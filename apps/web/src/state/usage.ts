@@ -18,7 +18,7 @@ import {
   type UsageThreadBreakdownInput,
   type UsageThreadRow,
 } from "@t3tools/contracts";
-import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
+import { executeAtomQuery, runAtomCommand } from "@t3tools/client-runtime/state/runtime";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
 import { useCallback, useMemo, useRef, useState } from "react";
@@ -211,43 +211,58 @@ export function useUsage(
   );
 
   // Give every selected environment a fresh token after refreshing model
-  // prices. When the thread table is mounted, refresh its provider-owned query
-  // at the same time so both views recount the same transcript state.
+  // prices. When the thread table is mounted, wait for that environment's
+  // summary before refreshing its thread rows so both views use one snapshot.
   const refresh = useCallback(() => {
     const currentInput = JSON.parse(rangeKey) as UsageSummaryInput;
-    const rateRefreshes = selectedEnvironments.map(({ environmentId }) =>
-      runAtomCommand(
-        appAtomRegistry,
-        serverEnvironment.refreshUsageRates,
-        { environmentId, input: {} },
-        { reportFailure: false },
-      ),
-    );
-    void Promise.allSettled(rateRefreshes).then(() => {
-      const selectedIds = selectedEnvironments.map(({ environmentId }) => environmentId);
-      const attemptId = randomUUID();
-      setRefreshTokens((current) =>
-        withUsageRefreshAttempt(current, selectedIds, answered, attemptId),
-      );
-      if (!refreshThreads) return;
-      for (const contribution of filterProviderContributionsForProject(
-        projectFilter,
-        merged.providerContributions,
-      )) {
-        if (contribution.contractVersion < USAGE_THREAD_BREAKDOWN_SINCE) continue;
-        appAtomRegistry.refresh(
-          serverEnvironment.usageThreadBreakdown({
-            environmentId: contribution.environmentId,
-            input: makeThreadBreakdownInput(
-              currentInput,
-              projectFilter,
-              contribution.providers,
-              contribution.environmentId,
-            ),
-          }),
+    const attemptId = randomUUID();
+    for (const { environmentId } of selectedEnvironments) {
+      void Promise.allSettled([
+        runAtomCommand(
+          appAtomRegistry,
+          serverEnvironment.refreshUsageRates,
+          { environmentId, input: {} },
+          { reportFailure: false },
+        ),
+      ]).then(async () => {
+        const refreshToken = withUsageRefreshAttempt({}, [environmentId], answered, attemptId)[
+          environmentId
+        ];
+        setRefreshTokens((current) =>
+          withUsageRefreshAttempt(current, [environmentId], answered, attemptId),
         );
-      }
-    });
+        if (!refreshThreads) return;
+        await executeAtomQuery(
+          appAtomRegistry,
+          serverEnvironment.usageSummary({
+            environmentId,
+            input: { ...currentInput, refreshToken },
+          }),
+          { reportFailure: false, refresh: true },
+        );
+        for (const contribution of filterProviderContributionsForProject(
+          projectFilter,
+          merged.providerContributions,
+        )) {
+          if (
+            contribution.environmentId !== environmentId ||
+            contribution.contractVersion < USAGE_THREAD_BREAKDOWN_SINCE
+          )
+            continue;
+          appAtomRegistry.refresh(
+            serverEnvironment.usageThreadBreakdown({
+              environmentId,
+              input: makeThreadBreakdownInput(
+                currentInput,
+                projectFilter,
+                contribution.providers,
+                environmentId,
+              ),
+            }),
+          );
+        }
+      });
+    }
   }, [
     answered,
     merged.providerContributions,

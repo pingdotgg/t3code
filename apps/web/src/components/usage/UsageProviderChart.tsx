@@ -247,6 +247,7 @@ export function UsageProviderChart({
   const [brush, setBrush] = useState<{ readonly start: number; readonly end: number } | null>(null);
   const brushRef = useRef<{
     readonly pointerId: number;
+    readonly days: readonly string[];
     readonly start: number;
     readonly end: number;
   } | null>(null);
@@ -254,6 +255,23 @@ export function UsageProviderChart({
   const plotRef = useRef<HTMLDivElement | null>(null);
   const tooltipRef = useRef<HTMLDivElement | null>(null);
   const hoverPositionRef = useRef<{ x: number; y: number } | null>(null);
+
+  useLayoutEffect(() => {
+    const activeBrush = brushRef.current;
+    if (
+      activeBrush === null ||
+      (zoomable &&
+        activeBrush.days.length === days.length &&
+        activeBrush.days.every((day, index) => day === days[index]))
+    )
+      return;
+    brushRef.current = null;
+    setBrush(null);
+    const plot = plotRef.current;
+    if (plot?.hasPointerCapture(activeBrush.pointerId)) {
+      plot.releasePointerCapture(activeBrush.pointerId);
+    }
+  }, [days, zoomable]);
 
   const { paths, ticks, stepX, toY, series } = useMemo(() => {
     if (periods.length === 0) {
@@ -402,11 +420,11 @@ export function UsageProviderChart({
       event.currentTarget.setPointerCapture(event.pointerId);
       hoverPositionRef.current = null;
       setHoverIndex(null);
-      const nextBrush = { pointerId: event.pointerId, start: index, end: index };
+      const nextBrush = { pointerId: event.pointerId, days, start: index, end: index };
       brushRef.current = nextBrush;
       setBrush(nextBrush);
     },
-    [indexAt, zoomable],
+    [days, indexAt, zoomable],
   );
 
   const finishBrush = useCallback(
