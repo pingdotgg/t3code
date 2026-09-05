@@ -37,6 +37,7 @@ import {
   sortScopedProjectsForSidebar,
   shouldCreateNewThreadInCurrentProject,
   THREAD_JUMP_HINT_SHOW_DELAY_MS,
+  toggleProjectScope,
 } from "./Sidebar.logic";
 import {
   EnvironmentId,
@@ -1650,5 +1651,16 @@ describe("sortLogicalProjectsForSidebar", () => {
         (project) => project.projectKey,
       ),
     ).toEqual(["logical-newer", "logical-older"]);
+  });
+});
+
+describe("toggleProjectScope", () => {
+  it("scopes the list to the picked project", () => {
+    expect(toggleProjectScope(null, "project-a")).toBe("project-a");
+    expect(toggleProjectScope("project-b", "project-a")).toBe("project-a");
+  });
+
+  it("picks the already-scoped project again to return to all projects", () => {
+    expect(toggleProjectScope("project-a", "project-a")).toBeNull();
   });
 });

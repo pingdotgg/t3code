@@ -8,6 +8,7 @@ import type { SnoozePreset } from "@t3tools/client-runtime/state/thread-settled"
  */
 export type ThreadActionMenuId =
   | "new-thread-on-branch"
+  | "filter-by-project"
   | "project-settings"
   | "pin"
   | "unpin"
@@ -28,6 +29,15 @@ export type ThreadActionMenuId =
 
 export interface ThreadActionMenuState {
   readonly branch: string | null;
+  /**
+   * Project scoping for the thread list. Null on surfaces with no scoped
+   * list behind the menu (the chat header), where the item must not show.
+   */
+  readonly projectFilter: {
+    readonly label: string;
+    /** True when the list is already scoped to this thread's project. */
+    readonly isActive: boolean;
+  } | null;
   readonly isPinned: boolean;
   readonly isSettled: boolean;
   readonly isSnoozed: boolean;
@@ -107,6 +117,21 @@ export function buildThreadActionMenuItems(
         ]
       : []),
     { id: "mark-unread", label: "Mark unread", icon: "mail-open" },
+    ...(state.projectFilter
+      ? [
+          state.projectFilter.isActive
+            ? {
+                id: "filter-by-project" as const,
+                label: "Show all projects",
+                icon: "folder-tree",
+              }
+            : {
+                id: "filter-by-project" as const,
+                label: `Filter by ${state.projectFilter.label}`,
+                icon: "folder-tree",
+              },
+        ]
+      : []),
     {
       id: "copy",
       label: "Copy",

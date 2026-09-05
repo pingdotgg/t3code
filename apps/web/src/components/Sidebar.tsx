@@ -159,6 +159,7 @@ import {
   sortPinnedThreadsForSidebar,
   sortSettledThreadsForSidebar,
   sortThreadsForSidebar,
+  toggleProjectScope,
   useRetainedValue,
   useSidebarRowSubscriptionLease,
   useThreadJumpHintVisibility,
@@ -2038,8 +2039,6 @@ export default function Sidebar() {
     () => sortLogicalProjectsForSidebar(unsortedProjectGroups, threads, sidebarProjectSortOrder),
     [sidebarProjectSortOrder, threads, unsortedProjectGroups],
   );
-  const projectGroupsRef = useRef(projectGroups);
-  projectGroupsRef.current = projectGroups;
   const serverConfigs = useAtomValue(environmentServerConfigsAtom);
   // Threads on non-primary environments (T3 Connect, hosted) resolve their
   // provider entry from their own environment's config: default instance ids
@@ -2481,6 +2480,12 @@ export default function Sidebar() {
   // a ref keeps it out of attemptSettle's dependency array.
   const handleNewThreadRef = useRef(newThreadContext.handleNewThread);
   handleNewThreadRef.current = newThreadContext.handleNewThread;
+  // The per-thread context menu resolves the right-clicked thread's project
+  // group through this ref: projectGroups is rebuilt per shell event, and a
+  // dependency on it would hand every row a fresh onContextMenu prop on each
+  // event and defeat row memoization during streaming.
+  const projectGroupsRef = useRef(projectGroups);
+  projectGroupsRef.current = projectGroups;
   const settledThreadKeys = useMemo(
     () =>
       new Set(
@@ -3307,10 +3312,26 @@ export default function Sidebar() {
         const isPinned = thread.pinnedAt != null;
         // Presets resolve at menu-open time (same as the popover).
         const snoozePresets = resolveSnoozePresets(new Date(), timestampFormat);
+        // The thread's logical project group decides both the visibility of
+        // "Filter by project" and what scoping to it does.
+        const threadProjectGroup =
+          projectGroupsRef.current.find((project) =>
+            project.memberProjectRefs.some(
+              (projectRef) =>
+                projectRef.environmentId === thread.environmentId &&
+                projectRef.projectId === thread.projectId,
+            ),
+          ) ?? null;
         const clicked = await settlePromise(() =>
           api.contextMenu.show(
             buildThreadActionMenuItems({
               branch: thread.branch ?? null,
+              projectFilter: threadProjectGroup
+                ? {
+                    label: threadProjectGroup.displayName,
+                    isActive: projectScopeKey === threadProjectGroup.projectKey,
+                  }
+                : null,
               isPinned,
               isSettled,
               isSnoozed,
@@ -3338,6 +3359,16 @@ export default function Sidebar() {
           return;
         }
         switch (clicked.value) {
+          case "filter-by-project":
+            // Unlike the dropdown above the list (a radio group with an
+            // explicit "All projects" entry), this item is the only control
+            // here, so picking the scoped project again clears the scope.
+            if (threadProjectGroup) {
+              setProjectScopeKey(
+                toggleProjectScope(projectScopeKey, threadProjectGroup.projectKey),
+              );
+            }
+            return;
           case "project-settings": {
             const projectGroup = projectGroupsRef.current.find((group) =>
               group.memberProjectRefs.some(
@@ -3510,6 +3541,7 @@ export default function Sidebar() {
       markThreadUnread,
       openProjectSettings,
       projectCwdByKey,
+      projectScopeKey,
       serverConfigs,
       startThreadRename,
       updateThreadMetadata,
