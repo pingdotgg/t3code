@@ -58,6 +58,23 @@ describe("ghosttyCellText", () => {
 });
 
 describe("GhosttyTerminalCore snapshots", () => {
+  it("releases point conversion allocations when the native call throws", async () => {
+    const core = await createCore();
+    const runtime = await loadGhosttyRuntime();
+    const call = runtime.call.bind(runtime);
+    vi.spyOn(runtime, "call").mockImplementation((name, ...args) => {
+      if (name === "ghostty_terminal_point_from_grid_ref") throw new Error("conversion failed");
+      return call(name, ...args);
+    });
+    const allocate = vi.spyOn(runtime, "alloc");
+    const free = vi.spyOn(runtime, "free");
+    expect(() => core.viewportPointToScreen(0, 0)).toThrow("conversion failed");
+    for (const result of allocate.mock.results) {
+      if (result.type === "return")
+        expect(free.mock.calls.some(([pointer]) => pointer === result.value)).toBe(true);
+    }
+  });
+
   const cores = new Set<GhosttyTerminalCore>();
 
   async function createCore(onData: (data: string) => void = () => {}) {

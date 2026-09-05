@@ -839,6 +839,26 @@ export class GhosttyTerminalCore {
     return this.convertPoint(col, row, 1, 2);
   }
 
+  /** Resolve terminal-owned selection endpoints before their borrowed refs can go stale. */
+  selectionPosition(): GhosttySelectionRange["screen"] | null {
+    this.ensureActive();
+    const layout = this.runtime.layout("GhosttySelection");
+    const selection = this.runtime.alloc(layout.size);
+    try {
+      this.runtime.setField(selection, "GhosttySelection", "size", layout.size);
+      if (
+        this.runtime.call("ghostty_terminal_get", this.terminal, 31, selection) !== GHOSTTY_SUCCESS
+      ) {
+        return null;
+      }
+      const start = this.pointFromGridRef(selection + layout.fields.start!.offset, 2);
+      const end = this.pointFromGridRef(selection + layout.fields.end!.offset, 2);
+      return start && end ? { start, end } : null;
+    } finally {
+      this.runtime.free(selection, layout.size);
+    }
+  }
+
   screenPointToViewport(col: number, row: number): { x: number; y: number } | null {
     return this.convertPoint(col, row, 2, 1);
   }
@@ -851,9 +871,11 @@ export class GhosttyTerminalCore {
   ): { x: number; y: number } | null {
     this.ensureActive();
     const ref = this.gridRef(col, row, fromTag);
-    const point = this.pointFromGridRef(ref, toTag);
-    this.runtime.free(ref, this.runtime.layout("GhosttyGridRef").size);
-    return point;
+    try {
+      return this.pointFromGridRef(ref, toTag);
+    } finally {
+      this.runtime.free(ref, this.runtime.layout("GhosttyGridRef").size);
+    }
   }
 
   dispose(): void {
@@ -1113,22 +1135,25 @@ export class GhosttyTerminalCore {
   private pointFromGridRef(ref: number, tag: 1 | 2): { x: number; y: number } | null {
     const coordinateLayout = this.runtime.layout("GhosttyPointCoordinate");
     const coordinate = this.runtime.alloc(coordinateLayout.size);
-    const result = this.runtime.call(
-      "ghostty_terminal_point_from_grid_ref",
-      this.terminal,
-      ref,
-      tag,
-      coordinate,
-    );
-    const point =
-      result === GHOSTTY_SUCCESS
-        ? {
-            x: this.runtime.readField(coordinate, "GhosttyPointCoordinate", "x"),
-            y: this.runtime.readField(coordinate, "GhosttyPointCoordinate", "y"),
-          }
-        : null;
-    this.runtime.free(coordinate, coordinateLayout.size);
-    return point;
+    try {
+      const result = this.runtime.call(
+        "ghostty_terminal_point_from_grid_ref",
+        this.terminal,
+        ref,
+        tag,
+        coordinate,
+      );
+      const point =
+        result === GHOSTTY_SUCCESS
+          ? {
+              x: this.runtime.readField(coordinate, "GhosttyPointCoordinate", "x"),
+              y: this.runtime.readField(coordinate, "GhosttyPointCoordinate", "y"),
+            }
+          : null;
+      return point;
+    } finally {
+      this.runtime.free(coordinate, coordinateLayout.size);
+    }
   }
 
   private getU16(data: number): number {

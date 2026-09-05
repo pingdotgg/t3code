@@ -85,6 +85,10 @@ import { openTerminalLinkInPreview } from "./preview/openTerminalLinkInPreview";
 import { useAtomCommand } from "../state/use-atom-command";
 import { preventTerminalCloseShortcut } from "../lib/terminalCloseShortcut";
 import {
+  copyTerminalClipboardFromGesture,
+  writeTerminalClipboard,
+} from "../terminal/ghostty/clipboard";
+import {
   resolveTerminalFontPreference,
   resolveTerminalFontSizePreference,
   TYPOGRAPHY_ADVANCED_STORAGE_KEY,
@@ -141,9 +145,9 @@ function parseTerminalColor(value: string, fallback: GhosttyColor): GhosttyColor
   };
 }
 
-function runtimeEnvSignature(runtimeEnv: Record<string, string> | undefined): string {
-  if (!runtimeEnv) return "";
-  return JSON.stringify(
+function normalizeRuntimeEnv(runtimeEnv: Record<string, string> | undefined) {
+  if (!runtimeEnv) return undefined;
+  return Object.fromEntries(
     Object.entries(runtimeEnv)
       .filter(([key, value]) => key.length > 0 && typeof value === "string")
       .sort(([leftKey], [rightKey]) => leftKey.localeCompare(rightKey)),
@@ -377,7 +381,10 @@ export function TerminalViewport({
   // cannot be mistaken for the active flow.
   const openSelectionMenuRequestIdRef = useRef<number | null>(null);
   const keybindingsRef = useRef(keybindings);
-  const runtimeEnvKey = useMemo(() => runtimeEnvSignature(runtimeEnv), [runtimeEnv]);
+  const [terminalEnv, runtimeEnvKey] = useMemo(() => {
+    const env = normalizeRuntimeEnv(runtimeEnv);
+    return [env, env ? JSON.stringify(env) : ""] as const;
+  }, [runtimeEnv]);
   const handleSessionExited = useEffectEvent(() => {
     onSessionExited();
   });
@@ -401,16 +408,17 @@ export function TerminalViewport({
     }),
   );
   const terminalFontRef = useRef({ family: terminalFontFamily, size: terminalFontSize });
+  const terminalAttachInput = {
+    threadId,
+    terminalId,
+    cwd,
+    ...(worktreePath !== undefined ? { worktreePath } : {}),
+    ...(terminalEnv ? { env: terminalEnv } : {}),
+    ...(providerInstanceId ? { providerInstanceId } : {}),
+  };
   const terminalSession = useAttachedTerminalSession({
     environmentId,
-    terminal: {
-      threadId,
-      terminalId,
-      cwd,
-      ...(worktreePath !== undefined ? { worktreePath } : {}),
-      ...(runtimeEnv ? { env: runtimeEnv } : {}),
-      ...(providerInstanceId ? { providerInstanceId } : {}),
-    },
+    terminal: terminalAttachInput,
   });
   const writeTerminal = useEffectEvent((data: string) =>
     runTerminalWrite({
@@ -490,6 +498,8 @@ export function TerminalViewport({
 
     const setup = async (): Promise<(() => void) | null> => {
       const setupFont = terminalFontRef.current;
+      const clipboardToastId = `terminal-copy:${environmentId}:${threadId}:${terminalId}`;
+      let clipboardRequest = 0;
       const terminalOptions: GhosttyTerminalSurfaceOptions = {
         theme: terminalThemeFromApp(mount),
         font: terminalFontOptions(setupFont.family, setupFont.size),
@@ -499,6 +509,32 @@ export function TerminalViewport({
         onData: (data) => handleData(data),
         onResize: (cols, rows) => void resizeTerminal(cols, rows),
         onSelectionChange: () => handleSelectionChange(),
+        onClipboardWrite: async (text, canWrite) => {
+          const request = ++clipboardRequest;
+          const result = await writeTerminalClipboard(text, canWrite);
+          if (request !== clipboardRequest || !canWrite()) return;
+          if (result === "written") toastManager.close(clipboardToastId);
+          else if (result === "failed") {
+            toastManager.add({
+              id: clipboardToastId,
+              type: "info",
+              title: text === "" ? "Clear clipboard?" : "Terminal text ready to copy",
+              description: "Your browser needs a click to allow this clipboard write.",
+              timeout: 10_000,
+              actionProps: {
+                children: text === "" ? "Clear" : "Copy",
+                onClick: () => {
+                  if (copyTerminalClipboardFromGesture(text)) toastManager.close(clipboardToastId);
+                  else
+                    toastManager.update(clipboardToastId, {
+                      type: "error",
+                      title: "Clipboard write was blocked",
+                    });
+                },
+              },
+            });
+          }
+        },
         beforeKey: (event) => handleBeforeKey(event),
         onLinkActivate: (text, event) => handleLinkActivate(text, event),
         // The surface listens from construction, so a right-click can land
@@ -513,6 +549,7 @@ export function TerminalViewport({
         terminal.dispose();
         return null;
       }
+      setupCleanups.push(() => toastManager.close(clipboardToastId));
       terminal.setVisible(visibleRef.current);
       // The theme observer is not installed yet, so re-read the theme in case
       // the app toggled light/dark while the WASM surface was loading.
@@ -547,6 +584,12 @@ export function TerminalViewport({
       if (visibleRef.current && mount.contains(document.activeElement)) {
         terminal.focus();
       }
+
+      setupCleanups.push(
+        terminalEnvironment.observeAttach({ environmentId, input: terminalAttachInput }, (event) =>
+          terminal.observeClipboard(event),
+        ),
+      );
 
       const dismissSelectionAction = (supersede = false) => {
         const ownsMenu =
@@ -729,19 +772,6 @@ export function TerminalViewport({
         }
       };
 
-      const sendTerminalInput = async (data: string, fallbackError: string) => {
-        const activeTerminal = terminalRef.current;
-        if (!activeTerminal) return;
-        const result = await writeTerminal(data);
-        if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-          const error = squashAtomCommandFailure(result);
-          writeSystemMessage(
-            activeTerminal,
-            error instanceof Error ? error.message : fallbackError,
-          );
-        }
-      };
-
       function handleBeforeKey(event: KeyboardEvent): boolean {
         const currentKeybindings = keybindingsRef.current;
         const options = { context: { terminalFocus: true, terminalOpen: true } };
@@ -762,7 +792,7 @@ export function TerminalViewport({
         if (navigationData !== null) {
           event.preventDefault();
           event.stopPropagation();
-          void sendTerminalInput(navigationData, "Failed to move cursor");
+          terminalRef.current?.sendUserInput(navigationData);
           return false;
         }
 
@@ -770,14 +800,14 @@ export function TerminalViewport({
         if (deleteData !== null) {
           event.preventDefault();
           event.stopPropagation();
-          void sendTerminalInput(deleteData, "Failed to delete terminal input");
+          terminalRef.current?.sendUserInput(deleteData);
           return false;
         }
 
         if (!isTerminalClearShortcut(event)) return true;
         event.preventDefault();
         event.stopPropagation();
-        void sendTerminalInput("\u000c", "Failed to clear terminal");
+        terminalRef.current?.sendUserInput("\u000c");
         return false;
       }
 
@@ -920,7 +950,7 @@ export function TerminalViewport({
       teardown?.();
       if (hadFocus && mount.isConnected) mount.focus({ preventScroll: true });
     };
-  }, [cwd, environmentId, runtimeEnvKey, terminalId, threadId, worktreePath]);
+  }, [cwd, environmentId, providerInstanceId, runtimeEnvKey, terminalId, threadId, worktreePath]);
 
   useEffect(() => {
     const terminal = terminalRef.current;
@@ -944,7 +974,6 @@ export function TerminalViewport({
     const outputUpdate = readTerminalOutputUpdate(current.output, outputCursorRef.current);
     writeTerminalOutputUpdate(terminal, outputUpdate);
     outputCursorRef.current = outputUpdate.cursor;
-    terminal.clearSelection();
 
     if (current.error !== null && current.error !== previous.error) {
       writeSystemMessage(terminal, current.error);

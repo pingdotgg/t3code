@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./terminal-clipboard": {
+      "types": "./src/terminalClipboard.ts",
+      "default": "./src/terminalClipboard.ts"
+    },
     "./connection": {
       "types": "./src/connection/index.ts",
       "default": "./src/connection/index.ts"

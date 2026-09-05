@@ -75,6 +75,7 @@ import {
   type PendingModifier,
 } from "./terminalInput";
 import { createTerminalPasteSession } from "./terminalPaste";
+import { useTerminalClipboard } from "./useTerminalClipboard";
 import { cacheTerminalGridSize, getCachedTerminalGridSize } from "./terminalUiState";
 
 const DEFAULT_TERMINAL_COLS = 80;
@@ -335,6 +336,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
   const terminalKey = selectedThread
     ? `${selectedThread.environmentId}:${selectedThread.id}:${terminalId}`
     : terminalId;
+  useTerminalClipboard(selectedThread?.environmentId ?? null, terminalAttachInput);
   const bufferReplayKey = useMemo(
     () => getTerminalBufferReplayKey({ terminalKey, fontSize }),
     [fontSize, terminalKey],
