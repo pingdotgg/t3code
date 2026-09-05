@@ -63,6 +63,7 @@ export function deriveLatestContextWindowSnapshot(
       lastCachedInputTokens: asFiniteNumber(payload?.lastCachedInputTokens),
       lastOutputTokens: asFiniteNumber(payload?.lastOutputTokens),
       lastReasoningOutputTokens: asFiniteNumber(payload?.lastReasoningOutputTokens),
+      cost: asFiniteNumber(payload?.cost),
       toolUses: asFiniteNumber(payload?.toolUses),
       durationMs: asFiniteNumber(payload?.durationMs),
       compactsAutomatically: asBoolean(payload?.compactsAutomatically) ?? false,
@@ -88,4 +89,14 @@ export function formatContextWindowTokens(value: number | null): string {
     return `${Math.round(value / 1_000)}k`;
   }
   return `${(value / 1_000_000).toFixed(1).replace(/\.0$/, "")}m`;
+}
+
+export function formatContextWindowCost(value: number | null): string {
+  if (value === null || !Number.isFinite(value) || value <= 0) {
+    return "$0.00";
+  }
+  if (value < 0.01) {
+    return `$${value.toFixed(4)}`;
+  }
+  return `$${value.toFixed(2)}`;
 }

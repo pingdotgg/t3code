@@ -20,7 +20,7 @@ const usage = deriveLatestContextWindowSnapshot([
     tone: "info",
     kind: "context-window.updated",
     summary: "Context updated",
-    payload: { usedTokens: 100_000, maxTokens: 1_000_000 },
+    payload: { usedTokens: 100_000, maxTokens: 1_000_000, cost: 0.42 },
     turnId: TurnId.make("turn-1"),
     createdAt: "2026-08-24T12:00:00.000Z",
   },
@@ -58,5 +58,12 @@ describe("ContextWindowMeter", () => {
     expect(markup).toContain('disabled=""');
     expect(markup).toContain(">Send or clear your draft before compacting<");
     expect(markup).not.toContain('aria-label="Send or clear your draft before compacting"');
+  });
+
+  it("shows the cumulative session cost when reported", () => {
+    const markup = renderToStaticMarkup(<ContextWindowMeter usage={usage} />);
+
+    expect(markup).toContain(">Cost</span>");
+    expect(markup).toContain(">$0.42</span>");
   });
 });

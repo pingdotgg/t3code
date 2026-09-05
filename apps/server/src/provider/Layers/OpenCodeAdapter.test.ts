@@ -30,6 +30,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ThreadId,
+  TurnId,
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 import { ServerConfig } from "../../config.ts";
@@ -47,6 +48,9 @@ import {
   isSameOpenCodeDirectory,
   makeOpenCodeAdapter,
   mergeOpenCodeAssistantText,
+  normalizeOpenCodeTokenCounts,
+  normalizeOpenCodeTokenUsage,
+  trimContributionTurnMap,
 } from "./OpenCodeAdapter.ts";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 
@@ -129,6 +133,10 @@ const runtimeMock = {
     questionListImplementation: null as (() => Promise<Array<QuestionRequest>>) | null,
     sessionUpdateCalls: [] as Array<{ sessionID: string; permission: unknown }>,
     forkCalls: [] as Array<{ sessionID: string; directory?: string }>,
+    modelListCalls: 0,
+    modelListResults: [] as Array<Record<string, unknown>>,
+    modelListError: null as Error | null,
+    modelListSignals: [] as Array<AbortSignal | undefined>,
   },
   reset() {
     this.state.startCalls.length = 0;
@@ -184,6 +192,10 @@ const runtimeMock = {
     this.state.questionListImplementation = null;
     this.state.sessionUpdateCalls.length = 0;
     this.state.forkCalls.length = 0;
+    this.state.modelListCalls = 0;
+    this.state.modelListResults = [];
+    this.state.modelListError = null;
+    this.state.modelListSignals.length = 0;
   },
 };
 
@@ -495,6 +507,16 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
           runtimeMock.state.pendingQuestions = runtimeMock.state.pendingQuestions.filter(
             (request) => request.id !== requestID,
           );
+        },
+      },
+      provider: {
+        list: async (_params?: unknown, options?: { signal?: AbortSignal }) => {
+          runtimeMock.state.modelListCalls += 1;
+          runtimeMock.state.modelListSignals.push(options?.signal);
+          if (runtimeMock.state.modelListError) {
+            throw runtimeMock.state.modelListError;
+          }
+          return { data: { all: runtimeMock.state.modelListResults } };
         },
       },
     }) as unknown as ReturnType<OpenCodeRuntimeShape["createOpenCodeSdkClient"]>,
@@ -6500,6 +6522,113 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
     }),
   );
 
+  it.effect("clamps partial, non-finite, and negative token counts to zero", () =>
+    Effect.sync(() => {
+      const counts = normalizeOpenCodeTokenCounts({
+        input: NaN,
+        output: -40,
+        reasoning: Number.POSITIVE_INFINITY,
+        cache: { read: 11.9, write: undefined },
+      });
+      NodeAssert.deepEqual(counts, {
+        input: 0,
+        output: 0,
+        reasoning: 0,
+        cacheRead: 12,
+        cacheWrite: 0,
+      });
+
+      // A payload missing the whole cache object must not throw.
+      const withoutCache = normalizeOpenCodeTokenCounts({
+        input: 3,
+        output: 4,
+        reasoning: 0,
+        cache: undefined,
+      });
+      NodeAssert.deepEqual(withoutCache, {
+        input: 3,
+        output: 4,
+        reasoning: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+      });
+    }),
+  );
+
+  it.effect("maps OpenCode token counts into a context-window usage snapshot", () =>
+    Effect.sync(() => {
+      const counts = normalizeOpenCodeTokenCounts({
+        input: 100,
+        output: 40,
+        reasoning: 7,
+        cache: { read: 11, write: 13 },
+      });
+      NodeAssert.deepEqual(counts, {
+        input: 100,
+        output: 40,
+        reasoning: 7,
+        cacheRead: 11,
+        cacheWrite: 13,
+      });
+
+      const usage = normalizeOpenCodeTokenUsage({
+        messageTokens: counts,
+        cumulativeTokens: counts,
+        maxTokens: 200_000,
+        cumulativeSessionCost: 0.42,
+      });
+      NodeAssert.deepEqual(usage, {
+        usedTokens: 124,
+        totalProcessedTokens: 171,
+        maxTokens: 200_000,
+        cost: 0.42,
+        inputTokens: 124,
+        cachedInputTokens: 24,
+        outputTokens: 40,
+        reasoningOutputTokens: 7,
+        lastUsedTokens: 124,
+        lastInputTokens: 124,
+        lastCachedInputTokens: 24,
+        lastOutputTokens: 40,
+        lastReasoningOutputTokens: 7,
+      });
+    }),
+  );
+
+  it.effect("omits cumulative and breakdown fields OpenCode did not report", () =>
+    Effect.sync(() => {
+      const usage = normalizeOpenCodeTokenUsage({
+        messageTokens: { input: 5, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0 },
+        cumulativeSessionCost: 0,
+      });
+      NodeAssert.deepEqual(usage, {
+        usedTokens: 5,
+        inputTokens: 5,
+        cachedInputTokens: 0,
+        lastUsedTokens: 5,
+        lastInputTokens: 5,
+        lastCachedInputTokens: 0,
+      });
+    }),
+  );
+
+  it.effect("returns no usage until an assistant message reports tokens", () =>
+    Effect.sync(() => {
+      NodeAssert.equal(
+        normalizeOpenCodeTokenUsage({
+          cumulativeTokens: { input: 50, output: 10, reasoning: 0, cacheRead: 20, cacheWrite: 0 },
+        }),
+        undefined,
+      );
+      NodeAssert.equal(
+        normalizeOpenCodeTokenUsage({
+          messageTokens: { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0 },
+        }),
+        undefined,
+      );
+    }),
+  );
+
   it.effect("does not strip coincidental prefix overlap from OpenCode part deltas", () =>
     Effect.gen(function* () {
       const adapter = yield* OpenCodeAdapter;
@@ -7057,6 +7186,1090 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
         NodeAssert.equal(metadataUpdated[0].payload.name, "Investigate reconnect failures");
       }
     }),
+  );
+
+  // ---- Context-window usage fixtures --------------------------------------
+  //
+  // The usage integration tests all drive the same two OpenCode events with
+  // small variations, then collect `thread.token-usage.updated` emissions.
+  // These helpers keep each scenario down to its actual variations.
+
+  const usageSessionId = "http://127.0.0.1:9999/session";
+  const usageModel = { id: "claude-sonnet-4-5", providerID: "anthropic" };
+  const usageTokens = { input: 50, output: 10, reasoning: 5, cache: { read: 20, write: 0 } };
+  const usageCatalog = [
+    { id: "anthropic", models: { "claude-sonnet-4-5": { limit: { context: 200_000 } } } },
+  ];
+
+  const usageAssistantMessage = (id: string, tokens = usageTokens) => ({
+    type: "message.updated",
+    properties: {
+      sessionID: usageSessionId,
+      info: {
+        id,
+        role: "assistant",
+        modelID: usageModel.id,
+        providerID: usageModel.providerID,
+        tokens,
+      },
+    },
+  });
+
+  const usageSessionUpdate = ({
+    model = usageModel,
+    tokens = usageTokens,
+    ...rest
+  }: {
+    readonly model?: Record<string, unknown> | undefined;
+    readonly tokens?: Record<string, unknown> | undefined;
+  } & Record<string, unknown> = {}) => ({
+    type: "session.updated",
+    properties: {
+      sessionID: usageSessionId,
+      info: { id: usageSessionId, model, tokens, ...rest },
+    },
+  });
+
+  // Session update carrying only a title — used as a drain marker whose
+  // metadata event proves earlier events finished processing.
+  const usageMarkerSessionUpdate = (title: string) => ({
+    type: "session.updated",
+    properties: {
+      sessionID: usageSessionId,
+      info: { id: usageSessionId, title },
+    },
+  });
+
+  const startUsageSession = (adapter: OpenCodeAdapterShape, threadId: ThreadId) =>
+    adapter.startSession({
+      provider: ProviderDriverKind.make("opencode"),
+      threadId,
+      runtimeMode: "full-access",
+    });
+
+  const collectUsageEvents = (adapter: OpenCodeAdapterShape, threadId: ThreadId, take: number) =>
+    adapter.streamEvents.pipe(
+      Stream.filter(
+        (event) => event.threadId === threadId && event.type === "thread.token-usage.updated",
+      ),
+      Stream.take(take),
+      Stream.runCollect,
+      Effect.forkChild,
+    );
+
+  it.effect("emits context-window usage from assistant messages and session totals", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-usage");
+      runtimeMock.state.modelListResults = usageCatalog;
+      runtimeMock.state.subscribedEvents = [
+        usageSessionUpdate({ cost: 0.42 }),
+        usageAssistantMessage("msg-usage-1"),
+      ];
+
+      const eventsFiber = yield* collectUsageEvents(adapter, threadId, 1);
+
+      yield* startUsageSession(adapter, threadId);
+
+      const events = Array.from(yield* Fiber.join(eventsFiber).pipe(Effect.timeout("1 second")));
+      const usageEvent = events[0];
+      NodeAssert.equal(usageEvent?.type, "thread.token-usage.updated");
+      if (usageEvent?.type !== "thread.token-usage.updated") {
+        return;
+      }
+      // Context usage = input + cache read/write of the latest assistant
+      // message; total processed folds output and reasoning in on top of the
+      // cumulative session totals; maxTokens comes from the catalog; cost is
+      // the cumulative session cost in USD.
+      NodeAssert.deepEqual(usageEvent.payload.usage, {
+        usedTokens: 70,
+        totalProcessedTokens: 85,
+        maxTokens: 200_000,
+        cost: 0.42,
+        inputTokens: 70,
+        cachedInputTokens: 20,
+        outputTokens: 10,
+        reasoningOutputTokens: 5,
+        lastUsedTokens: 70,
+        lastInputTokens: 70,
+        lastCachedInputTokens: 20,
+        lastOutputTokens: 10,
+        lastReasoningOutputTokens: 5,
+      });
+      // The catalog is resolved once per model, not per event.
+      NodeAssert.equal(runtimeMock.state.modelListCalls, 1);
+    }),
+  );
+
+  it.effect("does not re-emit unchanged token usage for repeated updates", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-usage-dedupe");
+      runtimeMock.state.subscribedEvents = [
+        usageAssistantMessage("msg-usage-dedupe"),
+        usageAssistantMessage("msg-usage-dedupe-2"),
+        // Drain marker: its metadata event is emitted only after both
+        // messages have been fully processed, so the collected window is
+        // complete regardless of how many ambient events they produce.
+        usageMarkerSessionUpdate("dedupe-marker"),
+      ];
+
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId),
+        Stream.takeUntil(
+          (event) =>
+            event.type === "thread.metadata.updated" && event.payload.name === "dedupe-marker",
+        ),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+
+      const events = Array.from(yield* Fiber.join(eventsFiber).pipe(Effect.timeout("1 second")));
+      const usageEvents = events.filter((event) => event.type === "thread.token-usage.updated");
+      NodeAssert.equal(usageEvents.length, 1);
+    }),
+  );
+
+  it.effect("re-emits usage when output tokens grow on a later message", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-usage-output-growth");
+      runtimeMock.state.subscribedEvents = [
+        usageAssistantMessage("msg-output-growth-1"),
+        usageAssistantMessage("msg-output-growth-2", {
+          input: 50,
+          output: 90,
+          reasoning: 30,
+          cache: { read: 20, write: 0 },
+        }),
+      ];
+
+      const eventsFiber = yield* collectUsageEvents(adapter, threadId, 2);
+
+      yield* startUsageSession(adapter, threadId);
+
+      const events = Array.from(yield* Fiber.join(eventsFiber).pipe(Effect.timeout("1 second")));
+      NodeAssert.equal(events.length, 2);
+      const lastUsage = events[1];
+      NodeAssert.equal(lastUsage?.type, "thread.token-usage.updated");
+      if (lastUsage?.type !== "thread.token-usage.updated") {
+        return;
+      }
+      // Context usage is unchanged (same input and cache), but the grown
+      // output and reasoning must still re-emit rather than dedupe away.
+      NodeAssert.equal(lastUsage.payload.usage.usedTokens, 70);
+      NodeAssert.equal(lastUsage.payload.usage.outputTokens, 90);
+      NodeAssert.equal(lastUsage.payload.usage.reasoningOutputTokens, 30);
+    }),
+  );
+
+  it.effect(
+    "emits usage without maxTokens while the catalog is unavailable, then retries once it resolves",
+    () =>
+      Effect.gen(function* () {
+        const adapter = yield* OpenCodeAdapter;
+        const threadId = asThreadId("thread-opencode-usage-catalog-retry");
+        runtimeMock.state.modelListError = new Error("catalog offline");
+        const recoveredSessionUpdate = promiseWithResolvers<unknown>();
+        runtimeMock.state.subscribedEvents = [
+          usageAssistantMessage("msg-usage-catalog-retry"),
+          usageSessionUpdate(),
+          recoveredSessionUpdate.promise,
+        ];
+
+        const eventsFiber = yield* collectUsageEvents(adapter, threadId, 1);
+
+        yield* startUsageSession(adapter, threadId);
+
+        const events = Array.from(yield* Fiber.join(eventsFiber).pipe(Effect.timeout("1 second")));
+        const first = events[0];
+        NodeAssert.equal(first?.type, "thread.token-usage.updated");
+        if (first?.type !== "thread.token-usage.updated") {
+          return;
+        }
+        // The meter still renders the raw token count while the catalog is
+        // down. (The message-before-session ordering that delays the first
+        // resolution with a healthy catalog is covered by the model-switch
+        // test below.)
+        NodeAssert.equal("maxTokens" in first.payload.usage, false);
+        NodeAssert.equal(first.payload.usage.usedTokens, 70);
+        NodeAssert.equal(runtimeMock.state.modelListCalls, 1);
+        // The catalog lookup runs on the sequential event pump, so it must
+        // carry the abort signal — the 5s timeout interrupts the fetch rather
+        // than leaving a wedged request behind the next retry.
+        NodeAssert.ok(runtimeMock.state.modelListSignals[0] instanceof AbortSignal);
+
+        // The catalog comes back: a later session.updated after the retry
+        // cooldown must retry the resolution instead of giving up for the
+        // session's lifetime. Same-model failures inside the cooldown window
+        // skip the bounded lookup so an outage (or a burst of unchanged
+        // replays) stalls the pump at most once per window.
+        runtimeMock.state.modelListError = null;
+        runtimeMock.state.modelListResults = usageCatalog;
+        yield* TestClock.adjust("31 seconds");
+        const secondEventsFiber = yield* collectUsageEvents(adapter, threadId, 1);
+        recoveredSessionUpdate.resolve(
+          usageSessionUpdate({
+            tokens: { input: 60, output: 10, reasoning: 5, cache: { read: 20, write: 0 } },
+          }),
+        );
+
+        const secondEvents = Array.from(
+          yield* Fiber.join(secondEventsFiber).pipe(Effect.timeout("1 second")),
+        );
+        const second = secondEvents[0];
+        NodeAssert.equal(second?.type, "thread.token-usage.updated");
+        if (second?.type !== "thread.token-usage.updated") {
+          return;
+        }
+        NodeAssert.equal(second.payload.usage.maxTokens, 200_000);
+        NodeAssert.equal(runtimeMock.state.modelListCalls, 2);
+      }),
+  );
+
+  it.effect("cools down same-model catalog retries so replays do not stall the pump", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-usage-catalog-cooldown");
+      runtimeMock.state.modelListError = new Error("catalog offline");
+      const replayedSessionUpdate = promiseWithResolvers<unknown>();
+      const recoveredSessionUpdate = promiseWithResolvers<unknown>();
+      runtimeMock.state.subscribedEvents = [
+        usageAssistantMessage("msg-usage-catalog-cooldown"),
+        usageSessionUpdate(),
+        replayedSessionUpdate.promise,
+        usageMarkerSessionUpdate("cooldown-marker"),
+        recoveredSessionUpdate.promise,
+      ];
+
+      const eventsFiber = yield* collectUsageEvents(adapter, threadId, 1);
+      yield* startUsageSession(adapter, threadId);
+      const events = Array.from(yield* Fiber.join(eventsFiber).pipe(Effect.timeout("1 second")));
+      NodeAssert.equal(events.length, 1);
+      NodeAssert.equal(runtimeMock.state.modelListCalls, 1);
+
+      // An unchanged replay inside the cooldown must not pay another bounded
+      // lookup on the sequential pump. Drain through the marker (its metadata
+      // event proves the replay finished processing): no extra catalog call.
+      const drainFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId),
+        Stream.takeUntil(
+          (event) =>
+            event.type === "thread.metadata.updated" && event.payload.name === "cooldown-marker",
+        ),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      replayedSessionUpdate.resolve(usageSessionUpdate());
+      const drained = Array.from(yield* Fiber.join(drainFiber).pipe(Effect.timeout("1 second")));
+      const drainedUsage = drained.filter((event) => event.type === "thread.token-usage.updated");
+      // The replay carries identical tokens, so the deduped meter emits
+      // nothing new — and the cooldown means no second catalog call either.
+      NodeAssert.equal(drainedUsage.length, 0);
+      NodeAssert.equal(runtimeMock.state.modelListCalls, 1);
+
+      // After the cooldown the next session.updated retries and resolves.
+      runtimeMock.state.modelListError = null;
+      runtimeMock.state.modelListResults = usageCatalog;
+      yield* TestClock.adjust("31 seconds");
+      const recoveredEventsFiber = yield* collectUsageEvents(adapter, threadId, 1);
+      recoveredSessionUpdate.resolve(
+        usageSessionUpdate({
+          tokens: { input: 60, output: 10, reasoning: 5, cache: { read: 20, write: 0 } },
+        }),
+      );
+      const recoveredEvents = Array.from(
+        yield* Fiber.join(recoveredEventsFiber).pipe(Effect.timeout("1 second")),
+      );
+      NodeAssert.equal(recoveredEvents.length, 1);
+      const recovered = recoveredEvents[0];
+      NodeAssert.equal(recovered?.type, "thread.token-usage.updated");
+      if (recovered?.type !== "thread.token-usage.updated") {
+        return;
+      }
+      NodeAssert.equal(recovered.payload.usage.maxTokens, 200_000);
+      NodeAssert.equal(runtimeMock.state.modelListCalls, 2);
+    }),
+  );
+
+  // ---- Live turn-usage accounting (ported from #8918) -----------------------
+  //
+  // #8918 recorded these live-usage cases before it was closed unmerged; they
+  // are preserved here against the current turn machinery. The per-turn
+  // contribution ledger (same-id reports replace, distinct ids accumulate,
+  // late events are fenced to their owning turn) feeds `usage`/`modelUsage`/
+  // `totalCostUsd` on idle `turn.completed`. The context-window meter keeps
+  // its own latest-message occupancy semantics on top (so `inputTokens` below
+  // folds cache in, unlike #8918's raw snapshot).
+
+  it.effect("emits thread.token-usage.updated on message.updated with tokens", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-token-usage");
+      const messageUpdatedEvent = promiseWithResolvers<unknown>();
+      runtimeMock.state.subscribedEvents = [messageUpdatedEvent.promise];
+
+      const tokenUsageFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter(
+          (event) => event.threadId === threadId && event.type === "thread.token-usage.updated",
+        ),
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId,
+        input: "test tokens",
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("opencode"),
+          "opencode/mimo-test",
+        ),
+      });
+
+      messageUpdatedEvent.resolve({
+        id: "evt-token-usage",
+        type: "message.updated",
+        properties: {
+          sessionID: "http://127.0.0.1:9999/session",
+          info: {
+            id: "msg_token",
+            role: "assistant",
+            tokens: { input: 100, output: 50, reasoning: 10, cache: { read: 20, write: 5 } },
+            cost: 0.002,
+            modelID: "mimo-test",
+            providerID: "opencode",
+          },
+        },
+      });
+
+      const events = Array.from(
+        yield* Fiber.join(tokenUsageFiber).pipe(Effect.timeout("1 second")),
+      );
+      NodeAssert.equal(events.length, 1);
+      const usage = (events[0] as { payload: { usage: Record<string, unknown> } }).payload.usage;
+      // Meter semantics: input folds cache in (occupancy), unlike the raw
+      // per-model turn usage below.
+      NodeAssert.equal(usage.inputTokens as number, 125);
+      NodeAssert.equal(usage.cachedInputTokens as number, 25);
+      NodeAssert.equal(usage.outputTokens as number, 50);
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("does not emit token usage on zero-token payload", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-zero-token");
+      const messageUpdatedEvent = promiseWithResolvers<unknown>();
+      const idleEvent = promiseWithResolvers<unknown>();
+      runtimeMock.state.subscribedEvents = [messageUpdatedEvent.promise, idleEvent.promise];
+
+      const turnCompletedFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId && event.type === "turn.completed"),
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      const turn = yield* adapter.sendTurn({
+        threadId,
+        input: "zero tokens",
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("opencode"),
+          "opencode/mimo-test",
+        ),
+      });
+
+      messageUpdatedEvent.resolve({
+        id: "evt-zero-token",
+        type: "message.updated",
+        properties: {
+          sessionID: "http://127.0.0.1:9999/session",
+          info: {
+            id: "msg_zero",
+            role: "assistant",
+            tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+            cost: 0,
+            modelID: "mimo-test",
+            providerID: "opencode",
+          },
+        },
+      });
+
+      yield* Effect.yieldNow;
+
+      idleEvent.resolve({
+        id: "evt-zero-idle",
+        type: "session.status",
+        properties: {
+          sessionID: "http://127.0.0.1:9999/session",
+          status: { type: "idle" },
+        },
+      });
+
+      const events = Array.from(
+        yield* Fiber.join(turnCompletedFiber).pipe(Effect.timeout("1 second")),
+      );
+      NodeAssert.equal(events.length, 1);
+      const payload = (events[0] as { payload: Record<string, unknown> }).payload;
+      NodeAssert.equal(payload.usage, undefined);
+      NodeAssert.equal(String((events[0] as { turnId: unknown }).turnId), String(turn.turnId));
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("idle turn completion carries usage and modelUsage", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-idle-usage");
+      const messageUpdatedEvent = promiseWithResolvers<unknown>();
+      const idleEvent = promiseWithResolvers<unknown>();
+      runtimeMock.state.subscribedEvents = [messageUpdatedEvent.promise, idleEvent.promise];
+
+      const turnCompletedFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId && event.type === "turn.completed"),
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      const turn = yield* adapter.sendTurn({
+        threadId,
+        input: "test idle usage",
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("opencode"),
+          "opencode/mimo-test",
+        ),
+      });
+
+      messageUpdatedEvent.resolve({
+        id: "evt-idle-usage-msg",
+        type: "message.updated",
+        properties: {
+          sessionID: "http://127.0.0.1:9999/session",
+          info: {
+            id: "msg_idle",
+            role: "assistant",
+            tokens: { input: 100, output: 20, reasoning: 5, cache: { read: 10, write: 2 } },
+            cost: 0.001,
+            modelID: "mimo-test",
+            providerID: "opencode",
+          },
+        },
+      });
+
+      // Yield to let token emission be processed
+      yield* Effect.yieldNow;
+
+      idleEvent.resolve({
+        id: "evt-idle-usage-idle",
+        type: "session.status",
+        properties: {
+          sessionID: "http://127.0.0.1:9999/session",
+          status: { type: "idle" },
+        },
+      });
+
+      const events = Array.from(
+        yield* Fiber.join(turnCompletedFiber).pipe(Effect.timeout("1 second")),
+      );
+      NodeAssert.equal(events.length, 1);
+      const payload = (events[0] as { payload: Record<string, unknown> }).payload;
+      NodeAssert.equal(payload.state, "completed");
+      NodeAssert.ok(payload.usage);
+      NodeAssert.equal(payload.totalCostUsd as number, 0.001);
+      const modelUsage = payload.modelUsage as Record<string, unknown>;
+      NodeAssert.ok(modelUsage["opencode/mimo-test"]);
+
+      // Ensure turnId matches
+      NodeAssert.equal(String((events[0] as { turnId: unknown }).turnId), String(turn.turnId));
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("accumulates usage and cost across multiple tool steps", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-accumulated-usage");
+      const firstMessage = promiseWithResolvers<unknown>();
+      const secondMessage = promiseWithResolvers<unknown>();
+      const idleEvent = promiseWithResolvers<unknown>();
+      runtimeMock.state.subscribedEvents = [
+        firstMessage.promise,
+        secondMessage.promise,
+        idleEvent.promise,
+      ];
+
+      const turnCompletedFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId && event.type === "turn.completed"),
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      const turn = yield* adapter.sendTurn({
+        threadId,
+        input: "test accumulation",
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("opencode"),
+          "opencode/mimo-test",
+        ),
+      });
+
+      firstMessage.resolve({
+        id: "evt-accum-1",
+        type: "message.updated",
+        properties: {
+          sessionID: "http://127.0.0.1:9999/session",
+          info: {
+            id: "msg_accum_1",
+            role: "assistant",
+            tokens: { input: 100, output: 20, reasoning: 5, cache: { read: 10, write: 2 } },
+            cost: 0.001,
+            modelID: "mimo-test",
+            providerID: "opencode",
+          },
+        },
+      });
+
+      yield* Effect.yieldNow;
+
+      secondMessage.resolve({
+        id: "evt-accum-2",
+        type: "message.updated",
+        properties: {
+          sessionID: "http://127.0.0.1:9999/session",
+          info: {
+            id: "msg_accum_2",
+            role: "assistant",
+            tokens: { input: 50, output: 30, reasoning: 10, cache: { read: 5, write: 1 } },
+            cost: 0.002,
+            modelID: "mimo-test",
+            providerID: "opencode",
+          },
+        },
+      });
+
+      yield* Effect.yieldNow;
+
+      idleEvent.resolve({
+        id: "evt-accum-idle",
+        type: "session.status",
+        properties: {
+          sessionID: "http://127.0.0.1:9999/session",
+          status: { type: "idle" },
+        },
+      });
+
+      const events = Array.from(
+        yield* Fiber.join(turnCompletedFiber).pipe(Effect.timeout("1 second")),
+      );
+      NodeAssert.equal(events.length, 1);
+      const payload = (events[0] as { payload: Record<string, unknown> }).payload;
+      const usage = payload.usage as {
+        input: number;
+        output: number;
+        reasoning: number;
+        cache: { read: number; write: number };
+      };
+      // Input 100+50, output 20+30, cache read 10+5, write 2+1
+      NodeAssert.equal(usage.input, 150);
+      NodeAssert.equal(usage.output, 50);
+      NodeAssert.equal(usage.cache.read, 15);
+      NodeAssert.equal(usage.cache.write, 3);
+      // Cost summed
+      NodeAssert.equal(payload.totalCostUsd as number, 0.003);
+      const modelUsage = payload.modelUsage as Record<string, typeof usage>;
+      NodeAssert.ok(modelUsage["opencode/mimo-test"]);
+      NodeAssert.equal(modelUsage["opencode/mimo-test"].input, 150);
+      NodeAssert.equal(String((events[0] as { turnId: unknown }).turnId), String(turn.turnId));
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("does not double count duplicate message.updated for same id", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-dedupe-usage");
+      const firstMessage = promiseWithResolvers<unknown>();
+      const secondMessage = promiseWithResolvers<unknown>();
+      const idleEvent = promiseWithResolvers<unknown>();
+      runtimeMock.state.subscribedEvents = [
+        firstMessage.promise,
+        secondMessage.promise,
+        idleEvent.promise,
+      ];
+
+      const turnCompletedFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId && event.type === "turn.completed"),
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      const turn = yield* adapter.sendTurn({
+        threadId,
+        input: "test dedupe",
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("opencode"),
+          "opencode/mimo-test",
+        ),
+      });
+
+      firstMessage.resolve({
+        id: "evt-dedupe-1",
+        type: "message.updated",
+        properties: {
+          sessionID: "http://127.0.0.1:9999/session",
+          info: {
+            id: "msg_dedupe",
+            role: "assistant",
+            tokens: { input: 100, output: 20, reasoning: 5, cache: { read: 10, write: 2 } },
+            cost: 0.001,
+            modelID: "mimo-test",
+            providerID: "opencode",
+          },
+        },
+      });
+
+      yield* Effect.yieldNow;
+
+      // Same message id, updated tokens (cumulative) — should replace, not sum
+      secondMessage.resolve({
+        id: "evt-dedupe-2",
+        type: "message.updated",
+        properties: {
+          sessionID: "http://127.0.0.1:9999/session",
+          info: {
+            id: "msg_dedupe",
+            role: "assistant",
+            tokens: { input: 150, output: 30, reasoning: 10, cache: { read: 15, write: 3 } },
+            cost: 0.002,
+            modelID: "mimo-test",
+            providerID: "opencode",
+          },
+        },
+      });
+
+      yield* Effect.yieldNow;
+
+      idleEvent.resolve({
+        id: "evt-dedupe-idle",
+        type: "session.status",
+        properties: {
+          sessionID: "http://127.0.0.1:9999/session",
+          status: { type: "idle" },
+        },
+      });
+
+      const events = Array.from(
+        yield* Fiber.join(turnCompletedFiber).pipe(Effect.timeout("1 second")),
+      );
+      NodeAssert.equal(events.length, 1);
+      const payload = (events[0] as { payload: Record<string, unknown> }).payload;
+      const usage = payload.usage as {
+        input: number;
+        output: number;
+        cache: { read: number; write: number };
+      };
+      // Should be latest snapshot, not sum of both (100+150)
+      NodeAssert.equal(usage.input, 150);
+      NodeAssert.equal(usage.output, 30);
+      NodeAssert.equal(usage.cache.read, 15);
+      // Cost should be latest as well (deduped) — 0.002 not 0.003
+      // For deduped message, cost is replaced, so total is 0.002
+      NodeAssert.equal(payload.totalCostUsd as number, 0.002);
+      NodeAssert.equal(String((events[0] as { turnId: unknown }).turnId), String(turn.turnId));
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("fences late events from a prior turn out of the new turn's totals", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-fenced-usage");
+      const firstMessage = promiseWithResolvers<unknown>();
+      const firstIdle = promiseWithResolvers<unknown>();
+      const lateDuplicate = promiseWithResolvers<unknown>();
+      const secondMessage = promiseWithResolvers<unknown>();
+      const secondIdle = promiseWithResolvers<unknown>();
+      runtimeMock.state.subscribedEvents = [
+        firstMessage.promise,
+        firstIdle.promise,
+        lateDuplicate.promise,
+        secondMessage.promise,
+        secondIdle.promise,
+      ];
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      const firstTurn = yield* adapter.sendTurn({
+        threadId,
+        input: "first turn",
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("opencode"),
+          "opencode/mimo-test",
+        ),
+      });
+      const firstCompletedFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId && event.type === "turn.completed"),
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      firstMessage.resolve({
+        id: "evt-fence-1",
+        type: "message.updated",
+        properties: {
+          sessionID: "http://127.0.0.1:9999/session",
+          info: {
+            id: "msg_fence",
+            role: "assistant",
+            tokens: { input: 10, output: 5, reasoning: 1, cache: { read: 2, write: 0 } },
+            cost: 0.001,
+            modelID: "mimo-test",
+            providerID: "opencode",
+          },
+        },
+      });
+
+      yield* Effect.yieldNow;
+
+      firstIdle.resolve({
+        id: "evt-fence-idle-1",
+        type: "session.status",
+        properties: {
+          sessionID: "http://127.0.0.1:9999/session",
+          status: { type: "idle" },
+        },
+      });
+
+      const firstEvents = Array.from(
+        yield* Fiber.join(firstCompletedFiber).pipe(Effect.timeout("1 second")),
+      );
+      NodeAssert.equal(firstEvents.length, 1);
+      const firstPayload = (firstEvents[0] as { payload: Record<string, unknown> }).payload;
+      NodeAssert.equal((firstPayload.usage as { input: number }).input, 10);
+
+      const secondTurn = yield* adapter.sendTurn({
+        threadId,
+        input: "second turn",
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("opencode"),
+          "opencode/mimo-test",
+        ),
+      });
+      const secondCompletedFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId && event.type === "turn.completed"),
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      // Late re-emission of the first turn's message while the second turn is
+      // active: same id, much larger totals. It must not contaminate the new
+      // turn — the contribution key is already owned by the first turn.
+      lateDuplicate.resolve({
+        id: "evt-fence-late",
+        type: "message.updated",
+        properties: {
+          sessionID: "http://127.0.0.1:9999/session",
+          info: {
+            id: "msg_fence",
+            role: "assistant",
+            tokens: { input: 100, output: 50, reasoning: 10, cache: { read: 20, write: 5 } },
+            cost: 0.009,
+            modelID: "mimo-test",
+            providerID: "opencode",
+          },
+        },
+      });
+
+      yield* Effect.yieldNow;
+
+      secondMessage.resolve({
+        id: "evt-fence-2",
+        type: "message.updated",
+        properties: {
+          sessionID: "http://127.0.0.1:9999/session",
+          info: {
+            id: "msg_fence_2",
+            role: "assistant",
+            tokens: { input: 7, output: 3, reasoning: 1, cache: { read: 1, write: 0 } },
+            cost: 0.002,
+            modelID: "mimo-test",
+            providerID: "opencode",
+          },
+        },
+      });
+
+      yield* Effect.yieldNow;
+
+      secondIdle.resolve({
+        id: "evt-fence-idle-2",
+        type: "session.status",
+        properties: {
+          sessionID: "http://127.0.0.1:9999/session",
+          status: { type: "idle" },
+        },
+      });
+
+      const secondEvents = Array.from(
+        yield* Fiber.join(secondCompletedFiber).pipe(Effect.timeout("1 second")),
+      );
+      NodeAssert.equal(secondEvents.length, 1);
+      const secondPayload = (secondEvents[0] as { payload: Record<string, unknown> }).payload;
+      const secondUsage = secondPayload.usage as { input: number; output: number };
+      // Only the second turn's own message — not 10+100+7.
+      NodeAssert.equal(secondUsage.input, 7);
+      NodeAssert.equal(secondUsage.output, 3);
+      NodeAssert.equal(secondPayload.totalCostUsd as number, 0.002);
+      NodeAssert.equal(
+        String((secondEvents[0] as { turnId: unknown }).turnId),
+        String(secondTurn.turnId),
+      );
+      NodeAssert.equal(
+        String((firstEvents[0] as { turnId: unknown }).turnId),
+        String(firstTurn.turnId),
+      );
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("bounds the contribution fence map with oldest-first eviction", () =>
+    Effect.gen(function* () {
+      const entries = new Map<string, TurnId>();
+      const turn = TurnId.make("turn-fence-bound");
+      // Past the 1,000-entry bound, the oldest keys go first.
+      for (let index = 0; index < 1_003; index += 1) {
+        entries.set(`msg:${index}`, turn);
+      }
+      NodeAssert.equal(entries.size, 1_003);
+      trimContributionTurnMap(entries);
+      NodeAssert.equal(entries.size, 1_000);
+      NodeAssert.equal(entries.has("msg:0"), false);
+      NodeAssert.equal(entries.has("msg:1"), false);
+      NodeAssert.equal(entries.has("msg:2"), false);
+      NodeAssert.equal(entries.get("msg:3"), turn);
+      NodeAssert.equal(entries.get("msg:1002"), turn);
+    }),
+  );
+
+  it.effect("leaves the contribution fence map alone below the bound", () =>
+    Effect.gen(function* () {
+      const entries = new Map<string, TurnId>();
+      const turn = TurnId.make("turn-fence-small");
+      for (let index = 0; index < 500; index += 1) {
+        entries.set(`msg:${index}`, turn);
+      }
+      trimContributionTurnMap(entries);
+      NodeAssert.equal(entries.size, 500);
+      NodeAssert.equal(entries.get("msg:0"), turn);
+      NodeAssert.equal(entries.get("msg:499"), turn);
+      trimContributionTurnMap(new Map());
+    }),
+  );
+
+  it.effect("keeps per-message usage when a zero-token message arrives", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-usage-zero-token");
+      runtimeMock.state.subscribedEvents = [
+        usageAssistantMessage("msg-usage-real"),
+        usageAssistantMessage("msg-usage-zero", {
+          input: 0,
+          output: 0,
+          reasoning: 0,
+          cache: { read: 0, write: 0 },
+        }),
+        usageSessionUpdate({
+          tokens: { input: 60, output: 10, reasoning: 5, cache: { read: 20, write: 0 } },
+        }),
+        usageMarkerSessionUpdate("zero-token-marker"),
+      ];
+
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId),
+        Stream.takeUntil(
+          (event) =>
+            event.type === "thread.metadata.updated" && event.payload.name === "zero-token-marker",
+        ),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+
+      const events = Array.from(yield* Fiber.join(eventsFiber).pipe(Effect.timeout("1 second")));
+      const usageEvents = events.filter((event) => event.type === "thread.token-usage.updated");
+      // The zero-token message must not clobber per-message usage: the
+      // session update after it still re-emits against the real message.
+      NodeAssert.equal(usageEvents.length, 2);
+      const lastUsage = usageEvents[usageEvents.length - 1];
+      NodeAssert.equal(lastUsage?.type, "thread.token-usage.updated");
+      if (lastUsage?.type !== "thread.token-usage.updated") {
+        return;
+      }
+      NodeAssert.equal(lastUsage.payload.usage.usedTokens, 70);
+    }),
+  );
+
+  it.effect("re-resolves maxTokens when the session model changes", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-usage-model-switch");
+      runtimeMock.state.modelListResults = [
+        ...usageCatalog,
+        { id: "openai", models: { "gpt-5": { limit: { context: 128_000 } } } },
+      ];
+      runtimeMock.state.subscribedEvents = [
+        usageAssistantMessage("msg-usage-model-switch"),
+        usageSessionUpdate(),
+        usageSessionUpdate({ model: { id: "gpt-5", providerID: "openai" } }),
+      ];
+
+      const eventsFiber = yield* collectUsageEvents(adapter, threadId, 3);
+
+      yield* startUsageSession(adapter, threadId);
+
+      const events = Array.from(yield* Fiber.join(eventsFiber).pipe(Effect.timeout("1 second")));
+      const maxTokensByEvent = events.map((event) => {
+        if (event.type !== "thread.token-usage.updated") {
+          return null;
+        }
+        return event.payload.usage.maxTokens ?? null;
+      });
+      NodeAssert.deepEqual(maxTokensByEvent, [null, 200_000, 128_000]);
+      // Resolved once per model, not per event.
+      NodeAssert.equal(runtimeMock.state.modelListCalls, 2);
+    }),
+  );
+
+  it.effect(
+    "drops the previous model's maxTokens when a switch fails to resolve, and re-resolves on switch-back",
+    () =>
+      Effect.gen(function* () {
+        const adapter = yield* OpenCodeAdapter;
+        const threadId = asThreadId("thread-opencode-usage-model-switch-failure");
+        runtimeMock.state.modelListResults = usageCatalog;
+        const switchedSessionUpdate = promiseWithResolvers<unknown>();
+        const switchBackSessionUpdate = promiseWithResolvers<unknown>();
+        runtimeMock.state.subscribedEvents = [
+          usageAssistantMessage("msg-usage-switch-failure"),
+          usageSessionUpdate(),
+          switchedSessionUpdate.promise,
+          switchBackSessionUpdate.promise,
+        ];
+
+        const eventsFiber = yield* collectUsageEvents(adapter, threadId, 2);
+
+        yield* startUsageSession(adapter, threadId);
+
+        const events = Array.from(yield* Fiber.join(eventsFiber).pipe(Effect.timeout("1 second")));
+        NodeAssert.equal(events.length, 2);
+        const resolved = events[1];
+        NodeAssert.equal(resolved?.type, "thread.token-usage.updated");
+        if (resolved?.type !== "thread.token-usage.updated") {
+          return;
+        }
+        NodeAssert.equal(resolved.payload.usage.maxTokens, 200_000);
+
+        // Switch to model B while the catalog is down: the emitted snapshot
+        // must drop model A's capacity rather than keep reporting it.
+        runtimeMock.state.modelListError = new Error("catalog offline");
+        const failureEventsFiber = yield* adapter.streamEvents.pipe(
+          Stream.filter(
+            (event) => event.threadId === threadId && event.type === "thread.token-usage.updated",
+          ),
+          Stream.take(1),
+          Stream.runCollect,
+          Effect.forkChild,
+        );
+        switchedSessionUpdate.resolve(
+          usageSessionUpdate({ model: { id: "gpt-5", providerID: "openai" } }),
+        );
+
+        const failureEvents = Array.from(
+          yield* Fiber.join(failureEventsFiber).pipe(Effect.timeout("1 second")),
+        );
+        const failed = failureEvents[0];
+        NodeAssert.equal(failed?.type, "thread.token-usage.updated");
+        if (failed?.type !== "thread.token-usage.updated") {
+          return;
+        }
+        NodeAssert.equal("maxTokens" in failed.payload.usage, false);
+        NodeAssert.equal(runtimeMock.state.modelListCalls, 2);
+
+        // Switching back to model A must re-resolve instead of trusting the
+        // stale model key from the failed switch.
+        runtimeMock.state.modelListError = null;
+        const switchBackEventsFiber = yield* adapter.streamEvents.pipe(
+          Stream.filter(
+            (event) => event.threadId === threadId && event.type === "thread.token-usage.updated",
+          ),
+          Stream.take(1),
+          Stream.runCollect,
+          Effect.forkChild,
+        );
+        switchBackSessionUpdate.resolve(usageSessionUpdate());
+
+        const switchBackEvents = Array.from(
+          yield* Fiber.join(switchBackEventsFiber).pipe(Effect.timeout("1 second")),
+        );
+        const switchBack = switchBackEvents[0];
+        NodeAssert.equal(switchBack?.type, "thread.token-usage.updated");
+        if (switchBack?.type !== "thread.token-usage.updated") {
+          return;
+        }
+        NodeAssert.equal(switchBack.payload.usage.maxTokens, 200_000);
+        NodeAssert.equal(runtimeMock.state.modelListCalls, 3);
+      }),
   );
 
   it.effect("writes provider-native observability records using the session thread id", () =>
