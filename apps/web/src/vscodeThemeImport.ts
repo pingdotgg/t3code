@@ -1,8 +1,11 @@
 import {
   createVividThemeColors,
+  getStandardThemeColors,
   getThemeModes,
+  isReservedThemeId,
   parseThemeFile,
   themeColorToHex,
+  themeIdFromName,
   THEME_FILE_VERSION,
   type ThemeAppearance,
   type ThemeColorRole,
@@ -14,10 +17,10 @@ import {
  *
  * VS Code themes describe editor chrome, not an app palette: they carry a few
  * hundred workbench keys, leave most of them unset, and freely use 8-digit
- * hex with alpha for overlays. So the conversion derives a complete, contrast
- * -solved palette from the theme's editor background and accent, then layers
- * the workbench colors it did specify on top. Anything the file omits keeps
- * the derived value instead of falling back to an unrelated palette.
+ * hex with alpha for overlays. The conversion derives a complete palette from
+ * a visible accent and the editor background, then layers usable workbench
+ * colors on top. Foregrounds must remain readable, while authored focus and
+ * control candidates must remain distinct from adjacent surfaces and states.
  */
 
 type VsCodeRgba = { r: number; g: number; b: number; a: number };
@@ -210,26 +213,46 @@ export function parseVsCodeThemeFile(value: unknown): ThemeDefinition {
   const canvas = { r: canvasColor.r, g: canvasColor.g, b: canvasColor.b };
   const appearance = resolveAppearance(value, canvas);
 
-  const accentColor = pick(
+  const canvasHex = toHex(canvas);
+
+  /** Accent and control candidates must clear this small separation floor
+   * from every adjacent surface or state checked by the importer. */
+  const standsApart = (first: string, second: string) =>
+    contrastRatio(hexToRgb(first), hexToRgb(second)) >= 1.1;
+
+  let accentColor: VsCodeRgba | null = null;
+  let accentHex: string | null = null;
+  for (const key of [
     "focusBorder",
     "button.background",
     "textLink.foreground",
     "activityBarBadge.background",
     "progressBar.background",
     "badge.background",
-  );
-  const canvasHex = toHex(canvas);
-  const accentHex = accentColor ? flattenOver(accentColor, canvas) : null;
+  ]) {
+    const candidate = parseVsCodeColor(colors[key]);
+    if (!candidate) continue;
+    const candidateHex = flattenOver(candidate, canvas);
+    if (!standsApart(candidateHex, canvasHex)) continue;
+    accentColor = candidate;
+    accentHex = candidateHex;
+    break;
+  }
+  if (!accentColor || !accentHex) {
+    accentHex = themeColorToHex(getStandardThemeColors(appearance).accent)!;
+    accentColor = parseVsCodeColor(accentHex)!;
+  }
 
   // The derived palette is the floor: every role starts contrast-solved, then
   // the theme's own workbench colors replace what it actually specified. The
   // floor derives from a muted accent -- the vivid engine carries the accent
   // hue into every surface, which washes an imported neutral palette (a gray
   // theme with a blue focusBorder would get blue code and text surfaces).
-  const mutedAccentHex = accentColor
-    ? flattenOver({ r: accentColor.r, g: accentColor.g, b: accentColor.b, a: 0.2 }, canvas)
-    : null;
-  const derived = createVividThemeColors(appearance, canvasHex, mutedAccentHex ?? canvasHex);
+  const mutedAccentHex = flattenOver(
+    { r: accentColor.r, g: accentColor.g, b: accentColor.b, a: 0.2 },
+    canvas,
+  );
+  const derived = createVividThemeColors(appearance, canvasHex, mutedAccentHex);
   const sidebarHex =
     solidOver(canvas, "sideBar.background", "activityBar.background") ?? derived.sidebar;
   const sidebar = hexToRgb(sidebarHex);
@@ -256,6 +279,21 @@ export function parseVsCodeThemeFile(value: unknown): ThemeDefinition {
     return relativeLuminance(surfaceRgb) < 0.179 ? "#ffffff" : "#000000";
   };
 
+  const surfaceRaisedHex =
+    solidOver(canvas, "editorWidget.background", "dropdown.background") ?? derived.surfaceRaised;
+  // The checked switch track maps to messageAction, so resolve it before
+  // choosing the input role used by the unchecked track.
+  const buttonHex = solidOver(canvas, "button.background");
+  const actionHex = buttonHex && standsApart(buttonHex, canvasHex) ? buttonHex : accentHex;
+  let inputHex = derived.input;
+  for (const key of ["input.background", "input.border"]) {
+    const candidate = solidOver(canvas, key);
+    if (candidate && standsApart(candidate, canvasHex) && standsApart(candidate, actionHex)) {
+      inputHex = candidate;
+      break;
+    }
+  }
+
   const overrides: Partial<Record<ThemeColorRole, string>> = {
     canvas: canvasHex,
     text: readableOn(canvasHex, derived.text, "editor.foreground", "foreground"),
@@ -266,15 +304,14 @@ export function parseVsCodeThemeFile(value: unknown): ThemeDefinition {
       "disabledForeground",
     ),
     surface: solidOver(canvas, "editorWidget.background") ?? derived.surface,
-    surfaceRaised:
-      solidOver(canvas, "editorWidget.background", "dropdown.background") ?? derived.surfaceRaised,
+    surfaceRaised: surfaceRaisedHex,
     surfaceOverlay:
       solidOver(canvas, "menu.background", "quickInput.background", "dropdown.background") ??
       derived.surfaceOverlay,
     border:
       solidOver(canvas, "panel.border", "editorGroup.border", "contrastBorder") ?? derived.border,
-    input: solidOver(canvas, "input.border", "dropdown.border") ?? derived.input,
-    placeholder: readableOn(canvasHex, derived.placeholder, "input.placeholderForeground"),
+    input: inputHex,
+    placeholder: readableOn(surfaceRaisedHex, derived.placeholder, "input.placeholderForeground"),
     error: readableOn(canvasHex, derived.error, "editorError.foreground", "errorForeground"),
     warning: readableOn(canvasHex, derived.warning, "editorWarning.foreground"),
     accentSurface:
@@ -301,29 +338,24 @@ export function parseVsCodeThemeFile(value: unknown): ThemeDefinition {
     terminalScrollbar:
       solidOver(terminal, "scrollbarSlider.background") ?? derived.terminalScrollbar,
   };
-  if (accentHex) {
-    overrides.accent = accentHex;
-    overrides.focus = accentHex;
-    // The button pair is the closest thing VS Code has to our action color.
-    const actionHex = solidOver(canvas, "button.background") ?? accentHex;
-    overrides.messageAction = actionHex;
-    overrides.messageActionForeground = readableOn(
-      actionHex,
-      derived.messageActionForeground,
-      "button.foreground",
-    );
-    overrides.accentForeground = readableOn(
-      accentHex,
-      derived.accentForeground,
-      "button.foreground",
-    );
-  }
+  overrides.accent = accentHex;
+  overrides.focus = accentHex;
+  overrides.messageAction = actionHex;
+  overrides.messageActionForeground = readableOn(
+    actionHex,
+    derived.messageActionForeground,
+    "button.foreground",
+  );
+  overrides.accentForeground = readableOn(accentHex, derived.accentForeground, "button.foreground");
 
   // Reuse the theme-file parser so ids, names, and color values go through the
   // same validation as a hand-written file.
+  const name = resolveName(value);
+  const generatedId = themeIdFromName(name);
   return parseThemeFile({
     version: THEME_FILE_VERSION,
-    name: resolveName(value),
+    ...(isReservedThemeId(generatedId) ? { id: `${generatedId}-vscode` } : {}),
+    name,
     appearance,
     colors: { ...derived, ...overrides },
   });
