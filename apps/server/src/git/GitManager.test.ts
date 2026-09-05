@@ -1549,6 +1549,9 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
           { cwd: worktreeDir, branch: "review/renamed-merge" },
         ].toSorted((left, right) => left.cwd.localeCompare(right.cwd)),
       );
+      expect((yield* manager.branchPullRequest({ cwd: repoDir, branch: headBranch }))?.state).toBe(
+        "merged",
+      );
       expect((yield* manager.status({ cwd: repoDir })).pr?.state).toBe("merged");
       expect(
         yield* manager.branchPullRequest({ cwd: worktreeDir, branch: "review/renamed-merge" }),
@@ -1556,7 +1559,12 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       for (const checkout of otherCheckouts) {
         expect(yield* manager.remoteStatus({ cwd: checkout.cwd })).toBe(checkout.status);
       }
-      expect(ghCalls).toHaveLength(callsBeforeMerge);
+      expect(ghCalls).toHaveLength(callsBeforeMerge + 2);
+      yield* manager.observePullRequestMerge({ ...merge, url: unrelated[0]!.url });
+      expect((yield* manager.branchPullRequest({ cwd: repoDir, branch: headBranch }))?.state).toBe(
+        "merged",
+      );
+      expect(ghCalls).toHaveLength(callsBeforeMerge + 2);
 
       scenario.failAfterCalls = ghCalls.length;
       scenario.failWith = new GitHubCli.GitHubCliUnavailableError({
@@ -1569,7 +1577,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
     }),
   );
 
-  it.effect("keeps a confirmed merge after a late open response without claiming a newer PR", () =>
+  it.effect("keeps a confirmed merge after a late open response", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
       yield* initRepo(repoDir);
@@ -1599,9 +1607,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
             // @effect-diagnostics-next-line preferSchemaOverJson:off
             JSON.stringify([pullRequest]),
             // @effect-diagnostics-next-line preferSchemaOverJson:off
-            JSON.stringify([
-              { ...pullRequest, number: 43, url: "https://github.com/owner/repository/pull/43" },
-            ]),
+            JSON.stringify([pullRequest]),
           ],
         },
       });
@@ -1619,9 +1625,51 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
 
       expect(yield* Fiber.join(lookup)).toEqual({ state: "merged", updatedAt: merge.mergedAt });
       expect((yield* manager.status({ cwd: repoDir })).pr?.state).toBe("merged");
-      expect(ghCalls.filter((call) => call.startsWith("pr list "))).toHaveLength(1);
+      expect(ghCalls.filter((call) => call.startsWith("pr list "))).toHaveLength(2);
+    }),
+  );
 
-      yield* manager.invalidateStatus(repoDir);
+  it.effect("rechecks a warm branch association before applying an older PR's merge", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      const branch = "feature/reused-merge";
+      yield* runGit(repoDir, ["checkout", "-b", branch]);
+      yield* runGit(repoDir, ["push", "-u", "origin", branch]);
+      const pullRequest = {
+        number: 42,
+        title: "Earlier PR",
+        url: "https://github.com/owner/repository/pull/42",
+        baseRefName: "main",
+        headRefName: branch,
+        state: "OPEN",
+        updatedAt: "2026-09-01T00:00:00Z",
+      };
+      const { manager } = yield* makeManager({
+        ghScenario: {
+          prListSequence: [
+            // Fake gh returns raw JSON stdout at the CLI boundary.
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify([pullRequest]),
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify([
+              { ...pullRequest, state: "MERGED" },
+              { ...pullRequest, number: 43, url: "https://github.com/owner/repository/pull/43" },
+            ]),
+          ],
+        },
+      });
+      expect((yield* manager.branchPullRequest({ cwd: repoDir, branch }))?.state).toBe("open");
+      const merge = {
+        provider: "github" as const,
+        url: pullRequest.url,
+        mergedAt: "2026-09-03T00:00:00.000Z",
+      };
+      yield* manager.observePullRequestMerge(merge);
+
+      expect((yield* manager.branchPullRequest({ cwd: repoDir, branch }))?.state).toBe("open");
       const next = yield* manager.status({ cwd: repoDir });
       expect(next.pr).toMatchObject({ number: 43, state: "open" });
       expect(yield* manager.observePullRequestMerge(merge)).toEqual([]);

@@ -1017,14 +1017,18 @@ export const make = Effect.gen(function* () {
   // A branch lookup owns the association. A confirmed merge belongs to the
   // provider's full PR URL, including its host, port and repository path.
   // Keep it separate so an older in-flight lookup cannot restore an open state.
-  const mergedPrByIdentity = new Map<string, DateTime.Utc>();
+  let mergeRevision = 0;
+  const mergedPrByIdentity = new Map<
+    string,
+    { readonly mergedAt: DateTime.Utc; readonly revision: number }
+  >();
   const prIdentity = (pr: { readonly provider: SourceControlProviderKind; readonly url: string }) =>
     JSON.stringify([pr.provider, pr.url]);
   const withObservedMerge = (pr: PullRequestInfo): PullRequestInfo => {
-    const mergedAt = mergedPrByIdentity.get(prIdentity(pr));
-    return mergedAt === undefined
+    const observed = mergedPrByIdentity.get(prIdentity(pr));
+    return observed === undefined
       ? pr
-      : { ...pr, state: "merged", updatedAt: Option.some(mergedAt) };
+      : { ...pr, state: "merged", updatedAt: Option.some(observed.mergedAt) };
   };
   const prLookupCache = yield* Cache.makeWith(
     (key: string) => {
@@ -1044,9 +1048,10 @@ export const make = Effect.gen(function* () {
         ...(remoteName.length > 0 ? { remoteName } : {}),
       };
       return Effect.gen(function* () {
+        const lookupMergeRevision = mergeRevision;
         const { headContext, lookup } = yield* resolveLookupHeadContext(cwd, details);
         if (!lookup) {
-          return { latest: null, headContext };
+          return { latest: null, headContext, mergeRevision: lookupMergeRevision };
         }
         // Only skip when the branch is untracked as well: anything carrying an
         // upstream keeps the old behaviour.
@@ -1055,10 +1060,10 @@ export const make = Effect.gen(function* () {
           details.upstreamRef === null &&
           (yield* isUnpublishedBranch(cwd, headContext))
         ) {
-          return { latest: null, headContext };
+          return { latest: null, headContext, mergeRevision: lookupMergeRevision };
         }
         const latest = yield* findLatestPrForHeadContext(cwd, headContext);
-        return { latest, headContext };
+        return { latest, headContext, mergeRevision: lookupMergeRevision };
       });
     },
     {
@@ -2139,7 +2144,7 @@ export const make = Effect.gen(function* () {
     // is looked up on the fork. Verify against the remote the lookup used.
     const identityRemoteName = (headContext: BranchHeadContext) =>
       headContext.remoteName ?? remoteName ?? undefined;
-    const currentIdentity = yield* resolvePrLookupRepositoryIdentity(
+    let currentIdentity = yield* resolvePrLookupRepositoryIdentity(
       cacheCwd,
       branch,
       identityRemoteName(cached.headContext),
@@ -2152,31 +2157,34 @@ export const make = Effect.gen(function* () {
     const hasSameIdentity = (headContext: BranchHeadContext, identity: typeof currentIdentity) =>
       headContext.headRemoteUrlKey === identity.headRemoteUrlKey &&
       headContext.targetRemoteUrlKey === identity.targetRemoteUrlKey;
-    if (!canVerifyIdentity(cached.headContext, currentIdentity)) {
-      return yield* new GitManagerError({
-        operation: "branchPullRequest",
-        cwd: cacheCwd,
-        detail: `Repository identity for ${branch} could not be verified.`,
-      });
-    }
-    if (!hasSameIdentity(cached.headContext, currentIdentity)) {
-      yield* Cache.invalidate(prLookupCache, cacheKey);
+    let refreshed = false;
+    while (true) {
+      const sameIdentity = hasSameIdentity(cached.headContext, currentIdentity);
+      if (!canVerifyIdentity(cached.headContext, currentIdentity) || (!sameIdentity && refreshed)) {
+        return yield* new GitManagerError({
+          operation: "branchPullRequest",
+          cwd: cacheCwd,
+          detail: refreshed
+            ? `Repository identity for ${branch} changed during pull request lookup.`
+            : `Repository identity for ${branch} could not be verified.`,
+        });
+      }
+      // A newer PR can reuse a branch without changing its Git configuration.
+      // Before settlement, recheck associations read before this PR's merge.
+      // The revision is captured before I/O, so late replies need this check too.
+      const observed =
+        cached.latest === null ? undefined : mergedPrByIdentity.get(prIdentity(cached.latest));
+      const predatesMerge = observed !== undefined && cached.mergeRevision < observed.revision;
+      if (sameIdentity && !predatesMerge) break;
+
+      yield* Cache.invalidateWhen(prLookupCache, cacheKey, (value) => value === cached);
       cached = yield* Cache.get(prLookupCache, cacheKey);
-      const refreshedIdentity = yield* resolvePrLookupRepositoryIdentity(
+      currentIdentity = yield* resolvePrLookupRepositoryIdentity(
         cacheCwd,
         branch,
         identityRemoteName(cached.headContext),
       );
-      if (
-        !canVerifyIdentity(cached.headContext, refreshedIdentity) ||
-        !hasSameIdentity(cached.headContext, refreshedIdentity)
-      ) {
-        return yield* new GitManagerError({
-          operation: "branchPullRequest",
-          cwd: cacheCwd,
-          detail: `Repository identity for ${branch} changed during pull request lookup.`,
-        });
-      }
+      refreshed = true;
     }
     const latest = cached.latest === null ? null : withObservedMerge(cached.latest);
     const hidesTerminalPr =
@@ -2204,7 +2212,7 @@ export const make = Effect.gen(function* () {
       if (oldest !== undefined) mergedPrByIdentity.delete(oldest);
     }
     const mergedAt = DateTime.makeUnsafe(input.mergedAt);
-    mergedPrByIdentity.set(identity, mergedAt);
+    mergedPrByIdentity.set(identity, { mergedAt, revision: ++mergeRevision });
     const branches: Array<{ readonly cwd: string; readonly branch: string }> = [];
     const cwds = new Set<string>();
     for (const [branchKey, known] of lastKnownPrByBranchKey) {
