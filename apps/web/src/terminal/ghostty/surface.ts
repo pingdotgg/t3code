@@ -919,7 +919,7 @@ export class GhosttyTerminalSurface {
     this.pasteShortcutToken += 1;
     if (text.length === 0) return;
     const encoded = this.core.encodePaste(text);
-    if (encoded.length > 0) this.options.onData(encoded);
+    this.sendUserInput(encoded);
   }
 
   hasSelection(): boolean {
@@ -1092,7 +1092,7 @@ export class GhosttyTerminalSurface {
           (text) => {
             if (this.disposed || this.pasteShortcutToken !== token) return;
             this.pasteShortcutToken += 1;
-            if (text.length > 0) this.options.onData(this.core.encodePaste(text));
+            if (text.length > 0) this.sendUserInput(this.core.encodePaste(text));
           },
           () => {
             // Clipboard read denied; the native paste event remains the path.
@@ -1113,7 +1113,7 @@ export class GhosttyTerminalSurface {
     this.suppressedKeyCodes.delete(event.code);
     event.preventDefault();
     event.stopPropagation();
-    this.options.onData(data);
+    this.sendUserInput(data);
   };
 
   private readonly onKeyUp = (event: KeyboardEvent) => {
@@ -1128,7 +1128,7 @@ export class GhosttyTerminalSurface {
     if (data.length === 0) return;
     event.preventDefault();
     event.stopPropagation();
-    this.options.onData(data);
+    this.sendUserInput(data);
   };
 
   private readonly onFocus = () => {
@@ -1202,7 +1202,7 @@ export class GhosttyTerminalSurface {
     // The native paste won the race with actual text; a pending clipboard read
     // must not double. An empty native paste leaves the read as the only path.
     this.pasteShortcutToken += 1;
-    this.options.onData(this.core.encodePaste(data));
+    this.sendUserInput(this.core.encodePaste(data));
   };
 
   private readonly onCompositionStart = () => {
@@ -1214,7 +1214,7 @@ export class GhosttyTerminalSurface {
   private readonly onCompositionEnd = (event: CompositionEvent) => {
     this.composing = false;
     const data = this.input.value || event.data;
-    if (data.length > 0) this.options.onData(data);
+    this.sendUserInput(data);
     this.input.value = "";
     this.compositionInputToSuppress = data;
     this.compositionSuppressionTimer = window.setTimeout(() => {
@@ -1233,9 +1233,15 @@ export class GhosttyTerminalSurface {
       return;
     }
     this.clearCompositionInputSuppression();
-    if (data.length > 0) this.options.onData(data);
+    this.sendUserInput(data);
     this.input.value = "";
   };
+
+  private sendUserInput(data: string): void {
+    if (data.length === 0) return;
+    if (!this.isAtBottom()) this.scrollToBottom();
+    this.options.onData(data);
+  }
 
   private clearCompositionInputSuppression(): void {
     if (this.compositionSuppressionTimer !== null) {
