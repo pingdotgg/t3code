@@ -35,7 +35,7 @@ import { LoadingScreen } from "../../components/LoadingScreen";
 import { environmentCatalog } from "../../connection/catalog";
 import { useEnvironmentPresentation } from "../../state/presentation";
 import { terminalEnvironment } from "../../state/terminal";
-import { environmentSession } from "../../state/session";
+import { environmentSession, readEnvironmentScope } from "../../state/session";
 import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { uuidv4 } from "../../lib/uuid";
@@ -597,6 +597,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
       !canOperateTerminal ||
       !initialInput ||
       !selectedThread ||
+      !readEnvironmentScope(selectedThread.environmentId, AuthTerminalOperateScope) ||
       terminal.version === 0 ||
       sentInitialInputKeyRef.current === launchTargetKey
     ) {
@@ -684,7 +685,11 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
   /** Resolves true once the pty accepted the write, false if it was skipped or rejected. */
   const writeInput = useCallback(
     async (data: string): Promise<boolean> => {
-      if (!canOperateTerminal || !selectedThread || !isRunning) {
+      if (
+        !selectedThread ||
+        !isRunning ||
+        !readEnvironmentScope(selectedThread.environmentId, AuthTerminalOperateScope)
+      ) {
         return false;
       }
 
@@ -698,7 +703,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
       });
       return result._tag === "Success";
     },
-    [canOperateTerminal, isRunning, selectedThread, terminalId, writeTerminal],
+    [isRunning, selectedThread, terminalId, writeTerminal],
   );
 
   const pasteSessionRef = useRef<ReturnType<typeof createTerminalPasteSession> | null>(null);
@@ -868,7 +873,12 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
     attached: terminalAttachInput !== null && selectedThread !== null,
     terminal,
     reopen: async () => {
-      if (terminalAttachInput === null || selectedThread === null) return false;
+      if (
+        terminalAttachInput === null ||
+        selectedThread === null ||
+        !readEnvironmentScope(selectedThread.environmentId, AuthTerminalOperateScope)
+      )
+        return false;
       const result = await openTerminal({
         environmentId: selectedThread.environmentId,
         input: {
@@ -887,12 +897,15 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
       pendingExitNavigationRef.current = null;
     },
     onExit: () => {
-      if (selectedThread) {
-        void closeTerminal({
-          environmentId: selectedThread.environmentId,
-          input: { threadId: selectedThread.id, terminalId },
-        });
-      }
+      if (
+        selectedThread === null ||
+        !readEnvironmentScope(selectedThread.environmentId, AuthTerminalOperateScope)
+      )
+        return;
+      void closeTerminal({
+        environmentId: selectedThread.environmentId,
+        input: { threadId: selectedThread.id, terminalId },
+      });
       if (navigation.isFocused()) {
         navigateAwayAfterExit();
         return;
@@ -915,7 +928,10 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
   );
 
   const handleOpenNewTerminal = useCallback(() => {
-    if (!canOperateTerminal || !selectedThread) {
+    if (
+      !selectedThread ||
+      !readEnvironmentScope(selectedThread.environmentId, AuthTerminalOperateScope)
+    ) {
       return;
     }
 
@@ -926,18 +942,14 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
         terminalId: nextOpenTerminalId({
           listedTerminalIds: terminalMenuSessions.map((session) => session.terminalId),
           activeRouteTerminalId: terminalId,
-          ...(knownSessions === null ? { uniqueSuffix: uuidv4() } : {}),
+          ...(knownSessions === null ||
+          !readEnvironmentScope(selectedThread.environmentId, AuthTerminalReadScope)
+            ? { uniqueSuffix: uuidv4() }
+            : {}),
         }),
       }),
     );
-  }, [
-    canOperateTerminal,
-    knownSessions,
-    navigation,
-    selectedThread,
-    terminalId,
-    terminalMenuSessions,
-  ]);
+  }, [knownSessions, navigation, selectedThread, terminalId, terminalMenuSessions]);
 
   const handleDecreaseFontSize = useCallback(() => {
     setTerminalFontSize(stepTerminalFontSize(fontSize, -1));
@@ -1016,7 +1028,10 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
   );
 
   const handleClearTerminal = useCallback(() => {
-    if (!canOperateTerminal || !selectedThread) {
+    if (
+      !selectedThread ||
+      !readEnvironmentScope(selectedThread.environmentId, AuthTerminalOperateScope)
+    ) {
       return;
     }
 
@@ -1028,7 +1043,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
         terminalId,
       },
     });
-  }, [canOperateTerminal, clearTerminal, selectedThread, terminalId]);
+  }, [clearTerminal, selectedThread, terminalId]);
 
   const handleToolbarActionPress = useCallback(
     (action: TerminalToolbarAction) => {
