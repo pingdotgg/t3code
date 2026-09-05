@@ -284,6 +284,7 @@ describe("UsageService", () => {
       const runtimeRepository: ProviderSessionRuntime.ProviderSessionRuntimeRepository["Service"] =
         {
           upsert: () => repositoryFailure,
+          recordImportedTranscript: () => repositoryFailure,
           getByThreadId: () => repositoryFailure,
           list: () => repositoryFailure,
           deleteByThreadId: () => repositoryFailure,
@@ -523,6 +524,7 @@ describe("UsageService", () => {
       const runtimeRepository: ProviderSessionRuntime.ProviderSessionRuntimeRepository["Service"] =
         {
           upsert: () => unused,
+          recordImportedTranscript: () => unused,
           getByThreadId: () => unused,
           list: () => Effect.succeed([]),
           deleteByThreadId: () => unused,
