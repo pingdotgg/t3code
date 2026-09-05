@@ -1,4 +1,5 @@
 import {
+  ProjectId,
   PullRequestAction,
   type PullRequestCheck,
   type PullRequestComment,
@@ -31,6 +32,8 @@ import {
   pullRequestFindingKey,
   pullRequestHandoffLabels,
   pullRequestReviewOutcome,
+  PULL_REQUEST_DETAIL_SNAPSHOT_MAX_BYTES,
+  PULL_REQUEST_DETAIL_SNAPSHOT_MAX_ENTRIES,
   readableFailure,
   readPullRequestDetailSnapshot,
   resolveDisplayedPullRequestDetail,
@@ -1313,7 +1316,9 @@ describe("which actions need the host read again after they run", () => {
 });
 
 describe("cached pull request detail", () => {
-  const reference = { projectId: "project-1", repository: "acme/web", number: 7 };
+  const reference = { projectId: ProjectId.make("project-1"), repository: "acme/web", number: 7 };
+  const snapshotPrefix = "t3.pullRequests.detail.v1:";
+  const indexKey = "t3.pullRequests.detail.index.v1";
   const detail = (overrides: Partial<PullRequestDetail> = {}): PullRequestDetail =>
     ({
       provider: "github",
@@ -1371,6 +1376,12 @@ describe("cached pull request detail", () => {
     return {
       getItem: (key: string) => held.get(key) ?? null,
       setItem: (key: string, value: string) => void held.set(key, value),
+      removeItem: (key: string) => void held.delete(key),
+      key: (position: number) => [...held.keys()][position] ?? null,
+      get length() {
+        return held.size;
+      },
+      entries: () => [...held.entries()],
     };
   };
 
@@ -1382,6 +1393,233 @@ describe("cached pull request detail", () => {
     expect(snapshot?.author?.login).toBe("octocat");
     expect(snapshot?.additions).toBe(12);
     expect(snapshot?.deletions).toBe(3);
+  });
+
+  it.each([
+    { environmentId: "env-2", reference },
+    { environmentId: "env-1", reference: { ...reference, projectId: ProjectId.make("project-2") } },
+    { environmentId: "env-1", reference: { ...reference, repository: "acme/api" } },
+    { environmentId: "env-1", reference: { ...reference, number: 8 } },
+  ])("isolates the cache by environment, project, repository, and number: %j", (other) => {
+    const storage = makeStorage();
+    writePullRequestDetailSnapshot(storage, "env-1", reference, detail());
+    expect(readPullRequestDetailSnapshot(storage, other.environmentId, other.reference)).toBeNull();
+    writePullRequestDetailSnapshot(
+      storage,
+      other.environmentId,
+      other.reference,
+      detail({ ...other.reference, title: "Another PR" }),
+    );
+    expect(readPullRequestDetailSnapshot(storage, "env-1", reference)?.title).toBe(
+      "Cache the title",
+    );
+    expect(
+      readPullRequestDetailSnapshot(storage, other.environmentId, other.reference)?.title,
+    ).toBe("Another PR");
+  });
+
+  it("keeps scope components distinct when they contain the old key separators", () => {
+    const storage = makeStorage();
+    const first = { ...reference, projectId: ProjectId.make("project:one") };
+    const second = { ...reference, projectId: ProjectId.make("one") };
+    writePullRequestDetailSnapshot(storage, "env", first, detail({ ...first, title: "First" }));
+    writePullRequestDetailSnapshot(
+      storage,
+      "env:project",
+      second,
+      detail({ ...second, title: "Second" }),
+    );
+    expect(readPullRequestDetailSnapshot(storage, "env", first)?.title).toBe("First");
+    expect(readPullRequestDetailSnapshot(storage, "env:project", second)?.title).toBe("Second");
+  });
+
+  it("evicts the least recently read or written detail across environments", () => {
+    const storage = makeStorage();
+    for (let number = 1; number <= PULL_REQUEST_DETAIL_SNAPSHOT_MAX_ENTRIES; number++) {
+      writePullRequestDetailSnapshot(
+        storage,
+        `env-${number}`,
+        { ...reference, number },
+        detail({ number }),
+      );
+    }
+    expect(
+      readPullRequestDetailSnapshot(storage, "env-1", { ...reference, number: 1 }),
+    ).not.toBeNull();
+    writePullRequestDetailSnapshot(
+      storage,
+      "env-2",
+      { ...reference, number: 2 },
+      detail({ number: 2 }),
+    );
+    writePullRequestDetailSnapshot(storage, "env-new", reference, detail());
+    expect(readPullRequestDetailSnapshot(storage, "env-3", { ...reference, number: 3 })).toBeNull();
+    expect(
+      readPullRequestDetailSnapshot(storage, "env-1", { ...reference, number: 1 }),
+    ).not.toBeNull();
+    expect(
+      readPullRequestDetailSnapshot(storage, "env-2", { ...reference, number: 2 }),
+    ).not.toBeNull();
+    expect(storage.entries().filter(([key]) => key.startsWith(snapshotPrefix))).toHaveLength(
+      PULL_REQUEST_DETAIL_SNAPSHOT_MAX_ENTRIES,
+    );
+  });
+
+  it("bounds UTF-16 storage bytes, including keys and the recency index", () => {
+    const storage = makeStorage();
+    const body = "🚀".repeat(PULL_REQUEST_DETAIL_SNAPSHOT_MAX_BYTES / 16);
+    for (let number = 1; number <= 4; number++) {
+      writePullRequestDetailSnapshot(
+        storage,
+        "env-1",
+        { ...reference, number },
+        detail({ number, body }),
+      );
+    }
+    expect(readPullRequestDetailSnapshot(storage, "env-1", { ...reference, number: 1 })).toBeNull();
+    expect(readPullRequestDetailSnapshot(storage, "env-1", { ...reference, number: 4 })?.body).toBe(
+      body,
+    );
+    const bytes = storage
+      .entries()
+      .reduce((total, [key, value]) => total + 2 * (key.length + value.length), 0);
+    expect(bytes).toBeLessThanOrEqual(PULL_REQUEST_DETAIL_SNAPSHOT_MAX_BYTES);
+
+    const longEnvironmentId = "e".repeat(PULL_REQUEST_DETAIL_SNAPSHOT_MAX_BYTES / 4);
+    writePullRequestDetailSnapshot(storage, longEnvironmentId, reference, detail());
+    expect(readPullRequestDetailSnapshot(storage, longEnvironmentId, reference)).toBeNull();
+    expect(readPullRequestDetailSnapshot(storage, "env-1", { ...reference, number: 4 })?.body).toBe(
+      body,
+    );
+  });
+
+  it("drops an oversized replacement without evicting other details", () => {
+    const storage = makeStorage();
+    writePullRequestDetailSnapshot(storage, "env-1", reference, detail());
+    writePullRequestDetailSnapshot(storage, "env-2", reference, detail());
+    writePullRequestDetailSnapshot(
+      storage,
+      "env-1",
+      reference,
+      detail({ body: "x".repeat(PULL_REQUEST_DETAIL_SNAPSHOT_MAX_BYTES) }),
+    );
+    expect(readPullRequestDetailSnapshot(storage, "env-1", reference)).toBeNull();
+    expect(readPullRequestDetailSnapshot(storage, "env-2", reference)?.title).toBe(
+      "Cache the title",
+    );
+    expect(storage.entries().filter(([key]) => key.startsWith(snapshotPrefix))).toHaveLength(1);
+  });
+
+  it("repairs stale byte accounting even when the next detail is oversized", () => {
+    const storage = makeStorage();
+    writePullRequestDetailSnapshot(storage, "env-1", reference, detail());
+    const key = storage.entries().find(([key]) => key.startsWith(snapshotPrefix))![0];
+    const oversized = detail({ body: "x".repeat(PULL_REQUEST_DETAIL_SNAPSHOT_MAX_BYTES) });
+    storage.setItem(key, JSON.stringify(oversized));
+    writePullRequestDetailSnapshot(storage, "env-2", reference, oversized);
+    const bytes = storage
+      .entries()
+      .reduce((total, [storedKey, value]) => total + 2 * (storedKey.length + value.length), 0);
+    expect(bytes).toBeLessThanOrEqual(PULL_REQUEST_DETAIL_SNAPSHOT_MAX_BYTES);
+    expect(readPullRequestDetailSnapshot(storage, "env-1", reference)).toBeNull();
+    expect(readPullRequestDetailSnapshot(storage, "env-2", reference)).toBeNull();
+  });
+
+  it("retires legacy and unindexed detail keys without touching other storage", () => {
+    const storage = makeStorage();
+    const retired = [
+      "t3.pullRequests.detail:env-1:project-1:acme/web#1",
+      "t3.pullRequests.detail:env-2:project-2:acme/api#2",
+      `${snapshotPrefix}interrupted-write`,
+    ];
+    const unrelated = ["t3.pullRequests.list:env-1", "t3.pullRequests.detailOther", "settings"];
+    for (const key of [...retired, ...unrelated]) storage.setItem(key, "keep if unrelated");
+    writePullRequestDetailSnapshot(storage, "env-1", reference, detail());
+    for (const key of retired) expect(storage.getItem(key)).toBeNull();
+    for (const key of unrelated) expect(storage.getItem(key)).toBe("keep if unrelated");
+    expect(readPullRequestDetailSnapshot(storage, "env-1", reference)?.title).toBe(
+      "Cache the title",
+    );
+  });
+
+  it.each(["{not json", JSON.stringify([{ key: "settings", bytes: 20 }])])(
+    "recovers from a corrupt index without deleting unrelated data: %s",
+    (index) => {
+      const storage = makeStorage();
+      writePullRequestDetailSnapshot(storage, "env-1", reference, detail());
+      storage.setItem("settings", "keep");
+      storage.setItem(indexKey, index);
+      writePullRequestDetailSnapshot(storage, "env-2", reference, detail());
+      expect(storage.getItem("settings")).toBe("keep");
+      expect(readPullRequestDetailSnapshot(storage, "env-2", reference)?.title).toBe(
+        "Cache the title",
+      );
+      expect(storage.entries().filter(([key]) => key.startsWith(snapshotPrefix))).toHaveLength(1);
+    },
+  );
+
+  it("reads only the selected payload and keeps it when a recency update fails", () => {
+    const storage = makeStorage();
+    writePullRequestDetailSnapshot(storage, "env-1", reference, detail());
+    const selectedKey = storage.entries().find(([key]) => key.startsWith(snapshotPrefix))![0];
+    writePullRequestDetailSnapshot(storage, "env-2", reference, detail());
+    const getItem = storage.getItem;
+    storage.getItem = (key) => {
+      if (key !== selectedKey && key !== indexKey) throw new Error("Read another payload");
+      return getItem(key);
+    };
+    storage.setItem = () => {
+      throw new Error("Storage is read-only");
+    };
+    expect(readPullRequestDetailSnapshot(storage, "env-1", reference)?.title).toBe(
+      "Cache the title",
+    );
+  });
+
+  it.each(["payload", "index"] as const)(
+    "tolerates a failed %s write without leaving an unindexed payload",
+    (failedWrite) => {
+      const storage = makeStorage();
+      writePullRequestDetailSnapshot(storage, "env-1", reference, detail());
+      const setItem = storage.setItem;
+      storage.setItem = (key, value) => {
+        if ((key === indexKey) === (failedWrite === "index")) {
+          throw new DOMException("Storage quota exceeded", "QuotaExceededError");
+        }
+        setItem(key, value);
+      };
+      expect(() =>
+        writePullRequestDetailSnapshot(storage, "env-2", reference, detail()),
+      ).not.toThrow();
+      expect(readPullRequestDetailSnapshot(storage, "env-1", reference)?.title).toBe(
+        "Cache the title",
+      );
+      expect(readPullRequestDetailSnapshot(storage, "env-2", reference)).toBeNull();
+      expect(storage.entries().filter(([key]) => key.startsWith(snapshotPrefix))).toHaveLength(1);
+      storage.setItem = setItem;
+      writePullRequestDetailSnapshot(storage, "env-2", reference, detail());
+      expect(readPullRequestDetailSnapshot(storage, "env-2", reference)?.title).toBe(
+        "Cache the title",
+      );
+    },
+  );
+
+  it("drops a replacement if the new payload cannot be recorded in the index", () => {
+    const storage = makeStorage();
+    writePullRequestDetailSnapshot(storage, "env-1", reference, detail());
+    const setItem = storage.setItem;
+    storage.setItem = (key, value) => {
+      if (key === indexKey) throw new Error("Index write failed");
+      setItem(key, value);
+    };
+    writePullRequestDetailSnapshot(
+      storage,
+      "env-1",
+      reference,
+      detail({ body: "larger".repeat(100) }),
+    );
+    expect(readPullRequestDetailSnapshot(storage, "env-1", reference)).toBeNull();
+    expect(storage.entries().filter(([key]) => key.startsWith(snapshotPrefix))).toHaveLength(0);
   });
 
   it("keeps a cached tab painted while the live read replaces the counts", () => {
@@ -1404,10 +1642,28 @@ describe("cached pull request detail", () => {
     expect(readPullRequestDetailSnapshot(makeStorage(), "env-2", reference)).toBeNull();
   });
 
-  it("shrugs off corrupt storage and no storage at all", () => {
+  it("tolerates corrupt, denied, missing, and non-evictable storage", () => {
     const storage = makeStorage();
-    storage.setItem("t3.pullRequests.detail:env-1:project-1:acme/web#7", "{not json");
+    writePullRequestDetailSnapshot(storage, "env-1", reference, detail());
+    const key = storage.entries().find(([key]) => key.startsWith(snapshotPrefix))![0];
+    storage.setItem(key, "{not json");
     expect(readPullRequestDetailSnapshot(storage, "env-1", reference)).toBeNull();
     expect(readPullRequestDetailSnapshot(undefined, "env-1", reference)).toBeNull();
+    expect(() =>
+      writePullRequestDetailSnapshot(undefined, "env-1", reference, detail()),
+    ).not.toThrow();
+    const limited = { getItem: storage.getItem, setItem: storage.setItem };
+    writePullRequestDetailSnapshot(limited, "env-2", reference, detail());
+    expect(readPullRequestDetailSnapshot(limited, "env-2", reference)).toBeNull();
+    storage.getItem = () => {
+      throw new Error("Storage is denied");
+    };
+    storage.setItem = () => {
+      throw new Error("Storage is denied");
+    };
+    expect(readPullRequestDetailSnapshot(storage, "env-1", reference)).toBeNull();
+    expect(() =>
+      writePullRequestDetailSnapshot(storage, "env-1", reference, detail()),
+    ).not.toThrow();
   });
 });
