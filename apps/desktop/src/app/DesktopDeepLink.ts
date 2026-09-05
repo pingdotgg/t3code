@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 
 import type { DesktopThreadDeepLinkPayload } from "@t3tools/contracts";
@@ -21,6 +22,13 @@ import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import { makeComponentLogger } from "./DesktopObservability.ts";
 
 const { logInfo, logWarning } = makeComponentLogger("desktop-deep-link");
+
+const decodeRequeuedDeepLink = Schema.decodeUnknownOption(
+  Schema.Struct({
+    payload: Schema.Struct({ environmentId: Schema.String, threadId: Schema.String }),
+    generation: Schema.Number,
+  }),
+);
 
 const UUID_SEGMENT = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
 
@@ -284,24 +292,12 @@ export const make = Effect.gen(function* () {
         .handle({
           channel: DEEP_LINK_REQUEUE_CHANNEL,
           handler: (raw) => {
-            const payload = raw as Record<string, unknown> | null;
-            const requeuedPayload = payload?.payload as Record<string, unknown> | null | undefined;
-            const environmentId = requeuedPayload?.environmentId;
-            const threadId = requeuedPayload?.threadId;
-            if (
-              payload === null ||
-              typeof payload !== "object" ||
-              requeuedPayload === null ||
-              typeof requeuedPayload !== "object" ||
-              typeof environmentId !== "string" ||
-              typeof threadId !== "string" ||
-              typeof payload.generation !== "number"
-            ) {
-              return Effect.succeed(null);
-            }
+            const decoded = decodeRequeuedDeepLink(raw);
+            if (Option.isNone(decoded)) return Effect.succeed(null);
+            const { payload, generation: requeuedGeneration } = decoded.value;
             return Effect.gen(function* () {
-              if ((yield* Ref.get(generation)) !== payload.generation) return null;
-              return yield* open({ environmentId, threadId });
+              if ((yield* Ref.get(generation)) !== requeuedGeneration) return null;
+              return yield* open(payload);
             });
           },
         })
