@@ -595,25 +595,29 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
       }),
   );
 
-  it.effect.skipIf(!symlinksSupported)(
-    "upgrades the Homebrew cask that owns the binary and compares against its version",
-    () =>
+  it.effect.each([
+    { directory: "Caskroom", name: "package-tool", kind: "cask" },
+    { directory: "Cellar", name: "package-tool", kind: "formula" },
+    { directory: "Cellar", name: "package-tool@latest", kind: "formula" },
+  ] as const)(
+    "upgrades the owning Homebrew $kind $name through an executable alias",
+    (fixture) =>
       Effect.gen(function* () {
         const tempDir = yield* makeTempDir("t3-homebrew-capabilities");
         const brewBinDir = NodePath.join(tempDir, "brew-bin");
         const brewPath = NodePath.join(brewBinDir, "brew");
         writeExecutable(brewPath);
-        const caskBinary = NodePath.join(
+        const ownedBinary = NodePath.join(
           tempDir,
-          "Caskroom",
-          "package-tool",
+          fixture.directory,
+          fixture.name,
           "0.148.0",
-          "package-tool",
+          "package-tool-0.148.0",
         );
-        writeExecutable(caskBinary);
-        const link = NodePath.join(tempDir, "bin", "package-tool");
+        writeExecutable(ownedBinary);
+        const link = NodePath.join(tempDir, "bin", "custom-package-tool");
         NodeFS.mkdirSync(NodePath.dirname(link), { recursive: true });
-        NodeFS.symlinkSync(caskBinary, link);
+        NodeFS.symlinkSync(ownedBinary, link);
         const spawned: Array<ReadonlyArray<string>> = [];
 
         const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
@@ -630,27 +634,38 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
               spawned.push([command, ...args]);
               return args[0] === "--prefix"
                 ? `${tempDir}\n`
-                : JSON.stringify({ casks: [{ version: "0.148.0,42" }] });
+                : JSON.stringify(
+                    fixture.kind === "cask"
+                      ? { casks: [{ version: "0.148.0,42" }] }
+                      : { formulae: [{ versions: { stable: "0.148.0" } }] },
+                  );
             }),
           ),
         );
 
         expect(spawned).toEqual([
           [brewPath, "--prefix"],
-          [brewPath, "info", "--json=v2", "package-tool"],
+          [brewPath, "info", "--json=v2", fixture.name],
         ]);
         expect(capabilities).toEqual({
           provider: driver("packageTool"),
           packageName: "@example/package-tool",
           latestVersion: "0.148.0",
           update: {
-            command: "brew upgrade --cask package-tool",
+            command:
+              fixture.kind === "cask"
+                ? `brew upgrade --cask ${fixture.name}`
+                : `brew upgrade ${fixture.name}`,
             executable: brewPath,
-            args: ["upgrade", "--cask", "package-tool"],
+            args:
+              fixture.kind === "cask"
+                ? ["upgrade", "--cask", fixture.name]
+                : ["upgrade", fixture.name],
             lockKey: "homebrew",
           },
         });
       }),
+    { skip: !symlinksSupported },
   );
 
   it.effect.skipIf(windowsHost)(
