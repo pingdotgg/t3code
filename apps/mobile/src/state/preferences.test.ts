@@ -188,6 +188,63 @@ describe("mobile preferences state", () => {
     }),
   );
 
+  it.effect("merges concurrent functional updates against the latest stored preferences", () =>
+    Effect.gen(function* () {
+      let persisted: Preferences = {};
+      let writeQueue = Promise.resolve();
+      const savePatch = vi.fn((patch: Partial<Preferences>) => Effect.succeed(patch));
+      const update = vi.fn((transform: (current: Preferences) => Partial<Preferences>) =>
+        Effect.promise(() => {
+          const write = writeQueue.then(() => {
+            persisted = { ...persisted, ...transform(persisted) };
+            return persisted;
+          });
+          writeQueue = write.then(() => undefined);
+          return write;
+        }),
+      );
+      const state = makePreferencesState({
+        load: Effect.sync(() => persisted),
+        savePatch,
+        update,
+      });
+      const registry = AtomRegistry.make();
+      const unmountPreferences = registry.mount(state.preferencesAtom);
+      const unmountUpdate = registry.mount(state.updatePreferencesAtom);
+
+      yield* AtomRegistry.getResult(registry, state.preferencesAtom, {
+        suspendOnWaiting: true,
+      });
+      registry.set(state.updatePreferencesAtom, (current) => ({
+        threadLastVisitedAtById: {
+          ...current.threadLastVisitedAtById,
+          "environment-a:thread-a": "2026-09-05T10:00:00.000Z",
+        },
+      }));
+      registry.set(state.updatePreferencesAtom, (current) => ({
+        threadLastVisitedAtById: {
+          ...current.threadLastVisitedAtById,
+          "environment-b:thread-b": "2026-09-05T10:01:00.000Z",
+        },
+      }));
+
+      yield* Effect.promise(() =>
+        vi.waitFor(() => {
+          expect(persisted.threadLastVisitedAtById).toEqual({
+            "environment-a:thread-a": "2026-09-05T10:00:00.000Z",
+            "environment-b:thread-b": "2026-09-05T10:01:00.000Z",
+          });
+        }),
+      );
+      expect(update).toHaveBeenCalledTimes(2);
+      expect(savePatch).not.toHaveBeenCalled();
+
+      unmountUpdate();
+      unmountPreferences();
+      registry.dispose();
+    }),
+  );
+
   it.effect("rolls back an optimistic field when its save fails", () =>
     Effect.gen(function* () {
       const state = makePreferencesState({

@@ -21,6 +21,7 @@ import type {
   ThreadId,
   UserInputQuestion,
 } from "@t3tools/contracts";
+import { useFocusEffect } from "@react-navigation/native";
 import * as Haptics from "expo-haptics";
 import {
   memo,
@@ -91,6 +92,7 @@ import {
 import { ThreadFeed } from "./ThreadFeed";
 import type { ThreadContentPresentation } from "./threadContentPresentation";
 import { resolveThreadFeedSubmissionAnchor } from "./thread-feed-live-follow";
+import { useThreadReadState } from "./use-thread-read-state";
 
 export interface ThreadDetailScreenProps {
   readonly selectedThread: OrchestrationThreadShell;
@@ -266,6 +268,11 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   const navigationHeaderHeight = useContext(HeaderHeightContext) || insets.top + IOS_NAV_BAR_HEIGHT;
   const agentLabel = `${props.selectedThread.modelSelection.instanceId} agent`;
   const selectedThreadKey = scopedThreadKey(props.environmentId, props.selectedThread.id);
+  const { markThreadVisited } = useThreadReadState({
+    environmentId: props.environmentId,
+    id: props.selectedThread.id,
+    latestTurn: props.selectedThread.latestTurn,
+  });
   const composerEditorRef = useRef<ComposerEditorHandle>(null);
   const draftMessageRef = useRef(props.draftMessage);
   draftMessageRef.current = props.draftMessage;
@@ -535,6 +542,18 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   const isSplitLayout = layoutVariant === "split";
   const contentMaxWidth = isSplitLayout ? CHAT_CONTENT_MAX_WIDTH : undefined;
   const selectedInstanceId = props.selectedThread.modelSelection.instanceId;
+  useFocusEffect(
+    useCallback(() => {
+      const markVisitedIfActive = () => {
+        if (AppState.currentState === "active") markThreadVisited();
+      };
+      markVisitedIfActive();
+      const subscription = AppState.addEventListener("change", (state) => {
+        if (state === "active") markThreadVisited();
+      });
+      return () => subscription.remove();
+    }, [markThreadVisited]),
+  );
   useStreamingHaptics(props.selectedThread.id, props.selectedThreadFeed);
   const selectedProviderSkills = useMemo(() => {
     const provider = props.serverConfig?.providers.find(

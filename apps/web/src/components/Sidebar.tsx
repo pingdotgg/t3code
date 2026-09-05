@@ -17,6 +17,7 @@ import {
 } from "@dnd-kit/sortable";
 import { restrictToFirstScrollableAncestor, restrictToVerticalAxis } from "@dnd-kit/modifiers";
 import { CSS } from "@dnd-kit/utilities";
+import { hasUnseenThreadCompletion } from "@t3tools/client-runtime/state/thread-read-state";
 import {
   canSnooze,
   effectiveSnoozed,
@@ -143,7 +144,6 @@ import {
   filterSidebarProjectScopeItems,
   formatWorkingDurationLabel,
   firstValidTimestampMs,
-  hasUnseenCompletion,
   isSidebarNestedLinkClick,
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
@@ -882,7 +882,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
 
   // Same semantics as the legacy sidebar (never-visited counts as read):
   // switching sidebars must not light up every historical thread as unread.
-  const isUnread = hasUnseenCompletion({ ...thread, lastVisitedAt });
+  const isUnread = hasUnseenThreadCompletion(thread, lastVisitedAt);
   const status = resolveSidebarThreadStatus(thread);
   const isInFlight =
     status === "working" || status === "monitoring" || status === "approval" || status === "input";

@@ -187,6 +187,10 @@
       "types": "./src/state/threadSettled.ts",
       "default": "./src/state/threadSettled.ts"
     },
+    "./state/thread-read-state": {
+      "types": "./src/state/threadReadState.ts",
+      "default": "./src/state/threadReadState.ts"
+    },
     "./state/thread-search": {
       "types": "./src/state/threadSearch.ts",
       "default": "./src/state/threadSearch.ts"

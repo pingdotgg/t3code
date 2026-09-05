@@ -104,6 +104,8 @@ interface HomeScreenProps {
   readonly onSelectThread: (thread: EnvironmentThreadShell) => void;
   readonly onArchiveThread: (thread: EnvironmentThreadShell) => void;
   readonly onDeleteThread: (thread: EnvironmentThreadShell) => void;
+  readonly onNewThreadFromThread: (thread: EnvironmentThreadShell) => void;
+  readonly onRenameThread: (thread: EnvironmentThreadShell) => void;
   /** Resolves true iff the settle was dispatched and succeeded. */
   readonly onSettleThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
   readonly onSnoozeThread: (
@@ -832,6 +834,8 @@ export function HomeScreen(props: HomeScreenProps) {
           onSelectThread={props.onSelectThread}
           onDeleteThread={handleDeleteThread}
           onArchiveThread={props.onArchiveThread}
+          onNewThreadFromThread={props.onNewThreadFromThread}
+          onRenameThread={props.onRenameThread}
           onRegenerateThreadTitle={handleRegenerateThreadTitle}
           titleRegenerationSupported={titleRegenerationEnvironmentIds.has(thread.environmentId)}
           settlementSupported={settlementEnvironmentIds.has(thread.environmentId)}
@@ -878,6 +882,8 @@ export function HomeScreen(props: HomeScreenProps) {
       projectCwdByKey,
       props.onArchiveThread,
       props.onDeletePendingTask,
+      props.onNewThreadFromThread,
+      props.onRenameThread,
       props.onSelectPendingTask,
       props.onSelectThread,
       props.savedConnectionsById,
@@ -885,9 +891,9 @@ export function HomeScreen(props: HomeScreenProps) {
       shelfPreferencesLoaded,
       settlementEnvironmentIds,
       snoozeEnvironmentIds,
+      titleRegenerationEnvironmentIds,
       threadListV2Items,
       threadSearchMatchByKey,
-      titleRegenerationEnvironmentIds,
       toggleSettledShelf,
       toggleSnoozedShelf,
       v2ProjectTitleByProjectKey,
@@ -996,6 +1002,8 @@ export function HomeScreen(props: HomeScreenProps) {
               searchQuery={props.searchQuery}
               onArchiveThread={props.onArchiveThread}
               onDeleteThread={props.onDeleteThread}
+              onNewThreadFromThread={props.onNewThreadFromThread}
+              onRenameThread={props.onRenameThread}
               onRegenerateThreadTitle={handleRegenerateThreadTitle}
               titleRegenerationSupported={titleRegenerationEnvironmentIds.has(thread.environmentId)}
               onSelectThread={props.onSelectThread}
@@ -1026,6 +1034,8 @@ export function HomeScreen(props: HomeScreenProps) {
       props.onDeletePendingTask,
       props.onDeleteThread,
       props.onNewThreadInProject,
+      props.onNewThreadFromThread,
+      props.onRenameThread,
       props.onSelectPendingTask,
       props.onSelectThread,
       props.searchQuery,

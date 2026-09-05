@@ -37,6 +37,7 @@ import {
 import { resolveThreadSelectionNavigationAction } from "../../lib/adaptive-navigation";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { mobilePreferencesAtom } from "../../state/preferences";
+import { useProjects } from "../../state/entities";
 import {
   DEFAULT_MOBILE_PROJECT_GROUPING_SETTINGS,
   resolveMobileProjectGroupingSettings,
@@ -48,6 +49,7 @@ import {
 import { AndroidHomeFabLayout } from "../home/AndroidHomeFab";
 import { HomeListOptionsProvider } from "../home/home-list-options";
 import { ThreadNavigationSidebar } from "../threads/ThreadNavigationSidebar";
+import { seedNewTaskDraftFromThread } from "../threads/new-thread-from-thread";
 import { WORKSPACE_PANE_TIMING } from "./workspace-pane-animation";
 import { WorkspaceInspectorPane } from "./workspace-inspector-pane";
 
@@ -222,6 +224,7 @@ function AdaptiveWorkspaceLayoutContent(
   const { width, height } = useWindowDimensions();
   const pathname = props.pathname;
   const navigation = useNavigation();
+  const projects = useProjects();
   const activeRoleOwner = useRef<symbol | null>(null);
   const [primarySidebarPreferredVisible, setPrimarySidebarPreferredVisible] = useState(true);
   const [supplementaryPanePreferredVisible, setSupplementaryPanePreferredVisible] = useState(true);
@@ -462,6 +465,24 @@ function AdaptiveWorkspaceLayoutContent(
     },
     [navigation],
   );
+  const handleNewThreadFromThread = useCallback(
+    (thread: EnvironmentThreadShell) => {
+      seedNewTaskDraftFromThread(thread);
+      const project = projects.find(
+        (candidate) =>
+          candidate.environmentId === thread.environmentId && candidate.id === thread.projectId,
+      );
+      navigation.navigate("NewTaskSheet", {
+        screen: "NewTaskDraft",
+        params: {
+          environmentId: String(thread.environmentId),
+          projectId: String(thread.projectId),
+          title: project?.title ?? "New task",
+        },
+      });
+    },
+    [navigation, projects],
+  );
 
   const renderedSidebarWidth = useSharedValue(
     panes.primarySidebarVisible ? (layout.listPaneWidth ?? 0) : 0,
@@ -543,6 +564,7 @@ function AdaptiveWorkspaceLayoutContent(
                     onOpenSettings={handleOpenSettings}
                     onOpenEnvironmentSettings={handleOpenEnvironmentSettings}
                     onNewThreadInProject={handleNewThreadInProject}
+                    onNewThreadFromThread={handleNewThreadFromThread}
                     onSelectThread={handleSelectThread}
                     onSearchQueryChange={setPrimarySidebarSearchQuery}
                     searchQuery={primarySidebarSearchQuery}
