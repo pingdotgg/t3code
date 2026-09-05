@@ -10,6 +10,7 @@ import { threadRuntimeCanArchive } from "@t3tools/client-runtime/state/models";
 import {
   AuthOrchestrationOperateScope,
   AuthSourceControlWriteScope,
+  EnvironmentAuthorizationError,
   EnvironmentId,
   type ScopedThreadRef,
   ThreadId,
@@ -255,7 +256,14 @@ export function useAcknowledgeThreadWoke() {
 function threadOperationFailure(target: ScopedThreadRef) {
   return readEnvironmentScope(target.environmentId, AuthOrchestrationOperateScope)
     ? null
-    : AsyncResult.failure(Cause.fail(new Error("This connection cannot change threads.")));
+    : AsyncResult.failure(
+        Cause.fail(
+          new EnvironmentAuthorizationError({
+            message: "This connection cannot change threads.",
+            requiredScope: AuthOrchestrationOperateScope,
+          }),
+        ),
+      );
 }
 
 export function useThreadActions() {
@@ -579,7 +587,12 @@ export function useThreadActions() {
             },
           })
         : AsyncResult.failure(
-            Cause.fail(new Error("This connection can no longer remove worktrees.")),
+            Cause.fail(
+              new EnvironmentAuthorizationError({
+                message: "This connection can no longer remove worktrees.",
+                requiredScope: AuthSourceControlWriteScope,
+              }),
+            ),
           );
       const refreshResult =
         removeResult._tag === "Success"
