@@ -632,6 +632,7 @@ export function runtimeEventToActivities(
         event.payload.lastToolName !== undefined ||
         event.payload.status !== undefined ||
         event.payload.error !== undefined;
+      const hasPhases = Array.isArray(event.payload.phases) && event.payload.phases.length > 0;
       return [
         ...(hasProgressState
           ? [
@@ -681,6 +682,28 @@ export function runtimeEventToActivities(
                   ...identityLinkage,
                   usageSnapshot: true,
                   typedUsage: event.payload.typedUsage,
+                },
+                turnId: toTurnId(event.turnId) ?? null,
+                ...maybeSequence,
+              },
+            ]
+          : []),
+        ...(hasPhases
+          ? [
+              {
+                // Phases only arrive on some progress ticks. Give them their own
+                // row so a later tick without phases can't overwrite it and make
+                // the panel flicker.
+                id: EventId.make(`task-phases:${event.threadId}:${event.payload.taskId}`),
+                createdAt: event.createdAt,
+                tone: "info" as const,
+                kind: "task.progress" as const,
+                summary: "Workflow phases updated",
+                payload: {
+                  taskId: event.payload.taskId,
+                  ...title,
+                  ...identityLinkage,
+                  usageSnapshot: true,
                 },
                 turnId: toTurnId(event.turnId) ?? null,
                 ...maybeSequence,
