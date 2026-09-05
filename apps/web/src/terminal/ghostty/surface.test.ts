@@ -216,50 +216,57 @@ describe("GhosttyTerminalSurface visibility", () => {
     vi.restoreAllMocks();
   });
 
-  it("gates path link feedback and activation while keeping selection and URLs available", async () => {
-    const harness = createHarness();
-    let canOpenPaths = false;
-    const openLink = vi.fn();
-    const surface = await harness.create({
-      canActivateLink: (text) => text.startsWith("https://") || canOpenPaths,
-      onLinkActivate: openLink,
-    });
-    surface.write("/repo/file.ts");
-    harness.flushFrame();
-    harness.pointer("pointermove", 5, 0, { ctrlKey: true });
-    expect(surface.canvas.style.cursor).toBe("");
-    harness.pointer("pointerdown", 5, 1, { ctrlKey: true });
-    harness.pointer("pointerup", 5, 0, { ctrlKey: true });
-    expect(openLink).not.toHaveBeenCalled();
+  it.each([
+    { platform: "Linux x86_64", modifiers: { ctrlKey: true, metaKey: false } },
+    { platform: "MacIntel", modifiers: { ctrlKey: false, metaKey: true } },
+  ])(
+    "gates path links and preserves selection and URLs ($platform)",
+    async ({ platform, modifiers }) => {
+      vi.stubGlobal("navigator", { platform });
+      const harness = createHarness();
+      let canOpenPaths = false;
+      const openLink = vi.fn();
+      const surface = await harness.create({
+        canActivateLink: (text) => text.startsWith("https://") || canOpenPaths,
+        onLinkActivate: openLink,
+      });
+      surface.write("/repo/file.ts");
+      harness.flushFrame();
+      harness.pointer("pointermove", 5, 0, modifiers);
+      expect(surface.canvas.style.cursor).toBe("");
+      harness.pointer("pointerdown", 5, 1, modifiers);
+      harness.pointer("pointerup", 5, 0, modifiers);
+      expect(openLink).not.toHaveBeenCalled();
 
-    harness.pointer("pointerdown", 5, 1);
-    harness.pointer("pointermove", 37, 1);
-    harness.pointer("pointerup", 37, 0);
-    expect(surface.getSelection()).toBe("/repo");
+      harness.pointer("pointerdown", 5, 1);
+      harness.pointer("pointermove", 37, 1);
+      harness.pointer("pointerup", 37, 0);
+      expect(surface.getSelection()).toBe("/repo");
 
-    harness.pointer("pointermove", 5, 0, { ctrlKey: true });
-    canOpenPaths = true;
-    surface.refreshLinkActivation();
-    expect(surface.canvas.style.cursor).toBe("pointer");
-    harness.pointer("pointerdown", 5, 1, { ctrlKey: true });
-    harness.pointer("pointerup", 5, 0, { ctrlKey: true });
-    expect(openLink).toHaveBeenCalledExactlyOnceWith("/repo/file.ts", expect.any(Event));
+      harness.pointer("pointermove", 5, 0, modifiers);
+      canOpenPaths = true;
+      surface.refreshLinkActivation();
+      expect(surface.canvas.style.cursor).toBe("pointer");
+      harness.pointer("pointerdown", 5, 1, modifiers);
+      harness.pointer("pointerup", 5, 0, modifiers);
+      expect(openLink).toHaveBeenCalledExactlyOnceWith("/repo/file.ts", expect.any(Event));
 
-    harness.pointer("pointerdown", 5, 1, { ctrlKey: true });
-    canOpenPaths = false;
-    surface.refreshLinkActivation();
-    expect(surface.canvas.style.cursor).toBe("");
-    harness.pointer("pointerup", 5, 0, { ctrlKey: true });
-    expect(openLink).toHaveBeenCalledOnce();
+      harness.pointer("pointerdown", 5, 1, modifiers);
+      canOpenPaths = false;
+      surface.refreshLinkActivation();
+      expect(surface.canvas.style.cursor).toBe("");
+      harness.pointer("pointerup", 5, 0, modifiers);
+      expect(openLink).toHaveBeenCalledOnce();
 
-    surface.resetAndWrite("https://t3.codes");
-    harness.flushFrame();
-    harness.pointer("pointermove", 5, 0, { ctrlKey: true });
-    expect(surface.canvas.style.cursor).toBe("pointer");
-    harness.pointer("pointerdown", 5, 1, { ctrlKey: true });
-    harness.pointer("pointerup", 5, 0, { ctrlKey: true });
-    expect(openLink).toHaveBeenLastCalledWith("https://t3.codes", expect.any(Event));
-  });
+      surface.resetAndWrite("https://t3.codes");
+      harness.flushFrame();
+      harness.pointer("pointermove", 5, 0, modifiers);
+      expect(surface.canvas.style.cursor).toBe("pointer");
+      harness.pointer("pointerdown", 5, 1, modifiers);
+      harness.pointer("pointerup", 5, 0, modifiers);
+      expect(openLink).toHaveBeenLastCalledWith("https://t3.codes", expect.any(Event));
+    },
+  );
 
   it("resends an unchanged grid when authorization and attachment become ready", async () => {
     const harness = createHarness();
