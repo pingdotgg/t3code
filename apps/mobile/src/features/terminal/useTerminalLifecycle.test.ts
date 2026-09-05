@@ -26,6 +26,7 @@ function input(changes: Partial<Input> = {}): Input {
   return {
     terminalKey: "environment:thread:term-1",
     canOperate: true,
+    observing: false,
     attached: true,
     terminal: { status: "running", version: 1 },
     reopen,
@@ -86,6 +87,38 @@ it("retains an exited observer's history after gaining operate", async () => {
   await render(input({ terminal: { status: "closed", version: 0 } }));
   await render(input({ terminal: { status: "exited", version: 1 } }));
   expect(reopen).not.toHaveBeenCalled();
+  expect(onExit).not.toHaveBeenCalled();
+});
+
+it.each(["closed", "exited"] as const)(
+  "keeps a pending observer passive when its first writable snapshot is %s",
+  async (status) => {
+    await render(
+      input({
+        canOperate: false,
+        observing: true,
+        terminal: { status, version: 0 },
+      }),
+    );
+    await render(input({ terminal: { status: "closed", version: 0 } }));
+    await render(input({ terminal: { status, version: 1 } }));
+    expect(reopen).not.toHaveBeenCalled();
+    expect(onExit).not.toHaveBeenCalled();
+    expect(onRunning).not.toHaveBeenCalled();
+  },
+);
+
+it("reopens an explicit operator visit after permissions finish loading", async () => {
+  await render(
+    input({
+      canOperate: false,
+      observing: false,
+      terminal: { status: "closed", version: 0 },
+    }),
+  );
+  await render(input({ terminal: { status: "closed", version: 0 } }));
+  await render(input({ terminal: { status: "exited", version: 1 } }));
+  expect(reopen).toHaveBeenCalledOnce();
   expect(onExit).not.toHaveBeenCalled();
 });
 
