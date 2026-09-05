@@ -8,7 +8,7 @@
  */
 import {
   type CheckpointRef,
-  ThreadTurnDiff,
+  OrchestrationGetTurnDiffResult,
   type OrchestrationGetFullThreadDiffInput,
   type OrchestrationGetFullThreadDiffResult,
   type OrchestrationGetTurnDiffInput,
@@ -57,7 +57,7 @@ export class CheckpointDiffQuery extends Context.Service<
   }
 >()("t3/checkpointing/CheckpointDiffQuery") {}
 
-const isTurnDiffResult = Schema.is(ThreadTurnDiff);
+const isTurnDiffResult = Schema.is(OrchestrationGetTurnDiffResult);
 
 function buildTurnDiffResult(
   input: {

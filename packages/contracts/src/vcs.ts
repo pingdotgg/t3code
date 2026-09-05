@@ -4,20 +4,20 @@ import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 export const VcsDriverKind = Schema.Literals(["git", "jj", "unknown"]);
 export type VcsDriverKind = typeof VcsDriverKind.Type;
 
-const VcsFreshnessSource = Schema.Literals([
+export const VcsFreshnessSource = Schema.Literals([
   "live-local",
   "cached-local",
   "cached-remote",
   "explicit-remote",
 ]);
-type VcsFreshnessSource = typeof VcsFreshnessSource.Type;
+export type VcsFreshnessSource = typeof VcsFreshnessSource.Type;
 
-const VcsFreshness = Schema.Struct({
+export const VcsFreshness = Schema.Struct({
   source: VcsFreshnessSource,
   observedAt: Schema.DateTimeUtc,
   expiresAt: Schema.Option(Schema.DateTimeUtc),
 });
-type VcsFreshness = typeof VcsFreshness.Type;
+export type VcsFreshness = typeof VcsFreshness.Type;
 
 export const VcsDriverCapabilities = Schema.Struct({
   kind: VcsDriverKind,
@@ -44,13 +44,13 @@ export const VcsListWorkspaceFilesResult = Schema.Struct({
 });
 export type VcsListWorkspaceFilesResult = typeof VcsListWorkspaceFilesResult.Type;
 
-const VcsRemote = Schema.Struct({
+export const VcsRemote = Schema.Struct({
   name: TrimmedNonEmptyString,
   url: TrimmedNonEmptyString,
   pushUrl: Schema.Option(TrimmedNonEmptyString),
   isPrimary: Schema.Boolean,
 });
-type VcsRemote = typeof VcsRemote.Type;
+export type VcsRemote = typeof VcsRemote.Type;
 
 export const VcsListRemotesResult = Schema.Struct({
   remotes: Schema.Array(VcsRemote),
@@ -234,13 +234,13 @@ export class VcsProcessMissingExitCodeError extends Schema.TaggedErrorClass<VcsP
   }
 }
 
-const VcsOutputDecodeError = Schema.Union([
+export const VcsOutputDecodeError = Schema.Union([
   VcsProcessStdinWriteError,
   VcsProcessOutputReadError,
   VcsProcessOutputLimitError,
   VcsProcessMissingExitCodeError,
 ]);
-type VcsOutputDecodeError = typeof VcsOutputDecodeError.Type;
+export type VcsOutputDecodeError = typeof VcsOutputDecodeError.Type;
 
 export class VcsRepositoryDetectionError extends Schema.TaggedErrorClass<VcsRepositoryDetectionError>()(
   "VcsRepositoryDetectionError",

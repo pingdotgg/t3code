@@ -19,7 +19,7 @@ export const GitStackedAction = Schema.Literals([
 export type GitStackedAction = typeof GitStackedAction.Type;
 export const GitActionProgressPhase = Schema.Literals(["branch", "commit", "push", "pr"]);
 export type GitActionProgressPhase = typeof GitActionProgressPhase.Type;
-const GitActionProgressKind = Schema.Literals([
+export const GitActionProgressKind = Schema.Literals([
   "action_started",
   "phase_started",
   "hook_started",
@@ -28,9 +28,9 @@ const GitActionProgressKind = Schema.Literals([
   "action_finished",
   "action_failed",
 ]);
-type GitActionProgressKind = typeof GitActionProgressKind.Type;
-const GitActionProgressStream = Schema.Literals(["stdout", "stderr"]);
-type GitActionProgressStream = typeof GitActionProgressStream.Type;
+export type GitActionProgressKind = typeof GitActionProgressKind.Type;
+export const GitActionProgressStream = Schema.Literals(["stdout", "stderr"]);
+export type GitActionProgressStream = typeof GitActionProgressStream.Type;
 const GitCommitStepStatus = Schema.Literals([
   "created",
   "skipped_no_changes",
@@ -47,10 +47,10 @@ const VcsStatusChangeRequestState = Schema.Literals(["open", "closed", "merged"]
 const GitPullRequestReference = TrimmedNonEmptyStringSchema;
 const GitPullRequestState = Schema.Literals(["open", "closed", "merged"]);
 const GitPreparePullRequestThreadMode = Schema.Literals(["local", "worktree"]);
-const GitRunStackedActionToastRunAction = Schema.Struct({
+export const GitRunStackedActionToastRunAction = Schema.Struct({
   kind: GitStackedAction,
 });
-type GitRunStackedActionToastRunAction = typeof GitRunStackedActionToastRunAction.Type;
+export type GitRunStackedActionToastRunAction = typeof GitRunStackedActionToastRunAction.Type;
 const GitRunStackedActionToastCta = Schema.Union([
   Schema.Struct({
     kind: Schema.Literal("none"),
@@ -66,13 +66,13 @@ const GitRunStackedActionToastCta = Schema.Union([
     action: GitRunStackedActionToastRunAction,
   }),
 ]);
-type GitRunStackedActionToastCta = typeof GitRunStackedActionToastCta.Type;
+export type GitRunStackedActionToastCta = typeof GitRunStackedActionToastCta.Type;
 const GitRunStackedActionToast = Schema.Struct({
   title: TrimmedNonEmptyStringSchema,
   description: Schema.optional(TrimmedNonEmptyStringSchema),
   cta: GitRunStackedActionToastCta,
 });
-type GitRunStackedActionToast = typeof GitRunStackedActionToast.Type;
+export type GitRunStackedActionToast = typeof GitRunStackedActionToast.Type;
 
 export const VcsRef = Schema.Struct({
   name: TrimmedNonEmptyStringSchema,
@@ -96,7 +96,7 @@ const GitResolvedPullRequest = Schema.Struct({
   headBranch: TrimmedNonEmptyStringSchema,
   state: GitPullRequestState,
 });
-type GitResolvedPullRequest = typeof GitResolvedPullRequest.Type;
+export type GitResolvedPullRequest = typeof GitResolvedPullRequest.Type;
 
 // RPC Inputs
 

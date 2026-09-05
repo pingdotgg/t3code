@@ -78,57 +78,58 @@ export const ResourceMonitorProcessSample = Schema.Struct({
 });
 export type ResourceMonitorProcessSample = typeof ResourceMonitorProcessSample.Type;
 
-const ResourceMonitorConfigureCommand = Schema.Struct({
+export const ResourceMonitorConfigureCommand = Schema.Struct({
   version: Schema.Literal(RESOURCE_MONITOR_PROTOCOL_VERSION),
   type: Schema.Literal("configure"),
   rootPid: PositiveInt,
   sampleIntervalMs: NonNegativeInt,
   externalProcesses: Schema.Array(ResourceMonitorExternalProcess),
 });
-type ResourceMonitorConfigureCommand = typeof ResourceMonitorConfigureCommand.Type;
+export type ResourceMonitorConfigureCommand = typeof ResourceMonitorConfigureCommand.Type;
 
-const ResourceMonitorSetExternalProcessesCommand = Schema.Struct({
+export const ResourceMonitorSetExternalProcessesCommand = Schema.Struct({
   version: Schema.Literal(RESOURCE_MONITOR_PROTOCOL_VERSION),
   type: Schema.Literal("setExternalProcesses"),
   processes: Schema.Array(ResourceMonitorExternalProcess),
 });
-type ResourceMonitorSetExternalProcessesCommand =
+export type ResourceMonitorSetExternalProcessesCommand =
   typeof ResourceMonitorSetExternalProcessesCommand.Type;
 
-const ResourceMonitorSampleNowCommand = Schema.Struct({
+export const ResourceMonitorSampleNowCommand = Schema.Struct({
   version: Schema.Literal(RESOURCE_MONITOR_PROTOCOL_VERSION),
   type: Schema.Literal("sampleNow"),
   requestId: TrimmedNonEmptyString,
 });
-type ResourceMonitorSampleNowCommand = typeof ResourceMonitorSampleNowCommand.Type;
+export type ResourceMonitorSampleNowCommand = typeof ResourceMonitorSampleNowCommand.Type;
 
-const ResourceMonitorSetSampleIntervalCommand = Schema.Struct({
+export const ResourceMonitorSetSampleIntervalCommand = Schema.Struct({
   version: Schema.Literal(RESOURCE_MONITOR_PROTOCOL_VERSION),
   type: Schema.Literal("setSampleInterval"),
   sampleIntervalMs: NonNegativeInt,
 });
-type ResourceMonitorSetSampleIntervalCommand = typeof ResourceMonitorSetSampleIntervalCommand.Type;
+export type ResourceMonitorSetSampleIntervalCommand =
+  typeof ResourceMonitorSetSampleIntervalCommand.Type;
 
-const ResourceMonitorSetStreamingCommand = Schema.Struct({
+export const ResourceMonitorSetStreamingCommand = Schema.Struct({
   version: Schema.Literal(RESOURCE_MONITOR_PROTOCOL_VERSION),
   type: Schema.Literal("setStreaming"),
   enabled: Schema.Boolean,
 });
-type ResourceMonitorSetStreamingCommand = typeof ResourceMonitorSetStreamingCommand.Type;
+export type ResourceMonitorSetStreamingCommand = typeof ResourceMonitorSetStreamingCommand.Type;
 
-const ResourceMonitorReadHistoryCommand = Schema.Struct({
+export const ResourceMonitorReadHistoryCommand = Schema.Struct({
   version: Schema.Literal(RESOURCE_MONITOR_PROTOCOL_VERSION),
   type: Schema.Literal("readHistory"),
   requestId: TrimmedNonEmptyString,
   windowMs: NonNegativeInt,
 });
-type ResourceMonitorReadHistoryCommand = typeof ResourceMonitorReadHistoryCommand.Type;
+export type ResourceMonitorReadHistoryCommand = typeof ResourceMonitorReadHistoryCommand.Type;
 
-const ResourceMonitorShutdownCommand = Schema.Struct({
+export const ResourceMonitorShutdownCommand = Schema.Struct({
   version: Schema.Literal(RESOURCE_MONITOR_PROTOCOL_VERSION),
   type: Schema.Literal("shutdown"),
 });
-type ResourceMonitorShutdownCommand = typeof ResourceMonitorShutdownCommand.Type;
+export type ResourceMonitorShutdownCommand = typeof ResourceMonitorShutdownCommand.Type;
 
 export const ResourceMonitorCommand = Schema.Union([
   ResourceMonitorConfigureCommand,
@@ -167,23 +168,23 @@ export const ResourceMonitorSnapshotEvent = Schema.Struct({
 });
 export type ResourceMonitorSnapshotEvent = typeof ResourceMonitorSnapshotEvent.Type;
 
-const ResourceMonitorHistoryChunkEvent = Schema.Struct({
+export const ResourceMonitorHistoryChunkEvent = Schema.Struct({
   version: Schema.Literal(RESOURCE_MONITOR_PROTOCOL_VERSION),
   type: Schema.Literal("historyChunk"),
   requestId: TrimmedNonEmptyString,
   done: Schema.Boolean,
   snapshots: Schema.Array(ResourceMonitorSnapshotEvent),
 });
-type ResourceMonitorHistoryChunkEvent = typeof ResourceMonitorHistoryChunkEvent.Type;
+export type ResourceMonitorHistoryChunkEvent = typeof ResourceMonitorHistoryChunkEvent.Type;
 
-const ResourceMonitorErrorEvent = Schema.Struct({
+export const ResourceMonitorErrorEvent = Schema.Struct({
   version: Schema.Literal(RESOURCE_MONITOR_PROTOCOL_VERSION),
   type: Schema.Literal("error"),
   code: TrimmedNonEmptyString,
   message: TrimmedNonEmptyString,
   recoverable: Schema.Boolean,
 });
-type ResourceMonitorErrorEvent = typeof ResourceMonitorErrorEvent.Type;
+export type ResourceMonitorErrorEvent = typeof ResourceMonitorErrorEvent.Type;
 
 export const ResourceMonitorEvent = Schema.Union([
   ResourceMonitorHelloEvent,
@@ -193,7 +194,7 @@ export const ResourceMonitorEvent = Schema.Union([
 ]);
 export type ResourceMonitorEvent = typeof ResourceMonitorEvent.Type;
 
-const DesktopElectronProcessType = Schema.Literals([
+export const DesktopElectronProcessType = Schema.Literals([
   "Browser",
   "Tab",
   "Utility",
@@ -204,7 +205,7 @@ const DesktopElectronProcessType = Schema.Literals([
   "Pepper Plugin Broker",
   "Unknown",
 ]);
-type DesktopElectronProcessType = typeof DesktopElectronProcessType.Type;
+export type DesktopElectronProcessType = typeof DesktopElectronProcessType.Type;
 
 export const DesktopElectronProcessMetric = Schema.Struct({
   pid: PositiveInt,
@@ -237,12 +238,12 @@ export const DesktopHostTelemetrySnapshot = Schema.Struct({
 });
 export type DesktopHostTelemetrySnapshot = typeof DesktopHostTelemetrySnapshot.Type;
 
-const DesktopHostTelemetryHello = Schema.Struct({
+export const DesktopHostTelemetryHello = Schema.Struct({
   version: Schema.Literal(1),
   type: Schema.Literal("desktopTelemetryHello"),
   electronPid: PositiveInt,
 });
-type DesktopHostTelemetryHello = typeof DesktopHostTelemetryHello.Type;
+export type DesktopHostTelemetryHello = typeof DesktopHostTelemetryHello.Type;
 
 /** Terminal marker for a server-triggered desktop update run. */
 export const DesktopUpdateRemoteOutcome = Schema.Literals([
@@ -278,20 +279,21 @@ export const DesktopHostTelemetryMessage = Schema.Union([
 ]);
 export type DesktopHostTelemetryMessage = typeof DesktopHostTelemetryMessage.Type;
 
-const DesktopTelemetrySetDiagnosticsDemand = Schema.Struct({
+export const DesktopTelemetrySetDiagnosticsDemand = Schema.Struct({
   version: Schema.Literal(1),
   type: Schema.Literal("setDiagnosticsDemand"),
   enabled: Schema.Boolean,
 });
-type DesktopTelemetrySetDiagnosticsDemand = typeof DesktopTelemetrySetDiagnosticsDemand.Type;
+export type DesktopTelemetrySetDiagnosticsDemand = typeof DesktopTelemetrySetDiagnosticsDemand.Type;
 
-const DesktopTelemetrySetHostPowerIntervals = Schema.Struct({
+export const DesktopTelemetrySetHostPowerIntervals = Schema.Struct({
   version: Schema.Literal(1),
   type: Schema.Literal("setHostPowerIntervals"),
   activeIntervalMs: PositiveInt,
   idleIntervalMs: PositiveInt,
 });
-type DesktopTelemetrySetHostPowerIntervals = typeof DesktopTelemetrySetHostPowerIntervals.Type;
+export type DesktopTelemetrySetHostPowerIntervals =
+  typeof DesktopTelemetrySetHostPowerIntervals.Type;
 
 /**
  * Server -> desktop main: run the app's own update flow now (check ->
@@ -371,13 +373,13 @@ export const ResourceTelemetryAggregate = Schema.Struct({
 });
 export type ResourceTelemetryAggregate = typeof ResourceTelemetryAggregate.Type;
 
-const ResourceTelemetryGroups = Schema.Struct({
+export const ResourceTelemetryGroups = Schema.Struct({
   backend: ResourceTelemetryAggregate,
   electron: ResourceTelemetryAggregate,
   monitor: ResourceTelemetryAggregate,
   allT3: ResourceTelemetryAggregate,
 });
-type ResourceTelemetryGroups = typeof ResourceTelemetryGroups.Type;
+export type ResourceTelemetryGroups = typeof ResourceTelemetryGroups.Type;
 
 export const ResourceTelemetrySourceHealth = Schema.Struct({
   status: ResourceTelemetrySourceStatus,

@@ -94,11 +94,12 @@ export const ProviderInstanceRef = Schema.Struct({
 });
 export type ProviderInstanceRef = typeof ProviderInstanceRef.Type;
 
-const ProviderInstanceEnvironmentVariableName = TrimmedNonEmptyString.check(
+export const ProviderInstanceEnvironmentVariableName = TrimmedNonEmptyString.check(
   Schema.isMaxLength(ENVIRONMENT_VARIABLE_NAME_MAX_CHARS),
   Schema.isPattern(ENVIRONMENT_VARIABLE_NAME_PATTERN),
 );
-type ProviderInstanceEnvironmentVariableName = typeof ProviderInstanceEnvironmentVariableName.Type;
+export type ProviderInstanceEnvironmentVariableName =
+  typeof ProviderInstanceEnvironmentVariableName.Type;
 
 export const ProviderInstanceEnvironmentVariable = Schema.Struct({
   name: ProviderInstanceEnvironmentVariableName,

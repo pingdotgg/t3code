@@ -161,8 +161,8 @@ const QuitConfirmationModeSetting = Schema.Union([QuitConfirmationMode, LegacyCo
  * A user-chosen font family (a single name or a comma-separated list). Empty
  * means "use the app default"; clients compose their own fallback stacks.
  */
-const FontFamilyPreference = Schema.String.check(Schema.isMaxLength(200));
-type FontFamilyPreference = typeof FontFamilyPreference.Type;
+export const FontFamilyPreference = Schema.String.check(Schema.isMaxLength(200));
+export type FontFamilyPreference = typeof FontFamilyPreference.Type;
 
 /**
  * The environment's theme, set with `t3 theme set <id>`. Each client applies
@@ -171,11 +171,11 @@ type FontFamilyPreference = typeof FontFamilyPreference.Type;
  * afterwards sticks until the next set. Empty means "no environment theme",
  * which is also how it is cleared.
  */
-const DefaultThemePreference = Schema.String.check(Schema.isMaxLength(64));
+export const DefaultThemePreference = Schema.String.check(Schema.isMaxLength(64));
 // Deliberately absent from ServerSettingsPatch: `t3 theme set` checks that an
 // id is syntactically valid and actually resolvable, and a generic RPC patch
 // would let a client write a theme no client can resolve, bypassing both.
-type DefaultThemePreference = typeof DefaultThemePreference.Type;
+export type DefaultThemePreference = typeof DefaultThemePreference.Type;
 
 /**
  * Defaults for the in-app preview browser, applied whenever a tab is opened
@@ -418,7 +418,7 @@ declare module "effect/Schema" {
   }
 }
 
-type ProviderSettingsOrder<Fields extends Schema.Struct.Fields> = readonly Extract<
+export type ProviderSettingsOrder<Fields extends Schema.Struct.Fields> = readonly Extract<
   keyof Fields,
   string
 >[];
@@ -766,11 +766,11 @@ export const UsageLimitSourceConfig = Schema.Struct({
 });
 export type UsageLimitSourceConfig = typeof UsageLimitSourceConfig.Type;
 
-const ObservabilitySettings = Schema.Struct({
+export const ObservabilitySettings = Schema.Struct({
   otlpTracesUrl: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   otlpMetricsUrl: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
 });
-type ObservabilitySettings = typeof ObservabilitySettings.Type;
+export type ObservabilitySettings = typeof ObservabilitySettings.Type;
 
 export const SourceControlWritingStyleMode = Schema.Literals([
   "repo_conventions",
@@ -801,15 +801,15 @@ export const BackgroundActivityProfile = Schema.Literals([
 export type BackgroundActivityProfile = typeof BackgroundActivityProfile.Type;
 export const DEFAULT_BACKGROUND_ACTIVITY_PROFILE: BackgroundActivityProfile = "balanced";
 
-const BackgroundActivityProfileSelection = Schema.Literals([
+export const BackgroundActivityProfileSelection = Schema.Literals([
   "balanced",
   "performance",
   "battery-saver",
   "custom",
 ]);
-type BackgroundActivityProfileSelection = typeof BackgroundActivityProfileSelection.Type;
+export type BackgroundActivityProfileSelection = typeof BackgroundActivityProfileSelection.Type;
 
-const BackgroundActivityOverrides = Schema.Struct({
+export const BackgroundActivityOverrides = Schema.Struct({
   automaticGitFetchInterval: Schema.optionalKey(Schema.DurationFromMillis),
   providerHealthRefreshInterval: Schema.optionalKey(Schema.DurationFromMillis),
   hostPowerMonitorActiveInterval: Schema.optionalKey(Schema.DurationFromMillis),
@@ -820,7 +820,7 @@ const BackgroundActivityOverrides = Schema.Struct({
   pauseWhenClientLowPower: Schema.optionalKey(Schema.Boolean),
   pauseWhenOnBattery: Schema.optionalKey(Schema.Boolean),
 });
-type BackgroundActivityOverrides = typeof BackgroundActivityOverrides.Type;
+export type BackgroundActivityOverrides = typeof BackgroundActivityOverrides.Type;
 
 export const BackgroundActivitySettings = Schema.Struct({
   schemaVersion: Schema.Literal(1).pipe(Schema.withDecodingDefault(Effect.succeed(1 as const))),
@@ -1006,7 +1006,7 @@ export const resolveProviderInstanceEnabled = (
   return instance.enabled ?? configEnabled ?? defaultEnabledForDriver(instance.driver);
 };
 
-const ServerSettingsOperation = Schema.Literals([
+export const ServerSettingsOperation = Schema.Literals([
   "normalize",
   "check-exists",
   "read-file",
@@ -1018,7 +1018,7 @@ const ServerSettingsOperation = Schema.Literals([
   "write-file",
   "prepare-directory",
 ]);
-type ServerSettingsOperation = typeof ServerSettingsOperation.Type;
+export type ServerSettingsOperation = typeof ServerSettingsOperation.Type;
 
 export class ServerSettingsError extends Schema.TaggedErrorClass<ServerSettingsError>()(
   "ServerSettingsError",
