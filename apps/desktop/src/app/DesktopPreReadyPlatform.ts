@@ -29,6 +29,24 @@ export function readCommandLineSwitchValue(
   return value.length > 0 ? value : null;
 }
 
+export function isVersionRequest(argv: ReadonlyArray<string>): boolean {
+  return argv.includes("--version") || argv.includes("-V");
+}
+
+export function writeStdoutLineSync(
+  line: string,
+  writeSync: (fd: number, data: string) => void = (fd, data) => {
+    NodeFS.writeSync(fd, data);
+  },
+): void {
+  try {
+    writeSync(1, `${line}\n`);
+  } catch (error) {
+    const err = error as NodeJS.ErrnoException;
+    if (err.code !== "EPIPE") throw error;
+  }
+}
+
 export const resolveEarlyLinuxElectronOptionsFromProcess =
   (): DesktopEarlyElectronStartup.EarlyLinuxElectronOptions =>
     DesktopEarlyElectronStartup.resolveEarlyLinuxElectronOptions({

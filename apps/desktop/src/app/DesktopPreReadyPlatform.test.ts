@@ -78,6 +78,37 @@ describe("DesktopPreReadyPlatform", () => {
     assert.isNull(value);
   });
 
+  it("detects --version and -V as whole-token version requests", () => {
+    assert.isTrue(DesktopPreReadyPlatform.isVersionRequest(["--version"]));
+    assert.isTrue(DesktopPreReadyPlatform.isVersionRequest(["-V"]));
+    assert.isFalse(DesktopPreReadyPlatform.isVersionRequest(["--no-sandbox"]));
+    assert.isFalse(DesktopPreReadyPlatform.isVersionRequest(["--version=1"]));
+    assert.isFalse(DesktopPreReadyPlatform.isVersionRequest(["--version-foo"]));
+    assert.isFalse(DesktopPreReadyPlatform.isVersionRequest(["-v"]));
+    assert.isFalse(DesktopPreReadyPlatform.isVersionRequest([]));
+  });
+
+  it("writes a version line to stdout synchronously and swallows EPIPE", () => {
+    const writes: Array<{ fd: number; data: string }> = [];
+    DesktopPreReadyPlatform.writeStdoutLineSync("1.2.3", (fd, data) => {
+      writes.push({ fd, data });
+    });
+    assert.deepEqual(writes, [{ fd: 1, data: "1.2.3\n" }]);
+
+    DesktopPreReadyPlatform.writeStdoutLineSync("1.2.3", () => {
+      throw Object.assign(new Error("broken pipe"), { code: "EPIPE" });
+    });
+
+    try {
+      DesktopPreReadyPlatform.writeStdoutLineSync("1.2.3", () => {
+        throw Object.assign(new Error("bad fd"), { code: "EBADF" });
+      });
+      assert.fail("expected EBADF to propagate");
+    } catch (error) {
+      assert.equal((error as NodeJS.ErrnoException).code, "EBADF");
+    }
+  });
+
   it.effect(
     "acquires a synchronous pre-ready layer before an asynchronous Clerk-shaped layer",
     () =>
