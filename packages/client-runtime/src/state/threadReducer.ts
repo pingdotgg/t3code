@@ -548,7 +548,12 @@ export function applyThreadDetailEvent(
       );
 
       const retainedTurnIds = new Set(Arr.map(checkpoints, (entry) => entry.turnId));
-      const messages = retainMessagesAfterRevert(thread.messages, retainedTurnIds);
+      const latestCheckpoint = checkpoints.at(-1) ?? null;
+      const messages = retainMessagesAfterRevert(
+        thread.messages,
+        retainedTurnIds,
+        latestCheckpoint,
+      );
       const proposedPlans = pipe(
         thread.proposedPlans,
         Arr.filter((plan) => plan.turnId === null || retainedTurnIds.has(plan.turnId)),
@@ -557,8 +562,6 @@ export function applyThreadDetailEvent(
         thread.activities,
         Arr.filter((activity) => activity.turnId === null || retainedTurnIds.has(activity.turnId)),
       );
-      const latestCheckpoint = checkpoints.at(-1) ?? null;
-
       return {
         kind: "updated",
         thread: {
@@ -741,16 +744,18 @@ function rebindCheckpointAssistantMessage(
 function retainMessagesAfterRevert(
   messages: ReadonlyArray<OrchestrationMessage>,
   retainedTurnIds: ReadonlySet<string>,
+  latestCheckpoint: OrchestrationCheckpointSummary | null,
 ): OrchestrationMessage[] {
-  // Keep messages that belong to a retained turn, plus system messages and
-  // messages without a turn binding (pre-turn-0 user messages).
-  return Arr.filter(messages, (message) => {
-    if (message.role === "system") {
-      return true;
-    }
-    if (message.turnId === null) {
-      return true;
-    }
-    return retainedTurnIds.has(message.turnId);
+  const checkpointMessageId = latestCheckpoint?.assistantMessageId ?? null;
+  const checkpointMessageIndex =
+    checkpointMessageId === null
+      ? -1
+      : messages.findIndex((message) => message.id === checkpointMessageId);
+
+  return messages.filter((message, index) => {
+    if (message.role === "system") return true;
+    if (message.turnId !== null) return retainedTurnIds.has(message.turnId);
+    if (checkpointMessageIndex >= 0) return index <= checkpointMessageIndex;
+    return latestCheckpoint !== null && message.createdAt <= latestCheckpoint.completedAt;
   });
 }
