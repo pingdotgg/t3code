@@ -2172,9 +2172,13 @@ describe("composerDraftStore sticky composer settings", () => {
 
 describe("composerDraftStore model seed migration", () => {
   const staleDraftId = DraftId.make("draft-legacy-stale-model");
+  const emptySeededDraftId = DraftId.make("draft-legacy-empty-seeded-model");
+  const sessionOnlyDraftId = DraftId.make("draft-legacy-session-only");
   const explicitDraftId = DraftId.make("draft-legacy-explicit-model");
   const typedDraftId = DraftId.make("draft-legacy-typed-model");
   const staleThreadId = ThreadId.make("thread-legacy-stale-model");
+  const emptySeededThreadId = ThreadId.make("thread-legacy-empty-seeded-model");
+  const sessionOnlyThreadId = ThreadId.make("thread-legacy-session-only");
   const explicitThreadId = ThreadId.make("thread-legacy-explicit-model");
   const typedThreadId = ThreadId.make("thread-legacy-typed-model");
   const serverThreadId = ThreadId.make("thread-server-model");
@@ -2268,6 +2272,12 @@ describe("composerDraftStore model seed migration", () => {
               modelSelectionByProvider: { [CODEX_INSTANCE]: staleSelection },
               activeProvider: CODEX_INSTANCE,
             },
+            [emptySeededDraftId]: {
+              prompt: "",
+              attachments: [],
+              modelSelectionByProvider: { [CODEX_INSTANCE]: staleSelection },
+              activeProvider: CODEX_INSTANCE,
+            },
             [explicitDraftId]: {
               prompt: "",
               attachments: [],
@@ -2284,6 +2294,8 @@ describe("composerDraftStore model seed migration", () => {
           },
           draftThreadsByThreadKey: {
             [staleDraftId]: draftThread(staleThreadId),
+            [emptySeededDraftId]: draftThread(emptySeededThreadId),
+            [sessionOnlyDraftId]: draftThread(sessionOnlyThreadId),
             [explicitDraftId]: draftThread(explicitThreadId),
             [typedDraftId]: draftThread(typedThreadId),
           },
@@ -2303,15 +2315,25 @@ describe("composerDraftStore model seed migration", () => {
         activeProvider: null,
         runtimeMode: "approval-required",
       });
+      expect(draftByKey(emptySeededDraftId)).toMatchObject({
+        modelSelectionByProvider: {},
+        activeProvider: null,
+        runtimeMode: "full-access",
+      });
+      expect(draftByKey(sessionOnlyDraftId)).toMatchObject({
+        runtimeMode: "full-access",
+      });
       expect(draftByKey(typedDraftId)).toMatchObject({
         prompt: "keep this prompt",
         modelSelectionByProvider: { [CODEX_INSTANCE]: staleSelection },
         activeProvider: CODEX_INSTANCE,
+        runtimeMode: "full-access",
       });
       expect(draftByKey(explicitDraftId)).toMatchObject({
         modelSelectionByProvider: { [CODEX_INSTANCE]: staleSelection },
         activeProvider: CODEX_INSTANCE,
         modelSelectionExplicit: true,
+        runtimeMode: "full-access",
       });
       expect(draftByKey(serverThreadKey)).toMatchObject({
         modelSelectionByProvider: { [CODEX_INSTANCE]: staleSelection },

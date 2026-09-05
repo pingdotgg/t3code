@@ -23,7 +23,14 @@ import {
   selectProjectGroupingSettings,
 } from "../logicalProject";
 import { resolveDefaultThreadEnvMode } from "@t3tools/shared/threadEnvMode";
-import { readProjects, readThreadShell, useProjects, useThread } from "../state/entities";
+import { resolveNewThreadRuntimeMode } from "@t3tools/shared/serverSettings";
+import {
+  readProjects,
+  readThreadShell,
+  useProjects,
+  useServerConfigs,
+  useThread,
+} from "../state/entities";
 import {
   hasExplicitComposerModelSelection,
   resolveNewDraftStartFromOrigin,
@@ -31,6 +38,7 @@ import {
 } from "../lib/chatThreadActions";
 import { readT3ProjectFileDefaultThreadEnvMode } from "../lib/t3ProjectFileDefaults";
 import { primaryServerSettingsAtom } from "../state/server";
+import { resolveDefaultProviderModelSelection } from "../providerInstances";
 import { resolveThreadRouteTarget } from "../threadRoutes";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
 import { useClientSettings } from "./useSettings";
@@ -61,6 +69,7 @@ export function useNewThreadHandler() {
   // the decoded defaults ("local" mode, current branch), since nothing can
   // set those values on a remote server.
   const primaryServerSettings = useAtomValue(primaryServerSettingsAtom);
+  const serverConfigs = useServerConfigs();
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
   const router = useRouter();
   const getCurrentRouteTarget = useCallback(() => {
@@ -121,11 +130,6 @@ export function useNewThreadHandler() {
         : null;
       const carryModelSelection =
         composerModelSelection ?? carrySourceShell?.modelSelection ?? null;
-      const carryRuntimeMode =
-        carrySourceComposer?.runtimeMode ??
-        carrySourceShell?.runtimeMode ??
-        carrySourceDraft?.runtimeMode ??
-        null;
       const carryInteractionMode =
         carrySourceComposer?.interactionMode ??
         carrySourceShell?.interactionMode ??
@@ -261,7 +265,6 @@ export function useNewThreadHandler() {
           if (workspaceContext) {
             setDraftThreadContext(emptyStoredDraftThread.draftId, {
               ...workspaceContext,
-              ...(carryRuntimeMode ? { runtimeMode: carryRuntimeMode } : {}),
               ...(carryInteractionMode ? { interactionMode: carryInteractionMode } : {}),
             });
           }
@@ -298,7 +301,6 @@ export function useNewThreadHandler() {
             {
               threadId: emptyStoredDraftThread.threadId,
               ...workspaceContext,
-              ...(carryRuntimeMode ? { runtimeMode: carryRuntimeMode } : {}),
               ...(carryInteractionMode ? { interactionMode: carryInteractionMode } : {}),
             },
           );
@@ -411,7 +413,7 @@ export function useNewThreadHandler() {
               envMode: initialEnvMode,
               newWorktreesStartFromOrigin: primaryServerSettings.newWorktreesStartFromOrigin,
             }),
-          runtimeMode: carryRuntimeMode ?? DEFAULT_RUNTIME_MODE,
+          runtimeMode: DEFAULT_RUNTIME_MODE,
           ...(carryInteractionMode ? { interactionMode: carryInteractionMode } : {}),
         });
         applyStickyState(draftId);
@@ -421,6 +423,15 @@ export function useNewThreadHandler() {
           // state. The project default wins when both are present.
           setModelSelection(draftId, modelSelectionOverride, { replaceOptions: true });
         }
+        const targetServerConfig = serverConfigs.get(projectRef.environmentId);
+        setDraftThreadContext(draftId, {
+          runtimeMode: resolveNewThreadRuntimeMode(
+            targetServerConfig?.settings,
+            getComposerDraft(draftId)?.activeProvider ??
+              resolveDefaultProviderModelSelection(targetServerConfig?.providers ?? [], null)
+                ?.instanceId,
+          ),
+        });
         await router.navigate({
           to: "/draft/$draftId",
           params: { draftId },
@@ -429,7 +440,7 @@ export function useNewThreadHandler() {
         return { draftId, threadId };
       })();
     },
-    [getCurrentRouteTarget, primaryServerSettings, projectGroupingSettings, router],
+    [getCurrentRouteTarget, primaryServerSettings, projectGroupingSettings, router, serverConfigs],
   );
 }
 

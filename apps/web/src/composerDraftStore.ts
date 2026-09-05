@@ -64,7 +64,7 @@ const isProviderDriverKind = Schema.is(ProviderDriverKind);
 const isReviewCommentContext = Schema.is(ReviewCommentContextSchema);
 
 export const COMPOSER_DRAFT_STORAGE_KEY = "t3code:composer-drafts:v1";
-const COMPOSER_DRAFT_STORAGE_VERSION = 9;
+const COMPOSER_DRAFT_STORAGE_VERSION = 10;
 const DraftThreadEnvModeSchema = Schema.Literals(["local", "worktree"]);
 export type DraftThreadEnvMode = typeof DraftThreadEnvModeSchema.Type;
 
@@ -2030,14 +2030,28 @@ function stripLegacyModelSeedsFromEmptyDraftSessions(
 
 function migratePersistedComposerDraftStoreState(
   persistedState: unknown,
+  persistedVersion: number,
 ): PersistedComposerDraftStoreState {
   const normalized = normalizeCurrentPersistedComposerDraftStoreState(persistedState);
+  const draftsWithRuntimeModes = { ...normalized.draftsByThreadKey };
+  if (persistedVersion < COMPOSER_DRAFT_STORAGE_VERSION) {
+    for (const [threadKey, draftThread] of Object.entries(normalized.draftThreadsByThreadKey)) {
+      const draft = draftsWithRuntimeModes[threadKey];
+      draftsWithRuntimeModes[threadKey] = {
+        prompt: "",
+        attachments: [],
+        ...draft,
+        runtimeMode: draft?.runtimeMode ?? draftThread.runtimeMode,
+      };
+    }
+  }
+  const draftsByThreadKey = stripLegacyModelSeedsFromEmptyDraftSessions(
+    draftsWithRuntimeModes,
+    normalized.draftThreadsByThreadKey,
+  );
   return {
     ...normalized,
-    draftsByThreadKey: stripLegacyModelSeedsFromEmptyDraftSessions(
-      normalized.draftsByThreadKey,
-      normalized.draftThreadsByThreadKey,
-    ),
+    draftsByThreadKey,
   };
 }
 

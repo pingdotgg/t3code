@@ -8,12 +8,14 @@ import { useCallback, useMemo } from "react";
 import { openCommandPalette } from "~/commandPaletteBus";
 import { useClientSettings } from "~/hooks/useSettings";
 import { hasExplicitComposerModelSelection } from "~/lib/chatThreadActions";
+import { resolveNewThreadRuntimeMode } from "@t3tools/shared/serverSettings";
 import { selectProjectGroupingSettings } from "~/logicalProject";
+import { resolveDefaultProviderModelSelection } from "~/providerInstances";
 import {
   buildSidebarProjectPickerEntries,
   buildSidebarProjectSnapshots,
 } from "~/sidebarProjectGrouping";
-import { useProjects, useThreadShells } from "~/state/entities";
+import { useProjects, useServerConfigs, useThreadShells } from "~/state/entities";
 import { useEnvironments, usePrimaryEnvironmentId } from "~/state/environments";
 import { sortLogicalProjectsForSidebar } from "../Sidebar.logic";
 import {
@@ -40,6 +42,7 @@ export function DraftHeroHeadline({
 }: DraftHeroHeadlineProps) {
   const projects = useProjects();
   const threads = useThreadShells();
+  const serverConfigs = useServerConfigs();
   const { environments } = useEnvironments();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
@@ -50,6 +53,7 @@ export function DraftHeroHeadline({
   const getComposerDraft = useComposerDraftStore((store) => store.getComposerDraft);
   const applyStickyState = useComposerDraftStore((store) => store.applyStickyState);
   const setModelSelection = useComposerDraftStore((store) => store.setModelSelection);
+  const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
   const openAddProject = useCallback(() => openCommandPalette({ open: "add-project" }), []);
 
   const environmentLabelById = useMemo(
@@ -154,6 +158,18 @@ export function DraftHeroHeadline({
                   replaceOptions: true,
                 });
               }
+            }
+            if (currentDraft?.runtimeMode == null) {
+              const targetServerConfig = serverConfigs.get(project.environmentId);
+              setDraftThreadContext(draftId, {
+                runtimeMode: resolveNewThreadRuntimeMode(
+                  targetServerConfig?.settings,
+                  getComposerDraft(draftId)?.activeProvider ??
+                    project.defaultModelSelection?.instanceId ??
+                    resolveDefaultProviderModelSelection(targetServerConfig?.providers ?? [], null)
+                      ?.instanceId,
+                ),
+              });
             }
           }}
         >

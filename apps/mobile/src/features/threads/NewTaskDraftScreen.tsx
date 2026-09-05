@@ -956,6 +956,7 @@ export function NewTaskDraftScreen(props: {
         // next task re-resolves project defaults before sticky app defaults.
         clearComposerDraftContent(draftKey, {
           clearModelSelection: true,
+          clearRuntimeMode: true,
           clearWorkspaceSelection: true,
         });
       }
@@ -1027,6 +1028,7 @@ export function NewTaskDraftScreen(props: {
     } else {
       clearComposerDraftContent(draftKey, {
         clearModelSelection: true,
+        clearRuntimeMode: true,
         clearWorkspaceSelection: true,
       });
     }

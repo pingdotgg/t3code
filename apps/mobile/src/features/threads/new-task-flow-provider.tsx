@@ -12,12 +12,12 @@ import type {
 import {
   CommandId,
   DEFAULT_PROVIDER_INTERACTION_MODE,
-  DEFAULT_RUNTIME_MODE,
   MessageId,
   T3_PROJECT_FILE_NAME,
   ThreadId,
 } from "@t3tools/contracts";
 import { parseT3ProjectFile } from "@t3tools/shared/t3ProjectFile";
+import { resolveNewThreadRuntimeMode } from "@t3tools/shared/serverSettings";
 import {
   isDefaultThreadEnvModeSettled,
   resolveDefaultThreadEnvMode,
@@ -415,8 +415,6 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     draftStartFromOrigin ??
     selectedEnvironmentServerConfig?.settings.newWorktreesStartFromOrigin ??
     true;
-  const runtimeMode = selectedProjectDraft.runtimeMode ?? DEFAULT_RUNTIME_MODE;
-
   // Antigravity keeps unavailable selections so sign-out or a catalog change
   // cannot switch the user's model. Other providers retain their fallback
   // rules. Implicit defaults also exclude legacy models for those providers.
@@ -455,6 +453,11 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     stickySelection: stickyModelSelection,
     modelOptions,
   });
+  const runtimeMode = resolveNewThreadRuntimeMode(
+    selectedEnvironmentServerConfig?.settings,
+    selectedModel?.instanceId,
+    selectedProjectDraft.runtimeMode,
+  );
   const selectedModelKey = selectedModel
     ? `${selectedModel.instanceId}:${selectedModel.model}`
     : null;
@@ -906,7 +909,11 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
         text,
         attachments: draft.attachments,
         modelSelection: draftModelSelection,
-        runtimeMode: draft.runtimeMode ?? DEFAULT_RUNTIME_MODE,
+        runtimeMode: resolveNewThreadRuntimeMode(
+          selectedEnvironmentServerConfig?.settings,
+          draftModelSelection.instanceId,
+          draft.runtimeMode,
+        ),
         interactionMode: resolvePendingTaskInteractionMode({
           preferenceLoaded: planModePreferenceLoaded,
           planModeEnabled: legacyPlanModeEnabled,

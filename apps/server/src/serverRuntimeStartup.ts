@@ -9,6 +9,7 @@ import {
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
+import { resolveNewThreadRuntimeMode } from "@t3tools/shared/serverSettings";
 import * as Cause from "effect/Cause";
 import * as Console from "effect/Console";
 import * as Context from "effect/Context";
@@ -199,6 +200,8 @@ export const resolveAutoBootstrapWelcomeTargets = Effect.gen(function* () {
 
   if (serverConfig.autoBootstrapProjectFromCwd) {
     yield* Effect.gen(function* () {
+      const settings = yield* ServerSettings.ServerSettingsService;
+      const serverSettings = yield* settings.getSettings;
       const existingProject = yield* projectionReadModelQuery.getActiveProjectByWorkspaceRoot(
         serverConfig.cwd,
       );
@@ -241,7 +244,10 @@ export const resolveAutoBootstrapWelcomeTargets = Effect.gen(function* () {
             title: "New thread",
             modelSelection: nextThreadModelSelection,
             interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-            runtimeMode: "full-access",
+            runtimeMode: resolveNewThreadRuntimeMode(
+              serverSettings,
+              nextThreadModelSelection.instanceId,
+            ),
             branch: null,
             worktreePath: null,
             createdAt,

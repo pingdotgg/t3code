@@ -1,9 +1,11 @@
 import {
+  DEFAULT_RUNTIME_MODE,
   isProviderDriverKind,
   isProviderAvailable,
   resolveProviderInstanceEnabled,
   type ModelSelection,
   type ProviderDriverKind,
+  type ProviderInstanceId,
   type ServerProvider,
   ServerSettings,
   type ServerSettingsPatch,
@@ -138,6 +140,37 @@ function mergeSettingsEntries<Value>(
   return Object.fromEntries(next);
 }
 
+function mergeProviderRuntimeModeDefaults(
+  current: ServerSettings["providerRuntimeModeDefaults"],
+  patch: NonNullable<ServerSettingsPatch["providerRuntimeModeDefaults"]>,
+): ServerSettings["providerRuntimeModeDefaults"] {
+  const next = new Map(Object.entries(current));
+  for (const [instanceId, runtimeMode] of Object.entries(patch)) {
+    if (runtimeMode === null) {
+      next.delete(instanceId);
+    } else {
+      next.set(instanceId, runtimeMode);
+    }
+  }
+  return Object.fromEntries(next) as ServerSettings["providerRuntimeModeDefaults"];
+}
+
+export function resolveNewThreadRuntimeMode(
+  settings:
+    | Pick<ServerSettings, "defaultThreadRuntimeMode" | "providerRuntimeModeDefaults">
+    | null
+    | undefined,
+  instanceId: ProviderInstanceId | null | undefined,
+  explicitRuntimeMode?: ServerSettings["defaultThreadRuntimeMode"] | null,
+): ServerSettings["defaultThreadRuntimeMode"] {
+  return (
+    explicitRuntimeMode ??
+    (instanceId ? settings?.providerRuntimeModeDefaults[instanceId] : undefined) ??
+    settings?.defaultThreadRuntimeMode ??
+    DEFAULT_RUNTIME_MODE
+  );
+}
+
 export function applyServerSettingsPatch(
   current: ServerSettings,
   patch: ServerSettingsPatch,
@@ -151,6 +184,7 @@ export function applyServerSettingsPatch(
     // Merged per entry below; its `null` removals must not reach deepMerge.
     usageLimitSources: usageLimitSourcesPatch,
     usagePriceOverrides: usagePriceOverridesPatch,
+    providerRuntimeModeDefaults: providerRuntimeModeDefaultsPatch,
     ...patchForMerge
   } = patch;
   const currentBackgroundActivity = normalizeServerBackgroundActivitySettings(current);
@@ -220,6 +254,14 @@ export function applyServerSettingsPatch(
           usagePriceOverrides: mergeSettingsEntries(
             current.usagePriceOverrides,
             usagePriceOverridesPatch,
+          ),
+        }
+      : {}),
+    ...(providerRuntimeModeDefaultsPatch !== undefined
+      ? {
+          providerRuntimeModeDefaults: mergeProviderRuntimeModeDefaults(
+            current.providerRuntimeModeDefaults,
+            providerRuntimeModeDefaultsPatch,
           ),
         }
       : {}),

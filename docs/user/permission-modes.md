@@ -3,8 +3,14 @@
 Permission modes control when an agent needs your approval to act. Choose a mode in the message
 composer; it applies to that thread.
 
-New threads start in **Full access** unless you choose another mode before sending. A thread
-created from another thread inherits its mode.
+The mode is set per thread from the mode control in the message composer. Changing it in an
+existing thread does not change any other thread.
+
+On web or desktop, **Settings → Providers** sets the fallback for new threads on that environment.
+Each provider instance can override that fallback from its **Runtime** settings. A new draft
+follows the selected provider instance until you explicitly pick a mode in the composer; that
+explicit choice then remains fixed when you switch providers. A thread created from another thread
+inherits its mode.
 
 | Mode                  | Behavior                                                                              |
 | --------------------- | ------------------------------------------------------------------------------------- |
