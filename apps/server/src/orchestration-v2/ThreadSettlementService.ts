@@ -112,7 +112,9 @@ export function isAutoSettlementCandidate(
   // one still parked on its wake time keeps its stronger statement.
   const snoozedAtMs = toMillis(thread.snoozedAt);
   const completedAtMs = toMillis(thread.latestRunCompletedAt);
-  const wokeOnError = thread.status === "failed";
+  const wokeOnError =
+    thread.status === "failed" &&
+    (snoozedAtMs === null || (completedAtMs !== null && completedAtMs > snoozedAtMs));
   const wokeOnCompletion =
     snoozedAtMs !== null && completedAtMs !== null && completedAtMs > snoozedAtMs;
   return wokeOnError || wokeOnCompletion;
