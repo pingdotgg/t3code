@@ -2626,6 +2626,17 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       target: target === "dmg" ? [target, "zip"] : [target],
       icon: "icon.icns",
       category: "public.app-category.developer-tools",
+      // Dictation (beta) captures the microphone via getUserMedia in the
+      // renderer: without a usage description macOS denies access silently.
+      extendInfo: {
+        NSMicrophoneUsageDescription:
+          "T3 Code uses the microphone for voice dictation into the composer.",
+      },
+      // Same reason for the hardened-runtime entitlement: unsigned local
+      // builds inherit neither, but signed/shipped builds need both.
+      ...(signed
+        ? {}
+        : { entitlements: path.join(repoRoot, "apps/desktop/resources/entitlements.mac.plist") }),
       protocols: [
         {
           name: "T3 Code",
