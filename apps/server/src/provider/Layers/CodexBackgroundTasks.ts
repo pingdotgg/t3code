@@ -99,7 +99,7 @@ export class CodexBackgroundTasks {
     for (;;) {
       const newline = delta.indexOf("\n", offset);
       const end = newline === -1 ? delta.length : newline;
-      task.remainder = (task.remainder + delta.slice(offset, end)).slice(0, MAX_EVENT_LENGTH);
+      task.remainder = (task.remainder + delta.slice(offset, end)).slice(0, MAX_EVENT_LENGTH + 1);
       if (newline === -1) break;
       this.enqueue(task, task.remainder.replace(/\r$/, ""));
       task.remainder = "";

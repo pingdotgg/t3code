@@ -126,6 +126,14 @@ describe("Codex background tasks", () => {
     expect(output).toContain("omitted");
   });
 
+  it("marks a single oversized line as truncated", () => {
+    const tasks = new CodexBackgroundTasks();
+    tasks.started(command());
+    tasks.subscribe("process-watch");
+    tasks.output("watch", "x".repeat(9000) + "\n");
+    expect(tasks.takeWake()?.output).toBe("x".repeat(8192) + "\n[Further watcher output omitted]");
+  });
+
   it("restores a rejected event ahead of later output and still supports unsubscribe", () => {
     const tasks = new CodexBackgroundTasks();
     tasks.started(command());

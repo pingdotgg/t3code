@@ -2490,7 +2490,6 @@ export const makeCodexSessionRuntime = (
           () =>
             turnLock.withPermit(
               Effect.gen(function* () {
-                suppressMonitorWakes = false;
                 const providerThreadId = yield* readProviderThreadId;
                 if (hasConfiguredMcpServer(options.appServerArgs)) {
                   yield* client.request("config/mcpServer/reload", undefined).pipe(
@@ -2530,6 +2529,7 @@ export const makeCodexSessionRuntime = (
                   ),
                 );
                 const turnId = TurnId.make(response.turn.id);
+                suppressMonitorWakes = false;
                 queuedUserTurns.add(turnId);
                 yield* updateSession(sessionRef, (session) => ({
                   status: "running",
