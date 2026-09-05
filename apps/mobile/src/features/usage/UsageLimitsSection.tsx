@@ -18,6 +18,7 @@ import {
   limitsNotice,
   paceOf,
   providerLimitsLabel,
+  remainingPercent,
 } from "@t3tools/shared/usageLimits";
 import { type ReactNode, useState } from "react";
 import { Alert, Pressable, View } from "react-native";
@@ -44,9 +45,10 @@ function useBarColor(driver: Driver): string | null {
 }
 
 /**
- * One window as a bar spanning its whole duration: the fill is quota spent,
- * the hairline is how far into the window the clock is. Pace sits under the
- * left edge, the countdown under the right, so a row reads in one glance.
+ * One window as a bar spanning its whole duration: the fill is quota left,
+ * the hairline is how much of the window is left, so even spending keeps the
+ * fill on the line. Pace sits under the left edge, the countdown under the
+ * right, so a row reads in one glance.
  */
 function WindowRow(props: {
   readonly window: ServerProviderUsageWindow;
@@ -54,37 +56,40 @@ function WindowRow(props: {
   readonly now: number;
 }) {
   const { window, now } = props;
-  const used = Math.round(Math.max(0, Math.min(100, window.usedPercent)));
+  const remaining = remainingPercent(window);
   const elapsed = elapsedShare(window, now);
+  const timeLeft = elapsed === null ? null : Math.round((1 - elapsed) * 100);
   const pace = paceOf(window, now);
   const resetsIn = formatResetsIn(window, now);
   return (
     <View className="gap-1">
       <View className="flex-row items-baseline justify-between gap-3">
         <Text className="text-sm text-foreground">{window.label}</Text>
-        <Text className="text-sm font-t3-medium tabular-nums text-foreground">{used}%</Text>
+        <Text className="text-sm font-t3-medium tabular-nums text-foreground">
+          {remaining}% left
+        </Text>
       </View>
       <View className="h-3 justify-center">
         <View className="h-1.5 flex-row overflow-hidden rounded-full bg-subtle">
           <View
             className={
-              used >= 90
+              remaining <= 10
                 ? "h-full rounded-full bg-red-500"
-                : used >= 70
+                : remaining <= 30
                   ? "h-full rounded-full bg-amber-500"
                   : "h-full rounded-full bg-foreground"
             }
             style={[
-              { flex: used },
-              used < 70 && props.color ? { backgroundColor: props.color } : null,
+              { flex: remaining },
+              remaining > 30 && props.color ? { backgroundColor: props.color } : null,
             ]}
           />
-          <View style={{ flex: 100 - used }} />
+          <View style={{ flex: 100 - remaining }} />
         </View>
-        {elapsed !== null ? (
+        {timeLeft !== null ? (
           <View
             className="absolute top-0 bottom-0 w-px bg-foreground"
-            style={{ left: `${elapsed * 100}%`, opacity: 0.6 }}
+            style={{ left: `${timeLeft}%`, opacity: 0.6 }}
           />
         ) : null}
       </View>

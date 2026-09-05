@@ -39,9 +39,9 @@ the dialog.
 
 ## Track subscription limits
 
-**Usage → Limits** shows quota use and reset times for Codex and Claude subscriptions. It also
-compares quota consumed with time elapsed in each window, so you can judge your pace before the
-next reset.
+**Usage → Limits** shows how much quota is left in each window and when it resets, for Codex and
+Claude subscriptions. For windows with timing data, each bar also marks how much of the window is
+left, so you can judge your pace before the next reset.
 
 If a window looks stale, refresh Limits to re-check every provider and hub.
 

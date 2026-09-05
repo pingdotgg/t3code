@@ -166,6 +166,11 @@ export function limitsNotice(limits: ServerProviderUsageLimits): string | null {
   return limits.windows.length === 0 ? "No limits reported." : null;
 }
 
+/** Quota left in the window, 0..100. Bars and labels show what remains, as Codex does. */
+export function remainingPercent(window: ServerProviderUsageWindow): number {
+  return Math.round(100 - Math.max(0, Math.min(100, window.usedPercent)));
+}
+
 function resetMillis(window: ServerProviderUsageWindow): number | null {
   if (window.resetsAt === undefined) return null;
   const at = Date.parse(window.resetsAt);
@@ -184,9 +189,9 @@ export function elapsedShare(window: ServerProviderUsageWindow, now: number): nu
 export type LimitPace = "ahead" | "on" | "under";
 
 /**
- * Usage against the clock. The bar is the whole window, so the elapsed share
- * is also where even spending would have put the fill; within five points of
- * it counts as on pace.
+ * Usage against the clock. Spending evenly leaves the same share of quota as
+ * there is time left in the window; within five points of that counts as on
+ * pace, further ahead means the window may run dry first.
  */
 export function paceOf(window: ServerProviderUsageWindow, now: number): LimitPace | null {
   const elapsed = elapsedShare(window, now);
