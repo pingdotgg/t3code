@@ -63,6 +63,18 @@ export class BootstrapEnvelopeDecodeError extends Schema.TaggedErrorClass<Bootst
   }
 }
 
+export class DesktopLifetimeReadError extends Schema.TaggedErrorClass<DesktopLifetimeReadError>()(
+  "DesktopLifetimeReadError",
+  {
+    fd: Schema.Number,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Failed to monitor desktop lifetime file descriptor ${this.fd}.`;
+  }
+}
+
 export const BootstrapError = Schema.Union([
   BootstrapFdStatError,
   BootstrapInputStreamOpenError,
@@ -143,6 +155,39 @@ export const readBootstrapEnvelope = Effect.fn("readBootstrapEnvelope")(function
 
     return Effect.sync(cleanup);
   }).pipe(Effect.timeoutOption(timeoutMs), Effect.map(Option.flatten));
+});
+
+export const waitForDesktopLifetimeEnd = Effect.fn("waitForDesktopLifetimeEnd")(function* (
+  fd: number,
+) {
+  const stream = yield* Effect.try({
+    try: () => makeDirectBootstrapStream(fd),
+    catch: (cause) => new DesktopLifetimeReadError({ fd, cause }),
+  });
+
+  return yield* Effect.callback<void, DesktopLifetimeReadError>((resume) => {
+    const cleanup = () => {
+      stream.removeListener("error", handleError);
+      stream.removeListener("end", handleEnd);
+      stream.removeListener("close", handleEnd);
+      stream.destroy();
+    };
+
+    const handleError = (cause: Error) => {
+      resume(Effect.fail(new DesktopLifetimeReadError({ fd, cause })));
+    };
+
+    const handleEnd = () => {
+      resume(Effect.void);
+    };
+
+    stream.once("error", handleError);
+    stream.once("end", handleEnd);
+    stream.once("close", handleEnd);
+    stream.resume();
+
+    return Effect.sync(cleanup);
+  });
 });
 
 const isUnavailableBootstrapFdError = Predicate.compose(

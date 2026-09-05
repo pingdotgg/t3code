@@ -251,6 +251,7 @@ describe("DesktopBackendConfiguration", () => {
         assert.equal(first.bootstrap.t3Home, environment.baseDir);
         assert.equal(first.bootstrap.tailscaleServeEnabled, true);
         assert.equal(first.bootstrap.tailscaleServePort, 8443);
+        assert.notProperty(first.bootstrap, "desktopLifetimeFd");
         assert.match(first.bootstrap.desktopBootstrapToken, /^[0-9a-f]{48}$/i);
         assert.equal(second.bootstrap.desktopBootstrapToken, first.bootstrap.desktopBootstrapToken);
       }),
@@ -300,6 +301,7 @@ describe("DesktopBackendConfiguration", () => {
         path.join(resourcesPath, "server.asar/apps/server/dist/bin.mjs"),
       );
       assert.equal(config.env.ELECTRON_RUN_AS_NODE, "1");
+      assert.notProperty(config.bootstrap, "desktopLifetimeFd");
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
@@ -890,6 +892,7 @@ describe("DesktopBackendConfiguration", () => {
           assert.equal(config.bootstrap.host, "0.0.0.0");
           assert.equal(config.bootstrap.tailscaleServeEnabled, false);
           assert.notProperty(config.bootstrap, "desktopTelemetryFd");
+          assert.notProperty(config.bootstrap, "desktopLifetimeFd");
           assert.notProperty(config.bootstrap, "resourceMonitorPath");
           // httpBaseUrl uses the resolved distro IP from the test stub,
           // not localhost — the renderer reaches the backend directly to
@@ -1217,6 +1220,7 @@ describe("DesktopBackendConfiguration", () => {
         assert.equal(config.bootstrap.resourceMonitorPath, monitorPath);
         assert.equal(config.bootstrap.desktopTelemetryFd, 4);
         assert.equal(config.bootstrap.desktopTelemetryControlFd, 5);
+        assert.equal(config.bootstrap.desktopLifetimeFd, 6);
       }).pipe(
         Effect.provide(
           DesktopBackendConfiguration.layer.pipe(
@@ -1229,6 +1233,7 @@ describe("DesktopBackendConfiguration", () => {
                 appPath: `${resourcesPath}/app.asar`,
                 dirname,
                 isPackaged: true,
+                platform: "linux",
                 resourcesPath,
               }),
             ),
