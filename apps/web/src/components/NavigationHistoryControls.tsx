@@ -2,6 +2,12 @@ import { useAtomValue } from "@effect/atom-react";
 import type { ResolvedKeybindingsConfig } from "@t3tools/contracts";
 import { ArrowLeftIcon, ArrowRightIcon } from "lucide-react";
 import { useEffect } from "react";
+import { useParams } from "@tanstack/react-router";
+import { resolveThreadRouteTarget, resolveActiveThreadRouteRef } from "../threadRoutes";
+import { useComposerDraftStore } from "../composerDraftStore";
+import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
+import { selectActiveRightPanel, useRightPanelStore } from "../rightPanelStore";
+import { isModelPickerOpen } from "../modelPickerVisibility";
 
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
 import { isPreviewFocused } from "../lib/previewFocus";
@@ -88,6 +94,19 @@ function useNavigationHistoryShortcuts(input: {
   readonly forward: () => void;
   readonly keybindings: ResolvedKeybindingsConfig;
 }) {
+  const routeTarget = useParams({ strict: false, select: resolveThreadRouteTarget });
+  const draft = useComposerDraftStore((store) =>
+    routeTarget?.kind === "draft" ? store.getDraftSession(routeTarget.draftId) : null,
+  );
+  const threadRef = resolveActiveThreadRouteRef(routeTarget, draft);
+  const terminalOpen = useTerminalUiStateStore((state) =>
+    threadRef
+      ? selectThreadTerminalUiState(state.terminalUiStateByThreadKey, threadRef).terminalOpen
+      : false,
+  );
+  const previewOpen = useRightPanelStore((state) =>
+    threadRef ? selectActiveRightPanel(state.byThreadKey, threadRef) === "preview" : false,
+  );
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented || event.repeat) return;
@@ -97,6 +116,9 @@ function useNavigationHistoryShortcuts(input: {
         context: {
           previewFocus: isPreviewFocused(),
           terminalFocus: isTerminalFocused(),
+          terminalOpen,
+          previewOpen,
+          modelPickerOpen: isModelPickerOpen(),
         },
       });
       if (command !== "navigation.back" && command !== "navigation.forward") {
@@ -108,7 +130,7 @@ function useNavigationHistoryShortcuts(input: {
     };
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
-  }, [input.back, input.forward, input.keybindings]);
+  }, [input.back, input.forward, input.keybindings, terminalOpen, previewOpen]);
 }
 export function NavigationHistoryControls({
   buttonClassName,
