@@ -11,6 +11,7 @@ import {
   parseKeybindingWhenExpression,
 } from "@t3tools/shared/keybindings";
 
+import { canonicalKeyFromEventCode } from "../../keybindings";
 import { isMacPlatform } from "../../lib/utils";
 
 export type KeybindingSource = "Default" | "Custom" | "Project";
@@ -303,12 +304,10 @@ export function normalizeShortcutKeyToken(key: string, code?: string): string | 
   ) {
     return null;
   }
-  const digitMatch = code?.match(/^Digit(\d)$/);
-  if (digitMatch?.[1]) {
-    return digitMatch[1];
+  const codeKey = canonicalKeyFromEventCode(code);
+  if (codeKey) {
+    return codeKey;
   }
-  if (code === "BracketLeft") return "[";
-  if (code === "BracketRight") return "]";
   if (normalized === " ") return "space";
   if (normalized === "escape") return "esc";
   if (normalized === "arrowup") return "arrowup";

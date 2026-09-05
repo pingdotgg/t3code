@@ -7,6 +7,7 @@ import {
   type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
 import {
+  canonicalKeyFromEventCode,
   formatShortcutLabel,
   isDiffToggleShortcut,
   modelPickerJumpCommandForIndex,
@@ -541,14 +542,71 @@ describe("model picker navigation helpers", () => {
     assert.isNull(modelPickerJumpIndexFromCommand("thread.jump.1"));
   });
 
-  it("resolves jump shortcuts with digit key codes and preserves NumLock-off navigation", () => {
+  it("maps physical event codes to canonical key tokens", () => {
+    assert.strictEqual(canonicalKeyFromEventCode("Digit0"), "0");
+    assert.strictEqual(canonicalKeyFromEventCode("Digit1"), "1");
+    assert.strictEqual(canonicalKeyFromEventCode("Digit6"), "6");
+    assert.strictEqual(canonicalKeyFromEventCode("BracketLeft"), "[");
+    assert.strictEqual(canonicalKeyFromEventCode("BracketRight"), "]");
+    assert.isNull(canonicalKeyFromEventCode("Numpad1"));
+    assert.isNull(canonicalKeyFromEventCode("KeyA"));
+    assert.isNull(canonicalKeyFromEventCode(undefined));
+  });
+
+  it("resolves shifted digit events to digit keybindings and preserves NumLock-off navigation", () => {
+    // When pressing Shift+1 on US layout, browser emits key: "!" with code: "Digit1".
+    // Runtime dispatch matches the physical alias "1", resolving mod+1.
     assert.strictEqual(
-      resolveShortcutCommand(event({ key: "1", code: "Digit1", metaKey: true }), DEFAULT_BINDINGS, {
+      resolveShortcutCommand(event({ key: "!", code: "Digit1", metaKey: true }), DEFAULT_BINDINGS, {
         platform: "MacIntel",
         context: { modelPickerOpen: true },
       }),
       "modelPicker.jump.1",
     );
+
+    // Shifted binding (e.g. shift+6) matches when Shift+6 is pressed (key: "^", code: "Digit6")
+    const customBindings = compile([
+      {
+        shortcut: {
+          key: "6",
+          shiftKey: true,
+          metaKey: false,
+          ctrlKey: false,
+          altKey: false,
+          modKey: false,
+        },
+        command: "test.shift6" as KeybindingCommand,
+      },
+    ]);
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "^", code: "Digit6", shiftKey: true }), customBindings, {
+        platform: "Win32",
+      }),
+      "test.shift6",
+    );
+
+    // Existing legacy bindings configured with shifted symbols (e.g. "shift+^")
+    // continue to match via event.key:
+    const legacyBindings = compile([
+      {
+        shortcut: {
+          key: "^",
+          shiftKey: true,
+          metaKey: false,
+          ctrlKey: false,
+          altKey: false,
+          modKey: false,
+        },
+        command: "test.legacyShift" as KeybindingCommand,
+      },
+    ]);
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "^", code: "Digit6", shiftKey: true }), legacyBindings, {
+        platform: "Win32",
+      }),
+      "test.legacyShift",
+    );
+
     // With NumLock off, Numpad1 produces key: "End" and must not trigger mod+1
     assert.isNull(
       resolveShortcutCommand(
