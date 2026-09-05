@@ -172,7 +172,7 @@ export function useAttachedTerminalSession(input: {
 export function useKnownTerminalSessions(input: {
   readonly environmentId: EnvironmentId | null;
   readonly threadId: ThreadId | null;
-}): ReadonlyArray<KnownTerminalSession> {
+}): ReadonlyArray<KnownTerminalSession> | null {
   const canRead = useEnvironmentScope(input.environmentId, AuthTerminalReadScope);
   const metadata = useEnvironmentQuery(
     input.environmentId === null || !canRead
@@ -183,8 +183,11 @@ export function useKnownTerminalSessions(input: {
         }),
   );
   return useMemo(
-    () => selectKnownTerminalSessions(metadata.data, input.environmentId, input.threadId),
-    [input.environmentId, input.threadId, metadata.data],
+    () =>
+      metadata.data === null || metadata.error !== null
+        ? null
+        : selectKnownTerminalSessions(metadata.data, input.environmentId, input.threadId),
+    [input.environmentId, input.threadId, metadata.data, metadata.error],
   );
 }
 
@@ -193,5 +196,5 @@ export function useThreadRunningTerminalIds(input: {
   readonly threadId: ThreadId | null;
 }): ReadonlyArray<string> {
   const sessions = useKnownTerminalSessions(input);
-  return useMemo(() => selectRunningSubprocessTerminalIds(sessions), [sessions]);
+  return useMemo(() => selectRunningSubprocessTerminalIds(sessions ?? []), [sessions]);
 }

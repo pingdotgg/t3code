@@ -43,6 +43,7 @@ import {
   useRemoteEnvironmentRuntime,
 } from "../../state/use-remote-environment-registry";
 import { useKnownTerminalSessions } from "../../state/use-terminal-session";
+import { uuidv4 } from "../../lib/uuid";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 import { useSelectedThreadDetailState } from "../../state/use-thread-detail";
 import { useThreadSelection } from "../../state/use-thread-selection";
@@ -341,7 +342,7 @@ function ThreadRouteContent(
   const terminalMenuSessions = useMemo(
     () =>
       buildTerminalMenuSessions({
-        knownSessions: knownTerminalSessions,
+        knownSessions: knownTerminalSessions ?? [],
         workspaceRoot: selectedThreadProject?.workspaceRoot ?? null,
       }),
     [knownTerminalSessions, selectedThreadProject?.workspaceRoot],
@@ -562,13 +563,20 @@ function ThreadRouteContent(
 
     const nextId = nextOpenTerminalId({
       listedTerminalIds: terminalMenuSessions.map((session) => session.terminalId),
+      ...(knownTerminalSessions === null ? { uniqueSuffix: uuidv4() } : {}),
     });
     void navigation.navigate("ThreadTerminal", {
       environmentId: String(selectedThread.environmentId),
       threadId: String(selectedThread.id),
       terminalId: nextId,
     });
-  }, [navigation, selectedThread, selectedThreadProject?.workspaceRoot, terminalMenuSessions]);
+  }, [
+    knownTerminalSessions,
+    navigation,
+    selectedThread,
+    selectedThreadProject?.workspaceRoot,
+    terminalMenuSessions,
+  ]);
 
   const handleRunProjectScript = useCallback(
     async (script: ProjectScript) => {
@@ -593,6 +601,7 @@ function ThreadRouteContent(
 
       const targetTerminalId = resolveProjectScriptTerminalId({
         existingTerminalIds: terminalMenuSessions.map((session) => session.terminalId),
+        ...(knownTerminalSessions === null ? { uniqueSuffix: uuidv4() } : {}),
         hasRunningTerminal: terminalMenuSessions.some(
           (session) => session.status === "running" || session.status === "starting",
         ),
@@ -641,6 +650,7 @@ function ThreadRouteContent(
       selectedThreadDetailWorktreePath,
       selectedThreadProject,
       terminalMenuSessions,
+      knownTerminalSessions,
     ],
   );
   const threadGitControlProps = {
