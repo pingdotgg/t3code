@@ -132,11 +132,11 @@ export function UsageRouteScreen() {
       nextWindow.sinceTime !== window.sinceTime ||
       nextWindow.untilTime !== window.untilTime
     ) {
-      refresh();
-    } else {
       setWindowSelection({ days: windowDays, window: nextWindow });
       refresh(nextWindow);
+      return;
     }
+    refresh();
   };
 
   return (
