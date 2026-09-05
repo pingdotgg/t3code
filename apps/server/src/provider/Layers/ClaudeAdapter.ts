@@ -285,6 +285,12 @@ function rememberPendingTaskModel(
   }
 }
 
+/**
+ * How a `--resume` start ended: the CLI took it, refused it, or the session was
+ * stopped before it answered.
+ */
+type ClaudeResumeOutcome = "accepted" | "rejected" | "aborted";
+
 interface ClaudeSessionContext {
   session: ProviderSession;
   readonly promptQueue: Queue.Queue<PromptQueueItem>;
@@ -297,6 +303,9 @@ interface ClaudeSessionContext {
    * effort override inherit this. */
   currentEffort: string | undefined;
   resumeSessionId: string | undefined;
+  /** Pending only while startSession waits for the CLI to answer the resume. */
+  resumeVerification: Deferred.Deferred<ClaudeResumeOutcome> | undefined;
+  resumeRejected: boolean;
   readonly pendingApprovals: Map<ApprovalRequestId, PendingApproval>;
   readonly pendingUserInputs: Map<ApprovalRequestId, PendingUserInput>;
   readonly turns: Array<{
@@ -553,6 +562,18 @@ function formatClaudeUsageLimitWait(waitMs: number): string {
   const minutes = totalMinutes % 60;
   if (hours === 0) return `${totalMinutes}m`;
   return minutes === 0 ? `${hours}h` : `${hours}h ${minutes}m`;
+}
+
+/**
+ * A `--resume` the CLI refuses because it holds no transcript for that id. The
+ * transcript lands a moment before the first `system/init`, so a session
+ * stopped during startup leaves an id that can never resolve.
+ */
+function isMissingConversationResult(message: SDKMessage): boolean {
+  return (
+    message.type === "result" &&
+    resultErrorsText(message).includes("no conversation found with session id")
+  );
 }
 
 function asRuntimeItemId(value: string): RuntimeItemId {
@@ -2249,6 +2270,29 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     }
   });
 
+  /**
+   * Reports whether the resume was rejected, settling startSession's wait.
+   * Hooks are excluded for the same reason as in `ensureThreadId`: they run
+   * before the CLI commits the session, so they prove nothing about a resume.
+   */
+  const settleResumeVerification = Effect.fn("settleResumeVerification")(function* (
+    context: ClaudeSessionContext,
+    message: SDKMessage,
+  ) {
+    if (context.resumeRejected) {
+      return true;
+    }
+    const verification = context.resumeVerification;
+    if (!verification || !hasDurableClaudeSessionId(message)) {
+      return false;
+    }
+    const rejected = isMissingConversationResult(message);
+    context.resumeRejected = rejected;
+    context.resumeVerification = undefined;
+    yield* Deferred.succeed(verification, rejected ? "rejected" : "accepted");
+    return rejected;
+  });
+
   const ensureThreadId = Effect.fn("ensureThreadId")(function* (
     context: ClaudeSessionContext,
     message: SDKMessage,
@@ -3909,6 +3953,10 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     message: SDKMessage,
   ) {
     yield* logNativeSdkMessage(context, message);
+    // This session is about to be replaced, so nothing it says reaches the user.
+    if (yield* settleResumeVerification(context, message)) {
+      return;
+    }
     yield* ensureThreadId(context, message);
 
     // Wire-only command bookkeeping has no user-facing T3 lifecycle.
@@ -3996,6 +4044,14 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       return;
     }
 
+    // A rejected resume belongs to startSession's retry, not to the thread, so
+    // its exit stays silent. Tear it down here rather than leaving that to the
+    // retry, which never runs if startSession was interrupted while waiting.
+    if (context.resumeRejected) {
+      yield* stopSessionInternal(context, { emitExitEvent: false });
+      return;
+    }
+
     if (Exit.isFailure(exit)) {
       if (isClaudeInterruptedCause(exit.cause)) {
         if (context.turnState) {
@@ -4026,6 +4082,15 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     options?: { readonly emitExitEvent?: boolean },
   ) {
     if (context.stopped) return;
+
+    // Ahead of the close, which by design aborts the rest of this function when
+    // it throws: a start still waiting on the resume answer must never be left
+    // behind that failure.
+    if (context.resumeVerification !== undefined) {
+      const verification = context.resumeVerification;
+      context.resumeVerification = undefined;
+      yield* Deferred.succeed(verification, "aborted");
+    }
 
     // Schedule process termination before any cleanup that can wait on the
     // provider. The SDK closes stdin, then escalates from SIGTERM to SIGKILL.
@@ -4153,8 +4218,9 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     return Effect.succeed(context);
   };
 
-  const startSession: ClaudeAdapterShape["startSession"] = Effect.fn("startSession")(
-    function* (input) {
+  const startSessionAttempt = Effect.fn("startSessionAttempt")(function* (
+    input: Parameters<ClaudeAdapterShape["startSession"]>[0],
+  ) {
       const modelCatalog = yield* modelCatalogEffect;
       if (input.provider !== undefined && input.provider !== PROVIDER) {
         return yield* new ProviderAdapterValidationError({
@@ -4182,6 +4248,10 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       const existingResumeSessionId = resumeState?.resume;
       const newSessionId = existingResumeSessionId === undefined ? yield* randomUUIDv4 : undefined;
       const sessionId = existingResumeSessionId ?? newSessionId;
+      const resumeVerification =
+        existingResumeSessionId === undefined
+          ? undefined
+          : yield* Deferred.make<ClaudeResumeOutcome>();
 
       const runtimeContext = yield* Effect.context<never>();
       const runFork = Effect.runForkWith(runtimeContext);
@@ -4768,6 +4838,8 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         currentApiModelId: apiModelId,
         currentEffort: effectiveEffort ?? undefined,
         resumeSessionId: sessionId,
+        resumeVerification,
+        resumeRejected: false,
         pendingApprovals,
         pendingUserInputs,
         turns: [],
@@ -4857,9 +4929,54 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         }
       });
 
+      // Hold a resume start open until the CLI says whether it has the
+      // transcript, so startSession's retry lands before any prompt is queued.
+      if (resumeVerification !== undefined) {
+        // The context is registered and its query already running, so an
+        // interrupted wait has to take both down with it.
+        const outcome = yield* Deferred.await(resumeVerification).pipe(
+          Effect.onExitIf(Exit.isFailure, () =>
+            stopSessionInternal(context, { emitExitEvent: false }).pipe(
+              Effect.catch((cause) =>
+                Effect.logError("Failed to close an interrupted Claude resume start.", { cause }),
+              ),
+            ),
+          ),
+        );
+        // A stop or a stream death settles the wait too, and the snapshot below
+        // would describe a session that is already gone.
+        if (outcome === "aborted") {
+          return yield* new ProviderAdapterSessionClosedError({
+            provider: PROVIDER,
+            threadId,
+          });
+        }
+      }
+
       return {
-        ...session,
+        session: { ...session },
+        // Read from the context, not the session map: a rejected session tears
+        // itself down, so by now it may already be gone from the map.
+        resumeRejected: context.resumeRejected,
       };
+  });
+
+  /**
+   * A rejected resume is definitive: retrying the id would leave the thread
+   * unable to ever start another turn.
+   */
+  const startSession: ClaudeAdapterShape["startSession"] = Effect.fn("startSession")(
+    function* (input) {
+      const { session, resumeRejected } = yield* startSessionAttempt(input);
+      if (!resumeRejected) {
+        return session;
+      }
+      yield* Effect.logWarning("claude.session.resume-rejected", {
+        threadId: input.threadId,
+        reason: "Claude holds no conversation for the resume id; starting a fresh session",
+      });
+      const { resumeCursor: _unresumable, ...withoutResumeCursor } = input;
+      return (yield* startSessionAttempt(withoutResumeCursor)).session;
     },
   );
 

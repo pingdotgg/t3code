@@ -167,23 +167,24 @@ function makeHarness(config?: {
   readonly baseDir?: string;
   readonly claudeConfig?: Partial<ClaudeSettings>;
   readonly instanceId?: ProviderInstanceId;
+  /** Queries handed to createQuery after the first; the last one repeats. */
+  readonly extraQueries?: ReadonlyArray<FakeClaudeQuery>;
   readonly scopedLimitNames?: ClaudeAdapterLiveOptions["scopedLimitNames"];
 }) {
   const query = new FakeClaudeQuery();
-  let createInput:
-    | {
-        readonly prompt: AsyncIterable<SDKUserMessage>;
-        readonly options: ClaudeQueryOptions;
-      }
-    | undefined;
+  const queries = [query, ...(config?.extraQueries ?? [])];
+  const createInputs: Array<{
+    readonly prompt: AsyncIterable<SDKUserMessage>;
+    readonly options: ClaudeQueryOptions;
+  }> = [];
 
   const adapterOptions: ClaudeAdapterLiveOptions = {
     ...(config?.instanceId ? { instanceId: config.instanceId } : {}),
     ...(config?.scopedLimitNames ? { scopedLimitNames: config.scopedLimitNames } : {}),
     modelCatalog: Effect.succeed(SYNTHETIC_CLAUDE_MODEL_CATALOG),
     createQuery: (input) => {
-      createInput = input;
-      return query;
+      createInputs.push(input);
+      return queries[Math.min(createInputs.length - 1, queries.length - 1)]!;
     },
     ...(config?.nativeEventLogger
       ? {
@@ -215,7 +216,8 @@ function makeHarness(config?: {
       Layer.provideMerge(NodeServices.layer),
     ),
     query,
-    getLastCreateQueryInput: () => createInput,
+    getCreateQueryInputs: () => createInputs,
+    getLastCreateQueryInput: () => createInputs.at(-1),
   };
 }
 
@@ -276,6 +278,16 @@ async function readFirstPromptMessage(
     return undefined;
   }
   return next.value;
+}
+
+/** What the CLI sends when it accepts a `--resume`, and what startSession waits for. */
+function resumeAcceptedInit(sessionId: string): SDKMessage {
+  return {
+    type: "system",
+    subtype: "init",
+    session_id: sessionId,
+    uuid: `init-${sessionId}`,
+  } as unknown as SDKMessage;
 }
 
 /** Drains the first `count` queued prompts so consecutive turns can be compared. */
@@ -3253,17 +3265,14 @@ describe("ClaudeAdapterLive", () => {
   });
 
   it.effect("closes the previous session before replacing an existing thread session", () => {
-    const queries: FakeClaudeQuery[] = [];
+    const queries = [new FakeClaudeQuery(), new FakeClaudeQuery()];
+    let createdQueries = 0;
     const layer = Layer.effect(
       ClaudeAdapter,
       Effect.gen(function* () {
         const claudeConfig = decodeClaudeSettings({});
         return yield* makeClaudeAdapter(claudeConfig, {
-          createQuery: () => {
-            const query = new FakeClaudeQuery();
-            queries.push(query);
-            return query;
-          },
+          createQuery: () => queries[createdQueries++]!,
         });
       }),
     ).pipe(
@@ -3286,6 +3295,8 @@ describe("ClaudeAdapterLive", () => {
         runtimeMode: "full-access",
       });
 
+      const resumeCursor = firstSession.resumeCursor as { readonly resume: string };
+      queries[1]!.emit(resumeAcceptedInit(resumeCursor.resume));
       const secondSession = yield* adapter.startSession({
         threadId: THREAD_ID,
         provider: ProviderDriverKind.make("claudeAgent"),
@@ -3296,7 +3307,7 @@ describe("ClaudeAdapterLive", () => {
       const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
       const activeSessions = yield* adapter.listSessions();
 
-      assert.equal(queries.length, 2);
+      assert.equal(createdQueries, 2);
       assert.equal(queries[0]?.closeCalls, 1);
       assert.equal(queries[1]?.closeCalls, 0);
       assert.equal(yield* adapter.hasSession(THREAD_ID), true);
@@ -5454,6 +5465,8 @@ describe("ClaudeAdapterLive", () => {
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
 
+      harness.query.emit(resumeAcceptedInit("550e8400-e29b-41d4-a716-446655440000"));
+
       const session = yield* adapter.startSession({
         threadId: RESUME_THREAD_ID,
         provider: ProviderDriverKind.make("claudeAgent"),
@@ -5484,6 +5497,212 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("starts a fresh session when Claude has no conversation for the resume id", () => {
+    const deadSessionId = "550e8400-e29b-41d4-a716-446655440000";
+    const freshQuery = new FakeClaudeQuery();
+    const harness = makeHarness({ extraQueries: [freshQuery] });
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 6).pipe(
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      harness.query.emit({
+        type: "result",
+        subtype: "error_during_execution",
+        is_error: true,
+        num_turns: 0,
+        session_id: deadSessionId,
+        errors: [`No conversation found with session ID: ${deadSessionId}`],
+        uuid: "resume-rejected",
+      } as unknown as SDKMessage);
+      freshQuery.emit(resumeAcceptedInit("fresh-session"));
+
+      const session = yield* adapter.startSession({
+        threadId: RESUME_THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        resumeCursor: { threadId: RESUME_THREAD_ID, resume: deadSessionId, turnCount: 0 },
+        runtimeMode: "full-access",
+      });
+
+      const [rejectedInput, freshInput] = harness.getCreateQueryInputs();
+      assert.equal(rejectedInput?.options.resume, deadSessionId);
+      assert.equal(freshInput?.options.resume, undefined);
+      assert.equal(typeof freshInput?.options.sessionId, "string");
+
+      const resumeCursor = session.resumeCursor as { readonly resume?: string };
+      assert.notEqual(resumeCursor.resume, deadSessionId);
+      assert.equal(resumeCursor.resume, freshInput?.options.sessionId);
+      assert.equal(harness.query.closeCalls, 1);
+
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      assert.equal(
+        runtimeEvents.some((event) => event.type === "runtime.error"),
+        false,
+      );
+      assert.equal(
+        runtimeEvents.some((event) => event.type === "session.exited"),
+        false,
+      );
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("releases an interrupted resume start instead of leaking its query", () => {
+    const deadSessionId = "550e8400-e29b-41d4-a716-446655440000";
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      const started = yield* Stream.take(adapter.streamEvents, 1).pipe(
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      const starting = yield* adapter
+        .startSession({
+          threadId: RESUME_THREAD_ID,
+          provider: ProviderDriverKind.make("claudeAgent"),
+          resumeCursor: { threadId: RESUME_THREAD_ID, resume: deadSessionId, turnCount: 0 },
+          runtimeMode: "full-access",
+        })
+        .pipe(Effect.forkChild);
+      yield* Fiber.join(started);
+
+      // Nothing is emitted: the CLI never answers, and the start is cancelled
+      // while still waiting on it.
+      yield* Fiber.interrupt(starting);
+
+      assert.equal(harness.query.closeCalls, 1);
+      assert.equal(yield* adapter.hasSession(RESUME_THREAD_ID), false);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("settles the resume wait even when closing the query throws", () => {
+    const deadSessionId = "550e8400-e29b-41d4-a716-446655440000";
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      harness.query.closeError = new Error("close failed");
+
+      const started = yield* Stream.take(adapter.streamEvents, 1).pipe(
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      const starting = yield* adapter
+        .startSession({
+          threadId: RESUME_THREAD_ID,
+          provider: ProviderDriverKind.make("claudeAgent"),
+          resumeCursor: { threadId: RESUME_THREAD_ID, resume: deadSessionId, turnCount: 0 },
+          runtimeMode: "full-access",
+        })
+        .pipe(Effect.result, Effect.forkChild);
+      yield* Fiber.join(started);
+
+      // A close that throws must still settle the wait, or this join hangs.
+      yield* adapter.stopSession(RESUME_THREAD_ID).pipe(Effect.result);
+
+      const result = yield* Fiber.join(starting);
+      assert.equal(result._tag, "Failure");
+      assert.equal(harness.query.closeCalls, 1);
+      // The close failed, so the session stays addressable by design; the bug
+      // was the start never being released at all.
+      assert.equal(yield* adapter.hasSession(RESUME_THREAD_ID), true);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("tears down a rejected resume even when startSession is interrupted", () => {
+    const deadSessionId = "550e8400-e29b-41d4-a716-446655440000";
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      // session.started is the receipt that the query exists and its stream is
+      // forked, so the interrupt below lands inside the resume wait.
+      const started = yield* Stream.take(adapter.streamEvents, 1).pipe(
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      const starting = yield* adapter
+        .startSession({
+          threadId: RESUME_THREAD_ID,
+          provider: ProviderDriverKind.make("claudeAgent"),
+          resumeCursor: { threadId: RESUME_THREAD_ID, resume: deadSessionId, turnCount: 0 },
+          runtimeMode: "full-access",
+        })
+        .pipe(Effect.forkChild);
+      yield* Fiber.join(started);
+      assert.equal(harness.getCreateQueryInputs().length, 1);
+
+      // The stream fiber is detached, so it must clean up on its own: nothing
+      // is waiting on the retry any more.
+      yield* Fiber.interrupt(starting);
+
+      harness.query.emit({
+        type: "result",
+        subtype: "error_during_execution",
+        is_error: true,
+        num_turns: 0,
+        session_id: deadSessionId,
+        errors: [`No conversation found with session ID: ${deadSessionId}`],
+        uuid: "resume-rejected",
+      } as unknown as SDKMessage);
+      harness.query.finish();
+      yield* Effect.yieldNow;
+      yield* Effect.yieldNow;
+      yield* Effect.yieldNow;
+
+      assert.equal(harness.query.closeCalls, 1);
+      assert.equal(yield* adapter.hasSession(RESUME_THREAD_ID), false);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("fails a resume start whose session dies before it says anything", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      harness.query.fail(new Error("claude exited during startup"));
+
+      const result = yield* adapter
+        .startSession({
+          threadId: RESUME_THREAD_ID,
+          provider: ProviderDriverKind.make("claudeAgent"),
+          resumeCursor: {
+            threadId: RESUME_THREAD_ID,
+            resume: "550e8400-e29b-41d4-a716-446655440000",
+          },
+          runtimeMode: "full-access",
+        })
+        .pipe(Effect.result);
+
+      assert.equal(result._tag, "Failure");
+      if (result._tag !== "Failure") {
+        return;
+      }
+      assert.equal(result.failure._tag, "ProviderAdapterSessionClosedError");
+      yield* Effect.yieldNow;
+      yield* Effect.yieldNow;
+      yield* Effect.yieldNow;
+      assert.equal(yield* adapter.hasSession(RESUME_THREAD_ID), false);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("preserves durable resume ids across Claude resume hooks", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
@@ -5496,17 +5715,19 @@ describe("ClaudeAdapterLive", () => {
         Effect.forkChild,
       );
 
-      yield* adapter.startSession({
-        threadId: RESUME_THREAD_ID,
-        provider: ProviderDriverKind.make("claudeAgent"),
-        resumeCursor: {
+      const startFiber = yield* adapter
+        .startSession({
           threadId: RESUME_THREAD_ID,
-          resume: durableSessionId,
-          resumeSessionAt: "assistant-99",
-          turnCount: 3,
-        },
-        runtimeMode: "full-access",
-      });
+          provider: ProviderDriverKind.make("claudeAgent"),
+          resumeCursor: {
+            threadId: RESUME_THREAD_ID,
+            resume: durableSessionId,
+            resumeSessionAt: "assistant-99",
+            turnCount: 3,
+          },
+          runtimeMode: "full-access",
+        })
+        .pipe(Effect.forkChild);
 
       harness.query.emit({
         type: "system",
@@ -5549,6 +5770,8 @@ describe("ClaudeAdapterLive", () => {
         session_id: durableSessionId,
         uuid: "resume-init",
       } as unknown as SDKMessage);
+
+      yield* Fiber.join(startFiber);
 
       const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
       const threadStartedEvents = runtimeEvents.filter((event) => event.type === "thread.started");
@@ -6073,6 +6296,7 @@ describe("ClaudeAdapterLive", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
+      harness.query.emit(resumeAcceptedInit("550e8400-e29b-41d4-a716-446655440000"));
       const session = yield* adapter.startSession({
         threadId: RESUME_THREAD_ID,
         provider: ProviderDriverKind.make("claudeAgent"),
