@@ -667,9 +667,10 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         catch: (cause) => new PreviewOperationError({ ...errorContext, cause }),
       }).pipe(
         Effect.timeout(CAPTURE_PAGE_ATTEMPT_TIMEOUT_MS),
-        Effect.catchTag("TimeoutError", (cause) =>
-          Effect.fail(new PreviewOperationError({ ...errorContext, cause })),
-        ),
+        Effect.catchTags({
+          TimeoutError: (cause) =>
+            Effect.fail(new PreviewOperationError({ ...errorContext, cause })),
+        }),
       );
       yield* requireCurrentGuest;
       return image;
