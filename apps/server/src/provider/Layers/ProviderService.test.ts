@@ -53,6 +53,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import {
   ProviderAdapterRequestError,
   ProviderAdapterSessionNotFoundError,
+  ProviderSessionDirectoryPersistenceError,
   ProviderUnsupportedError,
   ProviderValidationError,
   ProviderWorkspaceMissingError,
@@ -95,6 +96,9 @@ const asRequestId = (value: string): ApprovalRequestId => ApprovalRequestId.make
 const asEventId = (value: string): EventId => EventId.make(value);
 const asThreadId = (value: string): ThreadId => ThreadId.make(value);
 const asTurnId = (value: string): TurnId => TurnId.make(value);
+const isAdmittedClaudeCursor = Schema.is(
+  Schema.Struct({ resumeBeforeFirstPrompt: Schema.Literal(false) }),
+);
 const codexInstanceId = ProviderInstanceId.make("codex");
 const claudeAgentInstanceId = ProviderInstanceId.make("claudeAgent");
 const CODEX_DRIVER = ProviderDriverKind.make("codex");
@@ -138,6 +142,7 @@ function makeFakeCodexAdapter(
 ) {
   const sessions = new Map<ThreadId, ProviderSession>();
   const runtimeEventPubSub = Effect.runSync(PubSub.unbounded<ProviderRuntimeEvent>());
+  const eventSubscription = Deferred.makeUnsafe<void>();
 
   const startSession = vi.fn((input: ProviderSessionStartInput) =>
     Effect.sync(() => {
@@ -287,7 +292,12 @@ function makeFakeCodexAdapter(
     ...(provider === CODEX_DRIVER ? { uploadFeedback } : {}),
     stopAll,
     get streamEvents() {
-      return Stream.fromPubSub(runtimeEventPubSub);
+      return Stream.unwrap(
+        PubSub.subscribe(runtimeEventPubSub).pipe(
+          Effect.tap(() => Deferred.succeed(eventSubscription, undefined)),
+          Effect.map(Stream.fromSubscription),
+        ),
+      );
     },
   };
 
@@ -308,6 +318,7 @@ function makeFakeCodexAdapter(
 
   return {
     adapter,
+    subscribed: Deferred.await(eventSubscription),
     emit,
     updateSession,
     startSession,
@@ -464,6 +475,379 @@ function makeProviderServiceLayer(
     layer,
   };
 }
+
+const makeScopedClaudeAdmissionServices = (
+  adapter: ProviderAdapterShape<ProviderAdapterError>,
+  wrapDirectory?: (
+    directory: ProviderSessionDirectory.ProviderSessionDirectory["Service"],
+  ) => ProviderSessionDirectory.ProviderSessionDirectory["Service"],
+) =>
+  Effect.gen(function* () {
+    const persistence = yield* Layer.build(
+      ProviderSessionDirectoryLive.pipe(
+        Layer.provide(ProviderSessionRuntime.layer.pipe(Layer.provide(SqlitePersistenceMemory))),
+      ),
+    );
+    const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory.pipe(
+      Effect.provide(persistence),
+    );
+    const scope = yield* Scope.make();
+    yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+    const services = yield* Layer.build(
+      makeProviderServiceLive().pipe(
+        Layer.provide(NodeServices.layer),
+        Layer.provide(
+          Layer.succeed(
+            ProviderSessionDirectory.ProviderSessionDirectory,
+            wrapDirectory?.(directory) ?? directory,
+          ),
+        ),
+        Layer.provide(
+          Layer.succeed(
+            ProviderAdapterRegistry.ProviderAdapterRegistry,
+            makeAdapterRegistryMock({ [CLAUDE_AGENT_DRIVER]: adapter }),
+          ),
+        ),
+        Layer.provide(defaultServerSettingsLayer),
+        Layer.provide(serverConfigTestLayer),
+        Layer.provide(AnalyticsService.layerTest),
+        Layer.provide(
+          Layer.succeed(
+            ProviderEventLoggers.ProviderEventLoggers,
+            ProviderEventLoggers.NoOpProviderEventLoggers,
+          ),
+        ),
+      ),
+    ).pipe(Scope.provide(scope));
+    const provider = yield* ProviderService.ProviderService.pipe(Effect.provide(services));
+    return { provider, directory, scope };
+  });
+
+it.effect("serializes Claude writes across cancelled starts while other threads progress", () =>
+  Effect.gen(function* () {
+    const claude = makeFakeCodexAdapter(CLAUDE_AGENT_DRIVER);
+    const threadId = asThreadId("claude-lock-queued");
+    const otherId = asThreadId("claude-lock-other");
+    const writeEntered = yield* Deferred.make<void>();
+    const releaseWrite = yield* Deferred.make<void>();
+    const secondStarted = yield* Deferred.make<void>();
+    const survivorStarted = yield* Deferred.make<void>();
+    const writes: ThreadId[] = [];
+    let firstWrite = true;
+    const { provider } = yield* makeScopedClaudeAdmissionServices(claude.adapter, (directory) => ({
+      ...directory,
+      upsert: (binding) =>
+        Effect.gen(function* () {
+          if (binding.threadId === threadId && firstWrite) {
+            firstWrite = false;
+            yield* Deferred.succeed(writeEntered, undefined);
+            yield* Deferred.await(releaseWrite);
+          }
+          writes.push(binding.threadId);
+          return yield* directory.upsert(binding);
+        }),
+    }));
+    const originalStart = claude.startSession.getMockImplementation()!;
+    let blockedStarts = 0;
+    claude.startSession.mockImplementation((input) =>
+      originalStart(input).pipe(
+        Effect.tap(() => {
+          if (input.threadId !== threadId) return Effect.void;
+          blockedStarts++;
+          return blockedStarts === 2
+            ? Deferred.succeed(secondStarted, undefined)
+            : blockedStarts === 3
+              ? Deferred.succeed(survivorStarted, undefined)
+              : Effect.void;
+        }),
+      ),
+    );
+    const start = (id: ThreadId) =>
+      provider.startSession(id, {
+        threadId: id,
+        providerInstanceId: claudeAgentInstanceId,
+        runtimeMode: "approval-required",
+      });
+    const first = yield* start(threadId).pipe(Effect.forkChild);
+    yield* Deferred.await(writeEntered);
+    const cancelled = yield* start(threadId).pipe(Effect.forkChild);
+    yield* Deferred.await(secondStarted);
+    yield* start(otherId);
+    assert.deepEqual(writes, [otherId]);
+    yield* Fiber.interrupt(cancelled);
+    const surviving = yield* start(threadId).pipe(Effect.forkChild);
+    yield* Deferred.await(survivorStarted);
+    yield* Deferred.succeed(releaseWrite, undefined);
+    yield* Fiber.join(first);
+    yield* Fiber.join(surviving);
+    assert.deepEqual(writes, [otherId, threadId, threadId]);
+    yield* start(threadId);
+    assert.deepEqual(writes, [otherId, threadId, threadId, threadId]);
+  }),
+);
+
+it.effect(
+  "revokes Claude recovery eligibility before sending and ignores a stale send result",
+  () =>
+    Effect.gen(function* () {
+      const claude = makeFakeCodexAdapter(CLAUDE_AGENT_DRIVER);
+      const { provider, directory } = yield* makeScopedClaudeAdmissionServices(claude.adapter);
+      const threadId = asThreadId("claude-first-prompt");
+      const eligible = {
+        threadId,
+        resume: "550e8400-e29b-41d4-a716-446655440000",
+        resumeBeforeFirstPrompt: true,
+      };
+      const admitted = { ...eligible, resumeBeforeFirstPrompt: false };
+      yield* provider.startSession(threadId, {
+        threadId,
+        providerInstanceId: claudeAgentInstanceId,
+        runtimeMode: "approval-required",
+        resumeCursor: eligible,
+      });
+      claude.sendTurn.mockImplementation(() =>
+        Effect.gen(function* () {
+          assert.deepEqual(
+            Option.getOrThrow(yield* directory.getBinding(threadId).pipe(Effect.orDie))
+              .resumeCursor,
+            admitted,
+          );
+          return { threadId, turnId: asTurnId("first-prompt"), resumeCursor: eligible };
+        }),
+      );
+      yield* provider.sendTurn({ threadId, input: "First prompt" });
+      assert.equal(claude.sendTurn.mock.calls.length, 1);
+      assert.deepEqual(
+        Option.getOrThrow(yield* directory.getBinding(threadId)).resumeCursor,
+        admitted,
+      );
+    }),
+);
+
+it.effect("rejects a Claude prompt on storage failure without stopping event delivery", () =>
+  Effect.gen(function* () {
+    const claude = makeFakeCodexAdapter(CLAUDE_AGENT_DRIVER);
+    let failAdmission = true;
+    const { provider, directory } = yield* makeScopedClaudeAdmissionServices(
+      claude.adapter,
+      (directory) => ({
+        ...directory,
+        upsert: (binding) =>
+          failAdmission && isAdmittedClaudeCursor(binding.resumeCursor)
+            ? Effect.fail(
+                new ProviderSessionDirectoryPersistenceError({
+                  operation: "test admission",
+                  detail: "simulated storage failure",
+                }),
+              )
+            : directory.upsert(binding),
+      }),
+    );
+    yield* claude.subscribed;
+    const threadId = asThreadId("claude-admission-write-fails");
+    const eligible = {
+      threadId,
+      resume: "550e8400-e29b-41d4-a716-446655440000",
+      resumeBeforeFirstPrompt: true,
+    };
+    yield* provider.startSession(threadId, {
+      threadId,
+      providerInstanceId: claudeAgentInstanceId,
+      runtimeMode: "approval-required",
+      resumeCursor: eligible,
+    });
+    const failed = yield* provider
+      .sendTurn({ threadId, input: "Must not reach Claude" })
+      .pipe(Effect.result);
+    assert.equal(failed._tag, "Failure");
+    if (failed._tag === "Failure")
+      assert.instanceOf(failed.failure, ProviderSessionDirectoryPersistenceError);
+    assert.equal(claude.sendTurn.mock.calls.length, 0);
+    assert.deepEqual(
+      Option.getOrThrow(yield* directory.getBinding(threadId)).resumeCursor,
+      eligible,
+    );
+    const delivery = yield* provider.streamEvents.pipe(
+      Stream.filter((event) => event.eventId === "unrelated-thread-event"),
+      Stream.take(1),
+      Stream.runCollect,
+      Effect.forkChild({ startImmediately: true }),
+    );
+    claude.emit({
+      type: "session.started",
+      eventId: asEventId("unrelated-thread-event"),
+      threadId: asThreadId("other-thread"),
+      provider: CLAUDE_AGENT_DRIVER,
+      createdAt: "2026-09-05T07:00:00.000Z",
+      payload: {},
+    });
+    yield* Fiber.join(delivery);
+    failAdmission = false;
+    yield* provider.sendTurn({ threadId, input: "Retry after storage recovers" });
+    assert.equal(claude.sendTurn.mock.calls.length, 1);
+    assert.deepEqual(Option.getOrThrow(yield* directory.getBinding(threadId)).resumeCursor, {
+      ...eligible,
+      resumeBeforeFirstPrompt: false,
+    });
+  }),
+);
+
+for (const changed of ["native ID", "provider instance"] as const) {
+  it.effect("rejects admission after the active Claude " + changed + " changes", () =>
+    Effect.gen(function* () {
+      const claude = makeFakeCodexAdapter(CLAUDE_AGENT_DRIVER);
+      const { provider, directory } = yield* makeScopedClaudeAdmissionServices(claude.adapter);
+      const threadId = asThreadId("claude-admission-identity");
+      const eligible = {
+        threadId,
+        resume: "550e8400-e29b-41d4-a716-446655440000",
+        resumeBeforeFirstPrompt: true,
+      };
+      yield* provider.startSession(threadId, {
+        threadId,
+        providerInstanceId: claudeAgentInstanceId,
+        runtimeMode: "approval-required",
+        resumeCursor: eligible,
+      });
+      claude.updateSession(threadId, (session) =>
+        changed === "native ID"
+          ? {
+              ...session,
+              resumeCursor: { ...eligible, resume: "550e8400-e29b-41d4-a716-446655440001" },
+            }
+          : { ...session, providerInstanceId: ProviderInstanceId.make("other-claude") },
+      );
+      const failed = yield* provider
+        .sendTurn({ threadId, input: "Do not route to a replacement" })
+        .pipe(Effect.result);
+      assert.equal(failed._tag, "Failure");
+      if (failed._tag === "Failure") assert.instanceOf(failed.failure, ProviderValidationError);
+      assert.equal(claude.sendTurn.mock.calls.length, 0);
+      assert.deepEqual(
+        Option.getOrThrow(yield* directory.getBinding(threadId)).resumeCursor,
+        eligible,
+      );
+    }),
+  );
+}
+
+it.effect(
+  "does not restore Claude eligibility from a start snapshot after first prompt admission",
+  () =>
+    Effect.gen(function* () {
+      const claude = makeFakeCodexAdapter(CLAUDE_AGENT_DRIVER);
+      const { provider, directory } = yield* makeScopedClaudeAdmissionServices(claude.adapter);
+      const threadId = asThreadId("claude-late-start");
+      const eligible = {
+        threadId,
+        resume: "550e8400-e29b-41d4-a716-446655440000",
+        resumeBeforeFirstPrompt: true,
+      };
+      yield* directory.upsert({
+        threadId,
+        provider: CLAUDE_AGENT_DRIVER,
+        providerInstanceId: claudeAgentInstanceId,
+        runtimeMode: "approval-required",
+        resumeCursor: eligible,
+      });
+      const entered = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const originalStart = claude.startSession.getMockImplementation()!;
+      claude.startSession.mockImplementation((input) =>
+        Effect.gen(function* () {
+          const snapshot = yield* originalStart(input);
+          yield* Deferred.succeed(entered, undefined);
+          yield* Deferred.await(release);
+          return snapshot;
+        }),
+      );
+      const starting = yield* provider
+        .startSession(threadId, {
+          threadId,
+          providerInstanceId: claudeAgentInstanceId,
+          runtimeMode: "approval-required",
+        })
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(entered);
+      yield* provider.sendTurn({ threadId, input: "Admitted while startup response is delayed" });
+      yield* Deferred.succeed(release, undefined);
+      yield* Fiber.join(starting);
+      assert.deepEqual(Option.getOrThrow(yield* directory.getBinding(threadId)).resumeCursor, {
+        ...eligible,
+        resumeBeforeFirstPrompt: false,
+      });
+    }),
+);
+
+it.effect(
+  "does not restore Claude eligibility from a shutdown snapshot after first prompt admission",
+  () =>
+    Effect.gen(function* () {
+      const claude = makeFakeCodexAdapter(CLAUDE_AGENT_DRIVER);
+      const { provider, directory, scope } = yield* makeScopedClaudeAdmissionServices(
+        claude.adapter,
+      );
+      const threadId = asThreadId("claude-late-shutdown");
+      const eligible = {
+        threadId,
+        resume: "550e8400-e29b-41d4-a716-446655440000",
+        resumeBeforeFirstPrompt: true,
+      };
+      const pendingSession = yield* provider.startSession(threadId, {
+        threadId,
+        providerInstanceId: claudeAgentInstanceId,
+        runtimeMode: "approval-required",
+        resumeCursor: eligible,
+      });
+      yield* provider.sendTurn({ threadId, input: "Admitted before shutdown" });
+      claude.listSessions.mockReturnValueOnce(Effect.succeed([pendingSession]));
+      yield* Scope.close(scope, Exit.void);
+      assert.deepEqual(Option.getOrThrow(yield* directory.getBinding(threadId)).resumeCursor, {
+        ...eligible,
+        resumeBeforeFirstPrompt: false,
+      });
+    }),
+);
+
+it.effect("does not create an eligible Claude cursor after its startup session has closed", () =>
+  Effect.gen(function* () {
+    const claude = makeFakeCodexAdapter(CLAUDE_AGENT_DRIVER);
+    const { provider, directory } = yield* makeScopedClaudeAdmissionServices(claude.adapter);
+    const threadId = asThreadId("claude-close-before-upsert");
+    const eligible = {
+      threadId,
+      resume: "550e8400-e29b-41d4-a716-446655440000",
+      resumeBeforeFirstPrompt: true,
+    };
+    const entered = yield* Deferred.make<void>();
+    const release = yield* Deferred.make<void>();
+    const originalStart = claude.startSession.getMockImplementation()!;
+    claude.startSession.mockImplementation((input) =>
+      Effect.gen(function* () {
+        const snapshot = yield* originalStart(input);
+        yield* Deferred.succeed(entered, undefined);
+        yield* Deferred.await(release);
+        return snapshot;
+      }),
+    );
+    const starting = yield* provider
+      .startSession(threadId, {
+        threadId,
+        providerInstanceId: claudeAgentInstanceId,
+        runtimeMode: "approval-required",
+        resumeCursor: eligible,
+      })
+      .pipe(Effect.forkChild);
+    yield* Deferred.await(entered);
+    yield* claude.stopSession(threadId);
+    yield* Deferred.succeed(release, undefined);
+    yield* Fiber.join(starting);
+    assert.deepEqual(Option.getOrThrow(yield* directory.getBinding(threadId)).resumeCursor, {
+      ...eligible,
+      resumeBeforeFirstPrompt: false,
+    });
+  }),
+);
 
 for (const [enabled, completed] of [
   [false, false],

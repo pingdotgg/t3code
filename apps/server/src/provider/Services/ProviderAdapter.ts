@@ -68,6 +68,8 @@ export interface ProviderAdapterShape<TError> {
    */
   readonly sendTurn: (
     input: ProviderSendTurnInput,
+    /** Claude opts into this guard after its first-prompt admission is persisted. */
+    options?: { readonly expectedNativeSessionId?: string },
   ) => Effect.Effect<ProviderTurnStartResult, TError>;
 
   readonly compactThread?: (

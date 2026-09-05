@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFS from "node:fs";
+import * as NodeChildProcess from "node:child_process";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
@@ -11,6 +12,7 @@ import type {
   SDKMessage,
   SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
+import { query as createSdkQuery } from "@anthropic-ai/claude-agent-sdk";
 import {
   ApprovalRequestId,
   ClaudeSettings,
@@ -20,15 +22,17 @@ import {
   type RuntimeMode,
   ThreadId,
   ProviderInstanceId,
+  ProjectId,
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
-import { assert, describe, it } from "@effect/vitest";
+import { assert, describe, it, vi } from "@effect/vitest";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Random from "effect/Random";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -38,6 +42,20 @@ import * as TestClock from "effect/testing/TestClock";
 import { attachmentRelativePath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
+import * as ProviderSessionRuntime from "../../persistence/ProviderSessionRuntime.ts";
+import * as OrchestrationEngine from "../../orchestration/Services/OrchestrationEngine.ts";
+import * as ProjectionSnapshotQuery from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { importRecentAgentThreads } from "../../project/AgentSessionImporter.ts";
+import * as AgentSessionScanner from "../../project/AgentSessionScanner.ts";
+import * as AnalyticsService from "../../telemetry/AnalyticsService.ts";
+import * as ProviderAdapterRegistry from "../Services/ProviderAdapterRegistry.ts";
+import * as ProviderService from "../Services/ProviderService.ts";
+import * as ProviderSessionDirectory from "../Services/ProviderSessionDirectory.ts";
+import { makeAdapterRegistryMock } from "../testUtils/providerAdapterRegistryMock.ts";
+import { ProviderSessionDirectoryLive } from "./ProviderSessionDirectory.ts";
+import { makeProviderServiceLive } from "./ProviderService.ts";
+import * as ProviderEventLoggers from "./ProviderEventLoggers.ts";
 import {
   SYNTHETIC_CLAUDE_CAPABLE_MODEL,
   SYNTHETIC_CLAUDE_COLLIDING_ALIAS,
@@ -45,12 +63,19 @@ import {
   SYNTHETIC_CLAUDE_STANDARD_MODEL,
   SYNTHETIC_CLAUDE_THINKING_MODEL,
 } from "../ClaudeModelCatalog.testFixtures.ts";
-import { ProviderAdapterProcessError, ProviderAdapterValidationError } from "../Errors.ts";
+import {
+  ProviderAdapterProcessError,
+  ProviderAdapterValidationError,
+  ProviderSessionDirectoryPersistenceError,
+} from "../Errors.ts";
 import type { ClaudeAdapterShape } from "../Services/ClaudeAdapter.ts";
 import type { ClaudeScopedLimitNames } from "./claudeUsageLimits.ts";
 import { makeClaudeAdapter, type ClaudeAdapterLiveOptions } from "./ClaudeAdapter.ts";
 const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
 const encodeUnknownJsonString = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+const isAdmittedClaudeCursor = Schema.is(
+  Schema.Struct({ resumeBeforeFirstPrompt: Schema.Literal(false) }),
+);
 
 // Test-local service tag so the rest of the file can keep using `yield* ClaudeAdapter`.
 class ClaudeAdapter extends Context.Service<ClaudeAdapter, ClaudeAdapterShape>()(
@@ -58,6 +83,7 @@ class ClaudeAdapter extends Context.Service<ClaudeAdapter, ClaudeAdapterShape>()
 ) {}
 
 class FakeClaudeQuery implements AsyncIterable<SDKMessage> {
+  private readonly initialization = Promise.withResolvers<void>();
   private readonly queue: Array<SDKMessage> = [];
   private readonly waiters: Array<{
     readonly resolve: (value: IteratorResult<SDKMessage>) => void;
@@ -71,6 +97,21 @@ class FakeClaudeQuery implements AsyncIterable<SDKMessage> {
   public readonly setMaxThinkingTokensCalls: Array<number | null> = [];
   public closeCalls = 0;
   public closeError: unknown | undefined;
+
+  constructor() {
+    // Fresh-query tests need not observe the startup promise.
+    void this.initialization.promise.catch(() => {});
+  }
+
+  readonly initializationResult = (): Promise<void> => this.initialization.promise;
+
+  completeInitialization(): void {
+    this.initialization.resolve();
+  }
+
+  rejectInitialization(cause: unknown): void {
+    this.initialization.reject(cause);
+  }
 
   emit(message: SDKMessage): void {
     if (this.done) {
@@ -89,6 +130,7 @@ class FakeClaudeQuery implements AsyncIterable<SDKMessage> {
       return;
     }
     this.done = true;
+    this.initialization.reject(cause);
     this.failure = cause;
     for (const waiter of this.waiters.splice(0)) {
       waiter.reject(cause);
@@ -96,6 +138,7 @@ class FakeClaudeQuery implements AsyncIterable<SDKMessage> {
   }
 
   finish(): void {
+    this.initialization.reject(new Error("Query closed before initialization"));
     if (this.done) {
       return;
     }
@@ -167,23 +210,26 @@ function makeHarness(config?: {
   readonly baseDir?: string;
   readonly claudeConfig?: Partial<ClaudeSettings>;
   readonly instanceId?: ProviderInstanceId;
+  /** Queries handed to createQuery after the first; the last one repeats. */
+  readonly extraQueries?: ReadonlyArray<FakeClaudeQuery>;
   readonly scopedLimitNames?: ClaudeAdapterLiveOptions["scopedLimitNames"];
+  readonly createQuery?: ClaudeAdapterLiveOptions["createQuery"];
 }) {
   const query = new FakeClaudeQuery();
-  let createInput:
-    | {
-        readonly prompt: AsyncIterable<SDKUserMessage>;
-        readonly options: ClaudeQueryOptions;
-      }
-    | undefined;
+  const queries = [query, ...(config?.extraQueries ?? [])];
+  const createInputs: Array<{
+    readonly prompt: AsyncIterable<SDKUserMessage>;
+    readonly options: ClaudeQueryOptions;
+  }> = [];
 
   const adapterOptions: ClaudeAdapterLiveOptions = {
     ...(config?.instanceId ? { instanceId: config.instanceId } : {}),
     ...(config?.scopedLimitNames ? { scopedLimitNames: config.scopedLimitNames } : {}),
     modelCatalog: Effect.succeed(SYNTHETIC_CLAUDE_MODEL_CATALOG),
     createQuery: (input) => {
-      createInput = input;
-      return query;
+      createInputs.push(input);
+      if (config?.createQuery) return config.createQuery(input);
+      return queries[Math.min(createInputs.length - 1, queries.length - 1)]!;
     },
     ...(config?.nativeEventLogger
       ? {
@@ -215,7 +261,108 @@ function makeHarness(config?: {
       Layer.provideMerge(NodeServices.layer),
     ),
     query,
-    getLastCreateQueryInput: () => createInput,
+    getCreateQueryInputs: () => createInputs,
+    getLastCreateQueryInput: () => createInputs.at(-1),
+  };
+}
+
+const BootstrapReceipt = Schema.Struct({
+  type: Schema.String,
+  prompts: Schema.Number,
+  message: Schema.optional(Schema.Unknown),
+});
+const decodeBootstrapReceipt = Schema.decodeUnknownSync(BootstrapReceipt);
+
+function makeSdkBootstrapHarness(
+  modes: ReadonlyArray<"valid" | "missing" | "control-error" | "pending">,
+  nativeEventLogger?: ClaudeAdapterLiveOptions["nativeEventLogger"],
+) {
+  const fixtures: Array<{
+    runtime: ReturnType<typeof createSdkQuery>;
+    child: NodeChildProcess.ChildProcess;
+    exited: Promise<void>;
+    initializing: Promise<void>;
+    firstPrompt: Promise<Schema.Schema.Type<typeof BootstrapReceipt>>;
+    initialized: Promise<boolean>;
+    inspect: () => Promise<Schema.Schema.Type<typeof BootstrapReceipt>>;
+  }> = [];
+  const harness = makeHarness({
+    cwd: process.cwd(),
+    ...(nativeEventLogger ? { nativeEventLogger } : {}),
+    createQuery: ({ prompt, options }) => {
+      const mode = modes[fixtures.length] ?? "valid";
+      const initializing = Promise.withResolvers<void>();
+      const firstPrompt = Promise.withResolvers<Schema.Schema.Type<typeof BootstrapReceipt>>();
+      const exited = Promise.withResolvers<void>();
+      let inspected: ReturnType<
+        typeof Promise.withResolvers<Schema.Schema.Type<typeof BootstrapReceipt>>
+      >;
+      let child: NodeChildProcess.ChildProcess;
+      const runtime = createSdkQuery({
+        prompt,
+        options: {
+          ...options,
+          // The custom spawner ignores the provider executable and environment.
+          env: {},
+          settingSources: [],
+          settings: { disableAllHooks: true },
+          persistSession: false,
+          mcpServers: {},
+          strictMcpConfig: true,
+          tools: [],
+          spawnClaudeCodeProcess: () => {
+            child = NodeChildProcess.spawn(
+              process.execPath,
+              [
+                NodePath.join(import.meta.dirname, "../testFixtures/claudeBootstrapFixture.mjs"),
+                mode,
+                options.resume ?? options.sessionId ?? "unused",
+              ],
+              { env: {}, stdio: ["pipe", "pipe", "pipe", "ipc"] },
+            );
+            child.stderr?.resume();
+            child.once("exit", () => exited.resolve());
+            child.on("message", (message) => {
+              const receipt = decodeBootstrapReceipt(message);
+              if (receipt.type === "initializing") initializing.resolve();
+              if (receipt.type === "prompt") firstPrompt.resolve(receipt);
+              if (receipt.type === "state") inspected.resolve(receipt);
+            });
+            return child as NodeChildProcess.ChildProcessWithoutNullStreams;
+          },
+        },
+      });
+      fixtures.push({
+        runtime,
+        child: child!,
+        exited: exited.promise,
+        initializing: initializing.promise,
+        firstPrompt: firstPrompt.promise,
+        initialized: runtime.initializationResult().then(
+          () => true,
+          () => false,
+        ),
+        inspect: () => {
+          inspected = Promise.withResolvers();
+          child.send("inspect");
+          return inspected.promise;
+        },
+      });
+      return runtime;
+    },
+  });
+  return {
+    ...harness,
+    fixtures,
+    cleanUp: Effect.promise(async () => {
+      for (const fixture of fixtures) {
+        fixture.runtime.close();
+        if (fixture.child.exitCode === null && fixture.child.signalCode === null) {
+          fixture.child.kill("SIGTERM");
+        }
+        await fixture.exited;
+      }
+    }),
   };
 }
 
@@ -276,6 +423,28 @@ async function readFirstPromptMessage(
     return undefined;
   }
   return next.value;
+}
+
+/** A durable session event, distinct from the pre-prompt initialization response. */
+function resumeAcceptedInit(sessionId: string): SDKMessage {
+  return {
+    type: "system",
+    subtype: "init",
+    session_id: sessionId,
+    uuid: `init-${sessionId}`,
+  } as unknown as SDKMessage;
+}
+
+function missingResumeResult(sessionId: string): SDKMessage {
+  return {
+    type: "result",
+    subtype: "error_during_execution",
+    is_error: true,
+    num_turns: 0,
+    session_id: sessionId,
+    errors: [`No conversation found with session ID: ${sessionId}`],
+    uuid: `missing-${sessionId}`,
+  } as unknown as SDKMessage;
 }
 
 /** Drains the first `count` queued prompts so consecutive turns can be compared. */
@@ -3253,17 +3422,14 @@ describe("ClaudeAdapterLive", () => {
   });
 
   it.effect("closes the previous session before replacing an existing thread session", () => {
-    const queries: FakeClaudeQuery[] = [];
+    const queries = [new FakeClaudeQuery(), new FakeClaudeQuery()];
+    let createdQueries = 0;
     const layer = Layer.effect(
       ClaudeAdapter,
       Effect.gen(function* () {
         const claudeConfig = decodeClaudeSettings({});
         return yield* makeClaudeAdapter(claudeConfig, {
-          createQuery: () => {
-            const query = new FakeClaudeQuery();
-            queries.push(query);
-            return query;
-          },
+          createQuery: () => queries[createdQueries++]!,
         });
       }),
     ).pipe(
@@ -3286,6 +3452,9 @@ describe("ClaudeAdapterLive", () => {
         runtimeMode: "full-access",
       });
 
+      const resumeCursor = firstSession.resumeCursor as { readonly resume: string };
+      queries[1]!.emit(resumeAcceptedInit(resumeCursor.resume));
+      queries[1]!.completeInitialization();
       const secondSession = yield* adapter.startSession({
         threadId: THREAD_ID,
         provider: ProviderDriverKind.make("claudeAgent"),
@@ -3296,7 +3465,7 @@ describe("ClaudeAdapterLive", () => {
       const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
       const activeSessions = yield* adapter.listSessions();
 
-      assert.equal(queries.length, 2);
+      assert.equal(createdQueries, 2);
       assert.equal(queries[0]?.closeCalls, 1);
       assert.equal(queries[1]?.closeCalls, 0);
       assert.equal(yield* adapter.hasSession(THREAD_ID), true);
@@ -5454,6 +5623,9 @@ describe("ClaudeAdapterLive", () => {
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
 
+      harness.query.emit(resumeAcceptedInit("550e8400-e29b-41d4-a716-446655440000"));
+      harness.query.completeInitialization();
+
       const session = yield* adapter.startSession({
         threadId: RESUME_THREAD_ID,
         provider: ProviderDriverKind.make("claudeAgent"),
@@ -5484,6 +5656,1223 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("starts an actual SDK resume before any prompt or system init", () => {
+    const harness = makeSdkBootstrapHarness(["valid"]);
+    return Effect.gen(function* () {
+      yield* Effect.addFinalizer(() => harness.cleanUp);
+      const adapter = yield* ClaudeAdapter;
+      const nativeId = "550e8400-e29b-41d4-a716-446655440000";
+      const session = yield* adapter.startSession({
+        threadId: RESUME_THREAD_ID,
+        runtimeMode: "full-access",
+        resumeCursor: { resume: nativeId, resumeBeforeFirstPrompt: true },
+      });
+      assert.propertyVal(session.resumeCursor, "resume", nativeId);
+      assert.equal((yield* Effect.promise(() => harness.fixtures[0]!.inspect())).prompts, 0);
+      yield* adapter.sendTurn({ threadId: RESUME_THREAD_ID, input: "Only after initialization" });
+      const prompt = yield* Effect.promise(() => harness.fixtures[0]!.firstPrompt);
+      assert.equal(prompt.prompts, 1);
+      assert.include(encodeUnknownJsonString(prompt.message), "Only after initialization");
+    }).pipe(Effect.provide(harness.layer), Effect.scoped);
+  });
+
+  it.effect(
+    "drains an actual SDK missing result after initialization fails ahead of logging",
+    () => {
+      const logging = Deferred.makeUnsafe<void>();
+      const releaseLogging = Deferred.makeUnsafe<void>();
+      const harness = makeSdkBootstrapHarness(["missing", "valid"], {
+        filePath: "unused",
+        write: () =>
+          Deferred.succeed(logging, undefined).pipe(Effect.andThen(Deferred.await(releaseLogging))),
+        close: () => Effect.void,
+      });
+      return Effect.gen(function* () {
+        yield* Effect.addFinalizer(() => harness.cleanUp);
+        const adapter = yield* ClaudeAdapter;
+        const nativeId = "550e8400-e29b-41d4-a716-446655440000";
+        const starting = yield* adapter
+          .startSession({
+            threadId: RESUME_THREAD_ID,
+            runtimeMode: "full-access",
+            resumeCursor: { resume: nativeId, resumeBeforeFirstPrompt: true },
+          })
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(logging);
+        assert.equal(yield* Effect.promise(() => harness.fixtures[0]!.initialized), false);
+        yield* Deferred.succeed(releaseLogging, undefined);
+        const session = yield* Fiber.join(starting);
+        assert.equal(harness.fixtures.length, 2);
+        assert.notPropertyVal(session.resumeCursor, "resume", nativeId);
+        yield* adapter.sendTurn({ threadId: RESUME_THREAD_ID, input: "Single fresh prompt" });
+        const prompt = yield* Effect.promise(() => harness.fixtures[1]!.firstPrompt);
+        assert.equal(prompt.prompts, 1);
+        assert.include(encodeUnknownJsonString(prompt.message), "Single fresh prompt");
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    },
+  );
+
+  it.effect("closes an actual SDK initialize control error without retrying", () => {
+    const harness = makeSdkBootstrapHarness(["control-error"]);
+    return Effect.gen(function* () {
+      yield* Effect.addFinalizer(() => harness.cleanUp);
+      const adapter = yield* ClaudeAdapter;
+      const result = yield* adapter
+        .startSession({
+          threadId: RESUME_THREAD_ID,
+          runtimeMode: "full-access",
+          resumeCursor: {
+            resume: "550e8400-e29b-41d4-a716-446655440000",
+            resumeBeforeFirstPrompt: true,
+          },
+        })
+        .pipe(Effect.result);
+      assert.equal(result._tag, "Failure");
+      assert.equal(harness.fixtures.length, 1);
+      yield* Effect.promise(() => harness.fixtures[0]!.exited);
+      assert.equal(yield* adapter.hasSession(RESUME_THREAD_ID), false);
+    }).pipe(Effect.provide(harness.layer), Effect.scoped);
+  });
+
+  it.effect("rejects an overlapping send until actual SDK resume initialization completes", () => {
+    const harness = makeSdkBootstrapHarness(["pending"]);
+    return Effect.gen(function* () {
+      yield* Effect.addFinalizer(() => harness.cleanUp);
+      const adapter = yield* ClaudeAdapter;
+      const starting = yield* adapter
+        .startSession({
+          threadId: RESUME_THREAD_ID,
+          runtimeMode: "full-access",
+          resumeCursor: {
+            resume: "550e8400-e29b-41d4-a716-446655440000",
+            resumeBeforeFirstPrompt: true,
+          },
+        })
+        .pipe(Effect.forkChild);
+      const started = yield* adapter.streamEvents.pipe(Stream.take(1), Stream.runCollect);
+      assert.equal(started[0]?.type, "session.started");
+      yield* Effect.promise(() => harness.fixtures[0]!.initializing);
+      const result = yield* adapter
+        .sendTurn({ threadId: RESUME_THREAD_ID, input: "Too early" })
+        .pipe(Effect.result);
+      assert.equal(result._tag, "Failure");
+      if (result._tag === "Failure")
+        assert.instanceOf(result.failure, ProviderAdapterValidationError);
+      assert.equal((yield* Effect.promise(() => harness.fixtures[0]!.inspect())).prompts, 0);
+      harness.fixtures[0]!.child.send("initialize");
+      yield* Fiber.join(starting);
+      yield* adapter.sendTurn({ threadId: RESUME_THREAD_ID, input: "After ready" });
+      const prompt = yield* Effect.promise(() => harness.fixtures[0]!.firstPrompt);
+      assert.equal(prompt.prompts, 1);
+      assert.include(encodeUnknownJsonString(prompt.message), "After ready");
+    }).pipe(Effect.provide(harness.layer), Effect.scoped);
+  });
+
+  it.effect.each(["cancel", "stop"] as const)(
+    "closes actual SDK pending resume on %s",
+    (action) => {
+      const harness = makeSdkBootstrapHarness(["pending"]);
+      return Effect.gen(function* () {
+        yield* Effect.addFinalizer(() => harness.cleanUp);
+        const adapter = yield* ClaudeAdapter;
+        const starting = yield* adapter
+          .startSession({
+            threadId: RESUME_THREAD_ID,
+            runtimeMode: "full-access",
+            resumeCursor: {
+              resume: "550e8400-e29b-41d4-a716-446655440000",
+              resumeBeforeFirstPrompt: true,
+            },
+          })
+          .pipe(Effect.result, Effect.forkChild);
+        yield* adapter.streamEvents.pipe(Stream.take(1), Stream.runCollect);
+        yield* Effect.promise(() => harness.fixtures[0]!.initializing);
+        if (action === "cancel") yield* Fiber.interrupt(starting);
+        else {
+          yield* adapter.stopSession(RESUME_THREAD_ID);
+          assert.equal((yield* Fiber.join(starting))._tag, "Failure");
+        }
+        yield* Effect.promise(() => harness.fixtures[0]!.exited);
+        assert.equal(harness.fixtures.length, 1);
+        assert.equal(yield* adapter.hasSession(RESUME_THREAD_ID), false);
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    },
+  );
+
+  it.effect.each(["initialize", "missing"] as const)(
+    "does not replay a service send rejected during actual SDK resume before %s",
+    (response) => {
+      const harness = makeSdkBootstrapHarness(["pending", "valid"]);
+      const directoryLayer = ProviderSessionDirectoryLive.pipe(
+        Layer.provide(ProviderSessionRuntime.layer.pipe(Layer.provide(SqlitePersistenceMemory))),
+      );
+      const registryLayer = Layer.effect(
+        ProviderAdapterRegistry.ProviderAdapterRegistry,
+        Effect.map(ClaudeAdapter, (adapter) =>
+          makeAdapterRegistryMock({
+            [ProviderDriverKind.make("claudeAgent")]: adapter,
+          }),
+        ),
+      ).pipe(Layer.provide(harness.layer));
+      const providerLayer = makeProviderServiceLive().pipe(
+        Layer.provide(registryLayer),
+        Layer.provide(directoryLayer),
+        Layer.provide(harness.layer),
+        Layer.provide(AnalyticsService.layerTest),
+        Layer.provide(
+          Layer.succeed(
+            ProviderEventLoggers.ProviderEventLoggers,
+            ProviderEventLoggers.NoOpProviderEventLoggers,
+          ),
+        ),
+      );
+      return Effect.gen(function* () {
+        yield* Effect.addFinalizer(() => harness.cleanUp);
+        const adapter = yield* ClaudeAdapter;
+        const provider = yield* ProviderService.ProviderService;
+        const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
+        const nativeId = "550e8400-e29b-41d4-a716-446655440000";
+        yield* directory.upsert({
+          threadId: RESUME_THREAD_ID,
+          provider: ProviderDriverKind.make("claudeAgent"),
+          providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+          runtimeMode: "approval-required",
+          resumeCursor: { resume: nativeId, resumeBeforeFirstPrompt: true },
+        });
+        const started = yield* provider.streamEvents.pipe(
+          Stream.filter((event) => event.type === "session.started"),
+          Stream.take(1),
+          Stream.runCollect,
+          Effect.forkChild({ startImmediately: true }),
+        );
+        const starting = yield* provider
+          .startSession(RESUME_THREAD_ID, {
+            threadId: RESUME_THREAD_ID,
+            providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+            runtimeMode: "approval-required",
+          })
+          .pipe(Effect.forkChild);
+        yield* Fiber.join(started);
+        yield* Effect.promise(() => harness.fixtures[0]!.initializing);
+        const early = yield* provider
+          .sendTurn({ threadId: RESUME_THREAD_ID, input: "Never replay this rejected send" })
+          .pipe(Effect.result);
+        assert.equal(early._tag, "Failure");
+        if (early._tag === "Failure")
+          assert.instanceOf(early.failure, ProviderAdapterValidationError);
+        assert.propertyVal(
+          Option.getOrThrow(yield* directory.getBinding(RESUME_THREAD_ID)).resumeCursor,
+          "resumeBeforeFirstPrompt",
+          false,
+        );
+        // No prompt entered the adapter, so its still-live context remains unused.
+        assert.propertyVal(
+          (yield* adapter.listSessions())[0]!.resumeCursor,
+          "resumeBeforeFirstPrompt",
+          true,
+        );
+        assert.equal((yield* Effect.promise(() => harness.fixtures[0]!.inspect())).prompts, 0);
+        harness.fixtures[0]!.child.send(response);
+        yield* Fiber.join(starting);
+        assert.equal(harness.fixtures.length, response === "missing" ? 2 : 1);
+        const binding = Option.getOrThrow(yield* directory.getBinding(RESUME_THREAD_ID));
+        assert.propertyVal(binding.resumeCursor, "resumeBeforeFirstPrompt", response === "missing");
+        yield* provider.sendTurn({
+          threadId: RESUME_THREAD_ID,
+          input: "Explicit retry after startup",
+        });
+        const prompt = yield* Effect.promise(() => harness.fixtures.at(-1)!.firstPrompt);
+        assert.equal(prompt.prompts, 1);
+        assert.include(encodeUnknownJsonString(prompt.message), "Explicit retry after startup");
+        assert.notInclude(encodeUnknownJsonString(prompt.message), "Never replay");
+      }).pipe(
+        Effect.provide(Layer.mergeAll(providerLayer, directoryLayer, harness.layer)),
+        Effect.scoped,
+      );
+    },
+  );
+
+  it.effect("rejects initialization failure when query close throws without retrying", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      harness.query.closeError = new Error("close failed");
+      harness.query.rejectInitialization(new Error("initialization failed"));
+      const result = yield* adapter
+        .startSession({
+          threadId: RESUME_THREAD_ID,
+          runtimeMode: "full-access",
+          resumeCursor: {
+            resume: "550e8400-e29b-41d4-a716-446655440000",
+            resumeBeforeFirstPrompt: true,
+          },
+        })
+        .pipe(Effect.result);
+      assert.equal(result._tag, "Failure");
+      if (result._tag === "Failure") assert.instanceOf(result.failure, ProviderAdapterProcessError);
+      assert.equal(harness.getCreateQueryInputs().length, 1);
+      const sending = yield* adapter
+        .sendTurn({
+          threadId: RESUME_THREAD_ID,
+          input: "Failed initialization must not admit this",
+        })
+        .pipe(Effect.result);
+      if (sending._tag === "Success") {
+        assert.equal(
+          yield* Effect.promise(() => readFirstPromptText(harness.getLastCreateQueryInput())),
+          undefined,
+          "A failed close must not make an uninitialized resume sendable",
+        );
+      }
+      assert.equal(sending._tag, "Failure");
+      harness.query.closeError = undefined;
+      yield* adapter.stopSession(RESUME_THREAD_ID);
+    }).pipe(Effect.provide(harness.layer));
+  });
+
+  it.effect("ignores late resume initialization after stop and replacement", () => {
+    const replacement = new FakeClaudeQuery();
+    const harness = makeHarness({ extraQueries: [replacement] });
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const late = Promise.withResolvers<void>();
+      vi.spyOn(harness.query, "initializationResult").mockReturnValue(late.promise);
+      const started = yield* adapter.streamEvents.pipe(
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      const starting = yield* adapter
+        .startSession({
+          threadId: RESUME_THREAD_ID,
+          runtimeMode: "full-access",
+          resumeCursor: {
+            resume: "550e8400-e29b-41d4-a716-446655440000",
+            resumeBeforeFirstPrompt: true,
+          },
+        })
+        .pipe(Effect.result, Effect.forkChild);
+      yield* Fiber.join(started);
+      yield* adapter.stopSession(RESUME_THREAD_ID);
+      assert.equal((yield* Fiber.join(starting))._tag, "Failure");
+      const current = yield* adapter.startSession({
+        threadId: RESUME_THREAD_ID,
+        runtimeMode: "full-access",
+      });
+      late.resolve();
+      yield* adapter.sendTurn({ threadId: RESUME_THREAD_ID, input: "Replacement only" });
+      assert.deepEqual((yield* adapter.listSessions())[0]!.resumeCursor, {
+        ...(current.resumeCursor as object),
+        resumeBeforeFirstPrompt: false,
+      });
+      assert.equal(
+        yield* Effect.promise(() => readFirstPromptText(harness.getLastCreateQueryInput())),
+        "Replacement only",
+      );
+      assert.equal(harness.getCreateQueryInputs().length, 2);
+    }).pipe(Effect.provide(harness.layer));
+  });
+
+  it.effect("retries an unused generated session once after its exact ID is missing", () => {
+    const deadSessionId = "550e8400-e29b-41d4-a716-446655440000";
+    const freshQuery = new FakeClaudeQuery();
+    const harness = makeHarness({ extraQueries: [freshQuery] });
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 7).pipe(
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      harness.query.emit({
+        type: "result",
+        subtype: "error_during_execution",
+        is_error: true,
+        num_turns: 0,
+        session_id: deadSessionId,
+        errors: [`No conversation found with session ID: ${deadSessionId}`],
+        uuid: "resume-rejected",
+      } as unknown as SDKMessage);
+
+      const session = yield* adapter.startSession({
+        threadId: RESUME_THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        resumeCursor: {
+          threadId: RESUME_THREAD_ID,
+          resume: deadSessionId,
+          turnCount: 0,
+          resumeBeforeFirstPrompt: true,
+        },
+        runtimeMode: "full-access",
+      });
+
+      const [rejectedInput, freshInput] = harness.getCreateQueryInputs();
+      assert.equal(rejectedInput?.options.resume, deadSessionId);
+      assert.equal(freshInput?.options.resume, undefined);
+      assert.equal(typeof freshInput?.options.sessionId, "string");
+
+      const resumeCursor = session.resumeCursor as { readonly resume?: string };
+      assert.notEqual(resumeCursor.resume, deadSessionId);
+      assert.equal(resumeCursor.resume, freshInput?.options.sessionId);
+      assert.equal(harness.query.closeCalls, 1);
+      assert.equal(harness.getCreateQueryInputs().length, 2);
+
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      assert.equal(
+        runtimeEvents.some((event) => event.type === "runtime.error"),
+        false,
+      );
+      assert.equal(
+        runtimeEvents.some((event) => event.type === "session.exited"),
+        false,
+      );
+      const warnings = runtimeEvents.filter((event) => event.type === "runtime.warning");
+      assert.equal(warnings.length, 1);
+      assert.match(warnings[0]!.payload.message, /no T3 prompt.*fresh session/i);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("never resets an imported Claude transcript after its native ID goes missing", () => {
+    const harness = makeHarness({ cwd: process.cwd() });
+    const directoryLayer = ProviderSessionDirectoryLive.pipe(
+      Layer.provide(ProviderSessionRuntime.layer.pipe(Layer.provide(SqlitePersistenceMemory))),
+    );
+    return Effect.gen(function* () {
+      const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
+      const adapter = yield* ClaudeAdapter;
+      const nativeId = "550e8400-e29b-41d4-a716-446655440000";
+      const threadId = ThreadId.make(`import:claudeAgent:${nativeId}`);
+      const projectId = ProjectId.make("claude-import-recovery");
+      const createdAt = "2026-09-05T08:00:00.000Z";
+      const imported = yield* importRecentAgentThreads({ projectId }).pipe(
+        Effect.provideService(AgentSessionScanner.AgentSessionScanner, {
+          scan: Effect.die("unused"),
+          recentThreads: () =>
+            Stream.succeed({
+              _tag: "Importable",
+              thread: {
+                source: "claudeAgent",
+                providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+                providerSessionId: nativeId,
+                title: "Imported conversation",
+                model: null,
+                createdAt,
+                updatedAt: createdAt,
+                messages: [
+                  { role: "user", text: "Retain this native context", createdAt },
+                  { role: "assistant", text: "Existing response", createdAt },
+                ],
+              },
+              source: {
+                provider: "claudeAgent",
+                providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+                providerSessionId: nativeId,
+                filePath: "/audit/imported-transcript.jsonl",
+                size: 0,
+                mtimeMs: 0,
+                device: 0,
+                inode: 0,
+                birthtimeMs: 0,
+              },
+            }),
+        }),
+        Effect.provide(
+          Layer.mergeAll(
+            Layer.mock(OrchestrationEngine.OrchestrationEngineService)({
+              dispatch: () => Effect.succeed({ sequence: 1 }),
+            }),
+            Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
+              getProjectShellById: () =>
+                Effect.succeed(
+                  Option.some({
+                    id: projectId,
+                    title: "Imported project",
+                    workspaceRoot: process.cwd(),
+                    defaultModelSelection: null,
+                    scripts: [],
+                    createdAt,
+                    updatedAt: createdAt,
+                  }),
+                ),
+              getImportedAgentSessionSources: () => Effect.succeed([]),
+              getThreadDetailById: () => Effect.succeed(Option.none()),
+            }),
+          ),
+        ),
+      );
+      assert.deepEqual(imported, { importedCount: 1, skippedCount: 0 });
+      const binding = Option.getOrThrow(yield* directory.getBinding(threadId));
+      assert.deepEqual(binding.resumeCursor, { threadId, resume: nativeId });
+      harness.query.emit(missingResumeResult(nativeId));
+      const resumed = yield* adapter
+        .startSession({
+          threadId,
+          runtimeMode: "approval-required",
+          resumeCursor: binding.resumeCursor,
+        })
+        .pipe(Effect.result);
+      assert.equal(resumed._tag, "Failure");
+      assert.equal(harness.getCreateQueryInputs().length, 1);
+      assert.equal(harness.getLastCreateQueryInput()!.options.resume, nativeId);
+      assert.equal(yield* adapter.hasSession(threadId), false);
+      assert.deepEqual(Option.getOrThrow(yield* directory.getBinding(threadId)), binding);
+    }).pipe(Effect.provide(Layer.mergeAll(directoryLayer, harness.layer)));
+  });
+
+  it.effect.each([
+    { turnCount: 0 },
+    { turnCount: 3, resumeSessionAt: "assistant-99" },
+    { turnCount: 0, resumeBeforeFirstPrompt: false },
+    { turnCount: 0, resumeBeforeFirstPrompt: "true" },
+  ])("does not reset a legacy or confirmed missing cursor %j", (metadata) => {
+    const sessionId = "550e8400-e29b-41d4-a716-446655440000";
+    const harness = makeHarness();
+    const cursor = { threadId: RESUME_THREAD_ID, resume: sessionId, ...metadata };
+    const original = structuredClone(cursor);
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const diagnostic = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.type === "runtime.error"),
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      harness.query.emit(missingResumeResult(sessionId));
+      const result = yield* adapter
+        .startSession({
+          threadId: RESUME_THREAD_ID,
+          provider: ProviderDriverKind.make("claudeAgent"),
+          resumeCursor: cursor,
+          runtimeMode: "full-access",
+        })
+        .pipe(Effect.result);
+      assert.equal(result._tag, "Failure");
+      assert.equal(harness.getCreateQueryInputs().length, 1);
+      assert.equal(harness.getLastCreateQueryInput()?.options.resume, sessionId);
+      assert.deepEqual(cursor, original);
+      assert.equal(harness.query.closeCalls, 1);
+      assert.equal(yield* adapter.hasSession(RESUME_THREAD_ID), false);
+      const [event] = Array.from(yield* Fiber.join(diagnostic));
+      assert.equal(event?.type, "runtime.error");
+      if (event?.type === "runtime.error") {
+        assert.match(event.payload.message, /not.*reset|not.*replaced/i);
+      }
+    }).pipe(Effect.provide(harness.layer));
+  });
+
+  it.effect.each([
+    { errors: ["Authentication failed"] },
+    { errors: ["Network connection failed"] },
+    {
+      errors: [
+        "Could not verify: No conversation found with session ID: 550e8400-e29b-41d4-a716-446655440000",
+      ],
+    },
+    { errors: ["No conversation found with session ID: 7368d0c7-40a3-4d8a-bcc1-ac80c49f2719"] },
+    {
+      errors: [
+        "No conversation found with session ID: 550e8400-e29b-41d4-a716-446655440000",
+        "Network connection failed",
+      ],
+    },
+  ])("does not retry an unused cursor for an ambiguous rejection %j", (overrides) => {
+    const sessionId = "550e8400-e29b-41d4-a716-446655440000";
+    const harness = makeHarness();
+    const cursor = { threadId: RESUME_THREAD_ID, resume: sessionId, resumeBeforeFirstPrompt: true };
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const exited = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.type === "session.exited"),
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      harness.query.emit({ ...missingResumeResult(sessionId), ...overrides } as SDKMessage);
+      harness.query.finish();
+      yield* adapter
+        .startSession({
+          threadId: RESUME_THREAD_ID,
+          provider: ProviderDriverKind.make("claudeAgent"),
+          resumeCursor: cursor,
+          runtimeMode: "full-access",
+        })
+        .pipe(Effect.result);
+      yield* Fiber.join(exited);
+      assert.equal(harness.getCreateQueryInputs().length, 1);
+      assert.deepEqual(cursor, {
+        threadId: RESUME_THREAD_ID,
+        resume: sessionId,
+        resumeBeforeFirstPrompt: true,
+      });
+    }).pipe(Effect.provide(harness.layer));
+  });
+
+  it.effect(
+    "resumes the same generated ID and revokes eligibility only when submitting a prompt",
+    () => {
+      const resumedQuery = new FakeClaudeQuery();
+      const harness = makeHarness({ extraQueries: [resumedQuery] });
+      return Effect.gen(function* () {
+        const adapter = yield* ClaudeAdapter;
+        const first = yield* adapter.startSession({
+          threadId: RESUME_THREAD_ID,
+          runtimeMode: "full-access",
+        });
+        const cursor = first.resumeCursor as { resume: string; resumeBeforeFirstPrompt?: true };
+        assert.equal(cursor.resumeBeforeFirstPrompt, true);
+        yield* adapter.stopSession(RESUME_THREAD_ID);
+        const started = yield* adapter.streamEvents.pipe(
+          Stream.filter(
+            (event) => event.type === "session.started" && event.payload.resume !== undefined,
+          ),
+          Stream.take(1),
+          Stream.runCollect,
+          Effect.forkChild,
+        );
+        const starting = yield* adapter
+          .startSession({
+            threadId: RESUME_THREAD_ID,
+            resumeCursor: cursor,
+            runtimeMode: "full-access",
+          })
+          .pipe(Effect.forkChild);
+        yield* Fiber.join(started);
+        assert.equal(harness.getLastCreateQueryInput()?.options.resume, cursor.resume);
+        assert.equal(harness.getLastCreateQueryInput()?.options.sessionId, undefined);
+        assert.deepEqual((yield* adapter.listSessions())[0]?.resumeCursor, cursor);
+
+        // The native transcript may exist even though T3 never received the first init.
+        // Accepting the same ID must preserve that native context rather than replace it.
+        resumedQuery.emit(resumeAcceptedInit(cursor.resume));
+        resumedQuery.completeInitialization();
+        const resumed = yield* Fiber.join(starting);
+        assert.deepEqual(resumed.resumeCursor, {
+          threadId: RESUME_THREAD_ID,
+          resume: cursor.resume,
+          turnCount: 0,
+          resumeBeforeFirstPrompt: true,
+        });
+        assert.deepEqual((yield* adapter.listSessions())[0]?.resumeCursor, resumed.resumeCursor);
+        assert.equal(harness.getCreateQueryInputs().length, 2);
+        assert.equal(resumedQuery.closeCalls, 0);
+        yield* adapter.sendTurn({ threadId: RESUME_THREAD_ID, input: "First submitted prompt" });
+        assert.propertyVal(
+          (yield* adapter.listSessions())[0]!.resumeCursor,
+          "resumeBeforeFirstPrompt",
+          false,
+        );
+        assert.include(
+          (yield* Effect.promise(() => readFirstPromptText(harness.getLastCreateQueryInput())))!,
+          "First submitted prompt",
+        );
+      }).pipe(Effect.provide(harness.layer));
+    },
+  );
+
+  it.effect(
+    "rejects a different admitted Claude ID before queuing and accepts the current ID",
+    () => {
+      const harness = makeHarness();
+      return Effect.gen(function* () {
+        const adapter = yield* ClaudeAdapter;
+        yield* adapter.startSession({ threadId: THREAD_ID, runtimeMode: "approval-required" });
+        const nativeId = harness.getLastCreateQueryInput()!.options.sessionId!;
+        const rejected = yield* adapter
+          .sendTurn(
+            { threadId: THREAD_ID, input: "Must not reach the replacement" },
+            { expectedNativeSessionId: "550e8400-e29b-41d4-a716-446655440000" },
+          )
+          .pipe(Effect.result);
+        assert.equal(rejected._tag, "Failure");
+        if (rejected._tag === "Failure")
+          assert.instanceOf(rejected.failure, ProviderAdapterValidationError);
+        assert.propertyVal(
+          (yield* adapter.listSessions())[0]!.resumeCursor,
+          "resumeBeforeFirstPrompt",
+          true,
+        );
+        yield* adapter.sendTurn(
+          { threadId: THREAD_ID, input: "Admitted to the current native ID" },
+          { expectedNativeSessionId: nativeId },
+        );
+        assert.equal(
+          yield* Effect.promise(() => readFirstPromptText(harness.getLastCreateQueryInput())),
+          "Admitted to the current native ID",
+        );
+      }).pipe(Effect.provide(harness.layer));
+    },
+  );
+
+  it.effect("keeps an admitted Claude send on its captured queue during replacement", () => {
+    const replacement = new FakeClaudeQuery();
+    const harness = makeHarness({ extraQueries: [replacement] });
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const permissionEntered = Promise.withResolvers<void>();
+      const releasePermission = Promise.withResolvers<void>();
+      vi.spyOn(harness.query, "setPermissionMode").mockImplementation(() => {
+        permissionEntered.resolve();
+        return releasePermission.promise;
+      });
+      yield* adapter.startSession({ threadId: THREAD_ID, runtimeMode: "approval-required" });
+      const originalInput = harness.getLastCreateQueryInput()!;
+      const sending = yield* adapter
+        .sendTurn(
+          {
+            threadId: THREAD_ID,
+            input: "Must stay on the closed old queue",
+            interactionMode: "plan",
+          },
+          { expectedNativeSessionId: originalInput.options.sessionId! },
+        )
+        .pipe(Effect.exit, Effect.forkChild);
+      yield* Effect.promise(() => permissionEntered.promise);
+      yield* adapter.startSession({ threadId: THREAD_ID, runtimeMode: "approval-required" });
+      const replacementInput = harness.getLastCreateQueryInput()!;
+      assert.notEqual(replacementInput.options.sessionId, originalInput.options.sessionId);
+      assert.equal(harness.query.closeCalls, 1);
+      releasePermission.resolve();
+      yield* Fiber.join(sending);
+      assert.equal(yield* Effect.promise(() => readFirstPromptText(originalInput)), undefined);
+      assert.propertyVal(
+        (yield* adapter.listSessions())[0]!.resumeCursor,
+        "resumeBeforeFirstPrompt",
+        true,
+      );
+      yield* adapter.sendTurn(
+        { threadId: THREAD_ID, input: "First prompt on the replacement" },
+        { expectedNativeSessionId: replacementInput.options.sessionId! },
+      );
+      assert.equal(
+        yield* Effect.promise(() => readFirstPromptText(replacementInput)),
+        "First prompt on the replacement",
+      );
+    }).pipe(Effect.provide(harness.layer));
+  });
+
+  it.effect(
+    "rejects stale Claude admission after a replacement cursor is durable but before its first prompt",
+    () =>
+      Effect.gen(function* () {
+        const rejectedResume = new FakeClaudeQuery();
+        const replacement = new FakeClaudeQuery();
+        const harness = makeHarness({
+          cwd: process.cwd(),
+          extraQueries: [rejectedResume, replacement],
+        });
+        const replacementCaptured = yield* Deferred.make<void>();
+        const admissionWritten = yield* Deferred.make<void>();
+        const replacementNativeReady = yield* Deferred.make<void>();
+        const replacementDurable = yield* Deferred.make<void>();
+        let starts = 0;
+        let admissionPending = true;
+        let firstSend = true;
+        const cursorsAtSend: unknown[] = [];
+        const repositoryLayer = ProviderSessionRuntime.layer.pipe(
+          Layer.provide(SqlitePersistenceMemory),
+        );
+        const directoryLayer = ProviderSessionDirectoryLive.pipe(Layer.provide(repositoryLayer));
+        const admissionDirectory = Layer.effect(
+          ProviderSessionDirectory.ProviderSessionDirectory,
+          Effect.map(ProviderSessionDirectory.ProviderSessionDirectory, (directory) => ({
+            ...directory,
+            upsert: (binding) =>
+              Effect.gen(function* () {
+                yield* directory.upsert(binding);
+                if (admissionPending && isAdmittedClaudeCursor(binding.resumeCursor)) {
+                  admissionPending = false;
+                  yield* Deferred.succeed(admissionWritten, undefined);
+                  yield* Deferred.await(replacementNativeReady);
+                }
+              }),
+          })),
+        ).pipe(Layer.provide(directoryLayer));
+        const registryLayer = Layer.effect(
+          ProviderAdapterRegistry.ProviderAdapterRegistry,
+          Effect.gen(function* () {
+            const adapter = yield* ClaudeAdapter;
+            const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
+            return makeAdapterRegistryMock({
+              [ProviderDriverKind.make("claudeAgent")]: {
+                ...adapter,
+                startSession: (input) =>
+                  Effect.gen(function* () {
+                    const start = ++starts;
+                    if (start === 2) {
+                      yield* Deferred.succeed(replacementCaptured, undefined);
+                      yield* Deferred.await(admissionWritten);
+                    }
+                    const session = yield* adapter.startSession(input);
+                    if (start === 2) yield* Deferred.succeed(replacementNativeReady, undefined);
+                    return session;
+                  }),
+                sendTurn: (input, options) =>
+                  Effect.gen(function* () {
+                    // The receipt controls the adapter boundary, not the native SDK loop.
+                    if (firstSend) {
+                      firstSend = false;
+                      yield* Deferred.await(replacementDurable);
+                    }
+                    cursorsAtSend.push(
+                      Option.getOrThrow(
+                        yield* directory.getBinding(input.threadId).pipe(Effect.orDie),
+                      ).resumeCursor,
+                    );
+                    return yield* adapter.sendTurn(input, options);
+                  }),
+              },
+            });
+          }),
+        ).pipe(Layer.provide(Layer.mergeAll(harness.layer, directoryLayer)));
+        const providerLayer = makeProviderServiceLive().pipe(
+          Layer.provide(registryLayer),
+          Layer.provide(admissionDirectory),
+          Layer.provide(harness.layer),
+          Layer.provide(AnalyticsService.layerTest),
+          Layer.provide(
+            Layer.succeed(
+              ProviderEventLoggers.ProviderEventLoggers,
+              ProviderEventLoggers.NoOpProviderEventLoggers,
+            ),
+          ),
+        );
+        yield* Effect.gen(function* () {
+          const provider = yield* ProviderService.ProviderService;
+          const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
+          const input = {
+            threadId: RESUME_THREAD_ID,
+            providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+            runtimeMode: "approval-required" as const,
+          };
+          yield* provider.startSession(RESUME_THREAD_ID, input);
+          const originalId = harness.getLastCreateQueryInput()!.options.sessionId!;
+          rejectedResume.emit(missingResumeResult(originalId));
+          const replacing = yield* provider.startSession(RESUME_THREAD_ID, input).pipe(
+            Effect.tap(() => Deferred.succeed(replacementDurable, undefined)),
+            Effect.forkChild,
+          );
+          yield* Deferred.await(replacementCaptured);
+          const rejected = yield* provider
+            .sendTurn({ threadId: RESUME_THREAD_ID, input: "This stale admission must not queue" })
+            .pipe(Effect.result);
+          yield* Fiber.join(replacing);
+          const replacementId = harness.getLastCreateQueryInput()!.options.sessionId!;
+          assert.notEqual(replacementId, originalId);
+          assert.propertyVal(cursorsAtSend[0], "resume", replacementId);
+          assert.propertyVal(cursorsAtSend[0], "resumeBeforeFirstPrompt", true);
+          if (rejected._tag === "Success") {
+            assert.equal(
+              yield* Effect.promise(() => readFirstPromptText(harness.getLastCreateQueryInput())),
+              undefined,
+              "A stale admission must not enter the replacement's actual SDK prompt stream",
+            );
+          }
+          assert.equal(rejected._tag, "Failure");
+          if (rejected._tag === "Failure")
+            assert.instanceOf(rejected.failure, ProviderAdapterValidationError);
+          assert.propertyVal(
+            Option.getOrThrow(yield* directory.getBinding(RESUME_THREAD_ID)).resumeCursor,
+            "resumeBeforeFirstPrompt",
+            true,
+          );
+          yield* provider.sendTurn({
+            threadId: RESUME_THREAD_ID,
+            input: "Admitted to the replacement now",
+          });
+          assert.propertyVal(cursorsAtSend[1], "resumeBeforeFirstPrompt", false);
+          assert.equal(
+            yield* Effect.promise(() => readFirstPromptText(harness.getLastCreateQueryInput())),
+            "Admitted to the replacement now",
+          );
+          assert.equal(harness.getCreateQueryInputs().length, 3);
+          assert.equal(harness.getCreateQueryInputs()[1]!.options.resume, originalId);
+        }).pipe(Effect.provide(Layer.mergeAll(providerLayer, directoryLayer, harness.layer)));
+      }),
+  );
+
+  it.effect("does not retry a replacement query that also fails", () => {
+    const sessionId = "550e8400-e29b-41d4-a716-446655440000";
+    const replacement = new FakeClaudeQuery();
+    const harness = makeHarness({ extraQueries: [replacement] });
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      harness.query.emit(missingResumeResult(sessionId));
+      yield* adapter.startSession({
+        threadId: RESUME_THREAD_ID,
+        resumeCursor: {
+          threadId: RESUME_THREAD_ID,
+          resume: sessionId,
+          resumeBeforeFirstPrompt: true,
+        },
+        runtimeMode: "full-access",
+      });
+      const exited = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.type === "session.exited"),
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      const replacementId = harness.getLastCreateQueryInput()!.options.sessionId!;
+      replacement.emit(missingResumeResult(replacementId));
+      replacement.finish();
+      yield* Fiber.join(exited);
+      assert.equal(harness.getCreateQueryInputs().length, 2);
+      assert.equal(replacement.closeCalls, 1);
+    }).pipe(Effect.provide(harness.layer));
+  });
+
+  for (const admission of ["none", "sent", "storage failure"] as const) {
+    it.effect(
+      "round-trips real Claude adapter recovery through SQLite after prompt admission: " +
+        admission,
+      () => {
+        const harness = makeHarness({ cwd: process.cwd() });
+        let nativeSendCalls = 0;
+        const repositoryLayer = ProviderSessionRuntime.layer.pipe(
+          Layer.provide(SqlitePersistenceMemory),
+        );
+        const directoryLayer = ProviderSessionDirectoryLive.pipe(Layer.provide(repositoryLayer));
+        const admissionDirectory = Layer.effect(
+          ProviderSessionDirectory.ProviderSessionDirectory,
+          Effect.map(ProviderSessionDirectory.ProviderSessionDirectory, (directory) => ({
+            ...directory,
+            upsert: (binding) =>
+              admission === "storage failure" && isAdmittedClaudeCursor(binding.resumeCursor)
+                ? Effect.fail(
+                    new ProviderSessionDirectoryPersistenceError({
+                      operation: "test prompt admission",
+                      detail: "simulated storage failure",
+                    }),
+                  )
+                : directory.upsert(binding),
+          })),
+        ).pipe(Layer.provide(directoryLayer));
+        const registryLayer = Layer.effect(
+          ProviderAdapterRegistry.ProviderAdapterRegistry,
+          Effect.gen(function* () {
+            const adapter = yield* ClaudeAdapter;
+            return makeAdapterRegistryMock({
+              [ProviderDriverKind.make("claudeAgent")]: {
+                ...adapter,
+                sendTurn: (input, options) =>
+                  Effect.sync(() => {
+                    nativeSendCalls += 1;
+                  }).pipe(Effect.andThen(adapter.sendTurn(input, options))),
+              },
+            });
+          }),
+        ).pipe(Layer.provide(harness.layer));
+        const providerLayer = makeProviderServiceLive().pipe(
+          Layer.provide(registryLayer),
+          Layer.provide(admissionDirectory),
+          Layer.provide(harness.layer),
+          Layer.provide(AnalyticsService.layerTest),
+          Layer.provide(
+            Layer.succeed(
+              ProviderEventLoggers.ProviderEventLoggers,
+              ProviderEventLoggers.NoOpProviderEventLoggers,
+            ),
+          ),
+        );
+        return Effect.gen(function* () {
+          const provider = yield* ProviderService.ProviderService;
+          const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
+          const adapter = yield* ClaudeAdapter;
+          const session = yield* provider.startSession(RESUME_THREAD_ID, {
+            threadId: RESUME_THREAD_ID,
+            providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+            runtimeMode: "approval-required",
+          });
+          const nativeId = harness.getLastCreateQueryInput()!.options.sessionId!;
+          assert.deepEqual(
+            Option.getOrThrow(yield* directory.getBinding(RESUME_THREAD_ID)).resumeCursor,
+            session.resumeCursor,
+          );
+
+          const initialized = yield* provider.streamEvents.pipe(
+            Stream.filter((event) => event.type === "thread.started"),
+            Stream.take(1),
+            Stream.runCollect,
+            Effect.forkChild({ startImmediately: true }),
+          );
+          harness.query.emit(resumeAcceptedInit(nativeId));
+          harness.query.completeInitialization();
+          yield* Fiber.join(initialized);
+          // Init alone is not a submitted T3 prompt, including across restart.
+          assert.propertyVal(
+            Option.getOrThrow(yield* directory.getBinding(RESUME_THREAD_ID)).resumeCursor,
+            "resumeBeforeFirstPrompt",
+            true,
+          );
+          if (admission !== "none") {
+            const result = yield* provider
+              .sendTurn({ threadId: RESUME_THREAD_ID, input: "First admitted prompt" })
+              .pipe(Effect.result);
+            assert.equal(result._tag, admission === "sent" ? "Success" : "Failure");
+            if (admission === "sent") {
+              assert.include(
+                (yield* Effect.promise(() =>
+                  readFirstPromptText(harness.getLastCreateQueryInput()),
+                ))!,
+                "First admitted prompt",
+              );
+            }
+          }
+          assert.equal(nativeSendCalls, admission === "sent" ? 1 : 0);
+          const persisted = Option.getOrThrow(yield* directory.getBinding(RESUME_THREAD_ID));
+          assert.propertyVal(
+            persisted.resumeCursor,
+            "resumeBeforeFirstPrompt",
+            admission !== "sent",
+          );
+
+          // Snapshot before cleanup, then reconstruct only the actual adapter.
+          // ProviderService shutdown must not repair the row being tested.
+          yield* adapter.stopSession(RESUME_THREAD_ID);
+          const resumedQuery = new FakeClaudeQuery();
+          const replacementQuery = new FakeClaudeQuery();
+          const inputs: ClaudeQueryOptions[] = [];
+          const restarted = yield* makeClaudeAdapter(decodeClaudeSettings({}), {
+            modelCatalog: Effect.succeed(SYNTHETIC_CLAUDE_MODEL_CATALOG),
+            createQuery: ({ options }) => {
+              inputs.push(options);
+              return inputs.length === 1 ? resumedQuery : replacementQuery;
+            },
+          });
+          resumedQuery.emit(missingResumeResult(nativeId));
+          const result = yield* restarted
+            .startSession({
+              threadId: RESUME_THREAD_ID,
+              resumeCursor: persisted.resumeCursor,
+              runtimeMode: "approval-required",
+            })
+            .pipe(Effect.result);
+          assert.equal(result._tag, admission === "sent" ? "Failure" : "Success");
+          assert.equal(inputs.length, admission === "sent" ? 1 : 2);
+          assert.equal(inputs[0]!.resume, nativeId);
+          if (admission !== "sent") {
+            assert.equal(inputs[1]!.resume, undefined);
+            assert.equal(typeof inputs[1]!.sessionId, "string");
+          }
+          assert.deepEqual(
+            Option.getOrThrow(yield* directory.getBinding(RESUME_THREAD_ID)).resumeCursor,
+            persisted.resumeCursor,
+          );
+          yield* restarted.stopAll();
+
+          if (admission === "sent") {
+            for (const turnCount of [0, 124]) {
+              const legacyCursor = {
+                threadId: RESUME_THREAD_ID,
+                resume: nativeId,
+                resumeSessionAt: "retained-assistant",
+                turnCount,
+              };
+              yield* directory.upsert({ ...persisted, resumeCursor: legacyCursor });
+              const restored = Option.getOrThrow(yield* directory.getBinding(RESUME_THREAD_ID));
+              assert.deepEqual(restored.resumeCursor, legacyCursor);
+              const legacyQuery = new FakeClaudeQuery();
+              const legacyInputs: ClaudeQueryOptions[] = [];
+              const legacyAdapter = yield* makeClaudeAdapter(decodeClaudeSettings({}), {
+                modelCatalog: Effect.succeed(SYNTHETIC_CLAUDE_MODEL_CATALOG),
+                createQuery: ({ options }) => {
+                  legacyInputs.push(options);
+                  return legacyQuery;
+                },
+              });
+              legacyQuery.emit(missingResumeResult(nativeId));
+              const failed = yield* legacyAdapter
+                .startSession({
+                  threadId: RESUME_THREAD_ID,
+                  resumeCursor: restored.resumeCursor,
+                  runtimeMode: "approval-required",
+                })
+                .pipe(Effect.result);
+              assert.equal(failed._tag, "Failure");
+              assert.equal(legacyInputs.length, 1);
+              assert.equal(legacyInputs[0]!.resume, nativeId);
+              assert.deepEqual(
+                Option.getOrThrow(yield* directory.getBinding(RESUME_THREAD_ID)).resumeCursor,
+                legacyCursor,
+              );
+            }
+          }
+        }).pipe(Effect.provide(Layer.mergeAll(providerLayer, directoryLayer, harness.layer)));
+      },
+    );
+  }
+
+  it.effect("releases an interrupted resume start instead of leaking its query", () => {
+    const deadSessionId = "550e8400-e29b-41d4-a716-446655440000";
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      const started = yield* Stream.take(adapter.streamEvents, 1).pipe(
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      const starting = yield* adapter
+        .startSession({
+          threadId: RESUME_THREAD_ID,
+          provider: ProviderDriverKind.make("claudeAgent"),
+          resumeCursor: { threadId: RESUME_THREAD_ID, resume: deadSessionId, turnCount: 0 },
+          runtimeMode: "full-access",
+        })
+        .pipe(Effect.forkChild);
+      yield* Fiber.join(started);
+
+      // Nothing is emitted: the CLI never answers, and the start is cancelled
+      // while still waiting on it.
+      yield* Fiber.interrupt(starting);
+
+      assert.equal(harness.query.closeCalls, 1);
+      assert.equal(yield* adapter.hasSession(RESUME_THREAD_ID), false);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("settles the resume wait even when closing the query throws", () => {
+    const deadSessionId = "550e8400-e29b-41d4-a716-446655440000";
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      harness.query.closeError = new Error("close failed");
+
+      const started = yield* Stream.take(adapter.streamEvents, 1).pipe(
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      const starting = yield* adapter
+        .startSession({
+          threadId: RESUME_THREAD_ID,
+          provider: ProviderDriverKind.make("claudeAgent"),
+          resumeCursor: { threadId: RESUME_THREAD_ID, resume: deadSessionId, turnCount: 0 },
+          runtimeMode: "full-access",
+        })
+        .pipe(Effect.result, Effect.forkChild);
+      yield* Fiber.join(started);
+
+      // A close that throws must still settle the wait, or this join hangs.
+      yield* adapter.stopSession(RESUME_THREAD_ID).pipe(Effect.result);
+
+      const result = yield* Fiber.join(starting);
+      assert.equal(result._tag, "Failure");
+      assert.equal(harness.query.closeCalls, 1);
+      // The close failed, so the session stays addressable by design; the bug
+      // was the start never being released at all.
+      assert.equal(yield* adapter.hasSession(RESUME_THREAD_ID), true);
+      harness.query.completeInitialization();
+      yield* Effect.promise(() => harness.query.initializationResult());
+      const sending = yield* adapter
+        .sendTurn({ threadId: RESUME_THREAD_ID, input: "Late initialization must not revive this" })
+        .pipe(Effect.result);
+      assert.equal(sending._tag, "Failure");
+      if (sending._tag === "Failure")
+        assert.instanceOf(sending.failure, ProviderAdapterValidationError);
+      harness.query.closeError = undefined;
+      yield* adapter.stopSession(RESUME_THREAD_ID);
+      assert.equal(yield* adapter.hasSession(RESUME_THREAD_ID), false);
+      assert.equal(
+        yield* Effect.promise(() => readFirstPromptText(harness.getLastCreateQueryInput())),
+        undefined,
+      );
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("tears down a rejected resume even when startSession is interrupted", () => {
+    const deadSessionId = "550e8400-e29b-41d4-a716-446655440000";
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      // session.started is the receipt that the query exists and its stream is
+      // forked, so the interrupt below lands inside the resume wait.
+      const started = yield* Stream.take(adapter.streamEvents, 1).pipe(
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      const starting = yield* adapter
+        .startSession({
+          threadId: RESUME_THREAD_ID,
+          provider: ProviderDriverKind.make("claudeAgent"),
+          resumeCursor: { threadId: RESUME_THREAD_ID, resume: deadSessionId, turnCount: 0 },
+          runtimeMode: "full-access",
+        })
+        .pipe(Effect.forkChild);
+      yield* Fiber.join(started);
+      assert.equal(harness.getCreateQueryInputs().length, 1);
+
+      // The stream fiber is detached, so it must clean up on its own: nothing
+      // is waiting on the retry any more.
+      yield* Fiber.interrupt(starting);
+
+      harness.query.emit({
+        type: "result",
+        subtype: "error_during_execution",
+        is_error: true,
+        num_turns: 0,
+        session_id: deadSessionId,
+        errors: [`No conversation found with session ID: ${deadSessionId}`],
+        uuid: "resume-rejected",
+      } as unknown as SDKMessage);
+      harness.query.finish();
+
+      assert.equal(harness.query.closeCalls, 1);
+      assert.equal(yield* adapter.hasSession(RESUME_THREAD_ID), false);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("fails a resume start whose session dies before it says anything", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const exited = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.type === "session.exited"),
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      harness.query.fail(new Error("claude exited during startup"));
+
+      const result = yield* adapter
+        .startSession({
+          threadId: RESUME_THREAD_ID,
+          provider: ProviderDriverKind.make("claudeAgent"),
+          resumeCursor: {
+            threadId: RESUME_THREAD_ID,
+            resume: "550e8400-e29b-41d4-a716-446655440000",
+          },
+          runtimeMode: "full-access",
+        })
+        .pipe(Effect.result);
+
+      assert.equal(result._tag, "Failure");
+      if (result._tag !== "Failure") {
+        return;
+      }
+      assert.equal(result.failure._tag, "ProviderAdapterSessionClosedError");
+      yield* Fiber.join(exited);
+      assert.equal(yield* adapter.hasSession(RESUME_THREAD_ID), false);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("preserves durable resume ids across Claude resume hooks", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
@@ -5496,17 +6885,19 @@ describe("ClaudeAdapterLive", () => {
         Effect.forkChild,
       );
 
-      yield* adapter.startSession({
-        threadId: RESUME_THREAD_ID,
-        provider: ProviderDriverKind.make("claudeAgent"),
-        resumeCursor: {
+      const startFiber = yield* adapter
+        .startSession({
           threadId: RESUME_THREAD_ID,
-          resume: durableSessionId,
-          resumeSessionAt: "assistant-99",
-          turnCount: 3,
-        },
-        runtimeMode: "full-access",
-      });
+          provider: ProviderDriverKind.make("claudeAgent"),
+          resumeCursor: {
+            threadId: RESUME_THREAD_ID,
+            resume: durableSessionId,
+            resumeSessionAt: "assistant-99",
+            turnCount: 3,
+          },
+          runtimeMode: "full-access",
+        })
+        .pipe(Effect.forkChild);
 
       harness.query.emit({
         type: "system",
@@ -5549,6 +6940,9 @@ describe("ClaudeAdapterLive", () => {
         session_id: durableSessionId,
         uuid: "resume-init",
       } as unknown as SDKMessage);
+      harness.query.completeInitialization();
+
+      yield* Fiber.join(startFiber);
 
       const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
       const threadStartedEvents = runtimeEvents.filter((event) => event.type === "thread.started");
@@ -6073,6 +7467,8 @@ describe("ClaudeAdapterLive", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
+      harness.query.emit(resumeAcceptedInit("550e8400-e29b-41d4-a716-446655440000"));
+      harness.query.completeInitialization();
       const session = yield* adapter.startSession({
         threadId: RESUME_THREAD_ID,
         provider: ProviderDriverKind.make("claudeAgent"),

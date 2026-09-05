@@ -39,9 +39,11 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
+import * as RcMap from "effect/RcMap";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as SchemaIssue from "effect/SchemaIssue";
+import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
@@ -73,6 +75,12 @@ import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import * as McpSessionRegistry from "../../mcp/McpSessionRegistry.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 const isModelSelection = Schema.is(ModelSelection);
+const isClaudeResumeCursor = Schema.is(
+  Schema.Struct({
+    resume: Schema.String,
+    resumeBeforeFirstPrompt: Schema.optional(Schema.Boolean),
+  }),
+);
 
 interface PendingCompaction {
   readonly completion: Deferred.Deferred<string>;
@@ -322,6 +330,59 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
 
   const registry = yield* ProviderAdapterRegistry.ProviderAdapterRegistry;
   const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
+  const claudeCursorLocks = yield* RcMap.make({
+    lookup: (_threadId: ThreadId) => Semaphore.make(1),
+  });
+  const withClaudeCursorLock = <A, E, R>(threadId: ThreadId, task: Effect.Effect<A, E, R>) =>
+    RcMap.get(claudeCursorLocks, threadId).pipe(
+      Effect.flatMap((lock) => lock.withPermit(task)),
+      Effect.scoped,
+    );
+
+  // Admission and the four binding writers share this lock. An older startup
+  // or shutdown snapshot must not restore eligibility after a prompt is sent.
+  const upsertBinding = Effect.fn("ProviderService.upsertBinding")(function* (
+    binding: ProviderSessionDirectory.ProviderRuntimeBinding,
+  ) {
+    if (binding.provider !== "claudeAgent") return yield* directory.upsert(binding);
+    return yield* withClaudeCursorLock(
+      binding.threadId,
+      Effect.gen(function* () {
+        const cursor = binding.resumeCursor;
+        if (!isClaudeResumeCursor(cursor) || cursor.resumeBeforeFirstPrompt !== true) {
+          return yield* directory.upsert(binding);
+        }
+        const previous = Option.getOrUndefined(yield* directory.getBinding(binding.threadId));
+        const previousCursor = previous?.resumeCursor;
+        const wasAdmitted =
+          previous?.provider === "claudeAgent" &&
+          previous.providerInstanceId === binding.providerInstanceId &&
+          isClaudeResumeCursor(previousCursor) &&
+          previousCursor.resume === cursor.resume &&
+          previousCursor.resumeBeforeFirstPrompt !== true;
+        const adapter =
+          binding.providerInstanceId === undefined
+            ? undefined
+            : Option.getOrUndefined(
+                yield* registry.getByInstance(binding.providerInstanceId).pipe(Effect.option),
+              );
+        const active = adapter
+          ? (yield* adapter.listSessions()).find((session) => session.threadId === binding.threadId)
+          : undefined;
+        const activeCursor = active?.resumeCursor;
+        const stillPending =
+          active?.providerInstanceId === binding.providerInstanceId &&
+          isClaudeResumeCursor(activeCursor) &&
+          activeCursor.resume === cursor.resume &&
+          activeCursor.resumeBeforeFirstPrompt === true;
+        if (!wasAdmitted && stillPending) return yield* directory.upsert(binding);
+        yield* directory.upsert({
+          ...binding,
+          resumeCursor: { ...cursor, resumeBeforeFirstPrompt: false },
+        });
+      }),
+    );
+  });
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const issueMcpCredential =
     options?.issueMcpCredential ?? McpSessionRegistry.issueActiveMcpCredential;
@@ -851,7 +912,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         "ProviderService.upsertSessionBinding",
         session,
       );
-      yield* directory.upsert({
+      yield* upsertBinding({
         threadId,
         provider: session.provider,
         providerInstanceId,
@@ -1433,7 +1494,54 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         }),
         (turnMetadata) =>
           Effect.gen(function* () {
-            const turn = yield* routed.adapter.sendTurn(input);
+            const expectedNativeSessionId =
+              routed.adapter.provider === "claudeAgent"
+                ? yield* withClaudeCursorLock(
+                    input.threadId,
+                    Effect.gen(function* () {
+                      const binding = Option.getOrUndefined(
+                        yield* directory.getBinding(input.threadId),
+                      );
+                      const active = (yield* routed.adapter.listSessions()).find(
+                        (session) => session.threadId === input.threadId,
+                      );
+                      const cursor = binding?.resumeCursor;
+                      const activeCursor = active?.resumeCursor;
+                      if (
+                        !(
+                          isClaudeResumeCursor(cursor) && cursor.resumeBeforeFirstPrompt === true
+                        ) &&
+                        !(
+                          isClaudeResumeCursor(activeCursor) &&
+                          activeCursor.resumeBeforeFirstPrompt !== undefined
+                        )
+                      )
+                        return;
+                      if (
+                        binding?.providerInstanceId !== routed.instanceId ||
+                        active?.providerInstanceId !== routed.instanceId ||
+                        !isClaudeResumeCursor(cursor) ||
+                        !isClaudeResumeCursor(activeCursor) ||
+                        cursor.resume !== activeCursor.resume
+                      ) {
+                        return yield* toValidationError(
+                          "ProviderService.sendTurn",
+                          "Claude session changed before prompt admission. Retry after the session finishes starting.",
+                        );
+                      }
+                      if (cursor.resumeBeforeFirstPrompt === true) {
+                        yield* directory.upsert({
+                          ...binding,
+                          resumeCursor: { ...cursor, resumeBeforeFirstPrompt: false },
+                        });
+                      }
+                      return cursor.resume;
+                    }),
+                  )
+                : undefined;
+            const turn = yield* expectedNativeSessionId === undefined
+              ? routed.adapter.sendTurn(input)
+              : routed.adapter.sendTurn(input, { expectedNativeSessionId });
             yield* associateTurnAnalytics({
               providerInstanceId: routed.instanceId,
               threadId: input.threadId,
@@ -1449,7 +1557,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
             requestId: turnMetadata.requestId,
           }),
       );
-      yield* directory.upsert({
+      yield* upsertBinding({
         threadId: input.threadId,
         provider: routed.adapter.provider,
         providerInstanceId: routed.instanceId,
@@ -1754,7 +1862,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         timedOutNativeCompactions.delete(input.threadId);
         yield* clearTurnAnalyticsSession(routed.instanceId, input.threadId);
         yield* clearMcpSession(input.threadId);
-        yield* directory.upsert({
+        yield* upsertBinding({
           threadId: input.threadId,
           provider: routed.adapter.provider,
           providerInstanceId: routed.instanceId,
@@ -2021,7 +2129,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           "ProviderService.stopAll",
           binding,
         );
-        return yield* directory.upsert({
+        return yield* upsertBinding({
           threadId: binding.threadId,
           provider: binding.provider,
           providerInstanceId,

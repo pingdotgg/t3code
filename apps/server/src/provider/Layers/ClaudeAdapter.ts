@@ -39,6 +39,7 @@ import {
   type ProviderRuntimeTurnStatus,
   type ProviderSendTurnInput,
   type ProviderSession,
+  type ProviderSessionStartInput,
   type ThreadTokenUsageSnapshot,
   type TurnTokenUsage,
   type ProviderUserInputAnswers,
@@ -139,6 +140,7 @@ interface ClaudeResumeState {
   readonly resume?: string;
   readonly resumeSessionAt?: string;
   readonly turnCount?: number;
+  readonly resumeBeforeFirstPrompt?: boolean;
 }
 
 interface ClaudeTurnState {
@@ -285,6 +287,12 @@ function rememberPendingTaskModel(
   }
 }
 
+/**
+ * How a `--resume` start ended: the CLI took it, refused it, or the session was
+ * stopped before it answered.
+ */
+type ClaudeResumeOutcome = "accepted" | "rejected" | "aborted";
+
 interface ClaudeSessionContext {
   session: ProviderSession;
   readonly promptQueue: Queue.Queue<PromptQueueItem>;
@@ -297,6 +305,11 @@ interface ClaudeSessionContext {
    * effort override inherit this. */
   currentEffort: string | undefined;
   resumeSessionId: string | undefined;
+  /** Only app-generated IDs with no submitted T3 prompt may recover as fresh. */
+  resumeBeforeFirstPrompt: boolean | undefined;
+  /** Blocks sends until resume is accepted or query cleanup succeeds. */
+  resumeVerification: Deferred.Deferred<ClaudeResumeOutcome> | undefined;
+  resumeRejected: boolean;
   readonly pendingApprovals: Map<ApprovalRequestId, PendingApproval>;
   readonly pendingUserInputs: Map<ApprovalRequestId, PendingUserInput>;
   readonly turns: Array<{
@@ -334,6 +347,7 @@ interface ClaudeSessionContext {
 }
 
 interface ClaudeQueryRuntime extends AsyncIterable<SDKMessage> {
+  readonly initializationResult: () => Promise<unknown>;
   readonly setModel: (model?: string) => Promise<void>;
   readonly setPermissionMode: (mode: PermissionMode) => Promise<void>;
   readonly setMaxThinkingTokens: (maxThinkingTokens: number | null) => Promise<void>;
@@ -553,6 +567,20 @@ function formatClaudeUsageLimitWait(waitMs: number): string {
   const minutes = totalMinutes % 60;
   if (hours === 0) return `${totalMinutes}m`;
   return minutes === 0 ? `${hours}h` : `${hours}h ${minutes}m`;
+}
+
+/**
+ * Match only the CLI's definitive rejection of the requested native ID.
+ */
+function isMissingConversationResult(message: SDKMessage, sessionId: string | undefined): boolean {
+  return (
+    sessionId !== undefined &&
+    message.type === "result" &&
+    message.subtype === "error_during_execution" &&
+    message.is_error &&
+    message.errors.length === 1 &&
+    message.errors[0]?.trim() === `No conversation found with session ID: ${sessionId}`
+  );
 }
 
 function asRuntimeItemId(value: string): RuntimeItemId {
@@ -865,6 +893,7 @@ function readClaudeResumeState(resumeCursor: unknown): ClaudeResumeState | undef
     sessionId?: unknown;
     resumeSessionAt?: unknown;
     turnCount?: unknown;
+    resumeBeforeFirstPrompt?: unknown;
   };
 
   const threadIdCandidate = typeof cursor.threadId === "string" ? cursor.threadId : undefined;
@@ -887,6 +916,9 @@ function readClaudeResumeState(resumeCursor: unknown): ClaudeResumeState | undef
     ...(threadId ? { threadId } : {}),
     ...(resume ? { resume } : {}),
     ...(resumeSessionAt ? { resumeSessionAt } : {}),
+    ...(resume && typeof cursor.resumeBeforeFirstPrompt === "boolean"
+      ? { resumeBeforeFirstPrompt: cursor.resumeBeforeFirstPrompt }
+      : {}),
     ...(turnCountValue !== undefined && Number.isInteger(turnCountValue) && turnCountValue >= 0
       ? { turnCount: turnCountValue }
       : {}),
@@ -2060,6 +2092,9 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       threadId,
       ...(context.resumeSessionId ? { resume: context.resumeSessionId } : {}),
       ...(context.lastAssistantUuid ? { resumeSessionAt: context.lastAssistantUuid } : {}),
+      ...(context.resumeBeforeFirstPrompt !== undefined
+        ? { resumeBeforeFirstPrompt: context.resumeBeforeFirstPrompt }
+        : {}),
       turnCount: context.turns.length,
     };
 
@@ -2249,6 +2284,28 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     }
   });
 
+  /**
+   * A missing-transcript result precedes initialization failure. The native
+   * session ID is still transient, so only the exact requested-ID error counts.
+   */
+  const settleResumeVerification = Effect.fn("settleResumeVerification")(function* (
+    context: ClaudeSessionContext,
+    message: SDKMessage,
+  ) {
+    if (context.resumeRejected) {
+      return true;
+    }
+    const verification = context.resumeVerification;
+    const rejected = isMissingConversationResult(message, context.resumeSessionId);
+    if (!verification || !rejected) {
+      return false;
+    }
+    context.resumeRejected = rejected;
+    context.resumeVerification = undefined;
+    yield* Deferred.succeed(verification, "rejected");
+    return rejected;
+  });
+
   const ensureThreadId = Effect.fn("ensureThreadId")(function* (
     context: ClaudeSessionContext,
     message: SDKMessage,
@@ -2257,6 +2314,9 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       return;
     }
     if (!hasDurableClaudeSessionId(message)) {
+      return;
+    }
+    if (isMissingConversationResult(message, context.resumeSessionId)) {
       return;
     }
     const nextThreadId = message.session_id;
@@ -3909,7 +3969,14 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     message: SDKMessage,
   ) {
     yield* logNativeSdkMessage(context, message);
+    if (context.resumeRejected) {
+      return;
+    }
     yield* ensureThreadId(context, message);
+    // A missing ID must not overwrite the cursor or reach the turn handlers.
+    if (yield* settleResumeVerification(context, message)) {
+      return;
+    }
 
     // Wire-only command bookkeeping has no user-facing T3 lifecycle.
     if (sdkMessageType(message) === "command_lifecycle") {
@@ -3996,6 +4063,14 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       return;
     }
 
+    // A rejected resume belongs to startSession's retry, not to the thread, so
+    // its exit stays silent. Tear it down here rather than leaving that to the
+    // retry, which never runs if startSession was interrupted while waiting.
+    if (context.resumeRejected) {
+      yield* stopSessionInternal(context, { emitExitEvent: false });
+      return;
+    }
+
     if (Exit.isFailure(exit)) {
       if (isClaudeInterruptedCause(exit.cause)) {
         if (context.turnState) {
@@ -4027,6 +4102,14 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
   ) {
     if (context.stopped) return;
 
+    // Ahead of the close, which by design aborts the rest of this function when
+    // it throws: a start still waiting on the resume answer must never be left
+    // behind that failure.
+    if (context.resumeVerification !== undefined) {
+      const verification = context.resumeVerification;
+      yield* Deferred.succeed(verification, "aborted");
+    }
+
     // Schedule process termination before any cleanup that can wait on the
     // provider. The SDK closes stdin, then escalates from SIGTERM to SIGKILL.
     yield* Effect.try({
@@ -4040,6 +4123,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         }),
     });
 
+    context.resumeVerification = undefined;
     context.stopped = true;
 
     for (const taskId of Array.from(context.liveTaskIds)) {
@@ -4132,6 +4216,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
 
   const requireSession = (
     threadId: ThreadId,
+    sendGuard?: { readonly expectedNativeSessionId?: string },
   ): Effect.Effect<ClaudeSessionContext, ProviderAdapterError> => {
     const context = sessions.get(threadId);
     if (!context) {
@@ -4150,10 +4235,38 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         }),
       );
     }
+    if (
+      sendGuard?.expectedNativeSessionId !== undefined &&
+      context.resumeSessionId !== sendGuard.expectedNativeSessionId
+    ) {
+      return Effect.fail(
+        new ProviderAdapterValidationError({
+          provider: PROVIDER,
+          operation: "sendTurn",
+          issue:
+            "Claude session changed before prompt admission. Retry after the session finishes starting.",
+        }),
+      );
+    }
+    if (sendGuard && (context.resumeVerification !== undefined || context.resumeRejected)) {
+      return Effect.fail(
+        new ProviderAdapterValidationError({
+          provider: PROVIDER,
+          operation: "sendTurn",
+          issue: "Claude session is still starting. Retry after initialization finishes.",
+        }),
+      );
+    }
     return Effect.succeed(context);
   };
 
-  const startSession: ClaudeAdapterShape["startSession"] = Effect.fn("startSession")(
+  type ClaudeSessionStartAttempt = (
+    input: ProviderSessionStartInput,
+  ) => Effect.Effect<
+    { context: ClaudeSessionContext; initialCursor: ClaudeResumeState },
+    ProviderAdapterError
+  >;
+  const startSessionAttempt: ClaudeSessionStartAttempt = Effect.fn("startSessionAttempt")(
     function* (input) {
       const modelCatalog = yield* modelCatalogEffect;
       if (input.provider !== undefined && input.provider !== PROVIDER) {
@@ -4182,6 +4295,12 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       const existingResumeSessionId = resumeState?.resume;
       const newSessionId = existingResumeSessionId === undefined ? yield* randomUUIDv4 : undefined;
       const sessionId = existingResumeSessionId ?? newSessionId;
+      const resumeBeforeFirstPrompt =
+        newSessionId !== undefined ? true : resumeState?.resumeBeforeFirstPrompt;
+      const resumeVerification =
+        existingResumeSessionId === undefined
+          ? undefined
+          : yield* Deferred.make<ClaudeResumeOutcome>();
 
       const runtimeContext = yield* Effect.context<never>();
       const runFork = Effect.runForkWith(runtimeContext);
@@ -4739,6 +4858,13 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           }),
       });
 
+      const initialCursor: ClaudeResumeState = {
+        ...(threadId ? { threadId } : {}),
+        ...(sessionId ? { resume: sessionId } : {}),
+        ...(resumeState?.resumeSessionAt ? { resumeSessionAt: resumeState.resumeSessionAt } : {}),
+        turnCount: resumeState?.turnCount ?? 0,
+        ...(resumeBeforeFirstPrompt !== undefined ? { resumeBeforeFirstPrompt } : {}),
+      };
       const session: ProviderSession = {
         threadId,
         provider: PROVIDER,
@@ -4748,12 +4874,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ...(input.cwd ? { cwd: input.cwd } : {}),
         ...(modelSelection?.model ? { model: modelSelection.model } : {}),
         ...(threadId ? { threadId } : {}),
-        resumeCursor: {
-          ...(threadId ? { threadId } : {}),
-          ...(sessionId ? { resume: sessionId } : {}),
-          ...(resumeState?.resumeSessionAt ? { resumeSessionAt: resumeState.resumeSessionAt } : {}),
-          turnCount: resumeState?.turnCount ?? 0,
-        },
+        resumeCursor: initialCursor,
         createdAt: startedAt,
         updatedAt: startedAt,
       };
@@ -4768,6 +4889,9 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         currentApiModelId: apiModelId,
         currentEffort: effectiveEffort ?? undefined,
         resumeSessionId: sessionId,
+        resumeBeforeFirstPrompt,
+        resumeVerification,
+        resumeRejected: false,
         pendingApprovals,
         pendingUserInputs,
         turns: [],
@@ -4857,14 +4981,117 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         }
       });
 
-      return {
-        ...session,
-      };
+      // The initialize control response follows transcript loading. system/init
+      // follows a prompt instead, so waiting for that event would deadlock.
+      if (resumeVerification !== undefined) {
+        const initialize = Effect.gen(function* () {
+          const initialized = yield* Effect.tryPromise(() =>
+            queryRuntime.initializationResult(),
+          ).pipe(Effect.result);
+          if (initialized._tag === "Success") {
+            if (context.resumeVerification === resumeVerification) {
+              context.resumeVerification = undefined;
+              yield* Deferred.succeed(resumeVerification, "accepted");
+            }
+          } else {
+            // SDK cleanup rejects initialize before our event logger may have
+            // consumed its buffered result. Close without marking the context
+            // stopped, then drain that result before deciding whether to retry.
+            yield* Effect.try({
+              try: () => queryRuntime.close(),
+              catch: (cause) =>
+                new ProviderAdapterProcessError({
+                  provider: PROVIDER,
+                  threadId,
+                  detail: "Failed to close Claude runtime after initialization failed.",
+                  cause,
+                }),
+            });
+            yield* Fiber.await(streamFiber);
+            yield* Deferred.succeed(resumeVerification, "aborted");
+          }
+          return yield* Deferred.await(resumeVerification);
+        });
+        // The context is registered and its query already running, so an
+        // interrupted wait has to take both down with it.
+        const outcome = yield* Deferred.await(resumeVerification).pipe(
+          Effect.raceFirst(initialize),
+          Effect.onExitIf(Exit.isFailure, () =>
+            stopSessionInternal(context, { emitExitEvent: false }).pipe(
+              Effect.catch((cause) =>
+                Effect.logError("Failed to close an interrupted Claude resume start.", { cause }),
+              ),
+            ),
+          ),
+        );
+        // A stop or a stream death settles the wait too, and the snapshot below
+        // would describe a session that is already gone.
+        if (
+          outcome === "aborted" ||
+          (outcome === "accepted" && (context.stopped || sessions.get(threadId) !== context))
+        ) {
+          return yield* new ProviderAdapterSessionClosedError({
+            provider: PROVIDER,
+            threadId,
+          });
+        }
+      }
+
+      return { context, initialCursor };
     },
   );
 
-  const sendTurn: ClaudeAdapterShape["sendTurn"] = Effect.fn("sendTurn")(function* (input) {
-    const context = yield* requireSession(input.threadId);
+  /**
+   * Only a generated ID with no submitted prompt can recover automatically. A legacy
+   * cursor may represent prior context even when its turn count is zero.
+   */
+  const startSession: ClaudeAdapterShape["startSession"] = Effect.fn("startSession")(
+    function* (input) {
+      const { context, initialCursor } = yield* startSessionAttempt(input);
+      if (!context.resumeRejected) {
+        return {
+          ...context.session,
+          resumeCursor: {
+            ...initialCursor,
+            ...(context.resumeSessionId ? { resume: context.resumeSessionId } : {}),
+            ...(context.resumeBeforeFirstPrompt !== undefined
+              ? { resumeBeforeFirstPrompt: context.resumeBeforeFirstPrompt }
+              : {}),
+          },
+        };
+      }
+      yield* stopSessionInternal(context, { emitExitEvent: false });
+      if (!context.resumeBeforeFirstPrompt) {
+        const detail =
+          "Claude could not find this conversation. T3 has not reset its resume state or replaced its native context. Restore the original Claude transcript before retrying, or start a new T3 thread without that context.";
+        yield* emitRuntimeError(context, detail);
+        return yield* new ProviderAdapterProcessError({
+          provider: PROVIDER,
+          threadId: input.threadId,
+          detail,
+        });
+      }
+      yield* emitRuntimeWarning(
+        context,
+        "Claude could not find this conversation, and no T3 prompt was submitted to it. Starting a fresh session without replaying earlier history.",
+      );
+      const { resumeCursor: _unresumable, ...withoutResumeCursor } = input;
+      return { ...(yield* startSessionAttempt(withoutResumeCursor)).context.session };
+    },
+  );
+
+  const sendTurn: ClaudeAdapterShape["sendTurn"] = Effect.fn("sendTurn")(function* (input, guard) {
+    const context = yield* requireSession(input.threadId, guard ?? {});
+    if (context.resumeBeforeFirstPrompt !== undefined) {
+      context.resumeBeforeFirstPrompt = false;
+      context.session = {
+        ...context.session,
+        resumeCursor: {
+          ...readClaudeResumeState(context.session.resumeCursor),
+          resumeBeforeFirstPrompt: false,
+        },
+      };
+    }
     const modelCatalog = yield* modelCatalogEffect;
     const selectedModel =
       input.modelSelection !== undefined && input.modelSelection.instanceId === boundInstanceId
