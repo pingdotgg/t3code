@@ -50,7 +50,6 @@ import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/unstable/reactivity";
 import React, {
   Children,
-  Suspense,
   type CSSProperties,
   type ComponentProps,
   type ClipboardEvent as ReactClipboardEvent,
@@ -115,10 +114,8 @@ import {
   usePreferredEditor,
 } from "../editorPreferences";
 import { openInEditorMenuLabel } from "../editorLabels";
-import { resolveDiffThemeName, type DiffThemeName } from "../lib/diffRendering";
-import { fnv1a32 } from "../lib/diffRendering";
-import { LRUCache } from "../lib/lruCache";
-import { getSyntaxHighlighterPromise } from "../lib/syntaxHighlighting";
+import { resolveDiffThemeName } from "../lib/diffRendering";
+import { MarkdownCodeHighlight } from "./MarkdownCodeHighlight";
 import { RenderErrorBoundary } from "./RenderErrorBoundary";
 import { useTheme } from "../hooks/useTheme";
 import { getClientSettings, useClientSettings } from "../hooks/useSettings";
@@ -302,8 +299,6 @@ function CodexArtifactTemplateCard(props: {
 
 const CODE_FENCE_LANGUAGE_REGEX = /(?:^|\s)language-([^\s]+)/;
 const WINDOWS_DRIVE_PATH_REGEX = /^[A-Za-z]:[\\/]/;
-const MAX_HIGHLIGHT_CACHE_ENTRIES = 500;
-const MAX_HIGHLIGHT_CACHE_MEMORY_BYTES = 50 * 1024 * 1024;
 
 interface MarkdownActionFailureContext {
   readonly operation: string;
@@ -317,11 +312,6 @@ interface MarkdownActionFailureContext {
 function reportMarkdownActionFailure(context: MarkdownActionFailureContext, cause: unknown): void {
   console.error("[chat-markdown] action failed", context, cause);
 }
-
-const highlightedCodeCache = new LRUCache<string>(
-  MAX_HIGHLIGHT_CACHE_ENTRIES,
-  MAX_HIGHLIGHT_CACHE_MEMORY_BYTES,
-);
 
 function findTaskListMarkerOffset(markdown: string, listItemStart: number): number | null {
   const firstLineEnd = markdown.indexOf("\n", listItemStart);
@@ -653,14 +643,6 @@ function extractCodeBlock(
   };
 }
 
-function createHighlightCacheKey(code: string, language: string, themeName: DiffThemeName): string {
-  return `${fnv1a32(code).toString(36)}:${code.length}:${language}:${themeName}`;
-}
-
-function estimateHighlightedSize(html: string, code: string): number {
-  return Math.max(html.length * 2, code.length * 3);
-}
-
 function readInitialWordWrapSetting(): boolean {
   return getClientSettings().wordWrap;
 }
@@ -890,7 +872,7 @@ function MarkdownCodeBlock({
   language: string;
   fenceTitle: string | null;
   theme: "light" | "dark";
-  children: ReactNode;
+  children: (wrapped: boolean) => ReactNode;
 }) {
   const [copied, setCopied] = useState(false);
   const [wrapped, setWrapped] = useState(readInitialWordWrapSetting);
@@ -988,90 +970,8 @@ function MarkdownCodeBlock({
           </Tooltip>
         </span>
       </div>
-      {children}
+      {children(wrapped)}
     </div>
-  );
-}
-
-interface SuspenseShikiCodeBlockProps {
-  className: string | undefined;
-  code: string;
-  themeName: DiffThemeName;
-  isStreaming: boolean;
-}
-
-function SuspenseShikiCodeBlock({
-  className,
-  code,
-  themeName,
-  isStreaming,
-}: SuspenseShikiCodeBlockProps) {
-  const language = extractFenceLanguage(className);
-  const cacheKey = createHighlightCacheKey(code, language, themeName);
-  const cachedHighlightedHtml = !isStreaming ? highlightedCodeCache.get(cacheKey) : null;
-
-  if (cachedHighlightedHtml != null) {
-    return (
-      <div
-        className="chat-markdown-shiki"
-        dangerouslySetInnerHTML={{ __html: cachedHighlightedHtml }}
-      />
-    );
-  }
-
-  return (
-    <UncachedShikiCodeBlock
-      code={code}
-      language={language}
-      themeName={themeName}
-      cacheKey={cacheKey}
-      isStreaming={isStreaming}
-    />
-  );
-}
-
-interface UncachedShikiCodeBlockProps {
-  code: string;
-  language: string;
-  themeName: DiffThemeName;
-  cacheKey: string;
-  isStreaming: boolean;
-}
-
-function UncachedShikiCodeBlock({
-  code,
-  language,
-  themeName,
-  cacheKey,
-  isStreaming,
-}: UncachedShikiCodeBlockProps) {
-  const highlighter = use(getSyntaxHighlighterPromise(language));
-  const highlightedHtml = useMemo(() => {
-    try {
-      return highlighter.codeToHtml(code, { lang: language, theme: themeName });
-    } catch (error) {
-      // Log highlighting failures for debugging while falling back to plain text
-      console.warn(
-        `Code highlighting failed for language "${language}", falling back to plain text.`,
-        error instanceof Error ? error.message : error,
-      );
-      // If highlighting fails for this language, render as plain text
-      return highlighter.codeToHtml(code, { lang: "text", theme: themeName });
-    }
-  }, [code, highlighter, language, themeName]);
-
-  useEffect(() => {
-    if (!isStreaming) {
-      highlightedCodeCache.set(
-        cacheKey,
-        highlightedHtml,
-        estimateHighlightedSize(highlightedHtml, code),
-      );
-    }
-  }, [cacheKey, code, highlightedHtml, isStreaming]);
-
-  return (
-    <div className="chat-markdown-shiki" dangerouslySetInnerHTML={{ __html: highlightedHtml }} />
   );
 }
 
@@ -3048,19 +2948,21 @@ const CHAT_MARKDOWN_COMPONENTS = {
         fenceTitle={fenceTitle}
         theme={resolvedTheme}
       >
-        <RenderErrorBoundary
-          resetKeys={[codeBlock.code, language, diffThemeName, isStreaming]}
-          fallback={<pre {...props}>{children}</pre>}
-        >
-          <Suspense fallback={<pre {...props}>{children}</pre>}>
-            <SuspenseShikiCodeBlock
-              className={codeBlock.className}
+        {(wrapped) => (
+          <RenderErrorBoundary
+            resetKeys={[codeBlock.code, language, diffThemeName, isStreaming]}
+            fallback={<pre {...props}>{children}</pre>}
+          >
+            <MarkdownCodeHighlight
+              language={language}
+              fallback={<pre {...props}>{children}</pre>}
               code={codeBlock.code}
               themeName={diffThemeName}
+              wrapped={wrapped}
               isStreaming={isStreaming}
             />
-          </Suspense>
-        </RenderErrorBoundary>
+          </RenderErrorBoundary>
+        )}
       </MarkdownCodeBlock>
     );
   },

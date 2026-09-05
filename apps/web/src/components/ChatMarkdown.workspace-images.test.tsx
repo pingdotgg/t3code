@@ -7,6 +7,8 @@ const testState = vi.hoisted(() => ({
   assetState: "success" as "success" | "loading" | "failure",
 }));
 
+vi.mock("./DiffWorkerPoolProvider", () => ({ DiffWorkerPoolProvider: () => null }));
+
 vi.mock("@effect/atom-react", () => ({ useAtomValue: () => null }));
 vi.mock("../assets/assetUrls", () => ({
   useAssetUrlRefresh: () => vi.fn(),
