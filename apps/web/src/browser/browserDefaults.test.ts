@@ -45,14 +45,14 @@ describe("getBrowserDefaults profile resolution", () => {
 });
 
 describe("resolveBrowserDefaults", () => {
-  it("uses the current snapshot when client settings cannot be read", async () => {
+  it("rejects failed reads and uses the saved profile after a successful retry", async () => {
     withDefaultProfile("work");
     settings.current.browserDefaultZoomFactor = 1.25;
     settings.current.browserDefaultAppearance = "dark";
-    vi.mocked(ensureClientSettingsHydrated).mockRejectedValueOnce(
-      new Error("Settings read failed"),
-    );
+    const failure = new Error("Settings read failed");
+    vi.mocked(ensureClientSettingsHydrated).mockRejectedValueOnce(failure);
 
+    await expect(resolveBrowserDefaults()).rejects.toBe(failure);
     await expect(resolveBrowserDefaults()).resolves.toMatchObject({
       viewport: { _tag: "fill" },
       zoomFactor: 1.25,

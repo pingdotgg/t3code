@@ -11,6 +11,7 @@ import {
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -147,6 +148,31 @@ const codexRolloutLine = (cwd: string) =>
   `${JSON.stringify({ timestamp: "2026-01-01T00:00:00.000Z", type: "session_meta", payload: { id: "r1", cwd } })}\n`;
 
 const encodeTranscriptRecord = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
+
+function makeRecordLimitTranscript(cwd: string, overflow: boolean): string {
+  const records =
+    [
+      encodeTranscriptRecord({
+        type: "session_meta",
+        payload: { id: "record-limit-session", cwd },
+      }),
+      encodeTranscriptRecord({
+        type: "event_msg",
+        payload: { type: "user_message", message: "First prompt" },
+      }),
+    ].join("\n") +
+    "\n" +
+    "{}\n".repeat(99_998);
+  return overflow
+    ? records +
+        "\n" +
+        encodeTranscriptRecord({
+          type: "event_msg",
+          payload: { type: "user_message", message: "Overflow prompt" },
+        }) +
+        "\n"
+    : records;
+}
 
 it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
   describe("scan", () => {
@@ -944,6 +970,231 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
       }),
     );
 
+    it.effect.each([64, 65])("shares metadata bytes across homes for %s one-MiB files", (count) =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const claudeHomePath = yield* makeTempDir("t3code-metadata-home-");
+        const secondHome = yield* makeTempDir("t3code-metadata-second-");
+        const codexHomePath = yield* makeTempDir("t3code-metadata-codex-");
+        const firstWorkspace = yield* makeTempDir("t3code-metadata-first-project-");
+        const secondWorkspace = yield* makeTempDir("t3code-metadata-second-project-");
+        const directories = [
+          path.join(claudeHomePath, "projects", "p"),
+          path.join(secondHome, "projects", "p"),
+        ];
+        const templates = directories.map((directory) => path.join(directory, "template.jsonl"));
+        for (const [index, workspace] of [firstWorkspace, secondWorkspace].entries()) {
+          const record = encodeTranscriptRecord({ cwd: workspace });
+          yield* writeTranscript({
+            filePath: templates[index]!,
+            contents:
+              " ".repeat(1024 * 1024 - new TextEncoder().encode(record).byteLength) + record,
+            mtimeMs: Date.parse("2026-01-01T00:00:00.000Z") - index * 1_000,
+          });
+        }
+        const resolveFile = (filePath: string) => {
+          const index = directories.indexOf(path.dirname(filePath));
+          return index === -1 ? filePath : templates[index]!;
+        };
+        let reservedBytes = 0;
+        let opens = 0;
+        const requests: number[] = [];
+        const observedFileSystem = FileSystem.FileSystem.of({
+          ...fileSystem,
+          readDirectory: (directory, options) => {
+            const index = directories.indexOf(directory);
+            return index === -1
+              ? fileSystem.readDirectory(directory, options)
+              : Effect.succeed(
+                  Array.from(
+                    { length: index === 0 ? 32 : count - 32 },
+                    (_, item) => `session-${item}.jsonl`,
+                  ),
+                );
+          },
+          stat: (filePath) => fileSystem.stat(resolveFile(filePath)),
+          open: (filePath, options) => {
+            if (!directories.includes(path.dirname(filePath)))
+              return fileSystem.open(filePath, options);
+            opens += 1;
+            return fileSystem.open(resolveFile(filePath), options).pipe(
+              Effect.map((file) => ({
+                ...file,
+                stat: file.stat,
+                readAlloc: (size: FileSystem.SizeInput) => {
+                  reservedBytes += Number(size);
+                  requests.push(Number(size));
+                  return file.readAlloc(size);
+                },
+              })),
+            );
+          },
+        });
+        const result = yield* runScan({
+          claudeHomePath,
+          codexHomePath,
+          providerInstances: {
+            [ProviderInstanceId.make("claude-work")]: {
+              driver: ProviderDriverKind.make("claudeAgent"),
+              config: { homePath: secondHome },
+            },
+          },
+        }).pipe(Effect.provideService(FileSystem.FileSystem, observedFileSystem));
+        expect(result.candidates.map((candidate) => candidate.path)).toEqual([
+          firstWorkspace,
+          secondWorkspace,
+        ]);
+        expect(result.candidates.map((candidate) => candidate.threadCount)).toEqual([32, 32]);
+        expect(result.truncated).toBe(count === 65 ? true : undefined);
+        expect(opens).toBe(64);
+        expect(reservedBytes).toBe(64 * 1024 * 1024);
+        expect(requests[0]).toBe(4 * 1024);
+        expect(Math.max(...requests)).toBe(32 * 1024);
+      }),
+    );
+
+    it.effect.each([50, 51])("bounds metadata open/read calls for %s short-read files", (count) =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const claudeHomePath = yield* makeTempDir("t3code-short-metadata-home-");
+        const codexHomePath = yield* makeTempDir("t3code-short-metadata-codex-");
+        const workspace = yield* makeTempDir("t3code-short-metadata-project-");
+        const directory = path.join(claudeHomePath, "projects", "p");
+        const template = path.join(directory, "template.jsonl");
+        const record = encodeTranscriptRecord({ cwd: workspace });
+        const contents = " ".repeat(399 - new TextEncoder().encode(record).byteLength) + record;
+        const bytes = new TextEncoder().encode(contents);
+        yield* writeTranscript({
+          filePath: template,
+          contents,
+          mtimeMs: Date.parse("2026-01-01T00:00:00.000Z"),
+        });
+        let operations = 0;
+        const observedFileSystem = FileSystem.FileSystem.of({
+          ...fileSystem,
+          readDirectory: (target, options) =>
+            target === directory
+              ? Effect.succeed(
+                  Array.from({ length: count }, (_, index) => `session-${index}.jsonl`),
+                )
+              : fileSystem.readDirectory(target, options),
+          stat: (filePath) =>
+            fileSystem.stat(path.dirname(filePath) === directory ? template : filePath),
+          open: (filePath, options) => {
+            if (path.dirname(filePath) !== directory) return fileSystem.open(filePath, options);
+            operations += 1;
+            let offset = 0;
+            return fileSystem.open(template, options).pipe(
+              Effect.map((file) => ({
+                ...file,
+                stat: file.stat,
+                readAlloc: () =>
+                  Effect.sync(() => {
+                    operations += 1;
+                    if (offset === bytes.length) return Option.none<Uint8Array>();
+                    return Option.some(bytes.subarray(offset, ++offset));
+                  }),
+              })),
+            );
+          },
+        });
+        const result = yield* runScan({ claudeHomePath, codexHomePath }).pipe(
+          Effect.provideService(FileSystem.FileSystem, observedFileSystem),
+        );
+        expect(operations).toBe(20_000);
+        expect(result.candidates[0]?.threadCount).toBe(50);
+        expect(result.truncated).toBe(count === 51 ? true : undefined);
+      }),
+    );
+
+    it.effect("bounds malformed metadata records without excluding another account", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const claudeHomePath = yield* makeTempDir("t3code-record-metadata-home-");
+        const secondHome = yield* makeTempDir("t3code-record-metadata-second-");
+        const codexHomePath = yield* makeTempDir("t3code-record-metadata-codex-");
+        const workspace = yield* makeTempDir("t3code-record-metadata-project-");
+        const directory = path.join(claudeHomePath, "projects", "p");
+        const template = path.join(directory, "template.jsonl");
+        yield* writeTranscript({
+          filePath: template,
+          contents: "x\n".repeat(1_001),
+          mtimeMs: Date.parse("2026-01-02T00:00:00.000Z"),
+        });
+        yield* writeTranscript({
+          filePath: path.join(secondHome, "projects", "p", "session.jsonl"),
+          contents: encodeTranscriptRecord({ cwd: workspace }),
+          mtimeMs: Date.parse("2026-01-01T00:00:00.000Z"),
+        });
+        let malformedOpens = 0;
+        const observedFileSystem = FileSystem.FileSystem.of({
+          ...fileSystem,
+          readDirectory: (target, options) =>
+            target === directory
+              ? Effect.succeed(Array.from({ length: 102 }, (_, index) => `session-${index}.jsonl`))
+              : fileSystem.readDirectory(target, options),
+          stat: (filePath) =>
+            fileSystem.stat(path.dirname(filePath) === directory ? template : filePath),
+          open: (filePath, options) => {
+            if (path.dirname(filePath) !== directory) return fileSystem.open(filePath, options);
+            malformedOpens += 1;
+            return fileSystem.open(template, options);
+          },
+        });
+        const result = yield* runScan({
+          claudeHomePath,
+          codexHomePath,
+          providerInstances: {
+            [ProviderInstanceId.make("claude-work")]: {
+              driver: ProviderDriverKind.make("claudeAgent"),
+              config: { homePath: secondHome },
+            },
+          },
+        }).pipe(Effect.provideService(FileSystem.FileSystem, observedFileSystem));
+        expect(result.candidates.map((candidate) => candidate.path)).toEqual([workspace]);
+        expect(malformedOpens).toBe(100);
+        expect(result.truncated).toBe(true);
+      }),
+    );
+
+    it.effect.each([19_999, 20_000])(
+      "reports unfinished directory work for %s project directories",
+      (count) =>
+        Effect.gen(function* () {
+          const path = yield* Path.Path;
+          const fileSystem = yield* FileSystem.FileSystem;
+          const claudeHomePath = yield* makeTempDir("t3code-directory-budget-home-");
+          const codexHomePath = yield* makeTempDir("t3code-directory-budget-codex-");
+          const projectsDir = path.join(claudeHomePath, "projects");
+          let reads = 0;
+          const observedFileSystem = FileSystem.FileSystem.of({
+            ...fileSystem,
+            readDirectory: (directory, options) => {
+              if (directory === projectsDir) {
+                reads += 1;
+                return Effect.succeed(
+                  Array.from({ length: count }, (_, index) => `project-${index}`),
+                );
+              }
+              if (path.dirname(directory) === projectsDir) {
+                reads += 1;
+                return Effect.succeed([]);
+              }
+              return fileSystem.readDirectory(directory, options);
+            },
+          });
+          const result = yield* runScan({ claudeHomePath, codexHomePath }).pipe(
+            Effect.provideService(FileSystem.FileSystem, observedFileSystem),
+          );
+          expect(reads).toBe(20_000);
+          expect(result.candidates).toEqual([]);
+          expect(result.truncated).toBe(count === 20_000 ? true : undefined);
+        }),
+    );
+
     it.effect("skips malformed transcripts without failing the scan", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
@@ -1000,6 +1251,54 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
   });
 
   describe("recentThreads", () => {
+    it.effect.each([false, true])(
+      "counts terminal newlines correctly with record overflow=%s",
+      (overflow) =>
+        Effect.gen(function* () {
+          const path = yield* Path.Path;
+          const nowMs = Date.parse("2026-08-24T12:00:00.000Z");
+          yield* TestClock.setTime(nowMs);
+          const claudeHomePath = yield* makeTempDir("t3code-record-limit-claude-");
+          const codexHomePath = yield* makeTempDir("t3code-record-limit-codex-");
+          const workspace = yield* makeTempDir("t3code-record-limit-project-");
+          const directory = path.join(codexHomePath, "sessions", "2026", "08", "24");
+          yield* writeTranscript({
+            filePath: path.join(directory, "rollout-records.jsonl"),
+            contents: makeRecordLimitTranscript(workspace, overflow),
+            mtimeMs: nowMs,
+          });
+          yield* writeTranscript({
+            filePath: path.join(directory, "rollout-older.jsonl"),
+            contents: [
+              encodeTranscriptRecord({
+                type: "session_meta",
+                payload: { id: "older-session", cwd: workspace },
+              }),
+              encodeTranscriptRecord({
+                type: "event_msg",
+                payload: { type: "user_message", message: "Older prompt" },
+              }),
+            ].join("\n"),
+            mtimeMs: nowMs - 1_000,
+          });
+          const outcomes = yield* runRecentThreadOutcomes({
+            claudeHomePath,
+            codexHomePath,
+            workspaceRoot: workspace,
+          });
+          expect(outcomes.map((outcome) => outcome._tag)).toEqual(
+            overflow ? ["Skipped", "Importable"] : ["Importable", "Skipped"],
+          );
+          expect(
+            outcomes.flatMap((outcome) =>
+              outcome._tag === "Importable"
+                ? outcome.thread.messages.map((message) => message.text)
+                : [],
+            ),
+          ).toEqual([overflow ? "Older prompt" : "First prompt"]);
+        }),
+    );
+
     it.effect("imports recent Claude and Codex sessions for the selected project only", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
@@ -1999,81 +2298,106 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
       }),
     );
 
-    it.effect(
-      "keeps recent sessions from a second home when the first home fills the read budget",
-      () =>
-        Effect.gen(function* () {
-          const path = yield* Path.Path;
-          const fileSystem = yield* FileSystem.FileSystem;
-          const nowMs = Date.parse("2026-08-24T12:00:00.000Z");
-          yield* TestClock.setTime(nowMs);
-          const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
-          const codexHomePath = yield* makeTempDir("t3code-codex-home-");
-          const oldWorkspace = yield* makeTempDir("t3code-workspace-old-");
-          const recentWorkspace = yield* makeTempDir("t3code-workspace-recent-");
-          const recentHome = yield* makeTempDir("t3code-claude-recent-home-");
-          const oldDirectory = path.join(claudeHomePath, "projects", "-aaa-old");
-          const oldTranscript = path.join(oldDirectory, "old.jsonl");
-          const recentDirectory = path.join(recentHome, "projects", "-zzz-recent");
+    it.effect("keeps a second account when the first has 5000 newer files", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const nowMs = Date.parse("2026-08-24T12:00:00.000Z");
+        yield* TestClock.setTime(nowMs);
+        const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+        const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+        const oldWorkspace = yield* makeTempDir("t3code-workspace-old-");
+        const recentWorkspace = yield* makeTempDir("t3code-workspace-recent-");
+        const recentHome = yield* makeTempDir("t3code-claude-recent-home-");
+        const oldDirectory = path.join(claudeHomePath, "projects", "-aaa-old");
+        const oldTranscript = path.join(oldDirectory, "old.jsonl");
+        const recentDirectory = path.join(recentHome, "projects", "-zzz-recent");
 
-          yield* writeTranscript({
-            filePath: oldTranscript,
-            contents: encodeTranscriptRecord({
-              type: "user",
-              cwd: oldWorkspace,
-              sessionId: "old-session",
-              message: { role: "user", content: "Old work" },
-            }),
-            mtimeMs: nowMs - 45 * 24 * 60 * 60 * 1000,
-          });
-          yield* writeTranscript({
-            filePath: path.join(recentDirectory, "recent.jsonl"),
-            contents: encodeTranscriptRecord({
-              type: "user",
-              cwd: recentWorkspace,
-              sessionId: "recent-session",
-              message: { role: "user", content: "Recent work" },
-            }),
-            mtimeMs: nowMs,
-          });
+        yield* writeTranscript({
+          filePath: oldTranscript,
+          contents: encodeTranscriptRecord({
+            type: "user",
+            cwd: oldWorkspace,
+            sessionId: "old-session",
+            message: { role: "user", content: "Old work" },
+          }),
+          mtimeMs: nowMs,
+        });
+        yield* writeTranscript({
+          filePath: path.join(recentDirectory, "recent.jsonl"),
+          contents: encodeTranscriptRecord({
+            type: "user",
+            cwd: recentWorkspace,
+            sessionId: "recent-session",
+            message: { role: "user", content: "Recent work" },
+          }),
+          mtimeMs: nowMs - 1_000,
+        });
 
-          const simulatedOldTranscripts = Array.from(
-            { length: 5_000 },
-            (_, index) => `old-${index}.jsonl`,
-          );
-          const resolveTranscript = (filePath: string) =>
-            path.dirname(filePath) === oldDirectory && path.basename(filePath).startsWith("old-")
-              ? oldTranscript
-              : filePath;
-          const simulatedFileSystem = FileSystem.FileSystem.of({
-            ...fileSystem,
-            readDirectory: (directory, options) =>
-              directory === oldDirectory
-                ? Effect.succeed(simulatedOldTranscripts)
-                : fileSystem.readDirectory(directory, options),
-            stat: (filePath) => fileSystem.stat(resolveTranscript(filePath)),
-            open: (filePath, options) => fileSystem.open(resolveTranscript(filePath), options),
-          });
+        const simulatedOldTranscripts = Array.from(
+          { length: 5_000 },
+          (_, index) => `old-${index}.jsonl`,
+        );
+        const resolveTranscript = (filePath: string) =>
+          path.dirname(filePath) === oldDirectory && path.basename(filePath).startsWith("old-")
+            ? oldTranscript
+            : filePath;
+        const simulatedFileSystem = FileSystem.FileSystem.of({
+          ...fileSystem,
+          readDirectory: (directory, options) =>
+            directory === oldDirectory
+              ? Effect.succeed(simulatedOldTranscripts)
+              : fileSystem.readDirectory(directory, options),
+          stat: (filePath) => fileSystem.stat(resolveTranscript(filePath)),
+          open: (filePath, options) => fileSystem.open(resolveTranscript(filePath), options),
+        });
 
-          const threads = yield* runRecentThreads({
-            claudeHomePath,
-            codexHomePath,
-            workspaceRoot: recentWorkspace,
-            providerInstances: {
-              [ProviderInstanceId.make("claude-work")]: {
-                driver: ProviderDriverKind.make("claudeAgent"),
-                config: { homePath: recentHome },
-              },
+        const input = {
+          claudeHomePath,
+          codexHomePath,
+          providerInstances: {
+            [ProviderInstanceId.make("claude-work")]: {
+              driver: ProviderDriverKind.make("claudeAgent"),
+              config: { homePath: recentHome },
             },
-          }).pipe(Effect.provideService(FileSystem.FileSystem, simulatedFileSystem));
+          },
+        };
+        const threads = yield* Effect.gen(function* () {
+          const scanner = yield* AgentSessionScanner.AgentSessionScanner;
+          const scan = yield* scanner.scan;
+          expect(scan.truncated).toBe(true);
+          return yield* scanner.recentThreads(recentWorkspace).pipe(Stream.runCollect);
+        }).pipe(
+          Effect.provide(makeScannerTestLayer(input)),
+          Effect.provideService(FileSystem.FileSystem, simulatedFileSystem),
+        );
 
-          expect(threads.map((thread) => thread.providerSessionId)).toEqual(["recent-session"]);
-        }),
+        expect(
+          threads.flatMap((outcome) =>
+            outcome._tag === "Importable" ? [outcome.thread.providerSessionId] : [],
+          ),
+        ).toEqual(["recent-session"]);
+      }),
     );
   });
 });
 
 describe("parseAgentSessionTranscript", () => {
+  it.each([false, true])(
+    "handles the exact record limit and an interior blank overflow=%s",
+    (overflow) => {
+      const thread = AgentSessionScanner.parseAgentSessionTranscript({
+        contents: makeRecordLimitTranscript("/project", overflow),
+        source: "codex",
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        fallbackSessionId: "unused",
+        lastActiveAtMs: Date.parse("2026-08-24T12:00:00.000Z"),
+      });
+      if (overflow) expect(thread).toBeNull();
+      else expect(thread?.messages.map((message) => message.text)).toEqual(["First prompt"]);
+    },
+  );
+
   it("keeps Claude text and titles while dropping malformed and tool records", () => {
     const thread = AgentSessionScanner.parseAgentSessionTranscript({
       contents: [

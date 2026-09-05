@@ -42,6 +42,7 @@ import {
 import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
 import { Button } from "~/components/ui/button";
 import { PanelTabCloseButton } from "~/components/ui/panel-tab-close-button";
+import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { readTextFromClipboard, writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { cn } from "~/lib/utils";
 import { type TerminalContextSelection } from "~/lib/terminalContext";
@@ -802,6 +803,14 @@ export function TerminalViewport({
             threadRef,
             openPreview,
             fallbackToBrowser,
+          }).catch((error: unknown) => {
+            toastManager.add(
+              stackedThreadToast({
+                type: "error",
+                title: "Unable to open link",
+                description: error instanceof Error ? error.message : "An error occurred.",
+              }),
+            );
           });
           return;
         }

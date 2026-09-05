@@ -48,6 +48,7 @@ import * as ServerSettings from "../serverSettings.ts";
 
 /** Chunk size for transcript reads; stop as soon as session metadata names its cwd. */
 const TRANSCRIPT_PREFIX_BYTES = 32 * 1024;
+const INITIAL_TRANSCRIPT_PREFIX_BYTES = 4 * 1024;
 /** Prevent malformed transcripts from turning project discovery into a full file scan. */
 const MAX_TRANSCRIPT_SCAN_BYTES = 1024 * 1024;
 
@@ -64,6 +65,10 @@ const MAX_TRANSCRIPTS_PER_SOURCE = 5000;
  * and candidate stats share a larger budget. Once it runs out the scan stops.
  */
 const MAX_DISCOVERY_OPERATIONS_PER_SOURCE = MAX_TRANSCRIPTS_PER_SOURCE * 4;
+const MAX_METADATA_BYTES_PER_SOURCE = 64 * 1024 * 1024;
+const MAX_METADATA_OPERATIONS_PER_SOURCE = MAX_TRANSCRIPTS_PER_SOURCE * 4;
+const MAX_METADATA_RECORDS_PER_SOURCE = 100_000;
+const MAX_METADATA_RECORDS_PER_TRANSCRIPT = 1_000;
 const RECENT_THREAD_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 const MAX_IMPORTED_TRANSCRIPT_BYTES = 16 * 1024 * 1024;
 const MAX_IMPORTED_MESSAGES = 200;
@@ -178,6 +183,39 @@ interface TranscriptCandidate {
   readonly filePath: string;
   readonly mtimeMs: number;
   readonly providerInstanceId: ProviderInstanceId;
+  readonly size: number;
+}
+
+interface MetadataReadBudget {
+  bytesRemaining: number;
+  operationsRemaining: number;
+  recordsRemaining: number;
+  truncated: boolean;
+}
+
+function selectMetadataTranscripts(transcripts: ReadonlyArray<TranscriptCandidate>) {
+  const selected: Array<TranscriptCandidate> = [];
+  let pending = Array.from(
+    Map.groupBy(transcripts, (transcript) => transcript.providerInstanceId).values(),
+    (entries) => entries.values(),
+  );
+  while (pending.length > 0 && selected.length < MAX_TRANSCRIPTS_PER_SOURCE) {
+    const nextRound: typeof pending = [];
+    for (const iterator of pending) {
+      if (selected.length === MAX_TRANSCRIPTS_PER_SOURCE) break;
+      const next = iterator.next();
+      if (next.done) continue;
+      selected.push(next.value);
+      nextRound.push(iterator);
+    }
+    pending = nextRound;
+  }
+  return selected;
+}
+
+function splitTranscriptRecords(contents: string, limit: number): string[] {
+  const records = contents.endsWith("\n") ? contents.slice(0, -1) : contents;
+  return records.split("\n", limit);
 }
 
 function extractText(
@@ -222,7 +260,7 @@ export function parseAgentSessionTranscript(
     readonly fallbackSessionId: string;
     readonly lastActiveAtMs: number;
   },
-  lines = input.contents.split("\n", MAX_IMPORT_RECORDS + 1),
+  lines = splitTranscriptRecords(input.contents, MAX_IMPORT_RECORDS + 1),
 ): AgentSessionThread | null {
   if (lines.length > MAX_IMPORT_RECORDS) return null;
   const fallbackTimestamp = DateTime.formatIso(DateTime.makeUnsafe(input.lastActiveAtMs));
@@ -573,21 +611,61 @@ export const make = Effect.gen(function* () {
 
   // A large history snapshot can precede session metadata. Read bounded
   // chunks until a complete record names its cwd or the safety budget ends.
-  const readCwd = Effect.fn("AgentSessionScanner.readCwd")(function* (filePath: string) {
+  const readCwd = Effect.fn("AgentSessionScanner.readCwd")(function* (
+    transcript: TranscriptCandidate,
+    budget: MetadataReadBudget,
+  ) {
+    if (transcript.size === 0) return null;
+    if (
+      budget.bytesRemaining === 0 ||
+      budget.operationsRemaining < 2 ||
+      budget.recordsRemaining === 0
+    ) {
+      budget.truncated = true;
+      return null;
+    }
+    budget.operationsRemaining -= 1;
     return yield* Effect.scoped(
-      fileSystem.open(filePath, { flag: "r" }).pipe(
+      fileSystem.open(transcript.filePath, { flag: "r" }).pipe(
         Effect.flatMap((file) =>
           Effect.gen(function* () {
             const decoder = new TextDecoder();
             let remaining = "";
             let bytesRead = 0;
+            let recordsRead = 0;
+            const maxBytes = Math.min(MAX_TRANSCRIPT_SCAN_BYTES, transcript.size);
+            const reserveRecord = () => {
+              if (
+                recordsRead === MAX_METADATA_RECORDS_PER_TRANSCRIPT ||
+                budget.recordsRemaining === 0
+              ) {
+                budget.truncated = true;
+                return false;
+              }
+              recordsRead += 1;
+              budget.recordsRemaining -= 1;
+              return true;
+            };
+            const readLastRecord = () => {
+              const record = remaining + decoder.decode();
+              return record.length === 0 || !reserveRecord() ? null : extractCwd(record.trim());
+            };
 
-            while (bytesRead < MAX_TRANSCRIPT_SCAN_BYTES) {
-              const next = yield* file.readAlloc(
-                Math.min(TRANSCRIPT_PREFIX_BYTES, MAX_TRANSCRIPT_SCAN_BYTES - bytesRead),
+            while (bytesRead < maxBytes) {
+              if (budget.bytesRemaining === 0 || budget.operationsRemaining === 0) {
+                budget.truncated = true;
+                return null;
+              }
+              const readSize = Math.min(
+                bytesRead === 0 ? INITIAL_TRANSCRIPT_PREFIX_BYTES : TRANSCRIPT_PREFIX_BYTES,
+                maxBytes - bytesRead,
+                budget.bytesRemaining,
               );
+              budget.operationsRemaining -= 1;
+              budget.bytesRemaining -= readSize;
+              const next = yield* file.readAlloc(readSize);
               if (Option.isNone(next)) {
-                return extractCwd(remaining.trim());
+                return readLastRecord();
               }
 
               bytesRead += next.value.byteLength;
@@ -596,12 +674,17 @@ export const make = Effect.gen(function* () {
               remaining = lines.pop() ?? "";
 
               for (const line of lines) {
+                if (!reserveRecord()) return null;
                 const cwd = extractCwd(line.trim());
                 if (cwd !== null) return cwd;
               }
             }
 
-            return null;
+            if (bytesRead < transcript.size) {
+              budget.truncated = true;
+              return null;
+            }
+            return readLastRecord();
           }),
         ),
       ),
@@ -669,8 +752,12 @@ export const make = Effect.gen(function* () {
     function* (homePath: string, providerInstanceId: ProviderInstanceId, operationBudget: number) {
       const projectsDir = path.join(homePath, "projects");
       let operationsRemaining = operationBudget;
+      let truncated = false;
       const readDirectory = (directory: string) => {
-        if (operationsRemaining <= 0) return Effect.succeed<ReadonlyArray<string>>([]);
+        if (operationsRemaining <= 0) {
+          truncated = true;
+          return Effect.succeed<ReadonlyArray<string>>([]);
+        }
         operationsRemaining -= 1;
         return listDirectory(directory);
       };
@@ -678,14 +765,20 @@ export const make = Effect.gen(function* () {
       const transcripts: Array<TranscriptCandidate> = [];
 
       for (const projectDirectory of projectDirectories) {
-        if (operationsRemaining <= 0) break;
+        if (operationsRemaining <= 0) {
+          truncated = true;
+          break;
+        }
         const directory = path.join(projectsDir, projectDirectory);
         const directoryTranscripts = (yield* readDirectory(directory))
           .filter((entry) => entry.endsWith(".jsonl"))
           .map((entry) => path.join(directory, entry));
 
         for (const filePath of directoryTranscripts) {
-          if (operationsRemaining <= 0) break;
+          if (operationsRemaining <= 0) {
+            truncated = true;
+            break;
+          }
           operationsRemaining -= 1;
           const stats = yield* statOption(filePath);
           if (
@@ -699,10 +792,11 @@ export const make = Effect.gen(function* () {
             filePath,
             mtimeMs: stats.value.mtime.value.getTime(),
             providerInstanceId,
+            size: Number(stats.value.size),
           });
         }
       }
-      return transcripts;
+      return { transcripts, truncated };
     },
   );
 
@@ -712,24 +806,43 @@ export const make = Effect.gen(function* () {
 
       const transcripts: Array<TranscriptCandidate> = [];
       let operationsRemaining = operationBudget;
+      let truncated = false;
       const readDirectory = (directory: string) => {
-        if (operationsRemaining <= 0) return Effect.succeed<ReadonlyArray<string>>([]);
+        if (operationsRemaining <= 0) {
+          truncated = true;
+          return Effect.succeed<ReadonlyArray<string>>([]);
+        }
         operationsRemaining -= 1;
         return listDirectory(directory);
       };
       // Date-partitioned directories sort chronologically, so walking them in
       // reverse spends each home's share of the operation budget on recent sessions.
       for (const year of (yield* readDirectory(sessionsDir)).toSorted().toReversed()) {
+        if (operationsRemaining <= 0) {
+          truncated = true;
+          break;
+        }
         for (const month of (yield* readDirectory(path.join(sessionsDir, year)))
           .toSorted()
           .toReversed()) {
+          if (operationsRemaining <= 0) {
+            truncated = true;
+            break;
+          }
           for (const day of (yield* readDirectory(path.join(sessionsDir, year, month)))
             .toSorted()
             .toReversed()) {
+            if (operationsRemaining <= 0) {
+              truncated = true;
+              break;
+            }
             const directory = path.join(sessionsDir, year, month, day);
             for (const entry of (yield* readDirectory(directory)).toSorted().toReversed()) {
               if (!entry.startsWith("rollout-") || !entry.endsWith(".jsonl")) continue;
-              if (operationsRemaining <= 0) break;
+              if (operationsRemaining <= 0) {
+                truncated = true;
+                break;
+              }
               const filePath = path.join(directory, entry);
               operationsRemaining -= 1;
               const stats = yield* statOption(filePath);
@@ -742,22 +855,21 @@ export const make = Effect.gen(function* () {
                   filePath,
                   mtimeMs: stats.value.mtime.value.getTime(),
                   providerInstanceId,
+                  size: Number(stats.value.size),
                 });
               }
             }
-            if (operationsRemaining <= 0) break;
           }
-          if (operationsRemaining <= 0) break;
         }
-        if (operationsRemaining <= 0) break;
       }
-      return transcripts;
+      return { transcripts, truncated };
     },
   );
 
   const groupTranscriptsByCwd = Effect.fn("AgentSessionScanner.groupTranscriptsByCwd")(function* (
     source: AgentSessionSource,
     transcripts: ReadonlyArray<TranscriptCandidate>,
+    budget: MetadataReadBudget,
   ) {
     const byOwnerAndCwd = new Map<
       string,
@@ -770,7 +882,7 @@ export const make = Effect.gen(function* () {
     >();
 
     for (const transcript of transcripts) {
-      const cwd = yield* readCwd(transcript.filePath);
+      const cwd = yield* readCwd(transcript, budget);
       if (cwd === null) continue;
       const key = `${transcript.providerInstanceId}\0${cwd}`;
       const existing = byOwnerAndCwd.get(key);
@@ -803,6 +915,7 @@ export const make = Effect.gen(function* () {
     );
 
     const raw: Array<RawCandidate> = [];
+    let truncated = false;
 
     for (const source of ["claudeAgent", "codex"] as const) {
       const instances: Array<{
@@ -877,29 +990,43 @@ export const make = Effect.gen(function* () {
       const extraOperationBudgets = MAX_DISCOVERY_OPERATIONS_PER_SOURCE % Math.max(1, homes.length);
       for (const [index, home] of homes.entries()) {
         const operationBudget = baseOperationBudget + (index < extraOperationBudgets ? 1 : 0);
-        if (operationBudget === 0) continue;
-        transcriptCandidates.push(
-          ...(yield* source === "claudeAgent"
-            ? discoverClaudeTranscripts(home.homePath, home.providerInstanceId, operationBudget)
-            : discoverCodexTranscripts(home.homePath, home.providerInstanceId, operationBudget)),
-        );
+        if (operationBudget === 0) {
+          truncated = true;
+          continue;
+        }
+        const discovered = yield* source === "claudeAgent"
+          ? discoverClaudeTranscripts(home.homePath, home.providerInstanceId, operationBudget)
+          : discoverCodexTranscripts(home.homePath, home.providerInstanceId, operationBudget);
+        truncated ||= discovered.truncated;
+        transcriptCandidates.push(...discovered.transcripts);
       }
 
       transcriptCandidates.sort(
         (left, right) =>
           right.mtimeMs - left.mtimeMs || left.filePath.localeCompare(right.filePath),
       );
-      transcriptCandidates.splice(MAX_TRANSCRIPTS_PER_SOURCE);
-      raw.push(...(yield* groupTranscriptsByCwd(source, transcriptCandidates)));
+      if (transcriptCandidates.length > MAX_TRANSCRIPTS_PER_SOURCE) {
+        truncated = true;
+      }
+      // Give each account a turn before taking another file from the same home.
+      const selectedTranscripts = selectMetadataTranscripts(transcriptCandidates);
+      const metadataBudget: MetadataReadBudget = {
+        bytesRemaining: MAX_METADATA_BYTES_PER_SOURCE,
+        operationsRemaining: MAX_METADATA_OPERATIONS_PER_SOURCE,
+        recordsRemaining: MAX_METADATA_RECORDS_PER_SOURCE,
+        truncated: false,
+      };
+      raw.push(...(yield* groupTranscriptsByCwd(source, selectedTranscripts, metadataBudget)));
+      truncated ||= metadataBudget.truncated;
     }
 
-    return raw;
+    return { candidates: raw, truncated };
   });
 
   let cachedCandidates: ReadonlyArray<RawCandidate> | null = null;
 
   const scan: AgentSessionScanner["Service"]["scan"] = Effect.gen(function* () {
-    const raw = yield* collectCandidates();
+    const { candidates: raw, truncated } = yield* collectCandidates();
     cachedCandidates = raw;
 
     // Filesystem identity merges symlinks and case aliases without collapsing
@@ -1011,6 +1138,7 @@ export const make = Effect.gen(function* () {
     return {
       candidates,
       scannedAt: DateTime.formatIso(yield* DateTime.now),
+      ...(truncated ? { truncated: true } : {}),
     };
   });
 
@@ -1025,7 +1153,7 @@ export const make = Effect.gen(function* () {
     const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
     const cutoffMs = nowMs - RECENT_THREAD_WINDOW_MS;
 
-    const candidates = cachedCandidates ?? (yield* collectCandidates());
+    const candidates = cachedCandidates ?? (yield* collectCandidates()).candidates;
     cachedCandidates = candidates;
 
     const eligibleTranscripts: Array<{
@@ -1113,7 +1241,7 @@ export const make = Effect.gen(function* () {
           if (contents === null) {
             return Option.some<AgentSessionRecentThread>({ _tag: "Skipped" });
           }
-          const lines = contents.split("\n", recordsRemaining + 1);
+          const lines = splitTranscriptRecords(contents, recordsRemaining + 1);
           if (lines.length > recordsRemaining) {
             return Option.some<AgentSessionRecentThread>({ _tag: "Skipped" });
           }

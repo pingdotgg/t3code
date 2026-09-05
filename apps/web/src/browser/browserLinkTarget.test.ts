@@ -80,13 +80,13 @@ describe("resolveLinkTarget", () => {
 
 describe("resolveBrowserLinkTargetPreference", () => {
   it.each(["system", "app"] as const)(
-    "uses the current %s preference when client settings cannot be read",
+    "rejects failed reads instead of using the current %s preference",
     async (preference) => {
       settings.browserLinkTarget = preference;
-      vi.mocked(ensureClientSettingsHydrated).mockRejectedValueOnce(
-        new Error("Settings read failed"),
-      );
+      const failure = new Error("Settings read failed");
+      vi.mocked(ensureClientSettingsHydrated).mockRejectedValueOnce(failure);
 
+      await expect(resolveBrowserLinkTargetPreference()).rejects.toBe(failure);
       await expect(resolveBrowserLinkTargetPreference()).resolves.toBe(preference);
     },
   );

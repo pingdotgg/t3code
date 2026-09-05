@@ -112,6 +112,7 @@ function useOnboardingTargetEnvironment(
 
 const AGENT_ONBOARDING_THREAD_ID = ThreadId.make("onboarding-agent-setup");
 const ONBOARDING_STAGES = ["Connect", "Agents", "Projects"] as const;
+const SCAN_LIMIT_MESSAGE = "Scan limit reached. Some projects or conversations may be missing.";
 
 export function WelcomeWizard({
   localAvailable,
@@ -1089,6 +1090,12 @@ function ImportStep({
     [scan.data],
   );
   const more = candidates.length - recent.length;
+  const scanTruncated = scan.data?.truncated === true;
+  const scanLimitNotice = scanTruncated ? (
+    <p className="mt-3 text-sm text-muted-foreground" role="status">
+      {SCAN_LIMIT_MESSAGE}
+    </p>
+  ) : null;
 
   const finishAfterImport = () => {
     const projectRef = resolveOnboardingLandingProject(
@@ -1248,7 +1255,9 @@ function ImportStep({
         description={
           scan.error !== null
             ? "Could not check this computer for projects."
-            : "No existing Claude Code or Codex projects found."
+            : scanTruncated
+              ? SCAN_LIMIT_MESSAGE
+              : "No existing Claude Code or Codex projects found."
         }
         onBack={onBack}
       >
@@ -1262,10 +1271,10 @@ function ImportStep({
             </Button>
           ) : null}
           <Button
-            variant={scan.error !== null ? "ghost-muted" : "default"}
+            variant={scan.error !== null || scanTruncated ? "ghost-muted" : "default"}
             onClick={() => void onDone()}
           >
-            {scan.error !== null ? "Skip" : "Start coding"}
+            {scan.error !== null || scanTruncated ? "Skip" : "Start coding"}
           </Button>
         </div>
       </StepShell>
@@ -1281,6 +1290,7 @@ function ImportStep({
         backDisabled={isImporting}
         description={`${candidates.length} found on ${machineLabel}.`}
       >
+        {scanLimitNotice}
         <div className="mt-6 max-h-72 overflow-x-hidden overflow-y-auto border-y border-border">
           {candidates.map((candidate) => (
             <label
@@ -1338,6 +1348,7 @@ function ImportStep({
       onBack={onBack}
       backDisabled={isImporting}
     >
+      {scanLimitNotice}
       <div className="mt-6 border-y border-border">
         {recent.slice(0, 4).map((candidate) => (
           <div

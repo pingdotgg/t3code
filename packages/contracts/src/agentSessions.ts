@@ -51,6 +51,7 @@ export type AgentSessionProjectCandidate = typeof AgentSessionProjectCandidate.T
 export const AgentSessionScanResult = Schema.Struct({
   candidates: Schema.Array(AgentSessionProjectCandidate),
   scannedAt: IsoDateTime,
+  truncated: Schema.optional(Schema.Boolean),
 });
 export type AgentSessionScanResult = typeof AgentSessionScanResult.Type;
 

@@ -38,6 +38,9 @@ T3 Code finds directories that Claude Code or Codex has used. The default
 selection includes projects active within the last 30 days. Select **Choose**
 to include older projects or change the selection.
 
+A large or malformed history can reach the scan limit. T3 Code keeps the
+projects it found and warns when projects or conversations may be missing.
+
 Imported projects include Codex and Claude conversations active within the last
 30 days. You can continue those conversations in T3 Code.
 

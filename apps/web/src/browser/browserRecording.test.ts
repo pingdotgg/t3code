@@ -243,32 +243,34 @@ describe("browser recording", () => {
     await stopBrowserRecording("recording-tab");
   });
 
-  it.each([30, 60] as const)(
-    "records at %i fps and can restart when client settings cannot be read",
-    async (frameRate) => {
-      clientSettings.browserRecordingFrameRate = frameRate;
-      vi.mocked(ensureClientSettingsHydrated).mockRejectedValueOnce(
-        new Error("Settings read failed"),
-      );
+  it("clears a failed settings read before retrying recording", async () => {
+    const tabId = "settings-read-failure-tab";
+    const error = new Error("Settings read failed");
+    vi.mocked(ensureClientSettingsHydrated).mockRejectedValueOnce(error);
 
-      const startedAt = await startBrowserRecording("settings-read-failure-tab");
-      await expect(startBrowserRecording("settings-read-failure-tab")).resolves.toBe(startedAt);
-      expect(getDisplayMedia).toHaveBeenCalledWith({
-        audio: false,
-        video: { frameRate: { max: frameRate } },
-      });
+    await expect(startBrowserRecording(tabId)).rejects.toBe(error);
 
-      await stopBrowserRecording("settings-read-failure-tab");
-      await startBrowserRecording("settings-read-failure-tab");
-      await stopBrowserRecording("settings-read-failure-tab");
+    expect(readActiveBrowserRecordingTabIds()).toEqual(new Set());
+    expect(useBrowserSurfaceStore.getState().activityByTabId[tabId]).toBeUndefined();
+    expect(animationFrameCount).toBe(0);
+    expect(startScreencast).not.toHaveBeenCalled();
+    expect(stopScreencast).not.toHaveBeenCalled();
+    expect(getDisplayMedia).not.toHaveBeenCalled();
+    expect(FakeMediaRecorder.instances).toHaveLength(0);
 
-      expect(startScreencast).toHaveBeenCalledTimes(2);
-      expect(readActiveBrowserRecordingTabIds()).toEqual(new Set());
-      expect(
-        useBrowserSurfaceStore.getState().activityByTabId["settings-read-failure-tab"],
-      ).toBeUndefined();
-    },
-  );
+    clientSettings.browserRecordingFrameRate = 60;
+    await startBrowserRecording(tabId);
+
+    expect(getDisplayMedia).toHaveBeenCalledWith({
+      audio: false,
+      video: { frameRate: { max: 60 } },
+    });
+    await stopBrowserRecording(tabId);
+
+    expect(startScreencast).toHaveBeenCalledOnce();
+    expect(readActiveBrowserRecordingTabIds()).toEqual(new Set());
+    expect(useBrowserSurfaceStore.getState().activityByTabId[tabId]).toBeUndefined();
+  });
 
   it("stops the native stream when MediaRecorder cleanup fails", async () => {
     const stopTrack = vi.fn();
