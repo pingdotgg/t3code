@@ -459,15 +459,15 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       `,
   });
 
-  const listActiveProjectWorktreeRootRows = SqlSchema.findAll({
+  const listActiveThreadWorktreePathRows = SqlSchema.findAll({
     Request: Schema.Void,
-    Result: Schema.Struct({ worktreeRoot: Schema.String }),
+    Result: Schema.Struct({ worktreePath: Schema.String }),
     execute: () =>
       sql`
-        SELECT DISTINCT worktree_root AS "worktreeRoot"
-        FROM projection_projects
+        SELECT DISTINCT worktree_path AS "worktreePath"
+        FROM projection_threads
         WHERE deleted_at IS NULL
-          AND worktree_root IS NOT NULL
+          AND worktree_path IS NOT NULL
       `,
   });
 
@@ -2610,14 +2610,14 @@ pending_approval_requests AS (
         ),
       );
 
-  const listActiveProjectWorktreeRoots: ProjectionSnapshotQueryShape["listActiveProjectWorktreeRoots"] =
+  const listActiveThreadWorktreePaths: ProjectionSnapshotQueryShape["listActiveThreadWorktreePaths"] =
     () =>
-      listActiveProjectWorktreeRootRows().pipe(
-        Effect.map((rows) => rows.map((row) => row.worktreeRoot)),
+      listActiveThreadWorktreePathRows().pipe(
+        Effect.map((rows) => rows.map((row) => row.worktreePath)),
         Effect.mapError(
           toPersistenceSqlOrDecodeError(
-            "ProjectionSnapshotQuery.listActiveProjectWorktreeRoots:query",
-            "ProjectionSnapshotQuery.listActiveProjectWorktreeRoots:decodeRows",
+            "ProjectionSnapshotQuery.listActiveThreadWorktreePaths:query",
+            "ProjectionSnapshotQuery.listActiveThreadWorktreePaths:decodeRows",
           ),
         ),
       );
@@ -3226,7 +3226,7 @@ pending_approval_requests AS (
     getCounts,
     getEventReplayStats,
     getActiveProjectByWorkspaceRoot,
-    listActiveProjectWorktreeRoots,
+    listActiveThreadWorktreePaths,
     getProjectShellById,
     getFirstActiveThreadIdByProjectId,
     getThreadCheckpointContext,

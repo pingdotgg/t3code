@@ -565,6 +565,61 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
     }),
   );
 
+  it.effect("lists recorded worktree paths once, skipping threads without one", () =>
+    Effect.gen(function* () {
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const sql = yield* SqlClient.SqlClient;
+
+      yield* sql`DELETE FROM projection_threads`;
+
+      const insertThread = (
+        threadId: string,
+        worktreePath: string | null,
+        deletedAt: string | null,
+      ) => sql`
+        INSERT INTO projection_threads (
+          thread_id,
+          project_id,
+          title,
+          model_selection_json,
+          runtime_mode,
+          interaction_mode,
+          worktree_path,
+          created_at,
+          updated_at,
+          deleted_at
+        )
+        VALUES (
+          ${threadId},
+          'project-1',
+          'Thread',
+          '{"provider":"codex","model":"gpt-5-codex"}',
+          'full-access',
+          'default',
+          ${worktreePath},
+          '2026-01-01T00:00:00.000Z',
+          '2026-01-01T00:00:00.000Z',
+          ${deletedAt}
+        )
+      `;
+
+      // Two threads share a path, one has none, one is deleted: the guard that
+      // consumes this needs each live path exactly once and nothing else.
+      yield* insertThread("thread-a", "/custom/worktrees/feature-a", null);
+      yield* insertThread("thread-b", "/custom/worktrees/feature-a", null);
+      yield* insertThread("thread-c", "/custom/worktrees/feature-c", null);
+      yield* insertThread("thread-d", null, null);
+      yield* insertThread("thread-e", "/custom/worktrees/deleted", "2026-01-01T00:00:00.000Z");
+
+      const paths = yield* snapshotQuery.listActiveThreadWorktreePaths();
+
+      assert.deepStrictEqual(
+        [...paths].sort(),
+        ["/custom/worktrees/feature-a", "/custom/worktrees/feature-c"],
+      );
+    }),
+  );
+
   it.effect("keeps archived threads out of the main shell snapshot", () =>
     Effect.gen(function* () {
       const snapshotQuery = yield* ProjectionSnapshotQuery;

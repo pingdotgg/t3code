@@ -29,7 +29,21 @@ export const makeProjectWorktreeRootResolver = (services: {
       );
 
     const configured = Option.getOrUndefined(project)?.worktreeRoot;
-    return configured == null
-      ? undefined
-      : services.path.resolve(expandHomePathWith(configured, services.path));
+    if (configured == null) return undefined;
+
+    // The contract accepts every platform's absolute form, because any client
+    // can edit a project it does not host. Only this server knows which of
+    // those forms its own path module understands: a Windows root reaching a
+    // POSIX server would resolve under the server's cwd rather than fail, so
+    // the default location is the safer answer.
+    const expanded = expandHomePathWith(configured, services.path);
+    if (!services.path.isAbsolute(expanded)) {
+      yield* Effect.logWarning(
+        "project worktree location is not absolute on this server; using the default location",
+        { workspaceRoot, worktreeRoot: configured },
+      );
+      return undefined;
+    }
+
+    return services.path.resolve(expanded);
   });

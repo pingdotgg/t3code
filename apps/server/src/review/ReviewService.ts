@@ -79,17 +79,19 @@ export const make = Effect.gen(function* () {
       return;
     }
 
-    // Any configured root counts, matching the shared default worktrees
-    // directory this already accepts. A failed read honors only the defaults,
-    // denying rather than over-permitting.
-    const configuredRoots = yield* projectionSnapshotQuery
-      .listActiveProjectWorktreeRoots()
+    // A worktree outside both defaults is authorized by the path a thread
+    // actually holds, not by its project's current worktree location: the
+    // recorded path stays valid after that setting changes, and it cannot widen
+    // the guard the way a root like `/` would. A failed read honors only the
+    // defaults, denying rather than over-permitting.
+    const worktreePaths = yield* projectionSnapshotQuery
+      .listActiveThreadWorktreePaths()
       .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
-    for (const configuredRoot of configuredRoots) {
-      const resolvedRoot = yield* canonicalizePath(expandHomePathWith(configuredRoot, path)).pipe(
+    for (const worktreePath of worktreePaths) {
+      const resolvedWorktree = yield* canonicalizePath(expandHomePathWith(worktreePath, path)).pipe(
         Effect.orElseSucceed(() => null),
       );
-      if (resolvedRoot !== null && isWithinRoot(candidate, resolvedRoot)) {
+      if (resolvedWorktree !== null && isWithinRoot(candidate, resolvedWorktree)) {
         return;
       }
     }

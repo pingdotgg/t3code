@@ -2837,7 +2837,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     const targetBranch = input.newRefName ?? input.refName;
     const sanitizedBranch = targetBranch.replace(/\//g, "-");
     const repoName = path.basename(input.cwd);
-    // A configured root is already repo-specific; the shared default is not.
+    // A configured root belongs to one checkout, so it needs no repository
+    // segment; the shared default is one directory for every repo, so it does.
     const rootDir = input.rootDir ?? path.join(worktreesDir, repoName);
     const worktreePath = input.path ?? path.join(rootDir, sanitizedBranch);
     const args = input.newRefName

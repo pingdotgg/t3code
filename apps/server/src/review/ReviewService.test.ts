@@ -15,12 +15,12 @@ function makeLayer(input: {
   readonly workspaceRoot: string;
   readonly baseDir: string;
   readonly detectCalls?: Array<{ readonly cwd: string }>;
-  readonly projectWorktreeRoots?: ReadonlyArray<string>;
+  readonly threadWorktreePaths?: ReadonlyArray<string>;
 }) {
   return ReviewService.layer.pipe(
     Layer.provide(
       Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
-        listActiveProjectWorktreeRoots: () => Effect.succeed(input.projectWorktreeRoots ?? []),
+        listActiveThreadWorktreePaths: () => Effect.succeed(input.threadWorktreePaths ?? []),
       }),
     ),
     Layer.provide(
@@ -115,7 +115,7 @@ describe("ReviewService", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("allows diff preview cwd inside a project's configured worktree root", () =>
+  it.effect("allows diff preview cwd inside a thread's recorded worktree path", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const workspaceRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-workspace-" });
@@ -134,7 +134,7 @@ describe("ReviewService", () => {
             workspaceRoot,
             baseDir,
             detectCalls,
-            projectWorktreeRoots: [worktreeRoot],
+            threadWorktreePaths: [worktreeCwd],
           }),
         ),
       );
@@ -144,12 +144,14 @@ describe("ReviewService", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("still rejects a cwd outside every configured worktree root", () =>
+  it.effect("still rejects a cwd outside every recorded worktree path", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const workspaceRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-workspace-" });
       const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-base-" });
       const worktreeRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-worktrees-" });
+      const worktreeCwd = `${worktreeRoot}/feature-branch`;
+      yield* fs.makeDirectory(worktreeCwd, { recursive: true });
       const outsideRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-outside-" });
       const detectCalls: Array<{ readonly cwd: string }> = [];
 
@@ -162,7 +164,38 @@ describe("ReviewService", () => {
             workspaceRoot,
             baseDir,
             detectCalls,
-            projectWorktreeRoots: [worktreeRoot],
+            threadWorktreePaths: [worktreeCwd],
+          }),
+        ),
+      );
+
+      assert.strictEqual(error._tag, "VcsRepositoryDetectionError");
+      assert.deepStrictEqual(detectCalls, []);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("does not authorize the whole directory holding a recorded worktree", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const workspaceRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-workspace-" });
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-base-" });
+      const worktreeRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-worktrees-" });
+      const worktreeCwd = `${worktreeRoot}/feature-branch`;
+      const siblingCwd = `${worktreeRoot}/unrelated-checkout`;
+      yield* fs.makeDirectory(worktreeCwd, { recursive: true });
+      yield* fs.makeDirectory(siblingCwd, { recursive: true });
+      const detectCalls: Array<{ readonly cwd: string }> = [];
+
+      const error = yield* Effect.gen(function* () {
+        const review = yield* ReviewService.ReviewService;
+        return yield* review.getDiffPreview({ cwd: siblingCwd }).pipe(Effect.flip);
+      }).pipe(
+        Effect.provide(
+          makeLayer({
+            workspaceRoot,
+            baseDir,
+            detectCalls,
+            threadWorktreePaths: [worktreeCwd],
           }),
         ),
       );

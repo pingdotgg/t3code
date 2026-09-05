@@ -384,7 +384,6 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
         defaultModelSelection: ModelSelection | null;
         defaultThreadEnvMode: ThreadEnvMode | null;
         autoPull: boolean;
-        worktreeRoot: string | null;
         faviconPath: string | null;
         projectIcon: ProjectIconOverride | null;
       }>,
@@ -479,28 +478,6 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
     [updateAllMembers],
   );
 
-  const worktreeRoot = representative.worktreeRoot ?? null;
-  const setWorktreeRoot = useCallback(
-    (nextRoot: string) => {
-      const trimmed = nextRoot.trim();
-      if (trimmed === (worktreeRoot ?? "")) return;
-      // Caught here so a relative path reports itself instead of failing the write.
-      if (trimmed !== "" && !/^(?:~(?:$|[/\\])|\/|\\\\|[A-Za-z]:[/\\])/.test(trimmed)) {
-        toastManager.add({
-          type: "warning",
-          title: "Worktree location must be an absolute path",
-          description: "Start it with / or ~/ so it does not depend on where the server runs.",
-        });
-        return;
-      }
-      void updateAllMembers(
-        { worktreeRoot: trimmed === "" ? null : trimmed },
-        "Failed to update worktree location",
-      );
-    },
-    [updateAllMembers, worktreeRoot],
-  );
-
   const autoPull = representative.autoPull ?? false;
   const setAutoPull = useCallback(
     (enabled: boolean) =>
@@ -533,6 +510,42 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
   const selectedCheckout =
     group.memberProjects.find((member) => member.physicalProjectKey === selectedCheckoutKey) ??
     representative;
+  // Per checkout rather than per group: the root is a filesystem path, so it is
+  // only meaningful on the machine that owns this checkout.
+  const checkoutWorktreeRoot = selectedCheckout.worktreeRoot ?? null;
+  const setCheckoutWorktreeRoot = useCallback(
+    async (nextRoot: string) => {
+      const trimmed = nextRoot.trim();
+      if (trimmed === (checkoutWorktreeRoot ?? "")) return;
+      // Caught here so a relative path reports itself instead of failing the write.
+      if (trimmed !== "" && !/^(?:~(?:$|[/\\])|\/|\\\\|[A-Za-z]:[/\\])/.test(trimmed)) {
+        toastManager.add({
+          type: "warning",
+          title: "Worktree location must be an absolute path",
+          description: "Start it with / or ~/ so it does not depend on where the server runs.",
+        });
+        return;
+      }
+      const result = mapAtomCommandResult(
+        await updateProject({
+          environmentId: selectedCheckout.environmentId,
+          input: { projectId: selectedCheckout.id, worktreeRoot: trimmed === "" ? null : trimmed },
+        }),
+        () => undefined,
+      );
+      if (result._tag === "Failure") {
+        reportFailure("Failed to update worktree location", result);
+      }
+    },
+    [
+      checkoutWorktreeRoot,
+      reportFailure,
+      selectedCheckout.environmentId,
+      selectedCheckout.id,
+      updateProject,
+    ],
+  );
+
   const selectedServerConfig = useAtomValue(
     serverEnvironment.configValueAtom(selectedCheckout.environmentId),
   );
@@ -1011,33 +1024,6 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
             }
           />
           <SettingsRow
-            title="Worktree location"
-            description="Directory new worktrees for this project are created in, one per branch. Leave empty to use T3 Code's own worktrees directory. Existing worktrees stay where they are."
-            resetAction={
-              worktreeRoot !== null ? (
-                <SettingResetButton
-                  label="project worktree location"
-                  onClick={() => setWorktreeRoot("")}
-                />
-              ) : null
-            }
-            control={
-              <Input
-                key={`${group.projectKey}:worktree-root:${worktreeRoot ?? ""}`}
-                size="sm"
-                className="w-full sm:w-72"
-                aria-label="Worktree location"
-                placeholder="~/code/myrepo.worktrees"
-                spellCheck={false}
-                defaultValue={worktreeRoot ?? ""}
-                onBlur={(event) => setWorktreeRoot(event.currentTarget.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") event.currentTarget.blur();
-                }}
-              />
-            }
-          />
-          <SettingsRow
             title="Automatically pull"
             description="Keeps the default branch current in the background when the checkout has no local changes or commits."
             control={
@@ -1105,6 +1091,33 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
               </div>
             </div>
           </div>
+          <SettingsRow
+            title="Worktree location"
+            description="Directory new worktrees for this checkout are created in, one per branch. Leave empty to use T3 Code's own worktrees directory. Existing worktrees stay where they are."
+            resetAction={
+              checkoutWorktreeRoot !== null ? (
+                <SettingResetButton
+                  label="checkout worktree location"
+                  onClick={() => void setCheckoutWorktreeRoot("")}
+                />
+              ) : null
+            }
+            control={
+              <Input
+                key={`${selectedCheckout.physicalProjectKey}:worktree-root:${checkoutWorktreeRoot ?? ""}`}
+                size="sm"
+                className="w-full sm:w-72"
+                aria-label="Worktree location"
+                placeholder="~/code/myrepo.worktrees"
+                spellCheck={false}
+                defaultValue={checkoutWorktreeRoot ?? ""}
+                onBlur={(event) => void setCheckoutWorktreeRoot(event.currentTarget.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") event.currentTarget.blur();
+                }}
+              />
+            }
+          />
           <SettingsRow
             title="Project grouping"
             description="How this checkout joins project groups in the sidebar. Changing it can move you to a different project group."

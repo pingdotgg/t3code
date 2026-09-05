@@ -1,10 +1,12 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeOS from "node:os";
 
+import * as NodePath from "@effect/platform-node/NodePath";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 
 import type { OrchestrationProject } from "@t3tools/contracts";
@@ -33,7 +35,8 @@ const makeProject = (worktreeRoot: string | null): OrchestrationProject => ({
   deletedAt: null,
 });
 
-const resolveWith = (
+const resolveOn = (
+  pathLayer: Layer.Layer<Path.Path>,
   getActiveProjectByWorkspaceRoot: ProjectionSnapshotQueryShape["getActiveProjectByWorkspaceRoot"],
 ) =>
   Effect.gen(function* () {
@@ -45,7 +48,11 @@ const resolveWith = (
       path,
     });
     return yield* resolve(WORKSPACE_ROOT);
-  }).pipe(Effect.provide(NodeServices.layer));
+  }).pipe(Effect.provide(pathLayer));
+
+const resolveWith = (
+  getActiveProjectByWorkspaceRoot: ProjectionSnapshotQueryShape["getActiveProjectByWorkspaceRoot"],
+) => resolveOn(NodeServices.layer, getActiveProjectByWorkspaceRoot);
 
 describe("resolveProjectWorktreeRoot", () => {
   it.effect("returns undefined when the project sets no override", () =>
@@ -68,6 +75,26 @@ describe("resolveProjectWorktreeRoot", () => {
         Effect.succeed(Option.some(makeProject("~/code/myrepo.worktrees"))),
       );
       assert.strictEqual(resolved, `${NodeOS.homedir()}/code/myrepo.worktrees`);
+    }),
+  );
+
+  it.effect("falls back to the default location for a root this platform cannot resolve", () =>
+    Effect.gen(function* () {
+      // A Windows root reaching a POSIX server: resolving it would silently put
+      // worktrees under the server's cwd, so the default location wins.
+      const resolved = yield* resolveOn(NodePath.layerPosix, () =>
+        Effect.succeed(Option.some(makeProject("C:\\worktrees"))),
+      );
+      assert.strictEqual(resolved, undefined);
+    }),
+  );
+
+  it.effect("keeps a Windows root on a Windows server", () =>
+    Effect.gen(function* () {
+      const resolved = yield* resolveOn(NodePath.layerWin32, () =>
+        Effect.succeed(Option.some(makeProject("C:\\worktrees"))),
+      );
+      assert.strictEqual(resolved, "C:\\worktrees");
     }),
   );
 
