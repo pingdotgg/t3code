@@ -186,7 +186,7 @@ export class VcsStatusBroadcaster extends Context.Service<
     ) => Effect.Effect<VcsStatusLocalResult, GitManagerServiceError>;
     readonly refreshStatus: (cwd: string) => Effect.Effect<VcsStatusResult, GitManagerServiceError>;
     /**
-     * Refresh a loaded cwd after a turn if background policy allows it.
+     * Refresh PR metadata for a loaded cwd if background policy allows it.
      * GitManager retries missing PRs for the current branch and keeps known
      * PRs and failed lookup backoff cached. This does not fetch Git remotes.
      */
@@ -526,10 +526,6 @@ export const make = Effect.gen(function* () {
           ? DEFAULT_VCS_STATUS_REFRESH_INTERVAL
           : configuredInterval;
         const needsInitialRefresh = yield* Ref.get(needsInitialRefreshRef);
-        if (Duration.isZero(configuredInterval) && !needsInitialRefresh) {
-          return activeInterval;
-        }
-
         const demandCwds = yield* Ref.get(demandCwdsRef);
         const shouldRun =
           needsInitialRefresh ||
@@ -546,10 +542,14 @@ export const make = Effect.gen(function* () {
           return activeInterval;
         }
 
-        const exit = yield* refreshRemoteStatus(cwd, {
-          refreshUpstream: !Duration.isZero(configuredInterval),
-          policyCwds: [...demandCwds.keys()],
-        }).pipe(Effect.exit);
+        const refresh =
+          Duration.isZero(configuredInterval) && !needsInitialRefresh
+            ? refreshPullRequestStatus(cwd)
+            : refreshRemoteStatus(cwd, {
+                refreshUpstream: !Duration.isZero(configuredInterval),
+                policyCwds: [...demandCwds.keys()],
+              });
+        const exit = yield* refresh.pipe(Effect.exit);
         if (Exit.isSuccess(exit)) {
           yield* Ref.set(needsInitialRefreshRef, false);
           yield* Ref.set(consecutiveFailuresRef, 0);

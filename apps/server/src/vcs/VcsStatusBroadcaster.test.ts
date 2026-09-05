@@ -12,6 +12,7 @@ import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Queue from "effect/Queue";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
@@ -142,6 +143,74 @@ function makeBackgroundPolicyLayer(shouldRunScopeWork: (scope: BackgroundScope) 
     shouldRunScopeWork: (scope) => Effect.sync(() => shouldRunScopeWork(scope)),
     shouldRunOpportunisticWork: Effect.succeed(true),
   });
+}
+
+function makePollingFixture(
+  readRemote?: (call: number) => Effect.Effect<VcsStatusRemoteResult | null, GitManagerError>,
+) {
+  const state = {
+    local: baseLocalStatus,
+    remote: baseRemoteStatus as VcsStatusRemoteResult | null,
+    interval: Duration.zero,
+    backgroundWorkEnabled: true,
+    reads: [] as Array<
+      Parameters<GitWorkflowService.GitWorkflowService["Service"]["remoteStatus"]>[1]
+    >,
+    invalidations: 0,
+    pulls: 0,
+  };
+  const layer = VcsStatusBroadcaster.layer.pipe(
+    Layer.provide(FileSystem.layerNoop({ realPath: (cwd) => Effect.succeed(cwd) })),
+    Layer.provide(makeBackgroundPolicyLayer(() => state.backgroundWorkEnabled)),
+    Layer.provide(
+      Layer.succeed(VcsStatusBroadcaster.VcsAutoPullPolicy, {
+        isEnabled: () => Effect.succeed(true),
+      }),
+    ),
+    Layer.provide(
+      Layer.mock(GitWorkflowService.GitWorkflowService)({
+        localStatus: () => Effect.sync(() => state.local),
+        remoteStatus: (_input, options) =>
+          Effect.suspend(() => {
+            state.reads.push(options);
+            return readRemote?.(state.reads.length) ?? Effect.succeed(state.remote);
+          }),
+        invalidateLocalStatus: () =>
+          Effect.sync(() => {
+            state.invalidations += 1;
+          }),
+        invalidateRemoteStatus: () =>
+          Effect.sync(() => {
+            state.invalidations += 1;
+          }),
+        invalidateStatus: () =>
+          Effect.sync(() => {
+            state.invalidations += 1;
+          }),
+        pullCurrentBranch: () =>
+          Effect.sync(() => {
+            state.pulls += 1;
+            return { status: "pulled" as const, refName: "main", upstreamRef: "origin/main" };
+          }),
+      }),
+    ),
+    Layer.provideMerge(TestClock.layer()),
+  );
+  const subscribe = Effect.gen(function* () {
+    const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+    const events = yield* Queue.unbounded<VcsStatusStreamEvent>();
+    const fiber = yield* Stream.runForEach(
+      broadcaster.streamStatus(
+        { cwd: "/repo" },
+        { automaticRemoteRefreshInterval: Effect.sync(() => state.interval) },
+      ),
+      (event) => Queue.offer(events, event),
+    ).pipe(Effect.forkScoped);
+    const snapshot = yield* Queue.take(events);
+    assert.equal(snapshot._tag, "snapshot");
+    return { events, fiber };
+  });
+  return { state, layer, subscribe };
 }
 
 describe("VcsStatusBroadcaster", () => {
@@ -628,60 +697,193 @@ describe("VcsStatusBroadcaster", () => {
     }).pipe(Effect.provide(makeTestLayer(state)));
   });
 
-  it.effect("loads remote status once when periodic refreshes are disabled", () => {
-    const state = {
-      currentLocalStatus: baseLocalStatus,
-      currentRemoteStatus: remoteStatusWithPr,
-      localStatusCalls: 0,
-      remoteStatusCalls: 0,
-      localInvalidationCalls: 0,
-      remoteInvalidationCalls: 0,
-      remoteStatusRefreshUpstreamValues: [] as Array<boolean | undefined>,
-    };
+  it.effect.each([
+    { refName: "feature/status-broadcast", isDefaultRef: false },
+    { refName: "main", isDefaultRef: true },
+  ])(
+    "discovers an externally opened PR on $refName with Git fetch disabled without fetching or pulling",
+    ({ refName, isDefaultRef }) => {
+      const { state, layer, subscribe } = makePollingFixture();
+      state.local = { ...baseLocalStatus, refName, isDefaultRef };
+      return Effect.gen(function* () {
+        const { events } = yield* subscribe;
+        assert.deepStrictEqual(yield* Queue.take(events), {
+          _tag: "remoteUpdated",
+          remote: baseRemoteStatus,
+        });
+        state.remote = {
+          ...baseRemoteStatus,
+          behindCount: 2,
+          pr: {
+            number: 4106,
+            title: "Opened externally",
+            url: "https://github.com/example/audit/pull/4106",
+            baseRef: "review-target",
+            headRef: refName,
+            state: "open",
+          },
+        };
+        yield* TestClock.adjust(Duration.seconds(29));
+        assert.equal(state.reads.length, 1);
+        yield* TestClock.adjust(Duration.seconds(1));
+        assert.equal(state.reads.length, 2);
+        assert.deepStrictEqual(yield* Queue.take(events), {
+          _tag: "remoteUpdated",
+          remote: state.remote,
+        });
+        assert.deepStrictEqual(
+          state.reads.map((options) => options?.refreshUpstream),
+          [false, false],
+        );
+        assert.equal(state.reads[1]?.refreshMissingPullRequest, true);
+        assert.equal(state.invalidations, 0);
+        assert.equal(state.pulls, 0);
+      }).pipe(Effect.scoped, Effect.provide(layer));
+    },
+  );
 
+  it.effect("pauses metadata polling without eligible demand and resumes without Git fetch", () => {
+    const { state, layer, subscribe } = makePollingFixture();
+    state.backgroundWorkEnabled = false;
     return Effect.gen(function* () {
-      const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
-      const scope = yield* Scope.make();
-      const snapshotDeferred = yield* Deferred.make<VcsStatusStreamEvent>();
-      const remoteUpdatedDeferred = yield* Deferred.make<VcsStatusStreamEvent>();
-      yield* Stream.runForEach(
-        broadcaster.streamStatus(
-          { cwd: "/repo" },
-          { automaticRemoteRefreshInterval: Effect.succeed(Duration.zero) },
-        ),
-        (event) => {
-          if (event._tag === "snapshot") {
-            return Deferred.succeed(snapshotDeferred, event).pipe(Effect.ignore);
-          }
-          if (event._tag === "remoteUpdated") {
-            return Deferred.succeed(remoteUpdatedDeferred, event).pipe(Effect.ignore);
-          }
-          return Effect.void;
-        },
-      ).pipe(Effect.forkIn(scope));
+      const { events } = yield* subscribe;
+      yield* Queue.take(events);
+      state.remote = remoteStatusWithPr;
+      yield* TestClock.adjust(Duration.minutes(1));
+      assert.equal(state.reads.length, 1);
+      state.backgroundWorkEnabled = true;
+      yield* TestClock.adjust(Duration.seconds(30));
+      assert.equal(state.reads.length, 2);
+      assert.deepStrictEqual(yield* Queue.take(events), {
+        _tag: "remoteUpdated",
+        remote: state.remote,
+      });
+      state.backgroundWorkEnabled = false;
+      yield* TestClock.adjust(Duration.seconds(90));
+      assert.equal(state.reads.length, 2);
+      state.backgroundWorkEnabled = true;
+      yield* TestClock.adjust(Duration.seconds(30));
+      assert.equal(state.reads.length, 3);
+      assert.equal(state.invalidations, 0);
+    }).pipe(Effect.scoped, Effect.provide(layer));
+  });
 
-      const snapshot = yield* Deferred.await(snapshotDeferred);
-      const remoteUpdated = yield* Deferred.await(remoteUpdatedDeferred);
+  it.effect(
+    "shares metadata polling and interrupts its blocked read only after the last subscriber",
+    () => {
+      const started = Deferred.makeUnsafe<void>();
+      const interrupted = Deferred.makeUnsafe<void>();
+      const { state, layer, subscribe } = makePollingFixture((call) =>
+        call === 2
+          ? Deferred.succeed(started, undefined).pipe(
+              Effect.andThen(Effect.never),
+              Effect.onInterrupt(() => Deferred.succeed(interrupted, undefined)),
+            )
+          : Effect.succeed(call === 1 ? baseRemoteStatus : remoteStatusWithPr),
+      );
+      return Effect.gen(function* () {
+        const first = yield* subscribe;
+        yield* Queue.take(first.events);
+        const second = yield* subscribe;
+        yield* TestClock.adjust(Duration.seconds(30));
+        assert.equal(state.reads.length, 2);
+        yield* Deferred.await(started);
+        yield* Fiber.interrupt(first.fiber);
+        assert.isTrue(Option.isNone(yield* Deferred.poll(interrupted)));
+        yield* Fiber.interrupt(second.fiber);
+        yield* Deferred.await(interrupted);
+        yield* TestClock.adjust(Duration.minutes(1));
+        assert.equal(state.reads.length, 2);
 
-      assert.deepStrictEqual(snapshot, {
-        _tag: "snapshot",
-        local: baseLocalStatus,
-        remote: null,
-      } satisfies VcsStatusStreamEvent);
-      assert.deepStrictEqual(remoteUpdated, {
+        const reopened = yield* subscribe;
+        yield* TestClock.adjust(Duration.seconds(30));
+        assert.equal(state.reads.length, 3);
+        assert.deepStrictEqual(yield* Queue.take(reopened.events), {
+          _tag: "remoteUpdated",
+          remote: remoteStatusWithPr,
+        });
+        assert.equal(state.invalidations, 0);
+      }).pipe(Effect.scoped, Effect.provide(layer));
+    },
+  );
+
+  it.effect("backs off failed metadata polls and resets the delay after recovery", () => {
+    const { state, layer, subscribe } = makePollingFixture((call) =>
+      call === 2 || call === 3
+        ? Effect.fail(
+            new GitManagerError({ operation: "test", cwd: "/repo", detail: "Unavailable" }),
+          )
+        : Effect.succeed(call === 1 ? baseRemoteStatus : remoteStatusWithPr),
+    );
+    return Effect.gen(function* () {
+      const { events } = yield* subscribe;
+      yield* Queue.take(events);
+      yield* TestClock.adjust(Duration.seconds(30));
+      assert.equal(state.reads.length, 2);
+      yield* TestClock.adjust(Duration.seconds(29));
+      assert.equal(state.reads.length, 2);
+      yield* TestClock.adjust(Duration.seconds(1));
+      assert.equal(state.reads.length, 3);
+      yield* TestClock.adjust(Duration.seconds(59));
+      assert.equal(state.reads.length, 3);
+      yield* TestClock.adjust(Duration.seconds(1));
+      assert.equal(state.reads.length, 4);
+      assert.deepStrictEqual(yield* Queue.take(events), {
         _tag: "remoteUpdated",
         remote: remoteStatusWithPr,
-      } satisfies VcsStatusStreamEvent);
-      assert.equal(state.remoteStatusCalls, 1);
-      assert.equal(state.remoteInvalidationCalls, 0);
-      assert.deepStrictEqual(state.remoteStatusRefreshUpstreamValues, [false]);
+      });
+      yield* TestClock.adjust(Duration.seconds(30));
+      assert.equal(state.reads.length, 5);
+      assert.equal(state.invalidations, 0);
+    }).pipe(Effect.scoped, Effect.provide(layer));
+  });
 
+  it.effect("keeps cached non-repository remote results idle when Git fetch is disabled", () => {
+    const { state, layer, subscribe } = makePollingFixture();
+    state.remote = null;
+    return Effect.gen(function* () {
+      const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+      yield* broadcaster.getStatus({ cwd: "/repo" });
+      state.remote = remoteStatusWithPr;
+      yield* subscribe;
       yield* TestClock.adjust(Duration.minutes(2));
-      assert.equal(state.remoteStatusCalls, 1);
-      assert.equal(state.remoteInvalidationCalls, 0);
+      assert.equal(state.reads.length, 1);
+      assert.equal(state.invalidations, 0);
+    }).pipe(Effect.scoped, Effect.provide(layer));
+  });
 
-      yield* Scope.close(scope, Exit.void);
-    }).pipe(Effect.provide(Layer.merge(makeTestLayer(state), TestClock.layer())));
+  it.effect("switches between metadata-only polling and configured Git fetch intervals", () => {
+    const { state, layer, subscribe } = makePollingFixture();
+    return Effect.gen(function* () {
+      const { events } = yield* subscribe;
+      yield* Queue.take(events);
+      yield* TestClock.adjust(Duration.seconds(30));
+      assert.equal(state.reads.length, 2);
+      state.interval = Duration.minutes(1);
+      yield* TestClock.adjust(Duration.seconds(30));
+      assert.equal(state.reads.length, 3);
+      yield* TestClock.adjust(Duration.seconds(59));
+      assert.equal(state.reads.length, 3);
+      yield* TestClock.adjust(Duration.seconds(1));
+      assert.equal(state.reads.length, 4);
+      state.interval = Duration.zero;
+      yield* TestClock.adjust(Duration.seconds(59));
+      assert.equal(state.reads.length, 4);
+      yield* TestClock.adjust(Duration.seconds(1));
+      assert.equal(state.reads.length, 5);
+      yield* TestClock.adjust(Duration.seconds(30));
+      assert.equal(state.reads.length, 6);
+      assert.deepStrictEqual(
+        state.reads.map((options) => options?.refreshUpstream),
+        [false, false, true, true, false, false],
+      );
+      assert.deepStrictEqual(
+        state.reads.map((options) => options?.refreshMissingPullRequest),
+        [undefined, true, undefined, undefined, true, true],
+      );
+      assert.equal(state.invalidations, 2);
+      assert.equal(state.pulls, 0);
+    }).pipe(Effect.scoped, Effect.provide(layer));
   });
 
   it.effect("retries the initial remote load when periodic refreshes are disabled", () => {
