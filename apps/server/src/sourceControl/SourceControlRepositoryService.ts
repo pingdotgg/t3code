@@ -196,7 +196,12 @@ export const make = Effect.gen(function* () {
     yield* git.execute({
       operation: "SourceControlRepositoryService.cloneRepository",
       cwd: preparedDestination.parentPath,
-      args: ["clone", remoteUrl, preparedDestination.directoryName],
+      // `--` is required: git clone permutes options and positionals, so a
+      // remote URL or a destination directory whose name begins with a dash
+      // would otherwise be read as an option. `--upload-pack=<cmd>` is the
+      // dangerous one - git hands its value to a shell for local and ssh
+      // transports.
+      args: ["clone", "--", remoteUrl, preparedDestination.directoryName],
       timeoutMs: 120_000,
       maxOutputBytes: 256 * 1024,
     });
