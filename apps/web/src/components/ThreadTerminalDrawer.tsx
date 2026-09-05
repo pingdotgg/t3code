@@ -567,7 +567,11 @@ export function TerminalViewport({
       synchronizedStatusRef.current = "closed";
       synchronizeTerminalStatus(terminal, latestSession.status);
       // Startup may finish after the user has returned to the composer.
-      if (visibleRef.current && mount.contains(document.activeElement)) {
+      if (
+        hasTerminalWriteAccess() &&
+        visibleRef.current &&
+        mount.contains(document.activeElement)
+      ) {
         terminal.focus();
       }
 
@@ -949,7 +953,9 @@ export function TerminalViewport({
       cancelled = true;
       const hadFocus = mount.contains(document.activeElement);
       teardown?.();
-      if (hadFocus && mount.isConnected) mount.focus({ preventScroll: true });
+      if (hasTerminalWriteAccess() && hadFocus && mount.isConnected) {
+        mount.focus({ preventScroll: true });
+      }
     };
   }, [cwd, environmentId, runtimeEnvKey, terminalId, threadId, worktreePath]);
 
@@ -985,11 +991,11 @@ export function TerminalViewport({
   }, [terminalOutput, terminalError, terminalStatus, terminalVersion]);
 
   useEffect(() => {
-    if (!autoFocus || !visible) return;
+    if (!autoFocus || !canOperateTerminal || !visible) return;
     // Claim focus when requested, then hand it to the terminal once ready only
     // if the user has not focused something else in the meantime.
     (terminalRef.current ?? containerRef.current)?.focus();
-  }, [autoFocus, focusRequestId, visible]);
+  }, [autoFocus, canOperateTerminal, focusRequestId, visible]);
 
   useEffect(() => {
     const terminal = terminalRef.current;
