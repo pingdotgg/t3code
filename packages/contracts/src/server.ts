@@ -222,6 +222,10 @@ export const ServerProvider = Schema.Struct({
   // Human-readable reason populated when `availability === "unavailable"`.
   // Surfaces in the UI alongside the missing-driver affordance.
   unavailableReason: Schema.optional(TrimmedNonEmptyString),
+  // A successful runtime inventory is complete, so server reconciliation may
+  // remove models omitted from it. Absence keeps the additive behavior used by
+  // older and partial provider snapshots.
+  modelInventory: Schema.optionalKey(Schema.Literal("authoritative")),
   models: Schema.Array(ServerProviderModel),
   slashCommands: Schema.Array(ServerProviderSlashCommand).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),

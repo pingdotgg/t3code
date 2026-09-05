@@ -37,6 +37,11 @@ import { checkCodexProviderStatus, type CodexAppServerProviderSnapshot } from ".
 import { checkClaudeProviderStatus } from "./ClaudeProvider.ts";
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import { AntigravityInstallation } from "../AntigravityInstallation.ts";
+import {
+  SYNTHETIC_CLAUDE_CAPABLE_MODEL,
+  SYNTHETIC_CLAUDE_COLLIDING_ALIAS,
+  SYNTHETIC_CLAUDE_MODEL_CATALOG,
+} from "../ClaudeModelCatalog.testFixtures.ts";
 import * as ModelManifest from "../ModelManifest.ts";
 import * as CodexResetCredit from "./codexResetCredit.ts";
 import * as OpenCodeRuntime from "../opencodeRuntime.ts";
@@ -143,6 +148,7 @@ type TestClaudeCapabilities = {
   readonly tokenSource: string | undefined;
   readonly apiProvider: string | undefined;
   readonly slashCommands: ReadonlyArray<ServerProviderSlashCommand>;
+  readonly models: ReadonlyArray<{ readonly value: string; readonly displayName: string }>;
 };
 
 function claudeCapabilities(overrides: Partial<TestClaudeCapabilities> = {}) {
@@ -153,6 +159,7 @@ function claudeCapabilities(overrides: Partial<TestClaudeCapabilities> = {}) {
       tokenSource: undefined,
       apiProvider: undefined,
       slashCommands: [],
+      models: [],
       ...overrides,
     });
 }
@@ -646,7 +653,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
         );
       });
 
-      it("drops custom models the refreshed snapshot no longer carries", () => {
+      it("uses Claude inventory authority when reconciling snapshots", () => {
         const previousProvider = {
           instanceId: ProviderInstanceId.make("claudeAgent"),
           driver: ProviderDriverKind.make("claudeAgent"),
@@ -664,6 +671,12 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
               capabilities: null,
             },
             {
+              slug: "claude-stale-model",
+              name: "Stale model",
+              isCustom: false,
+              capabilities: null,
+            },
+            {
               slug: "removed-custom",
               name: "removed-custom",
               isCustom: true,
@@ -676,11 +689,23 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
         const refreshedProvider = {
           ...previousProvider,
           checkedAt: "2026-04-14T00:01:00.000Z",
+          modelInventory: "authoritative",
+          models: [previousProvider.models[0]],
+        } satisfies ServerProvider;
+        const partialProvider = {
+          ...previousProvider,
+          status: "warning",
+          auth: { status: "unknown" },
+          checkedAt: "2026-04-14T00:02:00.000Z",
           models: [previousProvider.models[0]],
         } satisfies ServerProvider;
 
         assert.deepStrictEqual(mergeProviderSnapshot(previousProvider, refreshedProvider).models, [
           ...refreshedProvider.models,
+        ]);
+        assert.deepStrictEqual(mergeProviderSnapshot(previousProvider, partialProvider).models, [
+          previousProvider.models[0],
+          previousProvider.models[1],
         ]);
       });
 
@@ -2756,6 +2781,63 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
         ),
       );
 
+      it.effect("publishes the models reported by Claude initialization", () =>
+        Effect.gen(function* () {
+          const customModel = {
+            slug: "runtime-custom",
+            name: "Configured Runtime Model",
+            capabilities: SYNTHETIC_CLAUDE_MODEL_CATALOG.models[0]!.model.capabilities!,
+          };
+          const status = yield* checkClaudeProviderStatus(
+            { ...defaultClaudeSettings, customModels: [customModel, "bare-runtime-custom"] },
+            claudeCapabilities({
+              models: [
+                { value: customModel.slug, displayName: "Runtime Name" },
+                { value: "bare-runtime-custom", displayName: "Bare Runtime Name" },
+                {
+                  value: `${SYNTHETIC_CLAUDE_COLLIDING_ALIAS}[expanded]`,
+                  displayName: "Synthetic Capable",
+                },
+              ],
+            }),
+            undefined,
+            undefined,
+            SYNTHETIC_CLAUDE_MODEL_CATALOG,
+          );
+
+          assert.deepStrictEqual(
+            status.models.filter((model) => !model.isLegacy).map((model) => model.slug),
+            [SYNTHETIC_CLAUDE_CAPABLE_MODEL, customModel.slug, "bare-runtime-custom"],
+          );
+          assert.deepStrictEqual(
+            status.models.find((model) => model.slug === customModel.slug),
+            {
+              ...customModel,
+              isCustom: true,
+            },
+          );
+          assert.deepStrictEqual(
+            status.models.find((model) => model.slug === "bare-runtime-custom"),
+            {
+              slug: "bare-runtime-custom",
+              name: "bare-runtime-custom",
+              isCustom: true,
+              capabilities: { optionDescriptors: [] },
+            },
+          );
+          assert.strictEqual(status.modelInventory, "authoritative");
+          assert.ok((status.models[0]?.capabilities?.optionDescriptors?.length ?? 0) > 0);
+        }).pipe(
+          Effect.provide(
+            mockSpawnerLayer((args) => {
+              const joined = args.join(" ");
+              if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
+              throw new Error(`Unexpected args: ${joined}`);
+            }),
+          ),
+        ),
+      );
+
       it.effect("deduplicates probed claude slash commands by name", () =>
         Effect.gen(function* () {
           const status = yield* checkClaudeProviderStatus(
@@ -2876,6 +2958,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
           assert.strictEqual(status.status, "warning");
           assert.strictEqual(status.installed, true);
           assert.strictEqual(status.auth.status, "unknown");
+          assert.strictEqual(status.modelInventory, undefined);
           assert.strictEqual(
             status.message,
             "Could not verify Claude authentication status from initialization result.",

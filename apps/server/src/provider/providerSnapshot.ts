@@ -230,6 +230,7 @@ export function buildServerProvider(input: {
   presentation: ServerProviderPresentation;
   enabled: boolean;
   checkedAt: string;
+  modelInventory?: ServerProvider["modelInventory"];
   models: ReadonlyArray<ServerProviderModel>;
   slashCommands?: ReadonlyArray<ServerProviderSlashCommand>;
   skills?: ReadonlyArray<ServerProviderSkill>;
@@ -258,6 +259,7 @@ export function buildServerProvider(input: {
     auth: input.probe.auth,
     checkedAt: input.checkedAt,
     ...(input.probe.message ? { message: input.probe.message } : {}),
+    ...(input.modelInventory ? { modelInventory: input.modelInventory } : {}),
     models: input.models,
     slashCommands: [...(input.slashCommands ?? [])],
     skills: [...(input.skills ?? [])],

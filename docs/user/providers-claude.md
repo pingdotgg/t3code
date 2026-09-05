@@ -49,6 +49,16 @@ You can also send `/compact` in an existing conversation. Web and desktop offer
 a large older thread. See [commands and skills](./composer.md#commands-and-skills)
 for using composer commands.
 
+## Model list
+
+T3 Code reads the available model list from Claude Code when it checks the provider. The project
+default picker and the chat composer use that same provider list. If Claude adds a model while T3
+Code is running, update Claude Code, then restart T3 Code to refresh the list immediately.
+
+When Claude Code cannot return a model list, T3 Code falls back to its model manifest and the
+installed Claude Code version. Models configured manually on the provider remain available in
+either case.
+
 ## Usage limits
 
 If your Claude subscription runs out of usage mid-turn, the thread shows which
