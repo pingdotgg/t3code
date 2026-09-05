@@ -17,7 +17,7 @@ import {
   resolveReviewHighlighterEnginePreference,
   type ReviewHighlighterEngine,
 } from "./reviewHighlighterEngine";
-import type { ReviewRenderableFile, ReviewRenderableLineRow } from "./reviewModel";
+import type { ReviewRenderableLineRow } from "./reviewModel";
 import { applyDiffRangesToTokens, computeWordAltDiffRanges } from "./reviewWordDiffs";
 
 export type ReviewDiffTheme = "light" | "dark";
@@ -43,17 +43,6 @@ export interface ReviewHighlightedToken {
   readonly diffHighlight?: boolean;
 }
 
-export interface ReviewHighlightedFile {
-  readonly additionLines: ReadonlyArray<ReadonlyArray<ReviewHighlightedToken>>;
-  readonly deletionLines: ReadonlyArray<ReadonlyArray<ReviewHighlightedToken>>;
-}
-
-export interface ReviewHighlightFileProgress {
-  readonly highlightedFile: ReviewHighlightedFile;
-  readonly complete: boolean;
-  readonly highlightedLineCount: number;
-}
-
 const SHIKI_THEME_NAME_BY_SCHEME = {
   light: "github-light-default",
   dark: "github-dark-default",
@@ -64,16 +53,9 @@ const REVIEW_HIGHLIGHTER_ENGINE_ENV_VALUE =
 const REVIEW_HIGHLIGHTER_ENGINE_PREFERENCE = resolveReviewHighlighterEnginePreference(
   REVIEW_HIGHLIGHTER_ENGINE_ENV_VALUE,
 );
-const REVIEW_HIGHLIGHTER_DISABLE_RESULT_CACHE = resolveReviewHighlighterBooleanFlag(
-  process.env.EXPO_PUBLIC_REVIEW_HIGHLIGHTER_DISABLE_CACHE,
-  false,
-);
-const REVIEW_HIGHLIGHT_RESULT_CACHE_LIMIT = 8;
 const REVIEW_HIGHLIGHT_CHUNK_LINE_THRESHOLD = 8;
 const REVIEW_HIGHLIGHT_CHUNK_SIZE = 200;
 const REVIEW_TOKENIZE_MAX_LINE_LENGTH = 1_000;
-const highlightCache = new Map<string, Promise<ReviewHighlightedFile>>();
-const resolvedHighlightCache = new Map<string, ReviewHighlightedFile>();
 const REVIEW_INITIAL_LANGUAGE_MODULES = [
   bashLanguage,
   javascriptLanguage,
@@ -204,22 +186,6 @@ type LoadedLanguageModule = {
   default: Parameters<HighlighterCore["loadLanguage"]>[0];
 };
 
-function resolveReviewHighlighterBooleanFlag(
-  value: string | undefined,
-  defaultValue: boolean,
-): boolean {
-  switch (value) {
-    case "1":
-    case "true":
-      return true;
-    case "0":
-    case "false":
-      return false;
-    default:
-      return defaultValue;
-  }
-}
-
 function isReviewHighlighterDebugLoggingEnabled(): boolean {
   return typeof __DEV__ !== "undefined" ? __DEV__ : false;
 }
@@ -267,7 +233,6 @@ async function getHighlighter(): Promise<HighlighterCore> {
       logReviewHighlighterDiagnostic("initializing", {
         configuredPreference: REVIEW_HIGHLIGHTER_ENGINE_ENV_VALUE,
         preference: REVIEW_HIGHLIGHTER_ENGINE_PREFERENCE,
-        resultCacheDisabled: REVIEW_HIGHLIGHTER_DISABLE_RESULT_CACHE,
       });
 
       const themes = [githubLightDefault, githubDarkDefault];
@@ -488,13 +453,6 @@ async function resolveLanguageFromPath(
   return candidate;
 }
 
-async function resolveLanguage(file: ReviewRenderableFile): Promise<string> {
-  return (
-    resolveLoadedLanguageFromPath(file.path, file.languageHint) ??
-    (await resolveLanguageFromPath(file.path, file.languageHint))
-  );
-}
-
 function normalizeHighlightedLines(
   tokenLines: ReadonlyArray<ReadonlyArray<{ content: string; color?: string; fontStyle?: number }>>,
 ): ReadonlyArray<ReadonlyArray<ReviewHighlightedToken>> {
@@ -505,84 +463,6 @@ function normalizeHighlightedLines(
       fontStyle: token.fontStyle ?? null,
     })),
   );
-}
-
-function makePlainHighlightedLines(
-  lines: ReadonlyArray<string>,
-): ReadonlyArray<ReadonlyArray<ReviewHighlightedToken>> {
-  return lines.map((line) => [
-    {
-      content: stripTrailingNewline(line),
-      color: null,
-      fontStyle: null,
-    },
-  ]);
-}
-
-function applyWordAltDiffHighlightsToFile(
-  file: ReviewRenderableFile,
-  highlighted: ReviewHighlightedFile,
-): ReviewHighlightedFile {
-  const nextAdditionLines = [...highlighted.additionLines];
-  const nextDeletionLines = [...highlighted.deletionLines];
-  const processedPairs = new Set<string>();
-  let changed = false;
-
-  file.rows.forEach((row) => {
-    if (row.kind !== "line" || row.change === "context" || !row.comparison) {
-      return;
-    }
-
-    const deletionTokenIndex =
-      row.change === "delete"
-        ? row.deletionTokenIndex
-        : row.comparison.change === "delete"
-          ? row.comparison.tokenIndex
-          : null;
-    const additionTokenIndex =
-      row.change === "add"
-        ? row.additionTokenIndex
-        : row.comparison.change === "add"
-          ? row.comparison.tokenIndex
-          : null;
-
-    if (deletionTokenIndex === null || additionTokenIndex === null) {
-      return;
-    }
-
-    const pairKey = `${deletionTokenIndex}:${additionTokenIndex}`;
-    if (processedPairs.has(pairKey)) {
-      return;
-    }
-    processedPairs.add(pairKey);
-
-    const deletionLine = stripTrailingNewline(file.deletionLines[deletionTokenIndex] ?? "");
-    const additionLine = stripTrailingNewline(file.additionLines[additionTokenIndex] ?? "");
-    const ranges = computeWordAltDiffRanges({ deletionLine, additionLine });
-
-    if (ranges.deletion.length > 0) {
-      nextDeletionLines[deletionTokenIndex] = applyDiffRangesToTokens(
-        nextDeletionLines[deletionTokenIndex] ?? [],
-        ranges.deletion,
-      );
-      changed = true;
-    }
-
-    if (ranges.addition.length > 0) {
-      nextAdditionLines[additionTokenIndex] = applyDiffRangesToTokens(
-        nextAdditionLines[additionTokenIndex] ?? [],
-        ranges.addition,
-      );
-      changed = true;
-    }
-  });
-
-  return changed
-    ? {
-        additionLines: nextAdditionLines,
-        deletionLines: nextDeletionLines,
-      }
-    : highlighted;
 }
 
 function applyWordAltDiffHighlightsToSelectedLines(input: {
@@ -731,308 +611,6 @@ export async function highlightSourceFile(input: {
 }): Promise<ReadonlyArray<ReadonlyArray<ReviewHighlightedToken>>> {
   const language = await resolveLanguageFromPath(input.path);
   return highlightLines(input.contents, language, SHIKI_THEME_NAME_BY_SCHEME[input.theme]);
-}
-
-async function highlightPatchLinesInChunks(input: {
-  readonly lines: ReadonlyArray<string>;
-  readonly language: string;
-  readonly theme: string;
-  readonly onChunk: (
-    startIndex: number,
-    tokens: ReadonlyArray<ReadonlyArray<ReviewHighlightedToken>>,
-  ) => void;
-}): Promise<ReadonlyArray<ReadonlyArray<ReviewHighlightedToken>>> {
-  if (input.lines.length === 0) {
-    return [];
-  }
-
-  const highlighter = await getHighlighter();
-  const highlightedLines: Array<ReadonlyArray<ReviewHighlightedToken>> = [];
-
-  for (
-    let startIndex = 0;
-    startIndex < input.lines.length;
-    startIndex += REVIEW_HIGHLIGHT_CHUNK_SIZE
-  ) {
-    const lineChunk = input.lines.slice(startIndex, startIndex + REVIEW_HIGHLIGHT_CHUNK_SIZE);
-    const chunkTokens: Array<ReadonlyArray<ReviewHighlightedToken>> = [];
-    const tokenizableLines: string[] = [];
-    const tokenizableIndexes: number[] = [];
-
-    lineChunk.forEach((line, index) => {
-      const strippedLine = stripTrailingNewline(line);
-      if (strippedLine.length > REVIEW_TOKENIZE_MAX_LINE_LENGTH) {
-        chunkTokens[index] = [{ content: strippedLine, color: null, fontStyle: null }];
-        return;
-      }
-
-      tokenizableIndexes.push(index);
-      tokenizableLines.push(strippedLine);
-    });
-
-    if (tokenizableLines.length > 0) {
-      const tokenLines = highlighter.codeToTokensBase(tokenizableLines.join("\n"), {
-        lang: input.language,
-        theme: input.theme,
-      });
-      const normalizedTokenLines = normalizeHighlightedLines(tokenLines);
-
-      tokenizableIndexes.forEach((chunkIndex, tokenIndex) => {
-        chunkTokens[chunkIndex] = normalizedTokenLines[tokenIndex] ?? [];
-      });
-    }
-
-    const completedChunk = lineChunk.map((_, index) => chunkTokens[index] ?? []);
-    highlightedLines.push(...completedChunk);
-    input.onChunk(startIndex, completedChunk);
-
-    if (startIndex + REVIEW_HIGHLIGHT_CHUNK_SIZE < input.lines.length) {
-      await waitForNextFrame();
-    }
-  }
-
-  return highlightedLines;
-}
-
-function getHighlightCacheKey(file: ReviewRenderableFile, theme: ReviewDiffTheme): string {
-  return `${SHIKI_THEME_NAME_BY_SCHEME[theme]}:${file.cacheKey}`;
-}
-
-function storeResolvedHighlightedFile(cacheKey: string, highlighted: ReviewHighlightedFile): void {
-  if (resolvedHighlightCache.has(cacheKey)) {
-    resolvedHighlightCache.delete(cacheKey);
-  }
-
-  resolvedHighlightCache.set(cacheKey, highlighted);
-
-  while (resolvedHighlightCache.size > REVIEW_HIGHLIGHT_RESULT_CACHE_LIMIT) {
-    const oldestKey = resolvedHighlightCache.keys().next().value;
-    if (oldestKey === undefined) {
-      break;
-    }
-    resolvedHighlightCache.delete(oldestKey);
-  }
-}
-
-export function clearReviewHighlightFileCache(): void {
-  highlightCache.clear();
-  resolvedHighlightCache.clear();
-}
-
-export function getCachedHighlightedReviewFile(
-  file: ReviewRenderableFile,
-  theme: ReviewDiffTheme,
-): ReviewHighlightedFile | null {
-  if (REVIEW_HIGHLIGHTER_DISABLE_RESULT_CACHE) {
-    return null;
-  }
-
-  return resolvedHighlightCache.get(getHighlightCacheKey(file, theme)) ?? null;
-}
-
-export async function highlightReviewFile(
-  file: ReviewRenderableFile,
-  theme: ReviewDiffTheme,
-): Promise<ReviewHighlightedFile> {
-  const shikiTheme = SHIKI_THEME_NAME_BY_SCHEME[theme];
-  const cacheKey = getHighlightCacheKey(file, theme);
-  if (!REVIEW_HIGHLIGHTER_DISABLE_RESULT_CACHE) {
-    const resolved = resolvedHighlightCache.get(cacheKey);
-    if (resolved) {
-      logReviewHighlighterDiagnostic("file highlight cache hit (resolved)", {
-        fileId: file.id,
-        filePath: file.path,
-        theme,
-      });
-      return resolved;
-    }
-    const cached = highlightCache.get(cacheKey);
-    if (cached) {
-      logReviewHighlighterDiagnostic("file highlight cache hit (pending)", {
-        fileId: file.id,
-        filePath: file.path,
-        theme,
-      });
-      return cached;
-    }
-  }
-
-  const promise = (async () => {
-    const startedAt = Date.now();
-    logReviewHighlighterDiagnostic("file highlight start", {
-      fileId: file.id,
-      filePath: file.path,
-      theme,
-      additionLineCount: file.additionLines.length,
-      deletionLineCount: file.deletionLines.length,
-      rowCount: file.rows.length,
-    });
-    const loadedLanguage = resolveLoadedLanguageFromPath(file.path, file.languageHint);
-    const language = loadedLanguage ?? (await resolveLanguage(file));
-    if (language === "text") {
-      const highlighted = applyWordAltDiffHighlightsToFile(file, {
-        additionLines: makePlainHighlightedLines(file.additionLines),
-        deletionLines: makePlainHighlightedLines(file.deletionLines),
-      });
-      if (!REVIEW_HIGHLIGHTER_DISABLE_RESULT_CACHE) {
-        storeResolvedHighlightedFile(cacheKey, highlighted);
-      }
-      logReviewHighlighterDiagnostic("file highlight complete", {
-        fileId: file.id,
-        filePath: file.path,
-        theme,
-        language,
-        highlightedAdditionLineCount: highlighted.additionLines.length,
-        highlightedDeletionLineCount: highlighted.deletionLines.length,
-        durationMs: Date.now() - startedAt,
-      });
-      return highlighted;
-    }
-
-    const additionLines = await highlightLines(
-      joinPatchLines(file.additionLines),
-      language,
-      shikiTheme,
-    );
-    await waitForNextFrame();
-    const deletionLines = await highlightLines(
-      joinPatchLines(file.deletionLines),
-      language,
-      shikiTheme,
-    );
-    await waitForNextFrame();
-
-    const highlighted = applyWordAltDiffHighlightsToFile(file, { additionLines, deletionLines });
-    if (!REVIEW_HIGHLIGHTER_DISABLE_RESULT_CACHE) {
-      storeResolvedHighlightedFile(cacheKey, highlighted);
-    }
-    logReviewHighlighterDiagnostic("file highlight complete", {
-      fileId: file.id,
-      filePath: file.path,
-      theme,
-      language,
-      highlightedAdditionLineCount: highlighted.additionLines.length,
-      highlightedDeletionLineCount: highlighted.deletionLines.length,
-      durationMs: Date.now() - startedAt,
-    });
-    return highlighted;
-  })();
-
-  if (!REVIEW_HIGHLIGHTER_DISABLE_RESULT_CACHE) {
-    highlightCache.set(cacheKey, promise);
-  }
-  return promise.finally(() => {
-    if (!REVIEW_HIGHLIGHTER_DISABLE_RESULT_CACHE) {
-      highlightCache.delete(cacheKey);
-    }
-  });
-}
-
-export async function streamHighlightReviewFile(
-  file: ReviewRenderableFile,
-  theme: ReviewDiffTheme,
-  onProgress: (progress: ReviewHighlightFileProgress) => void,
-): Promise<ReviewHighlightedFile> {
-  const shikiTheme = SHIKI_THEME_NAME_BY_SCHEME[theme];
-  const cacheKey = getHighlightCacheKey(file, theme);
-  if (!REVIEW_HIGHLIGHTER_DISABLE_RESULT_CACHE) {
-    const resolved = resolvedHighlightCache.get(cacheKey);
-    if (resolved) {
-      onProgress({
-        highlightedFile: resolved,
-        complete: true,
-        highlightedLineCount: resolved.additionLines.length + resolved.deletionLines.length,
-      });
-      return resolved;
-    }
-  }
-
-  const startedAt = Date.now();
-  logReviewHighlighterDiagnostic("file stream highlight start", {
-    fileId: file.id,
-    filePath: file.path,
-    theme,
-    additionLineCount: file.additionLines.length,
-    deletionLineCount: file.deletionLines.length,
-    rowCount: file.rows.length,
-  });
-
-  const loadedLanguage = resolveLoadedLanguageFromPath(file.path, file.languageHint);
-  const language = loadedLanguage ?? (await resolveLanguage(file));
-  if (language === "text") {
-    const highlighted = applyWordAltDiffHighlightsToFile(file, {
-      additionLines: makePlainHighlightedLines(file.additionLines),
-      deletionLines: makePlainHighlightedLines(file.deletionLines),
-    });
-    if (!REVIEW_HIGHLIGHTER_DISABLE_RESULT_CACHE) {
-      storeResolvedHighlightedFile(cacheKey, highlighted);
-    }
-    onProgress({
-      highlightedFile: highlighted,
-      complete: true,
-      highlightedLineCount: highlighted.additionLines.length + highlighted.deletionLines.length,
-    });
-    logReviewHighlighterDiagnostic("file stream highlight complete", {
-      fileId: file.id,
-      filePath: file.path,
-      theme,
-      language,
-      highlightedAdditionLineCount: highlighted.additionLines.length,
-      highlightedDeletionLineCount: highlighted.deletionLines.length,
-      highlightedLineCount: highlighted.additionLines.length + highlighted.deletionLines.length,
-      durationMs: Date.now() - startedAt,
-    });
-    return highlighted;
-  }
-
-  const additionLines: Array<ReadonlyArray<ReviewHighlightedToken>> = [];
-  const deletionLines: Array<ReadonlyArray<ReviewHighlightedToken>> = [];
-  let highlightedLineCount = 0;
-
-  await highlightPatchLinesInChunks({
-    lines: file.additionLines,
-    language,
-    theme: shikiTheme,
-    onChunk: (startIndex, tokens) => {
-      tokens.forEach((lineTokens, index) => {
-        additionLines[startIndex + index] = lineTokens;
-      });
-      highlightedLineCount += tokens.length;
-    },
-  });
-  await waitForNextFrame();
-  await highlightPatchLinesInChunks({
-    lines: file.deletionLines,
-    language,
-    theme: shikiTheme,
-    onChunk: (startIndex, tokens) => {
-      tokens.forEach((lineTokens, index) => {
-        deletionLines[startIndex + index] = lineTokens;
-      });
-      highlightedLineCount += tokens.length;
-    },
-  });
-
-  const highlighted = applyWordAltDiffHighlightsToFile(file, { additionLines, deletionLines });
-  if (!REVIEW_HIGHLIGHTER_DISABLE_RESULT_CACHE) {
-    storeResolvedHighlightedFile(cacheKey, highlighted);
-  }
-  onProgress({
-    highlightedFile: highlighted,
-    complete: true,
-    highlightedLineCount,
-  });
-  logReviewHighlighterDiagnostic("file stream highlight complete", {
-    fileId: file.id,
-    filePath: file.path,
-    theme,
-    language,
-    highlightedAdditionLineCount: highlighted.additionLines.length,
-    highlightedDeletionLineCount: highlighted.deletionLines.length,
-    highlightedLineCount,
-    durationMs: Date.now() - startedAt,
-  });
-  return highlighted;
 }
 
 export async function highlightReviewSelectedLines(input: {

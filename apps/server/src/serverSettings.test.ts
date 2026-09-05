@@ -14,6 +14,7 @@ import * as Duration from "effect/Duration";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -22,6 +23,7 @@ import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as ServerConfig from "./config.ts";
 import { SqlitePersistenceMemory } from "./persistence/Layers/Sqlite.ts";
 import * as ServerSettingsModule from "./serverSettings.ts";
+import { resolveProviderInstanceTerminalEnvironment } from "./terminal/Manager.ts";
 
 const decodeSettingsPatch = Schema.decodeUnknownEffect(ServerSettingsPatch);
 const decodeServerSettings = Schema.decodeUnknownEffect(ServerSettings);
@@ -268,6 +270,60 @@ it.layer(NodeServices.layer)("server settings", (it) => {
           Option.getOrUndefined(firstChange)?.providers.codex.binaryPath,
           "/usr/local/bin/codex-next",
         );
+      }),
+    ).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  it.effect("persists custom usage prices and removes them from the settings file", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const serverConfig = yield* ServerConfig.ServerConfig;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+        const prices = {
+          inputCostPerMillionTokens: 2,
+          outputCostPerMillionTokens: 8,
+          cacheReadCostPerMillionTokens: 0,
+        };
+        const readPersisted = fileSystem
+          .readFileString(serverConfig.settingsPath)
+          .pipe(Effect.flatMap(Schema.decodeUnknownEffect(Schema.fromJsonString(ServerSettings))));
+
+        yield* serverSettings.updateSettings({ usagePriceOverrides: { "example-model": prices } });
+        const persisted = yield* readPersisted;
+        assert.deepStrictEqual(persisted.usagePriceOverrides, { "example-model": prices });
+
+        yield* serverSettings.updateSettings({ usagePriceOverrides: { "example-model": null } });
+        const restored = yield* readPersisted;
+        assert.deepStrictEqual(restored.usagePriceOverrides, {});
+      }),
+    ).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  it.effect("persists and broadcasts thread settlement settings", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const serverConfig = yield* ServerConfig.ServerConfig;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+        const changes = yield* serverSettings.subscribeChanges;
+
+        const next = yield* serverSettings.updateSettings({
+          sidebarAutoSettleAfterDays: null,
+          sidebarAutoSettleOnMerge: false,
+        });
+        const change = Option.getOrUndefined(yield* Stream.runHead(changes));
+        const raw = yield* fileSystem.readFileString(serverConfig.settingsPath);
+        // Inspect raw persisted JSON before schema decoding can apply defaults.
+        // @effect-diagnostics-next-line preferSchemaOverJson:off
+        const persisted = JSON.parse(raw) as Record<string, unknown>;
+
+        assert.strictEqual(next.sidebarAutoSettleAfterDays, null);
+        assert.isFalse(next.sidebarAutoSettleOnMerge);
+        assert.strictEqual(change?.sidebarAutoSettleAfterDays, null);
+        assert.isFalse(change?.sidebarAutoSettleOnMerge);
+        assert.strictEqual(persisted.sidebarAutoSettleAfterDays, null);
+        assert.isFalse(persisted.sidebarAutoSettleOnMerge);
       }),
     ).pipe(Effect.provide(makeServerSettingsLayer())),
   );
@@ -1046,6 +1102,41 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         roundTripped.providerInstances[instanceId]?.environment?.[0]?.value,
         "sk-or-secret",
       );
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  it.effect("materializes provider secrets for terminal environment resolution", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const instanceId = ProviderInstanceId.make("codex_terminal");
+
+      yield* serverSettings.updateSettings({
+        providerInstances: {
+          [instanceId]: {
+            driver: ProviderDriverKind.make("codex"),
+            environment: [
+              { name: "OPENROUTER_API_KEY", value: "sk-terminal-secret", sensitive: true },
+            ],
+            config: { homePath: "~/.codex-terminal" },
+          },
+        },
+      });
+
+      const environment = yield* resolveProviderInstanceTerminalEnvironment({
+        serverSettings,
+        path,
+        rawProviderInstanceId: instanceId,
+        env: undefined,
+      });
+      const persisted = yield* fileSystem.readFileString(serverConfig.settingsPath);
+
+      assert.equal(environment.OPENROUTER_API_KEY, "sk-terminal-secret");
+      assert.match(environment.CODEX_HOME ?? "", /[\\/][.]codex-terminal$/);
+      assert.notInclude(persisted, "sk-terminal-secret");
+      assert.include(persisted, '"valueRedacted": true');
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 });

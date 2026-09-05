@@ -73,7 +73,7 @@ export class NativeTelemetryHandshakeTimedOut extends Schema.TaggedErrorClass<Na
   }
 }
 
-export class NativeTelemetryRequestTimedOut extends Schema.TaggedErrorClass<NativeTelemetryRequestTimedOut>()(
+class NativeTelemetryRequestTimedOut extends Schema.TaggedErrorClass<NativeTelemetryRequestTimedOut>()(
   "NativeTelemetryRequestTimedOut",
   {
     operation: Schema.Literals(["readHistory", "sampleNow"]),
@@ -131,7 +131,7 @@ export class NativeTelemetryExited extends Schema.TaggedErrorClass<NativeTelemet
   }
 }
 
-export class NativeTelemetryStreamClosed extends Schema.TaggedErrorClass<NativeTelemetryStreamClosed>()(
+class NativeTelemetryStreamClosed extends Schema.TaggedErrorClass<NativeTelemetryStreamClosed>()(
   "NativeTelemetryStreamClosed",
   {},
 ) {
@@ -268,7 +268,7 @@ export function resolveNativeSampleIntervalMs(
     return CONSTRAINED_SAMPLE_INTERVAL_MS;
   }
   if (snapshot.onBattery === "true") return BATTERY_SAMPLE_INTERVAL_MS;
-  return SAMPLE_INTERVAL_MS;
+  return liveSubscriberCount > 0 ? SAMPLE_INTERVAL_MS : UNKNOWN_BACKGROUND_SAMPLE_INTERVAL_MS;
 }
 
 export function commitCollectionControlUpdate<E, R>(
@@ -338,10 +338,6 @@ export function retainRecentNativeTelemetryFailures(
 
 function errorMessage(error: NativeTelemetryClientError): string {
   return error.message;
-}
-
-export function nativeTelemetrySupervisorFailureMessage(_cause: Cause.Cause<unknown>): string {
-  return "Resource monitor supervisor stopped unexpectedly.";
 }
 
 export function canRequestNativeTelemetryRetry(
@@ -462,13 +458,16 @@ export const make = Effect.fn("resourceTelemetry.nativeTelemetryClient.make")(fu
         return Effect.gen(function* () {
           const nativeSnapshot = { generation, snapshot: event } satisfies NativeTelemetrySnapshot;
           const sampledAt = DateTime.makeUnsafe(event.sampledAtUnixMs);
-          yield* Ref.update(state, (current) => ({
-            ...current,
-            status: "healthy" as const,
-            lastSampleAt: Option.some(sampledAt),
-            lastError: Option.none(),
-          }));
-          yield* publishHealth;
+          const healthChanged = yield* Ref.modify(state, (current) => [
+            current.status !== "healthy" || Option.isSome(current.lastError),
+            {
+              ...current,
+              status: "healthy" as const,
+              lastSampleAt: Option.some(sampledAt),
+              lastError: Option.none(),
+            },
+          ]);
+          if (healthChanged) yield* publishHealth;
           yield* PubSub.publish(snapshots, nativeSnapshot);
           if (event.requestId) {
             const deferred = yield* Ref.modify(pendingSamples, (pending) => {
@@ -485,15 +484,18 @@ export const make = Effect.fn("resourceTelemetry.nativeTelemetryClient.make")(fu
       case "historyChunk":
         return Effect.gen(function* () {
           const latestSnapshot = event.snapshots.at(-1);
-          yield* Ref.update(state, (current) => ({
-            ...current,
-            status: "healthy" as const,
-            lastSampleAt: latestSnapshot
-              ? Option.some(DateTime.makeUnsafe(latestSnapshot.sampledAtUnixMs))
-              : current.lastSampleAt,
-            lastError: Option.none(),
-          }));
-          yield* publishHealth;
+          const healthChanged = yield* Ref.modify(state, (current) => [
+            current.status !== "healthy" || Option.isSome(current.lastError),
+            {
+              ...current,
+              status: "healthy" as const,
+              lastSampleAt: latestSnapshot
+                ? Option.some(DateTime.makeUnsafe(latestSnapshot.sampledAtUnixMs))
+                : current.lastSampleAt,
+              lastError: Option.none(),
+            },
+          ]);
+          if (healthChanged) yield* publishHealth;
           const completed = yield* Ref.modify(pendingHistories, (pending) => {
             const request = pending.get(event.requestId);
             if (!request) return [Option.none(), pending] as const;
@@ -728,7 +730,7 @@ export const make = Effect.fn("resourceTelemetry.nativeTelemetryClient.make")(fu
             ...current,
             status: "unavailable" as const,
             hello: Option.none(),
-            lastError: Option.some(nativeTelemetrySupervisorFailureMessage(cause)),
+            lastError: Option.some("Resource monitor supervisor stopped unexpectedly."),
           })).pipe(
             Effect.andThen(publishHealth),
             Effect.andThen(

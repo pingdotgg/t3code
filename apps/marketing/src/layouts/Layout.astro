@@ -1,4 +1,8 @@
 ---
+import { Image } from "astro:assets";
+import appIcon from "../assets/icon.webp";
+import dmSansLatinUrl from "../assets/fonts/dm-sans-latin.woff2?url";
+import "../styles/fonts.css";
 import {
   ANDROID_PLAY_STORE_URL,
   GITHUB_REPOSITORY_URL,
@@ -14,7 +18,7 @@ interface Props {
 
 const {
   title = "T3 Code",
-  description = "T3 Code — The open-source control plane for coding agents.",
+  description = "T3 Code. The open-source control plane for coding agents.",
   pageClass,
 } = Astro.props;
 ---
@@ -24,11 +28,12 @@ const {
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description" content={description} />
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600&family=JetBrains+Mono:wght@400;500&display=swap"
-      rel="stylesheet"
+      rel="preload"
+      href={dmSansLatinUrl}
+      as="font"
+      type="font/woff2"
+      crossorigin="anonymous"
     />
     <link rel="icon" href="/favicon.ico" sizes="48x48" />
     <link rel="icon" type="image/png" href="/favicon-32x32.png" sizes="32x32" />
@@ -67,7 +72,17 @@ const {
       <footer class="footer">
         <div class="footer-inner">
           <div class="footer-brand">
-            <img src="/icon.webp" alt="" />
+            <Image
+              src={appIcon}
+              alt=""
+              width={20}
+              height={20}
+              densities={[1, 2, 3]}
+              format="webp"
+              quality={90}
+              loading="lazy"
+              decoding="async"
+            />
             <span>&copy; {new Date().getFullYear()} T3 Tools Inc · MIT licensed</span>
           </div>
           <div class="footer-links">
@@ -268,21 +283,17 @@ const {
     }
   }
 
-  @keyframes pulse {
-    50% { opacity: 0.4; }
+  /* Page-load sequence: [data-rise] plays once with delay --d. */
+  @keyframes rise {
+    from { opacity: 0; transform: translateY(16px); }
+    to { opacity: 1; transform: none; }
   }
-
-  @keyframes spin {
-    to { transform: rotate(360deg); }
+  [data-rise] {
+    animation: rise 0.7s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+    animation-delay: var(--d, 0ms);
   }
-
-  @keyframes floatDrift {
-    0%, 100% { translate: 0 0; }
-    50%      { translate: 0 -10px; }
-  }
-
-  @keyframes blink {
-    50% { opacity: 0; }
+  @media (prefers-reduced-motion: reduce) {
+    [data-rise] { animation: none; }
   }
 </style>
 

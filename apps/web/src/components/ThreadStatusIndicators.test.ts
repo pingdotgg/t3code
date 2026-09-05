@@ -1,20 +1,38 @@
-import { effectiveSettled } from "@t3tools/client-runtime/state/thread-settled";
-import type { OrchestrationThreadShell } from "@t3tools/contracts";
-import { ProjectId, ProviderInstanceId, ThreadId, type VcsStatusResult } from "@t3tools/contracts";
+import { ProjectId, type PullRequestSummary, type VcsStatusResult } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import { AtomRegistry } from "effect/unstable/reactivity";
+import {
+  GitMergeIcon,
+  GitPullRequestClosedIcon,
+  GitPullRequestDraftIcon,
+  GitPullRequestIcon,
+} from "lucide-react";
 
 import {
+  ChangeRequestStatusIcon,
   nextThreadChangeRequestSnapshot,
   prStatusIndicator,
   resolveDisplayedThreadPr,
   resolveDisplayedThreadPrProvider,
   resolveThreadPr,
   settledPrHoverColorClass,
+  threadChangeRequestSnapshotsEqual,
   threadChangeRequestSnapshotsAtom,
   type ThreadChangeRequestSnapshot,
 } from "./ThreadStatusIndicators";
+import { newestPullRequestSummary } from "../state/pullRequests";
+
+describe("ChangeRequestStatusIcon", () => {
+  it.each([
+    ["open", "open", false, GitPullRequestIcon],
+    ["draft", "open", true, GitPullRequestDraftIcon],
+    ["closed", "closed", false, GitPullRequestClosedIcon],
+    ["merged", "merged", false, GitMergeIcon],
+  ] as const)("uses the %s pull request glyph", (_label, state, isDraft, expectedIcon) => {
+    expect(ChangeRequestStatusIcon({ state, isDraft }).type).toBe(expectedIcon);
+  });
+});
 
 function status(overrides: Partial<VcsStatusResult> = {}): VcsStatusResult {
   return {
@@ -57,6 +75,47 @@ function snapshotFor(
 ): ThreadChangeRequestSnapshot {
   return { branch, pr, sourceControlProvider };
 }
+
+function pullRequestSummary(
+  state: PullRequestSummary["state"],
+  updatedAt: string,
+): PullRequestSummary {
+  return {
+    provider: "github",
+    projectId: ProjectId.make("project-1"),
+    repository: "pingdotgg/t3code",
+    number: 42,
+    title: "Feature PR",
+    url: "https://github.com/pingdotgg/t3code/pull/42",
+    state,
+    headBranch: "feature/current",
+    baseBranch: "main",
+    updatedAt,
+  };
+}
+
+describe("shared pull request state", () => {
+  it("shows a panel-observed merge instead of an older sidebar summary", () => {
+    const open = pullRequestSummary("open", "2026-09-03T01:00:00.000Z");
+    const merged = pullRequestSummary("merged", "2026-09-03T01:01:00.000Z");
+
+    expect(newestPullRequestSummary(open, merged)).toBe(merged);
+  });
+
+  it("never lets a stale open response regress a merged observation", () => {
+    const merged = pullRequestSummary("merged", "2026-09-03T01:01:00.000Z");
+    const staleOpen = pullRequestSummary("open", "2026-09-03T01:00:00.000Z");
+
+    expect(newestPullRequestSummary(merged, staleOpen)).toBe(merged);
+  });
+
+  it("accepts a newer open state after a closed pull request is reopened", () => {
+    const closed = pullRequestSummary("closed", "2026-09-03T01:00:00.000Z");
+    const reopened = pullRequestSummary("open", "2026-09-03T01:01:00.000Z");
+
+    expect(newestPullRequestSummary(closed, reopened)).toBe(reopened);
+  });
+});
 
 describe("resolveThreadPr", () => {
   it("keeps local-checkout PR indicators scoped to the stored thread branch", () => {
@@ -495,7 +554,7 @@ describe("resolveDisplayedThreadPr + nextThreadChangeRequestSnapshot", () => {
     ).toEqual(mergedPr);
   });
 
-  it("keeps effectiveSettled true for a retained merged PR after a main checkout", () => {
+  it("retains a merged PR after a main checkout", () => {
     const matchingStatus = status({
       refName: featureBranch,
       pr: mergedPr,
@@ -518,36 +577,18 @@ describe("resolveDisplayedThreadPr + nextThreadChangeRequestSnapshot", () => {
       retainTerminalOnBranchMismatch: true,
     });
     expect(displayed?.state).toBe("merged");
+  });
 
-    const shell = {
-      id: ThreadId.make("thread-1"),
-      projectId: ProjectId.make("project-1"),
-      title: "Feature thread",
-      modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
-      runtimeMode: "full-access",
-      interactionMode: "default",
-      branch: "main",
-      worktreePath: null,
-      latestTurn: null,
-      session: null,
-      createdAt: "2026-04-09T00:00:00.000Z",
-      updatedAt: "2026-04-09T00:00:00.000Z",
-      archivedAt: null,
-      settledAt: null,
-      settledOverride: null,
-      latestUserMessageAt: "2026-04-09T00:00:00.000Z",
-      hasPendingApprovals: false,
-      hasPendingUserInput: false,
-      hasActionableProposedPlan: false,
-    } as OrchestrationThreadShell;
+  it("refreshes a cached snapshot when a pull request becomes ready", () => {
+    const readyPr = { ...mergedPr, state: "open" as const };
+    const draftPr = { ...readyPr, isDraft: true };
 
     expect(
-      effectiveSettled(shell, {
-        now: "2026-04-10T00:00:00.000Z",
-        autoSettleAfterDays: null,
-        changeRequest: displayed,
-      }),
-    ).toBe(true);
+      threadChangeRequestSnapshotsEqual(
+        snapshotFor(featureBranch, draftPr),
+        snapshotFor(featureBranch, readyPr),
+      ),
+    ).toBe(false);
   });
 });
 
@@ -590,6 +631,17 @@ describe("prStatusIndicator", () => {
       "text-red-600",
     );
   });
+
+  it("uses gray and draft wording for draft pull requests", () => {
+    const draftPr = status().pr;
+    if (!draftPr) throw new Error("Expected pull request fixture");
+
+    expect(prStatusIndicator({ ...draftPr, isDraft: true }, undefined)).toMatchObject({
+      label: "PR draft",
+      colorClass: "text-zinc-500 dark:text-zinc-400/80",
+      tooltipLead: "PR #42 - Draft",
+    });
+  });
 });
 
 describe("settledPrHoverColorClass", () => {
@@ -599,5 +651,9 @@ describe("settledPrHoverColorClass", () => {
     ["closed", "text-red-600"],
   ] as const)("restores the %s pull request color on row hover", (state, colorClass) => {
     expect(settledPrHoverColorClass(state)).toContain(`group-hover/v2-row:${colorClass}`);
+  });
+
+  it("keeps draft pull requests gray on row hover", () => {
+    expect(settledPrHoverColorClass("open", true)).toContain("group-hover/v2-row:text-zinc-500");
   });
 });

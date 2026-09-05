@@ -2,7 +2,8 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import { memo, useMemo } from "react";
 
 import type { EnvironmentOption } from "./BranchToolbar.logic";
-import { getEnvironmentIcon } from "./Icons";
+import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
+import { composerFloatingLayerProps } from "./chat/composerEventScope";
 import {
   Select,
   SelectGroup,
@@ -31,10 +32,6 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
   const activeEnvironment = useMemo(() => {
     return availableEnvironments.find((env) => env.environmentId === environmentId) ?? null;
   }, [availableEnvironments, environmentId]);
-  const EnvironmentIcon = getEnvironmentIcon({
-    isPrimary: activeEnvironment?.isPrimary ?? false,
-    isWsl: activeEnvironment?.isWsl ?? false,
-  });
 
   const environmentItems = useMemo(
     () =>
@@ -53,10 +50,14 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
   if (envLocked || onEnvironmentChange === undefined) {
     return (
       <span
-        className="inline-flex h-7 min-w-0 max-w-full items-center gap-1 border border-transparent px-[calc(--spacing(3)-1px)] text-sm font-medium text-muted-foreground/70 sm:h-6 sm:text-xs"
+        className="inline-flex h-7 min-w-0 max-w-full items-center gap-1 border border-transparent px-[calc(--spacing(2)-1px)] font-normal text-muted-foreground/70 text-xs sm:h-6"
         data-composer-context-control
       >
-        <EnvironmentIcon className="size-3 shrink-0" />
+        <EnvironmentMachineIcon
+          kind={activeEnvironment?.machine ?? "server"}
+          wsl={activeEnvironment?.isWsl ?? false}
+          className="size-3 shrink-0"
+        />
         <span
           data-composer-label
           className="min-w-0 max-w-[240px] group-data-[compact]/composer-context:max-w-0"
@@ -82,11 +83,15 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
       <SelectTrigger
         variant="ghost"
         size="xs"
-        className="min-w-0 max-w-full font-medium"
+        className="min-w-0 max-w-full font-normal text-xs!"
         aria-label="Run on"
         data-composer-context-control
       >
-        <EnvironmentIcon className="size-3 shrink-0" />
+        <EnvironmentMachineIcon
+          kind={activeEnvironment?.machine ?? "server"}
+          wsl={activeEnvironment?.isWsl ?? false}
+          className="size-3 shrink-0"
+        />
         <span
           data-composer-label
           className="min-w-0 max-w-[240px] group-data-[compact]/composer-context:max-w-0"
@@ -99,20 +104,17 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
           </span>
         </span>
       </SelectTrigger>
-      <SelectPopup>
+      <SelectPopup alignItemWithTrigger={false} {...composerFloatingLayerProps}>
         <SelectGroup>
           <SelectGroupLabel>Run on</SelectGroupLabel>
-          {availableEnvironments.map((env) => {
-            const EnvironmentOptionIcon = getEnvironmentIcon(env);
-            return (
-              <SelectItem key={env.environmentId} value={env.environmentId}>
-                <span className="inline-flex items-center gap-1.5">
-                  <EnvironmentOptionIcon className="size-3" />
-                  {env.label}
-                </span>
-              </SelectItem>
-            );
-          })}
+          {availableEnvironments.map((env) => (
+            <SelectItem key={env.environmentId} value={env.environmentId}>
+              <span className="inline-flex items-center gap-1.5">
+                <EnvironmentMachineIcon kind={env.machine} wsl={env.isWsl} className="size-3" />
+                {env.label}
+              </span>
+            </SelectItem>
+          ))}
         </SelectGroup>
       </SelectPopup>
     </Select>

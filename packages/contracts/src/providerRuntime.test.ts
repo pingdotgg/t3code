@@ -1,11 +1,65 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, expectTypeOf, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
 
-import { classifyTaskAgentKind, ProviderRuntimeEvent } from "./providerRuntime.ts";
+import {
+  classifyTaskAgentKind,
+  ProviderRuntimeEvent,
+  type ProviderRuntimeEventType,
+} from "./providerRuntime.ts";
 
 const decodeRuntimeEvent = Schema.decodeUnknownSync(ProviderRuntimeEvent);
 
 describe("ProviderRuntimeEvent", () => {
+  it("includes every runtime event in the public event type", () => {
+    expectTypeOf<ProviderRuntimeEvent["type"]>().toEqualTypeOf<ProviderRuntimeEventType>();
+  });
+
+  it("requires input and output totals for complete turn usage", () => {
+    const completeEvent = {
+      type: "turn.completed",
+      eventId: "event-complete-usage",
+      provider: "codex",
+      createdAt: "2026-02-28T00:00:00.000Z",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      payload: {
+        state: "completed",
+        tokenUsage: {
+          usageStatus: "complete",
+          usageScope: "main_agent",
+          hasSubagents: false,
+        },
+      },
+    };
+
+    expect(() => decodeRuntimeEvent(completeEvent)).toThrow();
+    expect(
+      decodeRuntimeEvent({
+        ...completeEvent,
+        payload: {
+          ...completeEvent.payload,
+          tokenUsage: {
+            ...completeEvent.payload.tokenUsage,
+            inputTokens: 10,
+            outputTokens: 2,
+          },
+        },
+      }).type,
+    ).toBe("turn.completed");
+    expect(
+      decodeRuntimeEvent({
+        ...completeEvent,
+        payload: {
+          ...completeEvent.payload,
+          tokenUsage: {
+            ...completeEvent.payload.tokenUsage,
+            usageStatus: "partial",
+          },
+        },
+      }).type,
+    ).toBe("turn.completed");
+  });
+
   it("accepts fork-provided driver kinds as branded slugs", () => {
     const parsed = decodeRuntimeEvent({
       type: "session.started",
