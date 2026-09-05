@@ -54,6 +54,7 @@ import { HttpBody, HttpClient, HttpRouter } from "effect/unstable/http";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import { attachmentUploadRouteLayer } from "../http.ts";
+import { AntigravityProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/AntigravityAdapterV2.ts";
 import { ClaudeProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/ClaudeAdapterV2.ts";
 import { CodexProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import { CodexOrchestratorReplayHarness } from "../orchestration-v2/Adapters/CodexAdapterV2.testkit.ts";
@@ -94,8 +95,10 @@ const parentThreadId = ThreadId.make("thread:mcp-orchestrator-parent");
 const projectId = ProjectId.make("project:mcp-orchestrator");
 const codexInstanceId = ProviderInstanceId.make("codex");
 const claudeInstanceId = ProviderInstanceId.make("claudeAgent");
+const antigravityInstanceId = ProviderInstanceId.make("antigravity");
 const codexModel = "gpt-5.4";
 const claudeModel = "claude-sonnet-4-6";
+const antigravityModel = "gemini-3-pro";
 const parentPrompt = "Keep this parent turn active while orchestration tools are tested.";
 const delegatedPrompt = "Inspect the delegated API boundary and return the result.";
 const delegatedResult = "Delegated API boundary inspected.";
@@ -522,6 +525,14 @@ describe("orchestrator MCP toolkit", () => {
                   ? delegatedResult
                   : `Claude completed: ${turn.message.text}`,
             }),
+            makeDeterministicAdapter({
+              instanceId: antigravityInstanceId,
+              driver: ProviderDriverKind.make("antigravity"),
+              capabilities: AntigravityProviderCapabilitiesV2,
+              capturedTurns,
+              shouldComplete: () => true,
+              response: (turn) => `Antigravity completed: ${turn.message.text}`,
+            }),
           ]);
           // Captures parent-wake offers made when a delegated child
           // terminalizes after the parent run settled.
@@ -601,6 +612,11 @@ describe("orchestrator MCP toolkit", () => {
               instanceId: ProviderInstanceId.make("opencode"),
               driver: ProviderDriverKind.make("opencode"),
               model: "opencode/test",
+            }),
+            makeProviderSnapshot({
+              instanceId: antigravityInstanceId,
+              driver: ProviderDriverKind.make("antigravity"),
+              model: antigravityModel,
             }),
           ]);
           // In-memory ScheduledTaskService stub so the schedule/list/update/
@@ -1257,6 +1273,10 @@ describe("orchestrator MCP toolkit", () => {
                   canRunChildTask: true,
                   attachmentKinds: ["image", "file"],
                 }),
+                expect.objectContaining({
+                  providerInstanceId: antigravityInstanceId,
+                  attachmentKinds: ["image"],
+                }),
                 // Models advertise their option descriptors so agents can
                 // discover valid target.options ids and values.
                 expect.objectContaining({
@@ -1829,6 +1849,62 @@ describe("orchestrator MCP toolkit", () => {
             ).toHaveLength(2);
 
             const serverConfig = yield* ServerConfig.ServerConfig;
+            const antigravityThreadId = ThreadId.make("thread:mcp-antigravity-attachments");
+            yield* orchestrator.dispatch({
+              type: "thread.create",
+              createdBy: "user",
+              creationSource: "web",
+              commandId: CommandId.make("command:mcp-antigravity-attachments:create"),
+              threadId: antigravityThreadId,
+              projectId,
+              title: "Antigravity attachment thread",
+              modelSelection: {
+                instanceId: antigravityInstanceId,
+                model: antigravityModel,
+              },
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              branch: null,
+              worktreePath: cwd,
+            });
+            const antigravityPendingId = createPendingAttachmentId();
+            if (antigravityPendingId === null) {
+              return yield* Effect.die("Expected an Antigravity pending attachment id.");
+            }
+            const antigravityImage = {
+              type: "image",
+              id: ChatAttachmentId.make(antigravityPendingId),
+              name: "prompt.gif",
+              mimeType: "image/gif",
+              sizeBytes: 4,
+            } as const;
+            NodeFS.writeFileSync(
+              NodePath.join(serverConfig.attachmentsDir, `${antigravityPendingId}.gif`),
+              Buffer.from("test"),
+            );
+            const antigravitySend = yield* decodeThreadSendResult(
+              (yield* invoke("t3_thread_send", {
+                threadId: antigravityThreadId,
+                message: "Inspect this image.",
+                attachments: [antigravityImage],
+                clientRequestId: "attachment-antigravity-image-1",
+              })).structuredContent,
+            ).pipe(Effect.orDie);
+            const antigravityWait = yield* decodeThreadWaitResult(
+              (yield* invoke("t3_thread_wait", {
+                threadId: antigravityThreadId,
+                runId: antigravitySend.runId,
+                timeoutMs: 5_000,
+              })).structuredContent,
+            ).pipe(Effect.orDie);
+            expect(antigravityWait.timedOut).toBe(false);
+            expect(
+              (yield* Ref.get(capturedTurns)).find((turn) => turn.threadId === antigravityThreadId),
+            ).toMatchObject({
+              instanceId: antigravityInstanceId,
+              attachments: [expect.objectContaining({ type: "image", mimeType: "image/gif" })],
+            });
+
             const unsupportedPendingId = createPendingAttachmentId();
             if (unsupportedPendingId === null) {
               return yield* Effect.die("Expected a pending attachment id.");
@@ -1847,6 +1923,24 @@ describe("orchestrator MCP toolkit", () => {
             const claimedBeforeUnsupported = NodeFS.readdirSync(serverConfig.attachmentsDir).filter(
               (entry) => !entry.startsWith("pending-"),
             );
+            const unsupportedAntigravitySend = yield* invoke("t3_thread_send", {
+              threadId: antigravityThreadId,
+              attachments: [unsupportedFile],
+              clientRequestId: "attachment-antigravity-file-rejected-1",
+            });
+            expect(unsupportedAntigravitySend.structuredContent).toMatchObject({
+              code: "invalid_request",
+            });
+            expect(
+              NodeFS.existsSync(
+                NodePath.join(serverConfig.attachmentsDir, `${unsupportedPendingId}.txt`),
+              ),
+            ).toBe(true);
+            expect(
+              NodeFS.readdirSync(serverConfig.attachmentsDir).filter(
+                (entry) => !entry.startsWith("pending-"),
+              ),
+            ).toEqual(claimedBeforeUnsupported);
             const unsupportedSend = yield* invoke("t3_thread_send", {
               threadId: emptyThread.threadId,
               attachments: [unsupportedFile],
@@ -3084,11 +3178,15 @@ describe("orchestrator MCP toolkit", () => {
             model: codexModel,
           }),
         ]);
+        const serverConfigLayer = ServerConfig.layerTest(cwd, {
+          prefix: "t3-mcp-delegated-task-status-",
+        }).pipe(Layer.provide(NodeServices.layer));
         const testLayer = McpHttpServer.OrchestratorToolkitRegistrationLive.pipe(
           Layer.provideMerge(McpServer.McpServer.layer),
           Layer.provideMerge(orchestrationLayer),
           Layer.provide(providerRegistryLayer),
           Layer.provide(unusedScheduledTaskStubLayer),
+          Layer.provideMerge(serverConfigLayer),
           Layer.provide(NodeServices.layer),
         );
 

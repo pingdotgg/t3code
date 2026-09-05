@@ -175,6 +175,7 @@ function providerAttachmentKinds(provider: ServerProvider): ReadonlyArray<"image
     case "claudeAgent":
     case "cursor":
     case "grok":
+    case "antigravity":
       return ["image"];
     case "opencode":
       return ["image", "file"];
