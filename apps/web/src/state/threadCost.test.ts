@@ -1,5 +1,7 @@
-import { ThreadId, UsageDay, type UsageThreadRow } from "@t3tools/contracts";
-import { describe, expect, it } from "vite-plus/test";
+import { EnvironmentId, ThreadId, UsageDay, type UsageThreadRow } from "@t3tools/contracts";
+import { act, createElement } from "react";
+import { create, type ReactTestRenderer } from "react-test-renderer";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
   makeThreadCostInput,
@@ -7,9 +9,38 @@ import {
   resolveThreadCostState,
   summarizeThreadCost,
   supportsThreadCostBreakdown,
+  useThreadCost,
 } from "./threadCost";
 
+const hookState = vi.hoisted(() => ({
+  usageThreadBreakdown: vi.fn(
+    (request: { readonly input: { readonly refreshToken?: string } }) => ({ request }),
+  ),
+}));
+vi.mock("@effect/atom-react", () => ({
+  useAtomValue: () => ({ breakdown: null, isPending: false, supported: true }),
+}));
+vi.mock("./server", () => ({
+  serverEnvironment: {
+    configValueAtom: vi.fn(),
+    usageThreadBreakdown: hookState.usageThreadBreakdown,
+  },
+}));
+
 const threadId = ThreadId.make("thread-cost-test");
+let renderer: ReactTestRenderer | undefined;
+
+afterEach(async () => {
+  await act(() => renderer?.unmount());
+  renderer = undefined;
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+});
+
+function Probe(props: Parameters<typeof useThreadCost>[0]) {
+  useThreadCost(props);
+  return null;
+}
 
 function row(overrides: Partial<UsageThreadRow> = {}): UsageThreadRow {
   return {
@@ -50,6 +81,42 @@ describe("thread cost state", () => {
 
     expect(delay).toBeGreaterThan(30_000);
     expect(delay).toBeLessThan(32_000);
+  });
+
+  it("tokens a turn refresh after the debounce without leaking it across thread scope", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("window", globalThis);
+    hookState.usageThreadBreakdown.mockClear();
+    const base = {
+      environmentId: EnvironmentId.make("environment-a"),
+      threadId,
+      createdAt: "2026-09-01T12:00:00.000Z",
+      refreshKey: "turn-1",
+    };
+    await act(() => {
+      renderer = create(createElement(Probe, base));
+    });
+    expect(hookState.usageThreadBreakdown.mock.lastCall?.[0].input.refreshToken).toBeUndefined();
+
+    await act(() => renderer?.update(createElement(Probe, { ...base, refreshKey: "turn-2" })));
+    await act(() => vi.advanceTimersByTime(749));
+    expect(hookState.usageThreadBreakdown.mock.lastCall?.[0].input.refreshToken).toBeUndefined();
+    await act(() => vi.advanceTimersByTime(1));
+    expect(hookState.usageThreadBreakdown.mock.lastCall?.[0].input.refreshToken).toEqual(
+      expect.any(String),
+    );
+
+    await act(() =>
+      renderer?.update(
+        createElement(Probe, {
+          ...base,
+          environmentId: EnvironmentId.make("environment-b"),
+          threadId: ThreadId.make("other-thread"),
+          refreshKey: "turn-2",
+        }),
+      ),
+    );
+    expect(hookState.usageThreadBreakdown.mock.lastCall?.[0].input.refreshToken).toBeUndefined();
   });
 
   it("only enables the thread RPC when the server advertises pre-cap filtering", () => {

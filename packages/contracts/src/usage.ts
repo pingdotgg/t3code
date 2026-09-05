@@ -254,6 +254,8 @@ export const UsageThreadBreakdownInput = Schema.Struct({
   sinceTime: Schema.optional(TrimmedNonEmptyString),
   /** Exclusive UTC instant for a rolling window such as Past 24h. */
   untilTime: Schema.optional(TrimmedNonEmptyString),
+  /** Changed by callers that need to bypass the short-lived source snapshot. */
+  refreshToken: Schema.optional(TrimmedNonEmptyString),
   /**
    * Restrict to one project's records: a namespaced stable key selects that
    * project, `null` selects records outside every project, absent applies no

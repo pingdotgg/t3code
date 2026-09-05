@@ -159,65 +159,76 @@ function totalOutputTokens(summary: { buckets: readonly { totals: { outputTokens
 }
 
 describe("UsageService", () => {
-  it.live("does not parse unrelated Codex token content for a targeted thread read", () =>
-    Effect.gen(function* () {
-      const { settings, home } = yield* setup;
-      const sessionsDir = NodePath.join(home, "codex", "sessions", "2026", "08", "01");
-      yield* Effect.promise(() => NodeFSP.mkdir(sessionsDir, { recursive: true }));
-      const targetPath = NodePath.join(
-        sessionsDir,
-        "rollout-2026-08-01T10-00-00-target-session.jsonl",
-      );
-      const unrelatedPath = NodePath.join(
-        sessionsDir,
-        "rollout-2026-08-01T10-00-00-unrelated-session.jsonl",
-      );
-      yield* Effect.promise(() =>
-        Promise.all([
-          NodeFSP.writeFile(targetPath, codexRollout("target-session", "/work/target", 7)),
-          NodeFSP.writeFile(unrelatedPath, codexRollout("unrelated-session", "/work/other", 999)),
-        ]),
-      );
-
-      yield* Effect.gen(function* () {
-        const config = yield* ServerConfig.ServerConfig;
-        const runtimeRepository = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
-        yield* runtimeRepository.upsert({
-          threadId: ThreadId.make("target-thread"),
-          providerName: "codex",
-          providerInstanceId: null,
-          adapterKey: "codex",
-          runtimeMode: "full-access",
-          status: "running",
-          lastSeenAt: "2026-08-01T10:00:00.000Z",
-          resumeCursor: { threadId: "target-session" },
-          runtimePayload: null,
-        });
-        const service = yield* UsageService.make;
-        const breakdown = yield* service.readThreadBreakdown({
-          ...WINDOW,
-          threadId: ThreadId.make("target-thread"),
-        });
-        assert.strictEqual(breakdown.rows.length, 1);
-        assert.strictEqual(breakdown.rows[0]?.totals.outputTokens, 7);
-
-        const persisted = (yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown))(
+  for (const refreshToken of [undefined, "turn-refresh"]) {
+    it.live(
+      `does not parse unrelated Codex token content for a targeted thread read (${refreshToken ?? "initial"})`,
+      () =>
+        Effect.gen(function* () {
+          const { settings, home } = yield* setup;
+          const sessionsDir = NodePath.join(home, "codex", "sessions", "2026", "08", "01");
+          yield* Effect.promise(() => NodeFSP.mkdir(sessionsDir, { recursive: true }));
+          const targetPath = NodePath.join(
+            sessionsDir,
+            "rollout-2026-08-01T10-00-00-target-session.jsonl",
+          );
+          const unrelatedPath = NodePath.join(
+            sessionsDir,
+            "rollout-2026-08-01T10-00-00-unrelated-session.jsonl",
+          );
           yield* Effect.promise(() =>
-            NodeFSP.readFile(NodePath.join(config.stateDir, "usage-scan-cache.json"), "utf8"),
-          ),
-        )) as { files: Record<string, unknown>; identities: Record<string, unknown> };
-        assert.deepStrictEqual(Object.keys(persisted.files), [targetPath]);
-        assert.deepStrictEqual(
-          Object.keys(persisted.identities).sort(),
-          [targetPath, unrelatedPath].sort(),
-        );
-      }).pipe(
-        Effect.provide(
-          serviceLayers({ prefix: "usage-service-target-prefilter-test", home, settings }),
-        ),
-      );
-    }).pipe(Effect.scoped),
-  );
+            Promise.all([
+              NodeFSP.writeFile(targetPath, codexRollout("target-session", "/work/target", 7)),
+              NodeFSP.writeFile(
+                unrelatedPath,
+                codexRollout("unrelated-session", "/work/other", 999),
+              ),
+            ]),
+          );
+
+          yield* Effect.gen(function* () {
+            const config = yield* ServerConfig.ServerConfig;
+            const runtimeRepository =
+              yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
+            yield* runtimeRepository.upsert({
+              threadId: ThreadId.make("target-thread"),
+              providerName: "codex",
+              providerInstanceId: null,
+              adapterKey: "codex",
+              runtimeMode: "full-access",
+              status: "running",
+              lastSeenAt: "2026-08-01T10:00:00.000Z",
+              resumeCursor: { threadId: "target-session" },
+              runtimePayload: null,
+            });
+            const service = yield* UsageService.make;
+            const breakdown = yield* service.readThreadBreakdown({
+              ...WINDOW,
+              threadId: ThreadId.make("target-thread"),
+              ...(refreshToken === undefined ? {} : { refreshToken }),
+            });
+            assert.strictEqual(breakdown.rows.length, 1);
+            assert.strictEqual(breakdown.rows[0]?.totals.outputTokens, 7);
+
+            const persisted = (yield* Schema.decodeUnknownEffect(
+              Schema.fromJsonString(Schema.Unknown),
+            )(
+              yield* Effect.promise(() =>
+                NodeFSP.readFile(NodePath.join(config.stateDir, "usage-scan-cache.json"), "utf8"),
+              ),
+            )) as { files: Record<string, unknown>; identities: Record<string, unknown> };
+            assert.deepStrictEqual(Object.keys(persisted.files), [targetPath]);
+            assert.deepStrictEqual(
+              Object.keys(persisted.identities).sort(),
+              [targetPath, unrelatedPath].sort(),
+            );
+          }).pipe(
+            Effect.provide(
+              serviceLayers({ prefix: "usage-service-target-prefilter-test", home, settings }),
+            ),
+          );
+        }).pipe(Effect.scoped),
+    );
+  }
 
   it.live("filters a targeted thread from the summary's cached source snapshot", () =>
     Effect.gen(function* () {
@@ -268,6 +279,14 @@ describe("UsageService", () => {
         assert.strictEqual(breakdown.rows.length, 1);
         assert.strictEqual(breakdown.rows[0]?.totals.outputTokens, 7);
         assert.strictEqual(breakdown.readAt, summary.readAt);
+
+        const refreshed = yield* service.readThreadBreakdown({
+          ...WINDOW,
+          threadId: ThreadId.make("target-thread"),
+          refreshToken: "completed-turn",
+        });
+        assert.strictEqual(refreshed.rows.length, 1);
+        assert.strictEqual(refreshed.rows[0]?.totals.outputTokens, 77);
       }).pipe(
         Effect.provide(
           serviceLayers({ prefix: "usage-service-target-cached-snapshot-test", home, settings }),
@@ -569,6 +588,33 @@ describe("UsageService", () => {
       }).pipe(
         Effect.provide(
           serviceLayers({ prefix: "usage-service-thread-source-cache-test", home, settings }),
+        ),
+      );
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("refreshes thread rows when the caller changes the refresh token", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
+
+      yield* Effect.gen(function* () {
+        const service = yield* UsageService.make;
+        yield* service.readSummary(WINDOW);
+        yield* Effect.promise(() => NodeFSP.appendFile(transcript, claudeLine(2, 7)));
+
+        const breakdown = yield* service.readThreadBreakdown({
+          ...WINDOW,
+          refreshToken: "thread-refresh-1",
+        });
+
+        assert.strictEqual(
+          breakdown.rows.reduce((total, row) => total + row.totals.outputTokens, 0),
+          12,
+        );
+      }).pipe(
+        Effect.provide(
+          serviceLayers({ prefix: "usage-service-thread-refresh-test", home, settings }),
         ),
       );
     }).pipe(Effect.scoped),
