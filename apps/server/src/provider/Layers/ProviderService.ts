@@ -940,7 +940,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     } satisfies Record<string, string>;
   });
 
-  const prepareMcpSession = (threadId: ThreadId, providerInstanceId: ProviderInstanceId, provider: string) =>
+  const prepareMcpSession = (threadId: ThreadId, providerInstanceId: ProviderInstanceId, provider: ProviderDriverKind) =>
     Effect.gen(function* () {
       const capabilities = yield* agentAccessCapabilities(threadId);
       if (provider === "codex") capabilities.add("monitor");

@@ -6,10 +6,10 @@ import type * as Scope from "effect/Scope";
 
 export class MonitorUnavailableError extends Schema.TaggedErrorClass<MonitorUnavailableError>()(
   "MonitorUnavailableError",
-  {},
+  { sessionId: Schema.String },
 ) {
   override get message() {
-    return "Monitoring requires an active Codex 0.153.2 or later session.";
+    return `Monitoring requires an active Codex 0.153.2 or later session (${this.sessionId}).`;
   }
 }
 
@@ -33,10 +33,10 @@ export class MonitorStoppedError extends Schema.TaggedErrorClass<MonitorStoppedE
 
 export class MonitorProcessMissingError extends Schema.TaggedErrorClass<MonitorProcessMissingError>()(
   "MonitorProcessMissingError",
-  {},
+  { processId: Schema.String },
 ) {
   override get message() {
-    return "No running background process with this session ID. Launch a watcher with exec_command first.";
+    return `No running background process with session ID ${this.processId}. Launch a watcher with exec_command first.`;
   }
 }
 
@@ -90,7 +90,7 @@ export const make = Effect.sync(() => {
     processId: string,
   ) {
     const session = sessions.get(sessionId);
-    if (!session) return yield* new MonitorUnavailableError({});
+    if (!session) return yield* new MonitorUnavailableError({ sessionId });
     yield* session[operation](processId);
     return { processId, subscribed: operation === "subscribe" };
   });
