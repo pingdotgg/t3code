@@ -231,6 +231,12 @@ describe("ChatMarkdown workspace images", () => {
     expect(html).toContain("aspect-video");
   });
 
+  it("keeps a linked image inline when text shares its line", () => {
+    const html = render("Figure: [![shot](.t3/workspace-image.svg)](https://example.com)");
+
+    expect(html).not.toContain("aspect-video");
+  });
+
   it("retains an authored SVG fragment on the signed URL", () => {
     const html = render("![logo](icons.svg#logo)");
 

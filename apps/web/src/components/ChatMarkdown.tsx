@@ -372,7 +372,9 @@ function meaningfulHastChildren(node: MarkdownImageHastNode): MarkdownImageHastN
  */
 function markStandaloneImages(node: MarkdownImageHastNode) {
   const children = meaningfulHastChildren(node);
-  if (children.length === 1) {
+  // Only a block can make its image standalone; a link that wraps an image
+  // is still inline content of whatever block holds the link.
+  if (children.length === 1 && node.tagName !== "a") {
     let only = children[0];
     if (only?.type === "element" && only.tagName === "a") {
       const linkChildren = meaningfulHastChildren(only);
