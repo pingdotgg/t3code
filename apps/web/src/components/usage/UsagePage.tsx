@@ -11,7 +11,7 @@ import {
   RefreshCwIcon,
   SlidersHorizontalIcon,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 
 import {
   isCompatibleUsageContractVersion,
@@ -88,6 +88,8 @@ export function UsagePage() {
   }));
   const [metric, setMetric] = useState<UsageMetric>("cost");
   const showingLimits = metric === "limits";
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const refreshingRef = useRef(false);
   const [breakdown, setBreakdown] = useState<"model" | "time">("model");
   const [selectedEnvironmentIds, setSelectedEnvironmentIds] =
     useState<ReadonlySet<EnvironmentId> | null>(null);
@@ -138,26 +140,39 @@ export function UsagePage() {
     });
   };
   const refreshWindow = () => {
+    if (refreshingRef.current) return;
+
     if (showingLimits) {
-      for (const [environmentId, presentation] of presentations) {
-        if (selectedEnvironmentIds !== null && !selectedEnvironmentIds.has(environmentId)) continue;
-        if (presentation.connection.phase === "connected" && presentation.serverConfig !== null) {
-          void refreshProviders({ environmentId, input: {} });
-        }
-      }
+      refreshingRef.current = true;
+      setIsRefreshing(true);
+      void Promise.all(
+        Array.from(presentations, ([environmentId, presentation]) => {
+          if (selectedEnvironmentIds !== null && !selectedEnvironmentIds.has(environmentId)) return;
+          if (presentation.connection.phase === "connected" && presentation.serverConfig !== null) {
+            return refreshProviders({ environmentId, input: {} });
+          }
+        }),
+      ).finally(() => {
+        refreshingRef.current = false;
+        setIsRefreshing(false);
+      });
       return;
     }
     const nextWindow = makeWindow(windowDays, undefined, isPast24Hours ? "hour" : "day");
     if (
-      nextWindow.sinceDay === window.sinceDay &&
-      nextWindow.untilDay === window.untilDay &&
-      nextWindow.sinceTime === window.sinceTime &&
-      nextWindow.untilTime === window.untilTime
+      nextWindow.sinceDay !== window.sinceDay ||
+      nextWindow.untilDay !== window.untilDay ||
+      nextWindow.sinceTime !== window.sinceTime ||
+      nextWindow.untilTime !== window.untilTime
     ) {
-      refresh();
-    } else {
       setWindowSelection({ days: windowDays, window: nextWindow });
     }
+    refreshingRef.current = true;
+    setIsRefreshing(true);
+    void refresh(nextWindow).finally(() => {
+      refreshingRef.current = false;
+      setIsRefreshing(false);
+    });
   };
   const windowLabel =
     isPast24Hours && window.sinceTime !== undefined && window.untilTime !== undefined
@@ -225,10 +240,12 @@ export function UsagePage() {
         <Button
           onClick={refreshWindow}
           aria-label={showingLimits ? "Refresh limits" : "Refresh usage"}
+          aria-busy={isRefreshing}
+          disabled={isRefreshing}
           size="icon-sm"
           variant="ghost"
         >
-          <RefreshCwIcon className="size-3.5" />
+          <RefreshCwIcon className={cn("size-3.5", isRefreshing && "animate-spin")} />
         </Button>
       </div>
       <div className="col-span-2 ms-auto flex min-w-0 items-center justify-end gap-1 xl:hidden">
@@ -282,10 +299,12 @@ export function UsagePage() {
         <Button
           onClick={refreshWindow}
           aria-label={showingLimits ? "Refresh limits" : "Refresh usage"}
+          aria-busy={isRefreshing}
+          disabled={isRefreshing}
           size="icon-sm"
           variant="ghost"
         >
-          <RefreshCwIcon className="size-3.5" />
+          <RefreshCwIcon className={cn("size-3.5", isRefreshing && "animate-spin")} />
         </Button>
       </div>
     </div>

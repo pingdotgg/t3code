@@ -14,6 +14,7 @@
 import { PlusIcon, RefreshCwIcon, SearchIcon } from "lucide-react";
 
 import { openCommandPalette } from "../../commandPaletteBus";
+import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
 import { PullRequestListGhost } from "./PullRequestGhosts";
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyTitle } from "../ui/empty";
@@ -149,7 +150,7 @@ export function PullRequestListEmptyState({
           {/* The hosts answered this query once; a pull request opened since then would answer
               differently, and nothing on screen says which of the two the reader is looking at. */}
           <Button size="sm" variant="outline" disabled={refreshing} onClick={onRefresh}>
-            <RefreshCwIcon className="size-3.5" />
+            <RefreshCwIcon className={cn("size-3.5", refreshing && "animate-spin")} />
             {refreshing ? "Checking..." : "Check again"}
           </Button>
         </EmptyContent>
@@ -175,7 +176,7 @@ export function PullRequestListEmptyState({
           </Button>
         ) : null}
         <Button size="sm" variant="outline" disabled={refreshing} onClick={onRefresh}>
-          <RefreshCwIcon className="size-3.5" />
+          <RefreshCwIcon className={cn("size-3.5", refreshing && "animate-spin")} />
           {refreshing ? "Checking..." : "Check again"}
         </Button>
       </EmptyContent>

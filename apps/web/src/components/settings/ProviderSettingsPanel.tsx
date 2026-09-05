@@ -993,7 +993,7 @@ export function EnvironmentProviderSettings({
                         aria-busy={isRefreshingProviders}
                         onClick={() => void refreshProviders()}
                       >
-                        <RefreshCwIcon />
+                        <RefreshCwIcon className={cn(isRefreshingProviders && "animate-spin")} />
                         <span className="sr-only">Refresh provider status</span>
                         <span className="hidden min-w-0 truncate sm:inline">
                           {isRefreshingProviders ? (

@@ -13,8 +13,14 @@ import {
   type UsageSummary,
   type UsageSummaryInput,
 } from "@t3tools/contracts";
-import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
+import { EnvironmentRpcUnavailableError } from "@t3tools/client-runtime/rpc";
+import {
+  executeAtomQuery,
+  runAtomCommand,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
 import { useCallback, useMemo } from "react";
 
@@ -22,6 +28,8 @@ import { mergeUsage, type EnvironmentUsage, type MergedUsage } from "@t3tools/sh
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentPresentations } from "./presentation";
 import { serverEnvironment } from "./server";
+
+const isEnvironmentRpcUnavailable = Schema.is(EnvironmentRpcUnavailableError);
 
 export interface EnvironmentUsageStatus {
   readonly environmentId: EnvironmentId;
@@ -70,7 +78,7 @@ export interface UsageView {
    * improve by waiting on them, so they must not read as "still reporting".
    */
   readonly isPartial: boolean;
-  readonly refresh: () => void;
+  readonly refresh: (input?: UsageSummaryInput) => Promise<void>;
 }
 
 export function useUsage(
@@ -115,19 +123,49 @@ export function useUsage(
   // Each environment refetches model pricing first, so a model released since
   // its last daily fetch gets priced by the rescan. The rescan runs whether or
   // not the refetch succeeds: an offline environment still recounts tokens.
-  const refresh = useCallback(() => {
-    const input = JSON.parse(windowKey) as UsageSummaryInput;
-    for (const environment of selectedEnvironments) {
-      const { environmentId } = environment;
-      const query = serverEnvironment.usageSummary({ environmentId, input });
-      void runAtomCommand(
-        appAtomRegistry,
-        serverEnvironment.refreshUsageRates,
-        { environmentId, input: {} },
-        { reportFailure: false },
-      ).finally(() => appAtomRegistry.refresh(query));
-    }
-  }, [selectedEnvironments, windowKey]);
+  const refresh = useCallback(
+    async (nextInput?: UsageSummaryInput) => {
+      const input = nextInput ?? (JSON.parse(windowKey) as UsageSummaryInput);
+      await Promise.all(
+        selectedEnvironments.map(async ({ environmentId }) => {
+          const query = serverEnvironment.usageSummary({ environmentId, input });
+          const presentationAtom = environmentPresentations.presentationAtom(environmentId);
+          const controller = new AbortController();
+          const abortWhenDisconnected = () => {
+            if (appAtomRegistry.get(presentationAtom)?.connection.phase !== "connected") {
+              controller.abort();
+            }
+          };
+          const unsubscribe = appAtomRegistry.subscribe(presentationAtom, abortWhenDisconnected);
+          abortWhenDisconnected();
+
+          try {
+            const ratesResult = await runAtomCommand(
+              appAtomRegistry,
+              serverEnvironment.refreshUsageRates,
+              { environmentId, input: {} },
+              { reportFailure: false },
+            );
+            const sessionUnavailable =
+              ratesResult._tag === "Failure" &&
+              isEnvironmentRpcUnavailable(squashAtomCommandFailure(ratesResult));
+            if (sessionUnavailable || controller.signal.aborted) {
+              appAtomRegistry.refresh(query);
+              return;
+            }
+            await executeAtomQuery(appAtomRegistry, query, {
+              refresh: true,
+              reportFailure: false,
+              signal: controller.signal,
+            });
+          } finally {
+            unsubscribe();
+          }
+        }),
+      );
+    },
+    [selectedEnvironments, windowKey],
+  );
 
   const merged = useMemo(() => {
     const answered: EnvironmentUsage[] = selectedEnvironments.flatMap((environment) =>
