@@ -13,6 +13,7 @@ import {
   type ProviderSessionId,
   ThreadId,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -240,6 +241,7 @@ function makeProviderAdapter(
     }) => Effect.Effect<void>;
     readonly hasPendingBackgroundWork?: Effect.Effect<boolean>;
     readonly hangSessionScopeClose?: boolean;
+    readonly beforeClose?: Effect.Effect<void>;
   } = {},
 ): ProviderAdapterV2Shape {
   return {
@@ -285,6 +287,10 @@ function makeProviderAdapter(
           // close before the closeCount finalizer, like a provider process
           // that never yields its message stream.
           yield* Effect.addFinalizer(() => Effect.never);
+        }
+        const beforeClose = options.beforeClose;
+        if (beforeClose !== undefined) {
+          yield* Effect.addFinalizer(() => beforeClose);
         }
 
         return {
@@ -341,6 +347,7 @@ function makeTestLayer(input: {
   readonly failReleaseEventWrites?: boolean;
   readonly hasPendingBackgroundWork?: Effect.Effect<boolean>;
   readonly hangSessionScopeClose?: boolean;
+  readonly beforeClose?: Effect.Effect<void>;
   readonly serverSettingsLayer?: ReturnType<typeof ServerSettings.layerTest>;
 }) {
   const configuredEventSinkLayer = input.failReleaseEventWrites
@@ -358,6 +365,7 @@ function makeTestLayer(input: {
       ...(input.hangSessionScopeClose === undefined
         ? {}
         : { hangSessionScopeClose: input.hangSessionScopeClose }),
+      ...(input.beforeClose === undefined ? {} : { beforeClose: input.beforeClose }),
     }),
   );
   return Layer.mergeAll(
@@ -879,6 +887,8 @@ it.effect("ProviderSessionManagerV2 revokes MCP credentials when release persist
       assert.equal(closeError._tag, "ProviderSessionCloseError");
       assert.isUndefined(McpProviderSession.readMcpProviderSession(threadId));
       assert.isUndefined(yield* registry.resolve(token!));
+      yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+      assert.equal((yield* Ref.get(state)).openCount, 2);
     });
 
     yield* effect.pipe(
@@ -1183,6 +1193,8 @@ it.effect(
         ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
       >([]);
       const duringOpen = yield* Ref.make<Effect.Effect<void>>(Effect.void);
+      const openEntered = yield* Deferred.make<void>();
+      const openGate = yield* Deferred.make<void>();
       const effect = Effect.gen(function* () {
         const eventSink = yield* EventSinkV2;
         const idAllocator = yield* IdAllocatorV2;
@@ -1213,8 +1225,21 @@ it.effect(
         // releases. Eager adapters (ACP, OpenCode) bake the credential into
         // the process during openSession, so the release must not revoke it;
         // rotating afterwards cannot repair those adapters.
-        yield* Ref.set(duringOpen, manager.close(s1).pipe(Effect.orDie));
-        yield* manager.open({ threadId, providerSessionId: s2, modelSelection, runtimePolicy });
+        yield* Ref.set(
+          duringOpen,
+          Deferred.succeed(openEntered, undefined).pipe(Effect.andThen(Deferred.await(openGate))),
+        );
+        const opening = yield* manager
+          .open({ threadId, providerSessionId: s2, modelSelection, runtimePolicy })
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(openEntered);
+        const closing = yield* manager.close(s1).pipe(Effect.result, Effect.forkChild);
+        yield* TestClock.adjust("30 seconds");
+        assert.equal((yield* Fiber.join(closing))._tag, "Failure");
+        assert.equal((yield* Ref.get(state)).closeCount, 0);
+        yield* Deferred.succeed(openGate, undefined);
+        yield* Fiber.join(opening);
+        yield* manager.close(s1);
 
         const slot = McpProviderSession.readMcpProviderSession(threadId);
         assert.equal(
@@ -1231,6 +1256,7 @@ it.effect(
       });
 
       yield* effect.pipe(
+        Effect.ensuring(Deferred.succeed(openGate, undefined)),
         Effect.provide(
           makeTestLayer({
             state,
@@ -1339,7 +1365,7 @@ it.effect("ProviderSessionManagerV2 releases idle sessions without sweeping all 
   }),
 );
 
-it.effect("ProviderSessionManagerV2 persists release when session scope close hangs", () =>
+it.effect("ProviderSessionManagerV2 reports an error when session scope close hangs", () =>
   Effect.gen(function* () {
     const state = yield* Ref.make(emptyState);
     const effect = Effect.gen(function* () {
@@ -1376,12 +1402,331 @@ it.effect("ProviderSessionManagerV2 persists release when session scope close ha
       yield* TestClock.adjust("30 seconds");
       yield* Effect.yieldNow;
       const projection = yield* projectionStore.getThreadProjection(threadId);
-      assert.equal(projection.providerSessions.at(-1)?.status, "stopped");
+      assert.equal(projection.providerSessions.at(-1)?.status, "error");
+      assert.include(projection.providerSessions.at(-1)?.lastError ?? "", "30 seconds");
       assert.equal((yield* Ref.get(state)).closeCount, 0);
     });
 
     yield* effect.pipe(
       Effect.provide(makeTestLayer({ state, idleTimeoutMs: 1000, hangSessionScopeClose: true })),
+    );
+  }),
+);
+
+for (const operation of ["close", "detach"] as const) {
+  it.effect(
+    `ProviderSessionManagerV2 blocks replacement after ${operation} times out until cleanup completes`,
+    () =>
+      Effect.gen(function* () {
+        const state = yield* Ref.make(emptyState);
+        const closeEntered = yield* Deferred.make<void>();
+        const closeGate = yield* Deferred.make<void>();
+        const mcpConfigs = yield* Ref.make<
+          ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
+        >([]);
+        yield* Effect.gen(function* () {
+          const eventSink = yield* EventSinkV2;
+          const idAllocator = yield* IdAllocatorV2;
+          const manager = yield* ProviderSessionManagerV2;
+          const projectionStore = yield* ProjectionStoreV2;
+          const registry = yield* McpSessionRegistry.McpSessionRegistry;
+          const threadId = ThreadId.make(`thread-release-timeout-${operation}`);
+          const providerSessionId = yield* idAllocator.allocate.providerSession({
+            providerInstanceId: modelSelection.instanceId,
+            threadId,
+          });
+          const replacementId = yield* idAllocator.allocate.providerSession({
+            providerInstanceId: modelSelection.instanceId,
+            threadId,
+          });
+          yield* eventSink.write({
+            events: [
+              yield* makeThreadCreatedEvent({ idAllocator, threadId, now: yield* DateTime.now }),
+            ],
+          });
+          const open = (sessionId: ProviderSessionId) =>
+            manager.open({
+              threadId,
+              providerSessionId: sessionId,
+              modelSelection,
+              runtimePolicy,
+            });
+          const release =
+            operation === "close"
+              ? manager.close(providerSessionId)
+              : manager.detach({ providerSessionId, threadId });
+          yield* open(providerSessionId);
+          const firstClose = yield* release.pipe(Effect.result, Effect.forkChild);
+          yield* Deferred.await(closeEntered);
+          assert.equal(
+            (yield* open(replacementId).pipe(Effect.flip))._tag,
+            "ProviderSessionOpenError",
+          );
+          yield* TestClock.adjust("30 seconds");
+          assert.equal((yield* Fiber.join(firstClose))._tag, "Failure");
+          assert.equal(
+            (yield* projectionStore.getThreadProjection(threadId)).providerSessions.at(-1)?.status,
+            "error",
+          );
+          assert.equal(
+            (yield* open(providerSessionId).pipe(Effect.flip))._tag,
+            "ProviderSessionOpenError",
+          );
+          assert.equal(
+            (yield* open(replacementId).pipe(Effect.flip))._tag,
+            "ProviderSessionOpenError",
+          );
+          assert.equal((yield* Ref.get(state)).openCount, 1);
+          assert.equal((yield* Ref.get(state)).closeCount, 0);
+          const token = (yield* Ref.get(mcpConfigs))[0]?.authorizationHeader.replace(
+            /^Bearer\s+/,
+            "",
+          );
+          assert.isDefined(yield* registry.resolve(token!));
+
+          // Retrying must wait for the original cleanup, not treat the removed entry as stopped.
+          const cancelledWaiter = yield* release.pipe(Effect.forkChild);
+          yield* Fiber.interrupt(cancelledWaiter);
+          const retry = yield* manager
+            .detach({ providerSessionId, threadId, revokeMcpCredential: true })
+            .pipe(Effect.result, Effect.forkChild);
+          yield* TestClock.adjust("30 seconds");
+          assert.equal((yield* Fiber.join(retry))._tag, "Failure");
+          assert.isUndefined(yield* registry.resolve(token!));
+          yield* Deferred.succeed(closeGate, undefined);
+          yield* release;
+          assert.equal((yield* Ref.get(state)).closeCount, 1);
+          assert.equal(
+            (yield* projectionStore.getThreadProjection(threadId)).providerSessions.at(-1)?.status,
+            "stopped",
+          );
+          yield* open(replacementId);
+          assert.equal((yield* Ref.get(state)).openCount, 2);
+        }).pipe(
+          Effect.ensuring(Deferred.succeed(closeGate, undefined)),
+          Effect.provide(
+            makeTestLayer({
+              state,
+              idleTimeoutMs: 3_600_000,
+              capabilities: ExclusiveCapabilities,
+              mcpConfigs,
+              beforeClose: Deferred.succeed(closeEntered, undefined).pipe(
+                Effect.andThen(Deferred.await(closeGate)),
+              ),
+            }),
+          ),
+        );
+      }),
+  );
+}
+
+it.effect(
+  "ProviderSessionManagerV2 can close another session while cleanup hangs on the same thread",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const closes = yield* Ref.make(0);
+      const closeEntered = yield* Deferred.make<void>();
+      const closeGate = yield* Deferred.make<void>();
+      yield* Effect.gen(function* () {
+        const eventSink = yield* EventSinkV2;
+        const idAllocator = yield* IdAllocatorV2;
+        const manager = yield* ProviderSessionManagerV2;
+        const threadId = ThreadId.make("thread-two-cleanups");
+        const allocate = idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        const firstId = yield* allocate;
+        const secondId = yield* allocate;
+        yield* eventSink.write({
+          events: [
+            yield* makeThreadCreatedEvent({ idAllocator, threadId, now: yield* DateTime.now }),
+          ],
+        });
+        yield* manager.open({
+          threadId,
+          providerSessionId: firstId,
+          modelSelection,
+          runtimePolicy,
+        });
+        yield* manager.open({
+          threadId,
+          providerSessionId: secondId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const first = yield* manager.close(firstId).pipe(Effect.result, Effect.forkChild);
+        yield* Deferred.await(closeEntered);
+        const second = yield* manager.close(secondId).pipe(Effect.result, Effect.forkChild);
+        yield* TestClock.adjust("30 seconds");
+        assert.equal((yield* Fiber.join(first))._tag, "Failure");
+        assert.equal((yield* Fiber.join(second))._tag, "Success");
+        assert.equal((yield* Ref.get(state)).closeCount, 1);
+        yield* Deferred.succeed(closeGate, undefined);
+        yield* manager.close(firstId);
+        assert.equal((yield* Ref.get(state)).closeCount, 2);
+      }).pipe(
+        Effect.ensuring(Deferred.succeed(closeGate, undefined)),
+        Effect.provide(
+          makeTestLayer({
+            state,
+            idleTimeoutMs: 3_600_000,
+            beforeClose: Ref.getAndUpdate(closes, (n) => n + 1).pipe(
+              Effect.flatMap((n) =>
+                n === 0
+                  ? Deferred.succeed(closeEntered, undefined).pipe(
+                      Effect.andThen(Deferred.await(closeGate)),
+                    )
+                  : Effect.void,
+              ),
+            ),
+          }),
+        ),
+      );
+    }),
+);
+
+for (const cleanupOutcome of ["success", "failure"] as const) {
+  it.effect(
+    `ProviderSessionManagerV2 reuses an attached live session during peer cleanup ${cleanupOutcome}`,
+    () =>
+      Effect.gen(function* () {
+        const state = yield* Ref.make(emptyState);
+        const closes = yield* Ref.make(0);
+        const closeEntered = yield* Deferred.make<void>();
+        const closeGate = yield* Deferred.make<void>();
+        yield* Effect.gen(function* () {
+          const eventSink = yield* EventSinkV2;
+          const idAllocator = yield* IdAllocatorV2;
+          const manager = yield* ProviderSessionManagerV2;
+          const threadId = ThreadId.make(`thread-live-peer-${cleanupOutcome}`);
+          const otherThreadId = ThreadId.make(`thread-new-attachment-${cleanupOutcome}`);
+          for (const id of [threadId, otherThreadId]) {
+            yield* eventSink.write({
+              events: [
+                yield* makeThreadCreatedEvent({
+                  idAllocator,
+                  threadId: id,
+                  now: yield* DateTime.now,
+                }),
+              ],
+            });
+          }
+          const allocate = idAllocator.allocate.providerSession({
+            providerInstanceId: modelSelection.instanceId,
+            threadId,
+          });
+          const oldId = yield* allocate;
+          const liveId = yield* allocate;
+          const newId = yield* allocate;
+          const open = (providerSessionId: ProviderSessionId, attachedThreadId = threadId) =>
+            manager.open({
+              threadId: attachedThreadId,
+              providerSessionId,
+              modelSelection,
+              runtimePolicy,
+            });
+          yield* open(oldId);
+          yield* open(oldId, otherThreadId);
+          const liveRuntime = yield* open(liveId);
+          const closing = yield* manager.close(oldId).pipe(Effect.result, Effect.forkChild);
+          yield* Deferred.await(closeEntered);
+          assert.strictEqual(yield* open(liveId), liveRuntime);
+          assert.equal((yield* open(newId).pipe(Effect.flip))._tag, "ProviderSessionOpenError");
+          assert.equal((yield* open(oldId).pipe(Effect.flip))._tag, "ProviderSessionOpenError");
+          assert.equal(
+            (yield* open(liveId, otherThreadId).pipe(Effect.flip))._tag,
+            "ProviderSessionOpenError",
+          );
+          yield* TestClock.adjust("30 seconds");
+          assert.equal((yield* Fiber.join(closing))._tag, "Failure");
+          assert.strictEqual(yield* open(liveId), liveRuntime);
+          assert.equal((yield* Ref.get(state)).openCount, 2);
+          assert.equal((yield* Ref.get(state)).closeCount, 0);
+          yield* Deferred.succeed(closeGate, undefined);
+          const completed = yield* manager.close(oldId).pipe(Effect.result);
+          assert.equal(completed._tag, cleanupOutcome === "success" ? "Success" : "Failure");
+          assert.strictEqual(yield* open(liveId), liveRuntime);
+          if (cleanupOutcome === "success") {
+            assert.strictEqual(yield* open(liveId, otherThreadId), liveRuntime);
+          } else {
+            assert.equal(
+              (yield* open(liveId, otherThreadId).pipe(Effect.flip))._tag,
+              "ProviderSessionOpenError",
+            );
+            assert.equal((yield* open(newId).pipe(Effect.flip))._tag, "ProviderSessionOpenError");
+          }
+          assert.equal((yield* Ref.get(state)).openCount, 2);
+        }).pipe(
+          Effect.ensuring(Deferred.succeed(closeGate, undefined)),
+          Effect.provide(
+            makeTestLayer({
+              state,
+              idleTimeoutMs: 3_600_000,
+              beforeClose: Ref.getAndUpdate(closes, (n) => n + 1).pipe(
+                Effect.flatMap((n) =>
+                  n === 0
+                    ? Deferred.succeed(closeEntered, undefined).pipe(
+                        Effect.andThen(Deferred.await(closeGate)),
+                        Effect.andThen(
+                          cleanupOutcome === "failure" ? Effect.die("cleanup failed") : Effect.void,
+                        ),
+                      )
+                    : Effect.void,
+                ),
+              ),
+            }),
+          ),
+        );
+      }),
+  );
+}
+
+it.effect("ProviderSessionManagerV2 blocks replacement when cleanup fails", () =>
+  Effect.gen(function* () {
+    const cleanupDefect = "private adapter output that must not reach the client";
+    const state = yield* Ref.make(emptyState);
+    yield* Effect.gen(function* () {
+      const eventSink = yield* EventSinkV2;
+      const idAllocator = yield* IdAllocatorV2;
+      const manager = yield* ProviderSessionManagerV2;
+      const projectionStore = yield* ProjectionStoreV2;
+      const threadId = ThreadId.make("thread-failed-cleanup");
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId,
+      });
+      yield* eventSink.write({
+        events: [
+          yield* makeThreadCreatedEvent({ idAllocator, threadId, now: yield* DateTime.now }),
+        ],
+      });
+      const open = manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+      yield* open;
+      assert.equal((yield* manager.close(providerSessionId).pipe(Effect.result))._tag, "Failure");
+      const session = (yield* projectionStore.getThreadProjection(threadId)).providerSessions.at(
+        -1,
+      );
+      assert.equal(session?.status, "error");
+      assert.equal(session?.lastError, "Provider session cleanup failed.");
+      const release = manager.release({ providerSessionId, reason: "manual_shutdown" });
+      const releaseError = yield* release.pipe(Effect.flip);
+      const cleanupCause = releaseError.cause;
+      if (!Cause.isCause(cleanupCause)) assert.fail("Expected the original cleanup cause");
+      assert.strictEqual(Cause.squash(cleanupCause), cleanupDefect);
+      assert.strictEqual(yield* release.pipe(Effect.flip), releaseError);
+      assert.equal((yield* open.pipe(Effect.flip))._tag, "ProviderSessionOpenError");
+      assert.equal((yield* manager.close(providerSessionId).pipe(Effect.result))._tag, "Failure");
+      assert.equal((yield* Ref.get(state)).openCount, 1);
+    }).pipe(
+      Effect.provide(
+        makeTestLayer({
+          state,
+          idleTimeoutMs: 3_600_000,
+          beforeClose: Effect.die(cleanupDefect),
+        }),
+      ),
     );
   }),
 );
@@ -1657,28 +2002,25 @@ it.effect("ProviderSessionManagerV2 does not apply a stale idle pin to a replace
       yield* TestClock.adjust("1 second");
       yield* Deferred.await(checkEntered);
 
-      // close removes the map entry first, then waits to interrupt the idle
-      // fiber (still uninterruptible). That window lets a replacement open
-      // under the same providerSessionId before the stale probe finishes.
+      // Cleanup waits for the uninterruptible probe. Replacement must wait too.
       const closeFiber = yield* manager.close(providerSessionId).pipe(Effect.forkDetach);
       for (let i = 0; i < 20; i += 1) {
         yield* Effect.yieldNow;
       }
-      yield* manager.open({
+      const replacement = manager.open({
         threadId,
         providerSessionId,
         modelSelection,
         runtimePolicy,
       });
-      assert.equal((yield* Ref.get(state)).openCount, 2);
+      assert.equal((yield* replacement.pipe(Effect.flip))._tag, "ProviderSessionOpenError");
+      assert.equal((yield* Ref.get(state)).openCount, 1);
 
       // Stale probe reports pending work against the old runtime; the pin
       // stamp must no-op on the replacement (runtime / generation mismatch).
       yield* Deferred.succeed(checkGate, undefined);
       yield* Fiber.join(closeFiber);
-      for (let i = 0; i < 10; i += 1) {
-        yield* Effect.yieldNow;
-      }
+      yield* replacement;
 
       assert.isTrue(Option.isSome(yield* manager.get(providerSessionId)));
       assert.equal((yield* Ref.get(state)).closeCount, 1);
