@@ -312,7 +312,8 @@ function needsRecovery(
         projection.turnItems.some(
           (item) =>
             ["command_execution", "dynamic_tool", "subagent"].includes(item.type) &&
-            ["pending", "running", "waiting"].includes(item.status),
+            ["pending", "running", "waiting"].includes(item.status) &&
+            !projection.runs.some((run) => run.id === item.runId && run.status === "rolled_back"),
         )
       );
   }
@@ -2852,8 +2853,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 JOIN pending_provider_threads
                   ON pending_provider_threads.provider_thread_id = subagents.provider_thread_id
                 UNION
-                SELECT thread_id FROM orchestration_v2_projection_turn_items
-                WHERE type IN ('command_execution', 'dynamic_tool', 'subagent')
+                SELECT item.thread_id FROM orchestration_v2_projection_turn_items AS item
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM orchestration_v2_projection_runs AS run
+                    WHERE run.run_id = item.run_id AND run.status = 'rolled_back'
+                  )
+                  AND type IN ('command_execution', 'dynamic_tool', 'subagent')
                   AND status IN ('pending', 'running', 'waiting')
                 UNION
                 SELECT thread_id FROM orchestration_v2_effect_outbox
