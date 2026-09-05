@@ -233,6 +233,22 @@ export default function DiffPanel({
     selectedTurn &&
     (selectedTurn.checkpointTurnCount ?? inferredCheckpointTurnCountByTurnId[selectedTurn.turnId]);
   const latestTurn = orderedTurnDiffSummaries[0];
+  const [baselineMenuOpen, setBaselineMenuOpen] = useState(false);
+  const firstCheckpoint = orderedTurnDiffSummaries.findLast(
+    (summary) => summary.status === "ready" && summary.checkpointTurnCount > 0,
+  );
+  // A completion checkpoint can exist without Turn 0 when Git was initialized mid-turn.
+  // Check the earliest available range only when the baseline menu is opened.
+  const initialCheckpointDiff = useCheckpointDiff(
+    {
+      environmentId: activeThread?.environmentId ?? null,
+      threadId: activeThread?.id ?? null,
+      fromTurnCount: 0,
+      toTurnCount: firstCheckpoint?.checkpointTurnCount ?? null,
+      ignoreWhitespace: true,
+    },
+    { enabled: baselineMenuOpen && isGitRepo },
+  );
   const isLatestTurnSelection =
     baselineTurnCount === undefined ? selectedTurn?.turnId === latestTurn?.turnId : followsLatest;
   const selectedScopeLabel =
@@ -655,14 +671,17 @@ export default function DiffPanel({
                 })}
               </DropdownMenuSubContent>
             </DropdownMenuSub>
-            <DropdownMenuSub>
+            <DropdownMenuSub onOpenChange={setBaselineMenuOpen}>
               <DropdownMenuSubTrigger>Pin baseline</DropdownMenuSubTrigger>
               <DropdownMenuSubContent className="w-64">
                 <DropdownMenuItem
-                  disabled={!latestTurn}
+                  disabled={
+                    initialCheckpointDiff.data === null || initialCheckpointDiff.error !== null
+                  }
                   onClick={() => pinBaseline(THREAD_START_DIFF_BASELINE)}
                 >
                   Start of thread (Turn 0){baselineTurnCount === 0 ? " (pinned)" : ""}
+                  {initialCheckpointDiff.error ? " (unavailable)" : ""}
                 </DropdownMenuItem>
                 {orderedTurnDiffSummaries.map((summary) => (
                   <DropdownMenuItem
