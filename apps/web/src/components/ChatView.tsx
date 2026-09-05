@@ -22,6 +22,7 @@ import {
   type ApprovalRequestId,
   type ChatFileAttachment,
   DEFAULT_MODEL,
+  EnvironmentAuthorizationError,
   type EnvironmentId,
   type MessageId,
   type ModelSelection,
@@ -3998,7 +3999,12 @@ export default function ChatView(props: ChatViewProps) {
         (!isDeletingScript || readEnvironmentScope(environmentId, AuthSettingsWriteScope));
       if (changesKeybinding && !readEnvironmentScope(environmentId, AuthSettingsWriteScope)) {
         return AsyncResult.failure(
-          Cause.fail(new Error("This connection cannot change keyboard shortcuts.")),
+          Cause.fail(
+            new EnvironmentAuthorizationError({
+              requiredScope: AuthSettingsWriteScope,
+              message: "This connection cannot change keyboard shortcuts.",
+            }),
+          ),
         );
       }
       const keybindingRule = changesKeybinding
@@ -4047,9 +4053,11 @@ export default function ChatView(props: ChatViewProps) {
           ? updateResult
           : AsyncResult.failure(
               Cause.fail(
-                new Error(
-                  "The script was saved, but this connection can no longer change keyboard shortcuts.",
-                ),
+                new EnvironmentAuthorizationError({
+                  requiredScope: AuthSettingsWriteScope,
+                  message:
+                    "The script was saved, but this connection can no longer change keyboard shortcuts.",
+                }),
               ),
             );
       }
