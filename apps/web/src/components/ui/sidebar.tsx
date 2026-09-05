@@ -692,24 +692,34 @@ function SidebarSeparator({ className, ...props }: React.ComponentProps<typeof S
 function SidebarContent({
   className,
   fixedHeader,
+  scrollable = true,
   ...props
 }: React.ComponentProps<"div"> & {
   fixedHeader?: React.ReactNode;
+  /** Virtualized children own their viewport and must receive a bounded height. */
+  scrollable?: boolean;
 }) {
+  const content = (
+    <div
+      className={cn(
+        "flex w-full min-w-0 flex-col gap-2 group-data-[collapsible=icon]:overflow-hidden",
+        className,
+      )}
+      data-sidebar="content"
+      data-slot="sidebar-content"
+      {...props}
+    />
+  );
   return (
     <>
       {fixedHeader ? <div className="w-full shrink-0">{fixedHeader}</div> : null}
-      <ScrollArea hideScrollbars scrollFade className="h-auto min-h-0 flex-1">
-        <div
-          className={cn(
-            "flex w-full min-w-0 flex-col gap-2 group-data-[collapsible=icon]:overflow-hidden",
-            className,
-          )}
-          data-sidebar="content"
-          data-slot="sidebar-content"
-          {...props}
-        />
-      </ScrollArea>
+      {scrollable ? (
+        <ScrollArea hideScrollbars scrollFade className="h-auto min-h-0 flex-1">
+          {content}
+        </ScrollArea>
+      ) : (
+        content
+      )}
     </>
   );
 }
