@@ -1,9 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
+  isInsideComposerFocusScope,
   isInsideCollapsedComposerControls,
   isInsideComposerFloatingLayer,
   isInsideRestingComposerControlScope,
+  resolveDesktopComposerFocus,
 } from "./composerEventScope";
 
 class FakeElement {
@@ -51,11 +53,57 @@ describe("composer event scopes", () => {
     expect(isInsideRestingComposerControlScope(target as unknown as EventTarget)).toBe(true);
   });
 
+  it("keeps composer-owned toolbar controls and popups in its focus scope", () => {
+    vi.stubGlobal("Element", FakeElement);
+
+    const toolbarTarget = new FakeElement('[data-chat-composer-focus-scope="true"]');
+    const popupTarget = new FakeElement('[data-chat-composer-floating-layer="true"]');
+    expect(isInsideComposerFocusScope(toolbarTarget as unknown as EventTarget)).toBe(true);
+    expect(isInsideComposerFocusScope(popupTarget as unknown as EventTarget)).toBe(true);
+  });
+
+  it("keeps an expanded composer steady across the branch picker focus transition", () => {
+    vi.stubGlobal("Element", FakeElement);
+    vi.stubGlobal("Node", FakeElement);
+
+    const trigger = new FakeElement('[data-chat-composer-focus-scope="true"]');
+    const searchInput = new FakeElement('[data-chat-composer-floating-layer="true"]');
+    let focused = true;
+
+    focused = resolveDesktopComposerFocus({
+      currentFocused: focused,
+      composerForm: null,
+      target: trigger as unknown as EventTarget,
+    });
+    focused = resolveDesktopComposerFocus({
+      currentFocused: focused,
+      composerForm: null,
+      target: searchInput as unknown as EventTarget,
+    });
+
+    expect(focused).toBe(true);
+  });
+
+  it("does not expand a resting composer when the branch picker takes focus", () => {
+    vi.stubGlobal("Element", FakeElement);
+    vi.stubGlobal("Node", FakeElement);
+
+    const trigger = new FakeElement('[data-chat-composer-focus-scope="true"]');
+    expect(
+      resolveDesktopComposerFocus({
+        currentFocused: false,
+        composerForm: null,
+        target: trigger as unknown as EventTarget,
+      }),
+    ).toBe(false);
+  });
+
   it("leaves unrelated floating layers outside the composer scope", () => {
     vi.stubGlobal("Element", FakeElement);
 
     const target = new FakeElement('[data-slot="popover-popup"]');
     expect(isInsideComposerFloatingLayer(target as unknown as EventTarget)).toBe(false);
+    expect(isInsideComposerFocusScope(target as unknown as EventTarget)).toBe(false);
     expect(isInsideRestingComposerControlScope(target as unknown as EventTarget)).toBe(false);
   });
 
