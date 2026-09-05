@@ -17,6 +17,7 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
+import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { mediaFileReference } from "@t3tools/client-runtime/media-reference";
 import { Code2, Eye, FolderTree, Globe2, LoaderCircle } from "lucide-react";
 import * as Schema from "effect/Schema";
@@ -49,10 +50,17 @@ import { useEnvironmentHttpBaseUrl, usePrimaryEnvironmentId } from "~/state/envi
 import { previewEnvironment } from "~/state/preview";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
+import {
+  fileScrollPositionKey,
+  readHandledFileReveal,
+  rememberHandledFileReveal,
+} from "~/fileScrollState";
 
 import FileBrowserPanel from "./FileBrowserPanel";
 import { FileBreadcrumbs } from "./FileBreadcrumbs";
 import { FileMarkdownPreview } from "./FileMarkdownPreview";
+import { RestorableFileScroll } from "./RestorableFileScroll";
+import { rememberFileScrollPositionFromViewport } from "./fileScrollViewport";
 import {
   type FileCommentAnnotationEntry,
   type FileCommentAnnotationGroup,
@@ -143,6 +151,10 @@ const FILE_LINK_REVEAL_UNSAFE_CSS = `
   }
 `;
 type FilePostRender = NonNullable<FileOptions<unknown>["onPostRender"]>;
+
+function fileSourceLineCount(contents: string): number {
+  return contents.length === 0 ? 1 : contents.split(/\r\n|\r|\n/).length;
+}
 
 function WorkspaceImagePreview(props: {
   readonly environmentId: EnvironmentId;
@@ -427,12 +439,17 @@ interface FileRevealState {
 
 function useFileLineReveal(
   relativePath: string | null,
+  positionKey: string | null,
   revealLine: number | null,
   revealRequestId: number,
-): FilePostRender {
+): { onPostRender: FilePostRender; revealPerformed: boolean } {
   const [revealStatesByPath] = useState(() => new Map<string, FileRevealState>());
+  // True once this reveal request has scrolled the file, in this panel or an earlier mount of it.
+  // Read at render so a reopened file restores its saved position instead of re-revealing.
+  const revealPerformed =
+    positionKey !== null && readHandledFileReveal(positionKey) === revealRequestId;
 
-  return useCallback<FilePostRender>(
+  const onPostRender = useCallback<FilePostRender>(
     (fileContainer, instance, phase) => {
       if (relativePath === null) return;
 
@@ -440,7 +457,7 @@ function useFileLineReveal(
       const state: FileRevealState = existingState ?? {
         frameId: null,
         cancelGuard: null,
-        handledRequestId: null,
+        handledRequestId: positionKey === null ? null : readHandledFileReveal(positionKey),
         latestRequestId: null,
       };
       if (!existingState) revealStatesByPath.set(relativePath, state);
@@ -582,14 +599,16 @@ function useFileLineReveal(
 
           scrollContainer.scrollTop = targetTop;
           state.handledRequestId = revealRequestId;
+          if (positionKey !== null) rememberHandledFileReveal(positionKey, revealRequestId);
           guardScrollTarget(line);
         });
       };
 
       scheduleReveal(0);
     },
-    [revealStatesByPath, relativePath, revealLine, revealRequestId],
+    [revealStatesByPath, relativePath, positionKey, revealLine, revealRequestId],
   );
+  return { onPostRender, revealPerformed };
 }
 
 interface EditableFileSurfaceProps {
@@ -598,6 +617,8 @@ interface EditableFileSurfaceProps {
   relativePath: string;
   composerDraftTarget: ScopedThreadRef | DraftId;
   contents: string;
+  scrollPositionKey: string | null;
+  restoreScrollPosition: boolean;
   resolvedTheme: "light" | "dark";
   revealRequestId: number;
   wordWrap: boolean;
@@ -616,6 +637,8 @@ function EditableFileSurface({
   relativePath,
   composerDraftTarget,
   contents,
+  scrollPositionKey,
+  restoreScrollPosition,
   resolvedTheme,
   revealRequestId,
   wordWrap,
@@ -826,60 +849,68 @@ function EditableFileSurface({
   return (
     <EditProvider editor={editor}>
       <div ref={surfaceRef} className="flex min-h-0 flex-1">
-        <Virtualizer
-          className="file-preview-virtualizer min-h-0 flex-1 overflow-auto"
-          config={{
-            overscrollSize: 600,
-            intersectionObserverMargin: 1200,
-          }}
+        <RestorableFileScroll
+          positionKey={scrollPositionKey}
+          restorePosition={restoreScrollPosition}
+          sourceLineCount={fileSourceLineCount(contents)}
+          surface="source"
+          viewportSelector=".file-preview-virtualizer"
         >
-          <File<FileCommentAnnotationGroup>
-            file={{
-              name: relativePath,
-              contents,
-              cacheKey: projectFileEditorCacheKey(
-                environmentId,
-                cwd,
-                relativePath,
+          <Virtualizer
+            className="file-preview-virtualizer min-h-0 flex-1 overflow-auto"
+            config={{
+              overscrollSize: 600,
+              intersectionObserverMargin: 1200,
+            }}
+          >
+            <File<FileCommentAnnotationGroup>
+              file={{
+                name: relativePath,
                 contents,
-                editor.getFile(),
-              ),
-            }}
-            options={{
-              disableFileHeader: true,
-              enableGutterUtility: !hasOpenCommentForm,
-              enableLineSelection: !hasOpenCommentForm,
-              onGutterUtilityClick: setSelectedRange,
-              onLineSelectionChange: setSelectedRange,
-              onLineSelectionEnd: handleLineSelectionEnd,
-              overflow: wordWrap ? "wrap" : "scroll",
-              theme: resolveDiffThemeName(resolvedTheme),
-              preferredHighlighter: PREFERRED_HIGHLIGHTER,
-              themeType: resolvedTheme,
-              unsafeCSS: FILE_LINK_REVEAL_UNSAFE_CSS,
-              onPostRender: handlePostRender,
-            }}
-            selectedLines={selectedRange}
-            lineAnnotations={lineAnnotations}
-            renderAnnotation={(annotation) => (
-              <div className="py-1">
-                {annotation.metadata.entries.map((entry) => (
-                  <DiffCommentAnnotation
-                    key={entry.id}
-                    kind={entry.kind}
-                    rangeLabel={formatFileCommentRange(entry.startLine, entry.endLine)}
-                    text={entry.text}
-                    onCancel={() => removeAnnotationEntry(entry.id)}
-                    onComment={(text) => submitAnnotationEntry(entry.id, text)}
-                    onDelete={() => removeAnnotationEntry(entry.id)}
-                  />
-                ))}
-              </div>
-            )}
-            className="min-h-full"
-            contentEditable
-          />
-        </Virtualizer>
+                cacheKey: projectFileEditorCacheKey(
+                  environmentId,
+                  cwd,
+                  relativePath,
+                  contents,
+                  editor.getFile(),
+                ),
+              }}
+              options={{
+                disableFileHeader: true,
+                enableGutterUtility: !hasOpenCommentForm,
+                enableLineSelection: !hasOpenCommentForm,
+                onGutterUtilityClick: setSelectedRange,
+                onLineSelectionChange: setSelectedRange,
+                onLineSelectionEnd: handleLineSelectionEnd,
+                overflow: wordWrap ? "wrap" : "scroll",
+                theme: resolveDiffThemeName(resolvedTheme),
+                preferredHighlighter: PREFERRED_HIGHLIGHTER,
+                themeType: resolvedTheme,
+                unsafeCSS: FILE_LINK_REVEAL_UNSAFE_CSS,
+                onPostRender: handlePostRender,
+              }}
+              selectedLines={selectedRange}
+              lineAnnotations={lineAnnotations}
+              renderAnnotation={(annotation) => (
+                <div className="py-1">
+                  {annotation.metadata.entries.map((entry) => (
+                    <DiffCommentAnnotation
+                      key={entry.id}
+                      kind={entry.kind}
+                      rangeLabel={formatFileCommentRange(entry.startLine, entry.endLine)}
+                      text={entry.text}
+                      onCancel={() => removeAnnotationEntry(entry.id)}
+                      onComment={(text) => submitAnnotationEntry(entry.id, text)}
+                      onDelete={() => removeAnnotationEntry(entry.id)}
+                    />
+                  ))}
+                </div>
+              )}
+              className="min-h-full"
+              contentEditable
+            />
+          </Virtualizer>
+        </RestorableFileScroll>
       </div>
     </EditProvider>
   );
@@ -890,6 +921,8 @@ function RenderedMarkdownSurface({
   cwd,
   relativePath,
   contents,
+  scrollPositionKey,
+  restoreScrollPosition,
   threadRef,
   readOnly,
   onPendingChange,
@@ -913,27 +946,42 @@ function RenderedMarkdownSurface({
   });
 
   return (
-    <ScrollArea className="min-h-0 flex-1">
-      <FileMarkdownPreview
-        text={contents}
-        cwd={cwd}
-        relativePath={relativePath}
-        threadRef={threadRef}
-        onTaskListChange={
-          readOnly
-            ? undefined
-            : ({ markerOffset, checked }) => {
-                const currentContents =
-                  getOptimisticProjectFileQueryData(environmentId, cwd, relativePath)?.contents ??
-                  contents;
-                const nextContents = setMarkdownTaskChecked(currentContents, markerOffset, checked);
-                if (nextContents === currentContents) return;
-                setProjectFileQueryData(environmentId, cwd, relativePath, nextContents);
-                saveCoordinator.change(nextContents);
-              }
-        }
-      />
-    </ScrollArea>
+    <RestorableFileScroll
+      // Keyed by file so the old instance unmounts, and saves against its own viewport, before the
+      // next file's content commits into a reused one.
+      key={scrollPositionKey ?? relativePath}
+      positionKey={scrollPositionKey}
+      restorePosition={restoreScrollPosition}
+      sourceLineCount={fileSourceLineCount(contents)}
+      surface="markdown"
+      viewportSelector="[data-slot='scroll-area-viewport']"
+    >
+      <ScrollArea className="min-h-0 flex-1">
+        <FileMarkdownPreview
+          text={contents}
+          cwd={cwd}
+          relativePath={relativePath}
+          threadRef={threadRef}
+          onTaskListChange={
+            readOnly
+              ? undefined
+              : ({ markerOffset, checked }) => {
+                  const currentContents =
+                    getOptimisticProjectFileQueryData(environmentId, cwd, relativePath)?.contents ??
+                    contents;
+                  const nextContents = setMarkdownTaskChecked(
+                    currentContents,
+                    markerOffset,
+                    checked,
+                  );
+                  if (nextContents === currentContents) return;
+                  setProjectFileQueryData(environmentId, cwd, relativePath, nextContents);
+                  saveCoordinator.change(nextContents);
+                }
+          }
+        />
+      </ScrollArea>
+    </RestorableFileScroll>
   );
 }
 
@@ -1019,6 +1067,7 @@ export default function FilePreviewPanel({
     null,
   );
   const breadcrumbRef = useRef<HTMLDivElement>(null);
+  const previewSurfaceRef = useRef<HTMLDivElement>(null);
   const isMarkdown = relativePath ? isMarkdownPreviewFile(relativePath) : false;
   // A reveal still wins over the preference: the line only exists in the source.
   const revealHandled =
@@ -1039,7 +1088,35 @@ export default function FilePreviewPanel({
     isBrowserPreviewFile(relativePath);
   const absolutePath =
     relativePath && attachment === undefined ? resolvePathLinkTarget(relativePath, cwd) : null;
-  const onFilePostRender = useFileLineReveal(relativePath, revealLine, revealRequestId);
+  const scrollPositionKey =
+    relativePath === null
+      ? null
+      : fileScrollPositionKey({
+          threadKey: scopedThreadKey(threadRef),
+          cwd,
+          relativePath,
+        });
+  const rememberCurrentPreviewPosition = () => {
+    if (!isMarkdown || scrollPositionKey === null) return;
+    const selector = renderMarkdown
+      ? "[data-slot='scroll-area-viewport']"
+      : ".file-preview-virtualizer";
+    const viewport = previewSurfaceRef.current?.querySelector<HTMLElement>(selector);
+    if (!viewport) return;
+    rememberFileScrollPositionFromViewport({
+      positionKey: scrollPositionKey,
+      viewport,
+      surface: renderMarkdown ? "markdown" : "source",
+    });
+  };
+  const { onPostRender: onFilePostRender, revealPerformed } = useFileLineReveal(
+    relativePath,
+    scrollPositionKey,
+    revealLine,
+    revealRequestId,
+  );
+  // A pending reveal wins; once it has run, or when there is none, the saved position applies.
+  const restoreScrollPosition = revealHandled || revealPerformed;
   useWorkspaceMutationRefresh({
     enabled:
       attachment === undefined &&
@@ -1152,6 +1229,7 @@ export default function FilePreviewPanel({
                     className="shrink-0"
                     pressed={rendered}
                     onPressedChange={(pressed) => {
+                      rememberCurrentPreviewPosition();
                       setRenderedPreferred(pressed);
                       setHandledReveal(
                         pressed && relativePath !== null
@@ -1219,6 +1297,7 @@ export default function FilePreviewPanel({
       ) : null}
       <div className="flex min-h-0 flex-1 overflow-hidden">
         <div
+          ref={previewSurfaceRef}
           className={cn(
             "min-w-0 flex-1 flex-col overflow-hidden",
             relativePath ? "flex" : "hidden",
@@ -1277,36 +1356,46 @@ export default function FilePreviewPanel({
                 threadRef={threadRef}
                 contents={file.data.contents}
                 readOnly={isHostFile}
+                scrollPositionKey={scrollPositionKey}
+                restoreScrollPosition={restoreScrollPosition}
                 onPendingChange={onPendingChange}
               />
             ) : file.data.truncated || isHostFile ? (
               <DiffWorkerPoolProvider>
-                <Virtualizer
+                <RestorableFileScroll
                   key={`${relativePath}:${resolvedTheme}:${file.data.byteLength}`}
-                  className="file-preview-virtualizer min-h-0 flex-1 overflow-auto"
-                  config={{
-                    overscrollSize: 600,
-                    intersectionObserverMargin: 1200,
-                  }}
+                  positionKey={scrollPositionKey}
+                  restorePosition={restoreScrollPosition}
+                  sourceLineCount={fileSourceLineCount(file.data.contents)}
+                  surface="source"
+                  viewportSelector=".file-preview-virtualizer"
                 >
-                  <File
-                    file={{
-                      name: relativePath,
-                      contents: file.data.contents,
-                      cacheKey: projectFileCacheKey(cwd, relativePath, file.data.contents),
+                  <Virtualizer
+                    className="file-preview-virtualizer min-h-0 flex-1 overflow-auto"
+                    config={{
+                      overscrollSize: 600,
+                      intersectionObserverMargin: 1200,
                     }}
-                    options={{
-                      disableFileHeader: true,
-                      overflow: wordWrap ? "wrap" : "scroll",
-                      theme: resolveDiffThemeName(resolvedTheme),
-                      preferredHighlighter: PREFERRED_HIGHLIGHTER,
-                      themeType: resolvedTheme,
-                      unsafeCSS: FILE_LINK_REVEAL_UNSAFE_CSS,
-                      onPostRender: onFilePostRender,
-                    }}
-                    className="min-h-full"
-                  />
-                </Virtualizer>
+                  >
+                    <File
+                      file={{
+                        name: relativePath,
+                        contents: file.data.contents,
+                        cacheKey: projectFileCacheKey(cwd, relativePath, file.data.contents),
+                      }}
+                      options={{
+                        disableFileHeader: true,
+                        overflow: wordWrap ? "wrap" : "scroll",
+                        theme: resolveDiffThemeName(resolvedTheme),
+                        preferredHighlighter: PREFERRED_HIGHLIGHTER,
+                        themeType: resolvedTheme,
+                        unsafeCSS: FILE_LINK_REVEAL_UNSAFE_CSS,
+                        onPostRender: onFilePostRender,
+                      }}
+                      className="min-h-full"
+                    />
+                  </Virtualizer>
+                </RestorableFileScroll>
               </DiffWorkerPoolProvider>
             ) : (
               <DiffWorkerPoolProvider>
@@ -1317,6 +1406,8 @@ export default function FilePreviewPanel({
                   relativePath={relativePath}
                   composerDraftTarget={composerDraftTarget}
                   contents={file.data.contents}
+                  scrollPositionKey={scrollPositionKey}
+                  restoreScrollPosition={restoreScrollPosition}
                   resolvedTheme={resolvedTheme}
                   revealRequestId={revealRequestId}
                   wordWrap={wordWrap}

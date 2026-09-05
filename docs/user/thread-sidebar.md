@@ -41,6 +41,13 @@ prevent automatic settlement. An open pull request does not prevent inactivity
 settlement, but an old closed or merged pull request does not settle work you
 resumed after it closed.
 
+## Returning to a file
+
+When you switch between threads or files on web or desktop, each open text or Markdown file
+keeps its reading position. Toggling a Markdown file between rendered and source keeps the same
+place in the document. Positions belong to the current client session and are not shared across
+devices.
+
 Change these rules in **Settings → General**. They continue to run when your apps
 are closed. Changes apply to connected environments that support shared settings;
 offline environments and older servers keep their previous values. If connected
