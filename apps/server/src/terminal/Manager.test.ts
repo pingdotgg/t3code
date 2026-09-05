@@ -1687,6 +1687,31 @@ it.layer(
     }),
   );
 
+  it.effect.each(["linux", "darwin", "win32"] as const)(
+    "advertises truecolor before the PTY backend on %s without replacing explicit values",
+    (platform) =>
+      Effect.gen(function* () {
+        for (const [parentColor, runtimeColor, expected] of [
+          [undefined, undefined, "truecolor"],
+          ["", undefined, "truecolor"],
+          ["24bit", undefined, "24bit"],
+          ["24bit", "", "truecolor"],
+          ["24bit", "custom", "custom"],
+        ] as const) {
+          const env = Object.freeze({ COLORTERM: parentColor });
+          const { manager, ptyAdapter } = yield* createManager(5, {
+            shellResolver: () => "/bin/sh",
+            env,
+          }).pipe(Effect.provide(withHostPlatform(platform)));
+          yield* manager.open(
+            openInput({ env: runtimeColor === undefined ? {} : { COLORTERM: runtimeColor } }),
+          );
+          expect(ptyAdapter.spawnInputs[0]?.env.COLORTERM).toBe(expected);
+          expect(env.COLORTERM).toBe(parentColor);
+        }
+      }),
+  );
+
   it.effect("filters app runtime env variables from terminal sessions", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager(5, {

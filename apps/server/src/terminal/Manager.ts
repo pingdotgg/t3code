@@ -1270,6 +1270,10 @@ function createTerminalSpawnEnv(
       spawnEnv[key] = value;
     }
   }
+  // Both PTY backends feed truecolor-capable terminal clients.
+  if (spawnEnv.COLORTERM === undefined || spawnEnv.COLORTERM === "") {
+    spawnEnv.COLORTERM = "truecolor";
+  }
   return stripAppImageRuntimeEnv(spawnEnv);
 }
 
