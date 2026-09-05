@@ -10,11 +10,23 @@ export const CHAT_INLINE_CHIP_CLASS_NAME = `${INLINE_CHIP_CLASS_NAME} text-[12px
 
 export const COMPOSER_INLINE_CHIP_CLASS_NAME = `${INLINE_CHIP_CLASS_NAME} text-[0.86em] select-none`;
 
+// Composer chips hang 0.125em below the baseline: the Lexical decorator lives
+// in prompt text whose leading differs from chat, and the offset optically
+// centers the pill there. Chat chips stay on `align-middle` so a skill chip and
+// a file chip on the same message line share one anchor.
+export const INLINE_CHIP_WRAPPER_CLASS_NAME = "inline-flex align-middle leading-none";
+
 export const COMPOSER_INLINE_CHIP_DECORATOR_CLASS_NAME =
   "relative inline-flex align-[-0.125em] leading-none data-[composer-chip-selected]:after:pointer-events-none data-[composer-chip-selected]:after:absolute data-[composer-chip-selected]:after:inset-0 data-[composer-chip-selected]:after:rounded-[6px] data-[composer-chip-selected]:after:bg-[Highlight] data-[composer-chip-selected]:after:opacity-30 data-[composer-chip-selected]:after:content-['']";
 
 export const COMPOSER_INLINE_CHIP_ICON_CLASS_NAME =
   "block size-[1.17em] shrink-0 self-center opacity-85 [&>svg]:block";
+
+// The package glyph fills its viewBox edge-to-edge, unlike the file-type
+// icons that carry intrinsic padding, so skill chips render their icon one
+// step smaller to match the file chips' optical size.
+export const SKILL_CHIP_ICON_CLASS_NAME =
+  "block size-[1em] shrink-0 self-center opacity-85 [&>svg]:block";
 
 export const CHAT_INLINE_CHIP_LABEL_CLASS_NAME = "truncate leading-tight";
 
