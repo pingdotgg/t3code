@@ -1,8 +1,12 @@
+// @effect-diagnostics nodeBuiltinImport:off
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import { expect, it } from "@effect/vitest";
 import { ProviderInstanceId } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import { HttpClient } from "effect/unstable/http";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
@@ -32,26 +36,59 @@ const testLayer = ServerConfig.layerTest(process.cwd(), {
   ),
 );
 
+// The `#!/bin/sh` stub below cannot be resolved as an executable on Windows.
+const windowsHost = HostProcessPlatform.defaultValue() === "win32";
+
 it.layer(testLayer)("CursorDriver", (it) => {
-  it.effect("formats a copied update command for the injected Windows environment", () =>
+  it.effect.skipIf(windowsHost)(
+    "quotes a configured executable path in the copyable update command",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cursor-driver-" });
+        const binaryPath = NodePath.join(tempDir, "Cursor Tools", "bin", "cursor-agent");
+        yield* fs.makeDirectory(NodePath.dirname(binaryPath), { recursive: true });
+        yield* fs.writeFileString(binaryPath, "#!/bin/sh\n");
+        yield* fs.chmod(binaryPath, 0o755);
+
+        const instance = yield* CursorDriver.create({
+          instanceId: ProviderInstanceId.make("cursor-copy-command"),
+          displayName: "Cursor test",
+          enabled: false,
+          environment: [],
+          config: { ...CursorDriver.defaultConfig(), binaryPath },
+        });
+
+        const capabilities = yield* instance.snapshot.resolveMaintenance();
+        expect(capabilities.update).toMatchObject({
+          command: `'${binaryPath}' update`,
+          executable: binaryPath,
+          args: ["update"],
+        });
+        expect((yield* instance.snapshot.refresh).status).toBe("disabled");
+      }).pipe(
+        Effect.provideService(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make(() => Effect.die("Disabled Cursor must not spawn a process")),
+        ),
+        Effect.scoped,
+      ),
+  );
+
+  it.effect("stays manual-only when the configured executable does not exist", () =>
     Effect.gen(function* () {
-      const binaryPath = "C:\\Users\\Example User\\.local\\bin\\cursor-agent.exe";
       const instance = yield* CursorDriver.create({
-        instanceId: ProviderInstanceId.make("cursor-copy-command"),
+        instanceId: ProviderInstanceId.make("cursor-missing"),
         displayName: "Cursor test",
         enabled: false,
         environment: [],
-        config: { ...CursorDriver.defaultConfig(), binaryPath },
+        config: {
+          ...CursorDriver.defaultConfig(),
+          binaryPath: NodePath.join(NodeOS.tmpdir(), "t3-cursor-missing", "cursor-agent"),
+        },
       });
-
-      expect(instance.snapshot.maintenanceCapabilities.update).toMatchObject({
-        command: `& '${binaryPath}' update`,
-        executable: binaryPath,
-        args: ["update"],
-      });
-      expect((yield* instance.snapshot.refresh).status).toBe("disabled");
+      expect((yield* instance.snapshot.resolveMaintenance()).update).toBeNull();
     }).pipe(
-      Effect.provideService(HostProcessPlatform, "win32"),
       Effect.provideService(
         ChildProcessSpawner.ChildProcessSpawner,
         ChildProcessSpawner.make(() => Effect.die("Disabled Cursor must not spawn a process")),

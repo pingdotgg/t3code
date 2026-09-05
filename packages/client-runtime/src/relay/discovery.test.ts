@@ -62,6 +62,7 @@ const makeHarness = Effect.fn("RelayDiscoveryTest.makeHarness")(function* () {
   const listFailure = yield* Ref.make<ManagedRelay.ManagedRelayClientError | null>(null);
   const secondListCall = yield* Deferred.make<void>();
   const clerkToken = yield* Ref.make<string | null>("clerk-token");
+  const sessionIdentity = { accountId: "account-1" };
   const wakeups = yield* SubscriptionRef.make<{
     readonly sequence: number;
     readonly reason: "application-active" | "credentials-changed";
@@ -127,6 +128,11 @@ const makeHarness = Effect.fn("RelayDiscoveryTest.makeHarness")(function* () {
         Layer.succeed(
           ClientCapabilities.CloudSession,
           ClientCapabilities.CloudSession.of({
+            identity: Ref.get(clerkToken).pipe(
+              Effect.map((token) =>
+                token === null ? Option.none() : Option.some(sessionIdentity),
+              ),
+            ),
             clerkToken: Ref.get(clerkToken).pipe(
               Effect.flatMap((token) =>
                 token === null
@@ -283,6 +289,7 @@ describe("RelayEnvironmentDiscovery", () => {
           Layer.mergeAll(
             Layer.succeed(ManagedRelay.ManagedRelayClient, client),
             Layer.succeed(ClientCapabilities.CloudSession, {
+              identity: Effect.succeed(Option.some({ accountId: "account-1" })),
               clerkToken: Effect.succeed("clerk-token"),
             }),
             Layer.succeed(Connectivity.Connectivity, {
