@@ -88,8 +88,10 @@ recording started, ready for you to review and edit before sending.
 
 The first use may download Apple's speech model and needs a network connection.
 Later transcription works offline for that language. Recordings can be up to five
-minutes long. Canceling, leaving the screen, or an audio interruption discards the
-recording and preserves your existing draft.
+minutes long. Recording continues when you switch threads or open another app.
+Return to the original draft to finish or cancel it; only one recording can run at a time.
+At the time limit, the transcript is added to the original draft even if you are elsewhere.
+Canceling or an audio interruption discards the recording and preserves your existing draft.
 
 Transcription runs on your device. T3 Code deletes the temporary audio after
 transcription or cancellation; only the message text is sent when you submit.

@@ -511,6 +511,50 @@ describe("VoiceInputController", () => {
     expect(harness.deleted).toEqual(["file:///voice.m4a", "file:///reset-empty.m4a"]);
   });
 
+  it.each(["before stop", "during stop"] as const)(
+    "releases the session when the native recorder is destroyed %s",
+    async (releaseTiming) => {
+      const releaseRecording = vi.fn(async () => undefined);
+      const transcribe = vi.fn(async () => "ignored");
+      const harness = createHarness({
+        releaseRecording,
+        getTranscriber: () => ({ prepare: async () => preparedTranscription(transcribe) }),
+      });
+      await harness.controller.start();
+
+      const releaseNativeRecorder = () => {
+        Object.defineProperty(harness.recorder, "uri", {
+          get() {
+            throw new Error("Native recorder already released");
+          },
+        });
+      };
+      if (releaseTiming === "before stop") {
+        releaseNativeRecorder();
+        harness.recorder.stop.mockImplementation(() => {
+          throw new Error("Native recorder already released");
+        });
+      } else {
+        harness.recorder.stop.mockImplementation(async () => {
+          releaseNativeRecorder();
+        });
+      }
+
+      await harness.controller.interruptRecording();
+
+      expect(harness.controller.currentState.phase).toBe("error");
+      expect(releaseRecording).toHaveBeenCalledOnce();
+      expect(harness.deleted).toEqual(["file:///voice.m4a"]);
+      expect(transcribe).not.toHaveBeenCalled();
+      expect(harness.commits).toEqual([]);
+
+      const next = createHarness();
+      await next.controller.start();
+      expect(next.controller.currentState.phase).toBe("recording");
+      await next.controller.interruptRecording();
+    },
+  );
+
   it("cancels preparation when the app reaches the background", async () => {
     const preparation = deferred<PreparedVoiceTranscription>();
     const preparationEntered = deferred<AbortSignal>();
