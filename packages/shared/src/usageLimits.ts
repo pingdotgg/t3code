@@ -7,6 +7,9 @@
  */
 import {
   type EnvironmentId,
+  type UsageLimitsReport,
+  type ProviderInstanceId,
+  type ServerProviderSlashCommand,
   isProviderAvailable,
   type ServerProvider,
   type ServerProviderUsageLimits,
@@ -14,6 +17,8 @@ import {
   type UsageLimitSourceSnapshot,
   type UsageLimitSourceSnapshots,
 } from "@t3tools/contracts";
+
+import * as DateTime from "effect/DateTime";
 
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
@@ -144,7 +149,7 @@ function accountKey(driver: ServerProvider["driver"], email: string | undefined)
 
 /** The instance's configured name, else the driver's, else its raw kind. */
 export function providerLimitsLabel(
-  provider: ServerProvider,
+  provider: Pick<ServerProvider, "driver" | "displayName">,
   driverLabel: (driver: ServerProvider["driver"]) => string | undefined,
 ): string {
   return provider.displayName?.trim() || driverLabel(provider.driver) || String(provider.driver);
@@ -159,6 +164,11 @@ export function limitsNotice(limits: ServerProviderUsageLimits): string | null {
     return limits.unavailable.message ?? "Could not read limits.";
   }
   return limits.windows.length === 0 ? "No limits reported." : null;
+}
+
+/** Quota left in the window, 0..100. Bars and labels show what remains, as Codex does. */
+export function remainingPercent(window: ServerProviderUsageWindow): number {
+  return Math.round(100 - Math.max(0, Math.min(100, window.usedPercent)));
 }
 
 function resetMillis(window: ServerProviderUsageWindow): number | null {
@@ -179,9 +189,9 @@ export function elapsedShare(window: ServerProviderUsageWindow, now: number): nu
 export type LimitPace = "ahead" | "on" | "under";
 
 /**
- * Usage against the clock. The bar is the whole window, so the elapsed share
- * is also where even spending would have put the fill; within five points of
- * it counts as on pace.
+ * Usage against the clock. Spending evenly leaves the same share of quota as
+ * there is time left in the window; within five points of that counts as on
+ * pace, further ahead means the window may run dry first.
  */
 export function paceOf(window: ServerProviderUsageWindow, now: number): LimitPace | null {
   const elapsed = elapsedShare(window, now);
@@ -208,4 +218,143 @@ export function formatResetsIn(window: ServerProviderUsageWindow, now: number): 
   const resetsAt = resetMillis(window);
   if (resetsAt === null) return null;
   return resetsAt <= now ? "resets now" : `resets in ${formatDuration(resetsAt - now)}`;
+}
+
+/** Limit commands are served by T3 from the same snapshots as Usage → Limits. */
+export const USAGE_LIMITS_COMMAND = {
+  name: "usage-limits",
+  description: "Show this provider's usage limits",
+} satisfies ServerProviderSlashCommand;
+
+/** Handled by the client without sending a turn; anything with arguments stays an ordinary prompt. */
+export function isUsageLimitsCommand(prompt: string): boolean {
+  return prompt.trim().toLowerCase() === "/usage-limits";
+}
+
+/**
+ * Whether Limits has anything to say about this driver. A source that failed to
+ * read keeps no accounts, so its error counts for every driver rather than
+ * disappearing until the next successful refresh.
+ */
+export function hasProviderUsageLimits(
+  driver: ServerProvider["driver"],
+  providers: readonly ServerProvider[],
+  sources: UsageLimitSourceSnapshots,
+): boolean {
+  return (
+    providersWithLimits(providers).some((provider) => provider.driver === driver) ||
+    sources.some(
+      (source) =>
+        source.accounts.some((account) => account.driver === driver) ||
+        (source.error !== undefined && source.accounts.length === 0),
+    )
+  );
+}
+
+/**
+ * The drivers a set of sources would offer the command to, where a source that
+ * failed to read counts for every driver. Two snapshots with the same coverage
+ * need no catalog republish, however much their quotas moved.
+ */
+export function sameUsageLimitCommandCoverage(
+  previous: UsageLimitSourceSnapshots,
+  next: UsageLimitSourceSnapshots,
+): boolean {
+  const coverage = (sources: UsageLimitSourceSnapshots) =>
+    new Set(
+      sources.flatMap((source) =>
+        source.error !== undefined && source.accounts.length === 0
+          ? ["*"]
+          : source.accounts.map((account) => String(account.driver)),
+      ),
+    );
+  const before = coverage(previous);
+  const after = coverage(next);
+  return before.size === after.size && [...before].every((driver) => after.has(driver));
+}
+
+/** Advertise on workspace catalogs too, which replace the global command list. */
+export function withUsageLimitsCommands(
+  providers: readonly ServerProvider[],
+  sources: UsageLimitSourceSnapshots,
+): ServerProvider[] {
+  return providers.map((provider) => {
+    if (!hasProviderUsageLimits(provider.driver, providers, sources)) return provider;
+    const commands = (items: readonly ServerProviderSlashCommand[]) => [
+      ...items.filter((command) => command.name !== USAGE_LIMITS_COMMAND.name),
+      USAGE_LIMITS_COMMAND,
+    ];
+    return {
+      ...provider,
+      slashCommands: commands(provider.slashCommands),
+      ...(provider.workspaceSnapshots
+        ? {
+            workspaceSnapshots: provider.workspaceSnapshots.map((snapshot) => ({
+              ...snapshot,
+              slashCommands: commands(snapshot.slashCommands),
+            })),
+          }
+        : {}),
+    };
+  });
+}
+
+/** A point-in-time report; never refreshes or guesses which pooled account serves a turn. */
+export function collectProviderUsageLimits(
+  instanceId: ProviderInstanceId,
+  providers: readonly ServerProvider[],
+  sources: UsageLimitSourceSnapshots,
+  now: number,
+): UsageLimitsReport | null {
+  const selected = providers.find((provider) => provider.instanceId === instanceId);
+  if (!selected || !hasProviderUsageLimits(selected.driver, providers, sources)) return null;
+  const native = providersWithLimits(providers).filter(
+    (provider) => provider.driver === selected.driver,
+  );
+  const nativeAccounts = new Set(
+    native.flatMap((provider) => {
+      const key = accountKey(provider.driver, provider.auth.email);
+      return key && provider.usageLimits?.windows.length && !provider.usageLimits.unavailable
+        ? [key]
+        : [];
+    }),
+  );
+  const accounts: Array<UsageLimitsReport["accounts"][number]> = [];
+  const notices: string[] = [];
+  for (const provider of native) {
+    if (!provider.usageLimits) continue;
+    accounts.push({
+      id: provider.instanceId,
+      driver: provider.driver,
+      label: `${providerLimitsLabel(provider, () => undefined)} [${provider.instanceId}]`,
+      ...(provider.auth.label ? { plan: provider.auth.label } : {}),
+      instanceId: provider.instanceId,
+      ...(provider.displayName ? { displayName: provider.displayName } : {}),
+      ...(provider.accentColor ? { accentColor: provider.accentColor } : {}),
+      ...(provider.auth.email ? { email: provider.auth.email } : {}),
+      limits: provider.usageLimits,
+    });
+  }
+  for (const source of sources) {
+    const matching = source.accounts.filter((account) => account.driver === selected.driver);
+    for (const account of matching) {
+      const key = accountKey(account.driver, account.email);
+      if (key && nativeAccounts.has(key)) continue;
+      accounts.push({
+        id: `${source.id}:${account.id}`,
+        driver: account.driver,
+        label: `${source.label} · ${account.id}`,
+        sourceLabel: "CLI Proxy",
+        ...(account.plan ? { plan: account.plan } : {}),
+        ...(account.email ? { email: account.email } : {}),
+        limits: account.usageLimits,
+      });
+    }
+    // A source that failed to read has no accounts left to match on, so its
+    // error is reported to every provider rather than silently dropped.
+    if (source.error && (matching.length > 0 || source.accounts.length === 0)) {
+      notices.push(`${source.label}: ${source.error}`);
+    }
+  }
+  return { createdAt: DateTime.formatIso(DateTime.makeUnsafe(now)), accounts, notices };
 }
