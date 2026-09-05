@@ -35,6 +35,13 @@ describe("resolveT3McpToolPresentation", () => {
     });
   });
 
+  it("pretty prints environment usage tool names", () => {
+    expect(resolveT3McpToolPresentation("mcp__t3-code__t3_environment_usage")).toEqual({
+      displayName: "Read environment usage",
+      logo: "t3-code",
+    });
+  });
+
   it("pretty prints preview T3 MCP tool names", () => {
     expect(resolveT3McpToolPresentation("T3-code.preview_open")).toEqual({
       displayName: "Open a page in the preview browser",
