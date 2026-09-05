@@ -85,6 +85,7 @@ import * as Cause from "effect/Cause";
 import * as Schema from "effect/Schema";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { isElectron } from "../env";
+import { isWslConnectionTarget } from "../connection/desktopLocal";
 import { readLocalApi } from "../localApi";
 import { useDiffPanelStore } from "../diffPanelStore";
 import {
@@ -2134,6 +2135,7 @@ export default function ChatView(props: ChatViewProps) {
         label: environment?.label ?? p.environmentId,
         isPrimary,
         machine: resolveEnvironmentMachineKind(environment?.serverConfig ?? null),
+        isWsl: environment !== null && isWslConnectionTarget(environment.entry.target),
       });
     }
     // Sort: primary first, then alphabetical

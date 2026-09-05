@@ -116,6 +116,7 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
     <span className="inline-flex shrink-0 items-center gap-0.5">
       <EnvironmentMachineIcon
         kind={activeEnvironment?.machine ?? "server"}
+        wsl={activeEnvironment?.isWsl ?? false}
         className="size-3 shrink-0 mx-0!"
       />
       <WorkspaceIcon className="size-3 shrink-0 mx-0!" />
@@ -177,7 +178,11 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
                     value={env.environmentId}
                   >
                     <span className="flex min-w-0 items-center gap-1.5">
-                      <EnvironmentMachineIcon kind={env.machine} className="size-3" />
+                      <EnvironmentMachineIcon
+                        kind={env.machine}
+                        wsl={env.isWsl}
+                        className="size-3"
+                      />
                       <span className="min-w-0 truncate">{env.label}</span>
                     </span>
                   </MenuRadioItem>

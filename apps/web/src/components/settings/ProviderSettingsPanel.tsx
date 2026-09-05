@@ -27,7 +27,10 @@ import * as Result from "effect/Result";
 import { PlusIcon, RefreshCwIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
-import { isDesktopLocalConnectionTarget } from "../../connection/desktopLocal";
+import {
+  isDesktopLocalConnectionTarget,
+  isWslConnectionTarget,
+} from "../../connection/desktopLocal";
 import { isElectron } from "../../env";
 import { usePrimarySessionState } from "../../environments/primary";
 import { useEnvironmentSettings, useUpdateEnvironmentSettings } from "../../hooks/useSettings";
@@ -242,7 +245,10 @@ function EnvironmentUnavailablePlaceholder({
     <ProviderSettingsPlaceholder
       deviceTabs={deviceTabs}
       icon={
-        <EnvironmentMachineIcon kind={resolveEnvironmentMachineKind(environment.serverConfig)} />
+        <EnvironmentMachineIcon
+          kind={resolveEnvironmentMachineKind(environment.serverConfig)}
+          wsl={isWslConnectionTarget(environment.entry.target)}
+        />
       }
       title={title}
       description={description}
@@ -345,6 +351,7 @@ function ProviderSettingsPanelContent(target: ProviderSettingsTarget) {
                     <Toggle value={environment.environmentId} className="gap-2 text-left">
                       <EnvironmentMachineIcon
                         kind={machine}
+                        wsl={isWslConnectionTarget(environment.entry.target)}
                         className="size-3.5 shrink-0"
                         aria-hidden
                       />

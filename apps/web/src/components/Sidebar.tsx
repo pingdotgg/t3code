@@ -79,6 +79,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { isElectron } from "../env";
+import { isWslConnectionTarget } from "../connection/desktopLocal";
 import {
   resolveShortcutCommand,
   shortcutLabelForCommand,
@@ -294,6 +295,7 @@ function SidebarThreadTooltip({
   projectIcon,
   environmentLabel,
   environmentMachine,
+  environmentIsWsl,
   providerEntry,
   showInstanceBadge,
   modelInstanceId,
@@ -310,6 +312,7 @@ function SidebarThreadTooltip({
   projectIcon: ProjectIconOverride | null;
   environmentLabel: string | null;
   environmentMachine: EnvironmentMachineKind;
+  environmentIsWsl: boolean;
   providerEntry: ProviderInstanceEntry | null;
   showInstanceBadge: boolean;
   modelInstanceId: string;
@@ -352,6 +355,7 @@ function SidebarThreadTooltip({
             <div className="flex min-w-0 items-center gap-2">
               <EnvironmentMachineIcon
                 kind={environmentMachine}
+                wsl={environmentIsWsl}
                 className="size-3 shrink-0 stroke-muted-foreground"
               />
               <div className="min-w-0 truncate text-foreground/75">{environmentLabel}</div>
@@ -772,6 +776,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   currentEnvironmentId: string | null;
   environmentLabel: string | null;
   environmentMachine: EnvironmentMachineKind;
+  environmentIsWsl: boolean;
   projectCwd: string | null;
   projectFaviconPath: string | null;
   projectIcon: ProjectIconOverride | null;
@@ -1032,6 +1037,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
       projectIcon={props.projectIcon}
       environmentLabel={props.environmentLabel}
       environmentMachine={props.environmentMachine}
+      environmentIsWsl={props.environmentIsWsl}
       providerEntry={providerEntry}
       showInstanceBadge={showInstanceBadge}
       modelInstanceId={modelInstanceId}
@@ -1700,6 +1706,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                     <EnvironmentMachineIcon
                       aria-hidden
                       kind={props.environmentMachine}
+                      wsl={props.environmentIsWsl}
                       className="size-3.5"
                     />
                   </span>
@@ -1750,6 +1757,7 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
   projectDisplayName: string | null;
   environmentLabel: string | null;
   environmentMachine: EnvironmentMachineKind;
+  environmentIsWsl: boolean;
   providerEntryByInstanceId: ReadonlyMap<string, ProviderInstanceEntry>;
   isHighlighted: boolean;
   isRouteActive: boolean;
@@ -1851,6 +1859,7 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
           projectIcon={props.projectIcon}
           environmentLabel={props.environmentLabel}
           environmentMachine={props.environmentMachine}
+          environmentIsWsl={props.environmentIsWsl}
           providerEntry={providerEntry}
           showInstanceBadge={showInstanceBadge}
           modelInstanceId={modelInstanceId}
@@ -2000,6 +2009,16 @@ export default function Sidebar() {
               environment.environmentId,
               resolveEnvironmentMachineKind(environment.serverConfig),
             ] as const,
+        ),
+      ),
+    [environments],
+  );
+  const environmentIsWslById = useMemo(
+    () =>
+      new Map(
+        environments.map(
+          (environment) =>
+            [environment.environmentId, isWslConnectionTarget(environment.entry.target)] as const,
         ),
       ),
     [environments],
@@ -3957,6 +3976,7 @@ export default function Sidebar() {
                         environmentMachine={
                           environmentMachineById.get(thread.environmentId) ?? "server"
                         }
+                        environmentIsWsl={environmentIsWslById.get(thread.environmentId) ?? false}
                         providerEntryByInstanceId={
                           providerEntriesByEnvironment.get(thread.environmentId) ??
                           EMPTY_PROVIDER_ENTRIES
@@ -4058,6 +4078,7 @@ export default function Sidebar() {
                         environmentMachine={
                           environmentMachineById.get(thread.environmentId) ?? "server"
                         }
+                        environmentIsWsl={environmentIsWslById.get(thread.environmentId) ?? false}
                         projectCwd={
                           projectCwdByKey.get(`${thread.environmentId}:${thread.projectId}`) ?? null
                         }
