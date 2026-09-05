@@ -36,6 +36,7 @@ const completeFirstPromptOnCancel = process.env.T3_ACP_COMPLETE_FIRST_PROMPT_ON_
 const floodStderr = process.env.T3_ACP_FLOOD_STDERR === "1";
 const hangPromptForever = process.env.T3_ACP_HANG_PROMPT_FOREVER === "1";
 const hangFirstPromptForever = process.env.T3_ACP_HANG_FIRST_PROMPT_FOREVER === "1";
+const hangFirstPrompts = Number(process.env.T3_ACP_HANG_FIRST_PROMPTS ?? "0");
 const emitLateUpdateAfterCancel = process.env.T3_ACP_EMIT_LATE_UPDATE_AFTER_CANCEL === "1";
 const omitXAiPromptCompleteStopReason =
   process.env.T3_ACP_OMIT_XAI_PROMPT_COMPLETE_STOP_REASON === "1";
@@ -711,7 +712,13 @@ const program = Effect.gen(function* () {
         return yield* Effect.never;
       }
 
-      if (hangPromptForever || (hangFirstPromptForever && promptCount === 1)) {
+      if (
+        hangPromptForever ||
+        (hangFirstPromptForever && promptCount === 1) ||
+        (Number.isFinite(hangFirstPrompts) &&
+          hangFirstPrompts > 0 &&
+          promptCount <= hangFirstPrompts)
+      ) {
         return yield* Effect.never;
       }
 
