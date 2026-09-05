@@ -20,7 +20,7 @@ import {
   XIcon,
 } from "lucide-react";
 
-import { getProviderInstanceEntry } from "../../providerInstances";
+import { deriveProviderInstanceEntries } from "../../providerInstances";
 import { formatShortTimestamp } from "../../timestampFormat";
 import { PROVIDER_ICON_BY_PROVIDER, getTriggerDisplayModelName } from "./providerIconUtils";
 import { TimelineSystemDivider } from "./TimelineSystemDivider";
@@ -336,7 +336,9 @@ function HandoffEndpoint(props: {
   readonly instanceId: ProviderInstanceId;
   readonly model?: string | undefined;
 }) {
-  const entry = getProviderInstanceEntry(props.providers, props.instanceId);
+  const entry = deriveProviderInstanceEntries(props.providers).find(
+    (entry) => entry.instanceId === props.instanceId,
+  );
   const Icon = entry === undefined ? null : (PROVIDER_ICON_BY_PROVIDER[entry.driverKind] ?? null);
   const model = props.model?.trim();
   const providerModel =

@@ -12,7 +12,6 @@ import {
   buildCursorProviderSnapshot,
   buildInitialCursorProviderSnapshot,
   checkCursorProviderStatus,
-  getCursorFallbackModels,
 } from "./CursorProvider.ts";
 import { CursorSdkCatalogError, makeCursorSdkCatalogTestLayer } from "./CursorSdkCatalog.ts";
 
@@ -92,16 +91,6 @@ const sdkParameterizedModel = {
     },
   ],
 } satisfies SDKModel;
-
-describe("getCursorFallbackModels", () => {
-  it("does not publish any built-in cursor models before SDK discovery", () => {
-    expect(
-      getCursorFallbackModels({
-        customModels: ["internal/cursor-model"],
-      }).map((model) => model.slug),
-    ).toEqual(["internal/cursor-model"]);
-  });
-});
 
 describe("buildInitialCursorProviderSnapshot", () => {
   it.effect("uses SDK-specific pending status copy", () =>
