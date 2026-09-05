@@ -1,7 +1,12 @@
 import { assert, describe, it } from "@effect/vitest";
 import { Tool } from "effect/unstable/ai";
 
-import { CreateThreadsTool, DelegateTaskTool, ScheduleTaskTool } from "./tools.ts";
+import {
+  CreateThreadsTool,
+  DelegateTaskTool,
+  ScheduleTaskTool,
+  ThreadDeferOrganizationTool,
+} from "./tools.ts";
 
 describe("orchestrator MCP tool guidance", () => {
   it("directs subagent requests to delegation instead of ordinary threads", () => {
@@ -54,5 +59,11 @@ describe("orchestrator MCP tool guidance", () => {
     assert.isAtLeast(schema.properties?.schedule?.anyOf?.length ?? 0, 2);
     assert.include(ScheduleTaskTool.description ?? "", "STRUCTURED OBJECT");
     assert.include(ScheduleTaskTool.description ?? "", "nextRunAt");
+  });
+
+  it("describes safe, calling-run-bound deferred organization", () => {
+    assert.include(ThreadDeferOrganizationTool.description ?? "", "THIS calling thread");
+    assert.include(ThreadDeferOrganizationTool.description ?? "", "current run");
+    assert.include(ThreadDeferOrganizationTool.description ?? "", "approval-blocked");
   });
 });

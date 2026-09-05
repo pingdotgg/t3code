@@ -1123,6 +1123,7 @@ export function threadShellFromProjection(
     pinnedAt: projection.thread.pinnedAt ?? null,
     pinOrderKey: projection.thread.pinOrderKey ?? null,
     lastVisitedAt: projection.thread.lastVisitedAt,
+    deferredOrganization: projection.thread.deferredOrganization ?? null,
     titleRegeneration: projection.thread.titleRegeneration ?? null,
     deletedAt: projection.thread.deletedAt,
   };
@@ -1303,6 +1304,7 @@ function shellFromState(input: {
     pinnedAt: input.state.thread.pinnedAt ?? null,
     pinOrderKey: input.state.thread.pinOrderKey ?? null,
     lastVisitedAt: input.state.thread.lastVisitedAt,
+    deferredOrganization: input.state.thread.deferredOrganization ?? null,
     titleRegeneration: input.state.thread.titleRegeneration ?? null,
     deletedAt: input.state.thread.deletedAt,
   };

@@ -97,6 +97,12 @@ const handlers = {
       const service = yield* OrchestratorMcpService;
       return yield* service.organizeThreads(scope, input);
     }),
+  t3_thread_defer_organization: (input) =>
+    Effect.gen(function* () {
+      const scope = yield* McpInvocationContext;
+      const service = yield* OrchestratorMcpService;
+      return yield* service.deferThreadOrganization(scope, input);
+    }),
   t3_thread_delete: (input) =>
     Effect.gen(function* () {
       const scope = yield* McpInvocationContext;

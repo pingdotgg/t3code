@@ -21,7 +21,10 @@ import { layer as checkpointCaptureServiceLayer } from "../CheckpointCaptureServ
 import { layer as checkpointServiceLayer } from "../CheckpointService.ts";
 import { layer as checkpointRollbackServiceLayer } from "../CheckpointRollbackService.ts";
 import { layer as commandPolicyLayer } from "../CommandPolicy.ts";
-import { layer as commandReceiptStoreLayer } from "../CommandReceiptStore.ts";
+import {
+  CommandReceiptStoreV2,
+  layer as commandReceiptStoreLayer,
+} from "../CommandReceiptStore.ts";
 import { layer as contextHandoffServiceLayer } from "../ContextHandoffService.ts";
 import { layer as effectOutboxLayer } from "../EffectOutbox.ts";
 import {
@@ -29,14 +32,18 @@ import {
   layer as effectWorkerLayer,
   runDaemon as runEffectWorkerDaemon,
 } from "../EffectWorker.ts";
-import { layerFromStores as eventSinkLayer } from "../EventSink.ts";
+import { EventSinkV2, layerFromStores as eventSinkLayer } from "../EventSink.ts";
 import { layer as eventStoreLayer } from "../EventStore.ts";
 import { layer as idAllocatorLayer } from "../IdAllocator.ts";
 import { layer as orchestratorLayer } from "../Orchestrator.ts";
-import { layer as projectionStoreLayer } from "../ProjectionStore.ts";
+import { layer as projectionStoreLayer, ProjectionStoreV2 } from "../ProjectionStore.ts";
 import { OrchestratorV2, type OrchestratorV2Error } from "../Orchestrator.ts";
 import { ProviderAdapterRegistryV2 } from "../ProviderAdapterRegistry.ts";
 import { ProviderAuthService } from "../../provider/Services/ProviderAuthService.ts";
+import {
+  ProviderRuntimeRecoveryService,
+  layer as providerRuntimeRecoveryLayer,
+} from "../ProviderRuntimeRecoveryService.ts";
 import { layer as providerEventIngestorLayer } from "../ProviderEventIngestor.ts";
 import { layerWithOptions as providerSessionManagerLayerWithOptions } from "../ProviderSessionManager.ts";
 import { layer as providerSwitchServiceLayer } from "../ProviderSwitchService.ts";
@@ -219,9 +226,15 @@ export function makeOrchestratorV2ProviderReplayLayer<
     >;
     readonly enableLegacyTokenStreaming?: boolean;
     readonly runEffectWorker?: boolean;
+    readonly decorateProjectionStore?: (
+      service: ProjectionStoreV2["Service"],
+    ) => ProjectionStoreV2["Service"];
     readonly replayGate?: ProviderReplayGate;
   } = {},
-): Layer.Layer<OrchestratorV2, Error | MigrationError | PlatformError.PlatformError | SqlError> {
+): Layer.Layer<
+  OrchestratorV2 | ProviderRuntimeRecoveryService | CommandReceiptStoreV2 | EventSinkV2,
+  Error | MigrationError | PlatformError.PlatformError | SqlError
+> {
   const registryLayer = harness.makeProviderAdapterRegistryLayer(
     scenario.transcript,
     options.replayGate === undefined ? {} : { replayGate: options.replayGate },
@@ -239,8 +252,14 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
     >;
     readonly enableLegacyTokenStreaming?: boolean;
     readonly runEffectWorker?: boolean;
+    readonly decorateProjectionStore?: (
+      service: ProjectionStoreV2["Service"],
+    ) => ProjectionStoreV2["Service"];
   } = {},
-): Layer.Layer<OrchestratorV2, Error | MigrationError | PlatformError.PlatformError | SqlError> {
+): Layer.Layer<
+  OrchestratorV2 | ProviderRuntimeRecoveryService | CommandReceiptStoreV2 | EventSinkV2,
+  Error | MigrationError | PlatformError.PlatformError | SqlError
+> {
   const serverConfigLayer = Layer.effect(
     ServerConfig,
     makeReplayServerConfig(scenario.name).pipe(Effect.orDie),
@@ -255,13 +274,21 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
   const serverSettingsLayer = ServerSettingsService.layerTest({
     enableLegacyTokenStreaming: options.enableLegacyTokenStreaming ?? false,
   }).pipe(Layer.orDie);
-  const storesLayer = Layer.mergeAll(
+  const otherStoresLayer = Layer.mergeAll(
     eventStoreLayer,
-    projectionStoreLayer,
     commandReceiptStoreLayer,
     effectOutboxLayer,
     turnItemPositionStoreLayer,
   ).pipe(Layer.provide(databaseLayer));
+  const projectionStoreProvided = projectionStoreLayer.pipe(Layer.provide(databaseLayer));
+  const selectedProjectionStoreLayer =
+    options.decorateProjectionStore === undefined
+      ? projectionStoreProvided
+      : Layer.effect(
+          ProjectionStoreV2,
+          ProjectionStoreV2.pipe(Effect.map(options.decorateProjectionStore)),
+        ).pipe(Layer.provide(projectionStoreProvided));
+  const storesLayer = Layer.merge(otherStoresLayer, selectedProjectionStoreLayer);
   const eventSinkProvided = eventSinkLayer.pipe(
     Layer.provide(Layer.mergeAll(storesLayer, databaseLayer)),
   );
@@ -396,18 +423,30 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
       ),
     ),
   );
-  const replayRuntime = Layer.merge(orchestratorProvided, effectWorkerProvided).pipe(
-    Layer.provide(worktreeRepairDependenciesTestLayer),
-    Layer.provide(NodeServices.layer),
+  const providerRuntimeRecoveryProvided = providerRuntimeRecoveryLayer.pipe(
+    Layer.provide(
+      Layer.mergeAll(effectWorkerProvided, storesLayer, eventSinkProvided, idAllocatorLayer),
+    ),
+    Layer.provide(serverSettingsLayer),
   );
+  const replayRuntime = Layer.mergeAll(
+    orchestratorProvided,
+    effectWorkerProvided,
+    providerRuntimeRecoveryProvided,
+  ).pipe(Layer.provide(worktreeRepairDependenciesTestLayer), Layer.provide(NodeServices.layer));
 
   // Build the daemon from the exact worker instance exposed alongside the
   // orchestrator. Keeping this acquisition in the replay layer makes the
   // outbox lifecycle explicit and prevents test-only command-side draining.
   if (options.runEffectWorker === false) {
-    return orchestratorProvided.pipe(Layer.provide(NodeServices.layer));
+    return Layer.mergeAll(
+      orchestratorProvided,
+      providerRuntimeRecoveryProvided,
+      commandReceiptStoreProvided,
+      eventSinkProvided,
+    ).pipe(Layer.provide(worktreeRepairDependenciesTestLayer), Layer.provide(NodeServices.layer));
   }
-  return Layer.effect(
+  const orchestratorWithWorker = Layer.effect(
     OrchestratorV2,
     Effect.gen(function* () {
       const orchestrator = yield* OrchestratorV2;
@@ -415,4 +454,10 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
       return orchestrator;
     }),
   ).pipe(Layer.provide(replayRuntime));
+  return Layer.mergeAll(
+    orchestratorWithWorker,
+    providerRuntimeRecoveryProvided,
+    commandReceiptStoreProvided,
+    eventSinkProvided,
+  ).pipe(Layer.provide(worktreeRepairDependenciesTestLayer), Layer.provide(NodeServices.layer));
 }

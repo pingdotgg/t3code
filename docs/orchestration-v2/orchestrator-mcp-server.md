@@ -310,6 +310,21 @@ cannot settle. A pending approval or user-input request also blocks archive
 through MCP. Every successful outcome returns the resulting durable
 organization state.
 
+### `t3_thread_defer_organization`
+
+Stores an organization intent for the calling thread and binds it to the
+calling run. The supported deferred actions are settle and archive. The
+terminal-run handler applies the intent only after that exact run completes
+successfully and the serialized decision sees no newer run, queued or active
+work, pending runtime request, or title regeneration. Otherwise the intent is
+cleared without changing settlement or archive state.
+
+`operation: "read"` returns the current durable intent, and
+`operation: "cancel"` clears it. Schedule, cancel, and the terminal application
+all use command receipts. Startup recovery examines persisted intents so a
+terminal or stale intent is applied or discarded after a server restart; it
+does not require a polling daemon.
+
 ### `t3_thread_delete`
 
 Permanently deletes one thread in the calling project and defaults to the
