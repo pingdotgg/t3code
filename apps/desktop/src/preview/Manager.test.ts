@@ -2060,10 +2060,30 @@ describe("PreviewManager", () => {
           /\/browser-artifacts\/browser-screenshot-example-com-[^.]+\.png$/,
         );
 
+        // Chromium reports UnknownVizError while a hidden guest warms its
+        // first compositor frame, so transient failures are retried.
+        capturePage.mockClear();
+        capturePage.mockRejectedValueOnce(new Error("UnknownVizError"));
+        capturePage.mockRejectedValueOnce(new Error("UnknownVizError"));
+        const retriedFiber = yield* Effect.exit(manager.captureScreenshot("tab_1")).pipe(
+          Effect.forkChild({ startImmediately: true }),
+        );
+        yield* TestClock.adjust(1_000);
+        const retriedExit = yield* Fiber.join(retriedFiber);
+        expect(Exit.isSuccess(retriedExit)).toBe(true);
+        expect(capturePage).toHaveBeenCalledTimes(3);
+
+        // A persistent failure still surfaces once the retries are spent.
+        capturePage.mockClear();
         const captureCause = new Error("capture failed");
-        capturePage.mockRejectedValueOnce(captureCause);
-        const exit = yield* Effect.exit(manager.captureScreenshot("tab_1"));
+        capturePage.mockRejectedValue(captureCause);
+        const failingFiber = yield* Effect.exit(manager.captureScreenshot("tab_1")).pipe(
+          Effect.forkChild({ startImmediately: true }),
+        );
+        yield* TestClock.adjust(1_000);
+        const exit = yield* Fiber.join(failingFiber);
         expect(Exit.isFailure(exit)).toBe(true);
+        expect(capturePage).toHaveBeenCalledTimes(3);
         if (Exit.isSuccess(exit)) return;
         const error = Option.getOrThrow(Cause.findErrorOption(exit.cause));
         expect(error).toMatchObject({
@@ -2393,6 +2413,127 @@ describe("PreviewManager", () => {
           });
         }
         expect(host.session.setDisplayMediaRequestHandler).not.toHaveBeenCalled();
+      }),
+    ),
+  );
+
+  effectIt.effect("stops capture retries when the tab swaps during the retry delay", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const capturePage = vi.fn(async () => ({
+          toPNG: () => Buffer.from("png"),
+          toJPEG: () => Buffer.from("jpeg"),
+          getSize: () => ({ width: 100, height: 80 }),
+        }));
+        fromId.mockReturnValue(makeTestPreviewWebContents(capturePage, 42));
+        yield* manager.createTab("tab_1");
+        yield* manager.registerWebview("tab_1", 42);
+
+        capturePage.mockRejectedValueOnce(new Error("UnknownVizError"));
+        const fiber = yield* Effect.exit(manager.captureScreenshot("tab_1")).pipe(
+          Effect.forkChild({ startImmediately: true }),
+        );
+        // Let the rejection schedule its retry before replacing the guest.
+        yield* TestClock.adjust(60);
+        expect(capturePage).toHaveBeenCalledTimes(1);
+        fromId.mockReturnValue(makeTestPreviewWebContents(capturePage, 43));
+        yield* manager.registerWebview("tab_1", 43);
+        yield* TestClock.adjust(1_000);
+        const exit = yield* Fiber.join(fiber);
+
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(capturePage).toHaveBeenCalledTimes(1);
+        expect(writeFile).not.toHaveBeenCalled();
+      }),
+    ),
+  );
+
+  effectIt.effect("discards a screenshot that resolves after its guest is replaced", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const image = {
+          toPNG: () => Buffer.from("stale-png"),
+          toJPEG: () => Buffer.from("stale-jpeg"),
+          getSize: () => ({ width: 100, height: 80 }),
+        };
+        const pending = Promise.withResolvers<typeof image>();
+        const capturePage = vi.fn(() => pending.promise);
+        fromId.mockReturnValue(makeTestPreviewWebContents(capturePage, 42));
+        yield* manager.createTab("tab_1");
+        yield* manager.registerWebview("tab_1", 42);
+
+        const fiber = yield* Effect.exit(manager.captureScreenshot("tab_1")).pipe(
+          Effect.forkChild({ startImmediately: true }),
+        );
+        yield* TestClock.adjust(0);
+        expect(capturePage).toHaveBeenCalledOnce();
+        fromId.mockReturnValue(makeTestPreviewWebContents(capturePage, 43));
+        yield* manager.registerWebview("tab_1", 43);
+        pending.resolve(image);
+        const exit = yield* Fiber.join(fiber);
+
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(capturePage).toHaveBeenCalledOnce();
+        expect(writeFile).not.toHaveBeenCalled();
+      }),
+    ),
+  );
+
+  effectIt.effect("releases snapshot control when every capture attempt stalls", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const capturePage = vi.fn(() => new Promise<TestCapturedPreviewImage>(() => {}));
+        const wc = makeTestPreviewWebContents(capturePage);
+        Object.assign(wc, { isDevToolsOpened: () => false });
+        Object.assign(wc.debugger, {
+          sendCommand: vi.fn(async (method: string, params?: Record<string, unknown>) => {
+            if (method === "Runtime.evaluate") {
+              return {
+                result: {
+                  value:
+                    params?.["expression"] === "42"
+                      ? 42
+                      : {
+                          url: "https://example.com",
+                          title: "Example",
+                          loading: false,
+                          visibleText: "Example",
+                          interactiveElements: [],
+                        },
+                },
+              };
+            }
+            return method === "Accessibility.getFullAXTree" ? { nodes: [] } : undefined;
+          }),
+        });
+        fromId.mockReturnValue(wc);
+        yield* manager.createTab("tab_1");
+        yield* manager.registerWebview("tab_1", 42);
+
+        const snapshot = yield* Effect.exit(manager.automationSnapshot("tab_1")).pipe(
+          Effect.forkChild({ startImmediately: true }),
+        );
+        yield* TestClock.adjust(100);
+        expect(capturePage).toHaveBeenCalledOnce();
+        const evaluate = yield* manager
+          .automationEvaluate("tab_1", { expression: "42" })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        expect(evaluate.pollUnsafe()).toBeUndefined();
+
+        yield* TestClock.adjust(4_000);
+        const exit = yield* Fiber.join(snapshot);
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(capturePage).toHaveBeenCalledTimes(3);
+        if (Exit.isSuccess(exit)) return;
+        const error = Option.getOrThrow(Cause.findErrorOption(exit.cause));
+        expect(error).toMatchObject({
+          _tag: "PreviewOperationError",
+          operation: "automationSnapshot.capturePage",
+          tabId: "tab_1",
+          webContentsId: 42,
+          cause: { _tag: "TimeoutError" },
+        });
+        expect(yield* Fiber.join(evaluate)).toBe(42);
       }),
     ),
   );
