@@ -90,6 +90,8 @@ export class EnvironmentRegistry extends Context.Service<
       | PlatformEnvironmentRemovalError
     >;
     readonly retryNow: (environmentId: EnvironmentId) => Effect.Effect<void>;
+    readonly connect: (environmentId: EnvironmentId) => Effect.Effect<void>;
+    readonly disconnect: (environmentId: EnvironmentId) => Effect.Effect<void>;
     readonly state: (
       environmentId: EnvironmentId,
     ) => Effect.Effect<SupervisorConnectionState, EnvironmentNotRegisteredError>;
@@ -271,23 +273,26 @@ export const make = Effect.gen(function* () {
       ),
   );
 
+  // Closes and replaces the running supervisor, so callers must already hold
+  // the environment's lease.
+  const acquireSupervisorLocked = Effect.fn("EnvironmentRegistry.acquireSupervisorLocked")(
+    function* (environmentId: EnvironmentId) {
+      const entry = yield* getEntry(environmentId);
+      const existing = (yield* SubscriptionRef.get(serviceScopes)).get(environmentId);
+      if (existing !== undefined) {
+        if (Equal.equals(existing.entry, entry)) {
+          return existing.supervisor;
+        }
+        yield* closeServiceScope(environmentId);
+      }
+      return yield* createServiceScope(entry);
+    },
+  );
+
   const acquireSupervisor = Effect.fn("EnvironmentRegistry.acquireSupervisor")(function* (
     environmentId: EnvironmentId,
   ) {
-    return yield* withLeaseLock(
-      environmentId,
-      Effect.gen(function* () {
-        const entry = yield* getEntry(environmentId);
-        const existing = (yield* SubscriptionRef.get(serviceScopes)).get(environmentId);
-        if (existing !== undefined) {
-          if (Equal.equals(existing.entry, entry)) {
-            return existing.supervisor;
-          }
-          yield* closeServiceScope(environmentId);
-        }
-        return yield* createServiceScope(entry);
-      }),
-    );
+    return yield* withLeaseLock(environmentId, acquireSupervisorLocked(environmentId));
   });
 
   const run: EnvironmentRegistry["Service"]["run"] = Effect.fn("EnvironmentRegistry.run")(
@@ -629,6 +634,56 @@ export const make = Effect.gen(function* () {
       Effect.catchTag("EnvironmentNotRegisteredError", () => Effect.void),
       Effect.withSpan("EnvironmentRegistry.retryNow"),
     );
+  // Acquisition and the intent change share one lease: releasing in between
+  // would let a concurrent register or platform reconcile swap in a fresh,
+  // connected supervisor while we flip the intent on the discarded one.
+  const connect = (environmentId: EnvironmentId) =>
+    withLeaseLock(
+      environmentId,
+      acquireSupervisorLocked(environmentId).pipe(
+        Effect.flatMap((supervisor) => supervisor.connect),
+      ),
+    ).pipe(
+      Effect.catchTag("EnvironmentNotRegisteredError", () => Effect.void),
+      Effect.withSpan("EnvironmentRegistry.connect"),
+    );
+  // A managed SSH environment owns a tunnel that outlives the RPC session, so
+  // parking the supervisor is not enough to stop it. `resolver.prepare` runs on
+  // every attempt and brings the tunnel back on the next connect.
+  const disconnectManagedSsh = Effect.fn("EnvironmentRegistry.disconnectManagedSsh")(function* (
+    environmentId: EnvironmentId,
+  ) {
+    const target = (yield* getEntry(environmentId)).target;
+    if (target._tag !== "SshConnectionTarget") {
+      return;
+    }
+    const profile = yield* profiles.get(target.connectionId);
+    if (Option.isNone(profile) || !isSshConnectionProfile(profile.value)) {
+      return;
+    }
+    yield* ssh.disconnect(profile.value.target);
+  });
+
+  const disconnect = (environmentId: EnvironmentId) =>
+    withLeaseLock(
+      environmentId,
+      Effect.gen(function* () {
+        const supervisor = yield* acquireSupervisorLocked(environmentId);
+        yield* supervisor.disconnect;
+        yield* disconnectManagedSsh(environmentId).pipe(
+          Effect.tapError((error) =>
+            Effect.logWarning("Could not disconnect the managed SSH environment.", {
+              environmentId,
+              error,
+            }),
+          ),
+          Effect.ignore,
+        );
+      }),
+    ).pipe(
+      Effect.catchTag("EnvironmentNotRegisteredError", () => Effect.void),
+      Effect.withSpan("EnvironmentRegistry.disconnect"),
+    );
   const state = Effect.fn("EnvironmentRegistry.state")(function* (environmentId: EnvironmentId) {
     const supervisor = yield* acquireSupervisor(environmentId);
     return yield* SubscriptionRef.get(supervisor.state);
@@ -668,6 +723,8 @@ export const make = Effect.gen(function* () {
     remove,
     removeRelayEnvironments,
     retryNow,
+    connect,
+    disconnect,
     state,
     stateChanges,
     run,

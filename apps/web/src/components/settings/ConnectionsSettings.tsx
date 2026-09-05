@@ -1395,14 +1395,18 @@ function NetworkAccessDescription({
 type SavedBackendListRowProps = {
   environment: EnvironmentPresentation;
   removingEnvironmentId: EnvironmentId | null;
+  disconnectingEnvironmentId: EnvironmentId | null;
   onConnect: (environmentId: EnvironmentId) => void;
+  onDisconnect: (environmentId: EnvironmentId) => void;
   onRemove: (environmentId: EnvironmentId) => void;
 };
 
 function SavedBackendListRow({
   environment,
   removingEnvironmentId,
+  disconnectingEnvironmentId,
   onConnect,
+  onDisconnect,
   onRemove,
 }: SavedBackendListRowProps) {
   const environmentId = environment.environmentId;
@@ -1567,31 +1571,32 @@ function SavedBackendListRow({
             </Tooltip>
           ) : (
             <>
-              {!isConnected ? (
-                <Button
-                  size="xs"
-                  variant="outline"
-                  disabled={removingEnvironmentId === environmentId}
-                  onClick={() => void onRemove(environmentId)}
-                >
-                  {removingEnvironmentId === environmentId ? "Removing…" : "Remove"}
-                </Button>
-              ) : null}
               <Button
                 size="xs"
                 variant="outline"
-                disabled={isConnecting || removingEnvironmentId === environmentId}
+                disabled={removingEnvironmentId === environmentId}
+                onClick={() => void onRemove(environmentId)}
+              >
+                {removingEnvironmentId === environmentId ? "Removing…" : "Remove"}
+              </Button>
+              <Button
+                size="xs"
+                variant="outline"
+                disabled={
+                  removingEnvironmentId === environmentId ||
+                  disconnectingEnvironmentId === environmentId
+                }
                 onClick={() =>
-                  void (isConnected ? onRemove(environmentId) : onConnect(environmentId))
+                  void (isConnected || isConnecting
+                    ? onDisconnect(environmentId)
+                    : onConnect(environmentId))
                 }
               >
-                {isConnected
-                  ? removingEnvironmentId === environmentId
+                {isConnected || isConnecting
+                  ? disconnectingEnvironmentId === environmentId
                     ? "Disconnecting…"
                     : "Disconnect"
-                  : isConnecting
-                    ? "Connecting…"
-                    : "Connect"}
+                  : "Connect"}
               </Button>
             </>
           )}
@@ -1777,7 +1782,10 @@ export function ConnectionsSettings() {
     reportFailure: false,
   });
   const removeEnvironment = useAtomCommand(environmentCatalog.remove, { reportFailure: false });
-  const retryEnvironment = useAtomCommand(environmentCatalog.retryNow, { reportFailure: false });
+  const connectEnvironment = useAtomCommand(environmentCatalog.connect, { reportFailure: false });
+  const disconnectEnvironment = useAtomCommand(environmentCatalog.disconnect, {
+    reportFailure: false,
+  });
   const primaryEnvironmentId = primaryEnvironment?.environmentId ?? null;
   const primarySessionState = usePrimarySessionState();
   const currentSessionScopes = desktopBridge
@@ -1843,6 +1851,8 @@ export function ConnectionsSettings() {
   const [savedBackendError, setSavedBackendError] = useState<string | null>(null);
   const [isAddingSavedBackend, setIsAddingSavedBackend] = useState(false);
   const [removingSavedEnvironmentId, setRemovingSavedEnvironmentId] =
+    useState<EnvironmentId | null>(null);
+  const [disconnectingSavedEnvironmentId, setDisconnectingSavedEnvironmentId] =
     useState<EnvironmentId | null>(null);
   const [isUpdatingDesktopServerExposure, setIsUpdatingDesktopServerExposure] = useState(false);
   const [isDesktopServerExposureDialogOpen, setIsDesktopServerExposureDialogOpen] = useState(false);
@@ -2366,7 +2376,7 @@ export function ConnectionsSettings() {
   const handleConnectSavedBackend = useCallback(
     async (environmentId: EnvironmentId) => {
       setSavedBackendError(null);
-      const result = await retryEnvironment(environmentId);
+      const result = await connectEnvironment(environmentId);
       if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
         const error = squashAtomCommandFailure(result);
         const message = error instanceof Error ? error.message : "Failed to connect backend.";
@@ -2380,7 +2390,29 @@ export function ConnectionsSettings() {
         );
       }
     },
-    [retryEnvironment],
+    [connectEnvironment],
+  );
+
+  const handleDisconnectSavedBackend = useCallback(
+    async (environmentId: EnvironmentId) => {
+      setDisconnectingSavedEnvironmentId(environmentId);
+      setSavedBackendError(null);
+      const result = await disconnectEnvironment(environmentId);
+      setDisconnectingSavedEnvironmentId(null);
+      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
+        const message = error instanceof Error ? error.message : "Failed to disconnect backend.";
+        setSavedBackendError(message);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Could not disconnect backend",
+            description: message,
+          }),
+        );
+      }
+    },
+    [disconnectEnvironment],
   );
 
   const handleRemoveSavedBackend = useCallback(
@@ -3582,7 +3614,9 @@ export function ConnectionsSettings() {
             key={environment.environmentId}
             environment={environment}
             removingEnvironmentId={removingSavedEnvironmentId}
+            disconnectingEnvironmentId={disconnectingSavedEnvironmentId}
             onConnect={handleConnectSavedBackend}
+            onDisconnect={handleDisconnectSavedBackend}
             onRemove={handleRemoveSavedBackend}
           />
         ))}
