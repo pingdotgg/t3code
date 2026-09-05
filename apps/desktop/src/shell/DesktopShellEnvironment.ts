@@ -8,6 +8,8 @@ import * as Schema from "effect/Schema";
 import * as ChildProcess from "effect/unstable/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
+import { resolveKnownPosixCliDirs } from "@t3tools/shared/shell";
+
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 
 type EnvironmentPatch = Record<string, string>;
@@ -442,7 +444,16 @@ const installPosixEnvironment = Effect.fn("desktop.shellEnvironment.installPosix
         ? yield* readLaunchctlPath
         : Option.none<string>();
     const mergedPath = mergePaths(config.platform, [
-      trimNonEmpty(shellEnvironment.PATH).pipe(Option.orElse(() => launchctlPath)),
+      trimNonEmpty(shellEnvironment.PATH).pipe(
+        Option.orElse(() => launchctlPath),
+        Option.orElse(() =>
+          trimNonEmpty(
+            resolveKnownPosixCliDirs(config.env, config.platform).join(
+              pathDelimiter(config.platform),
+            ),
+          ),
+        ),
+      ),
       readEnvPath(config.env),
     ]);
 
