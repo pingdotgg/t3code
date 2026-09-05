@@ -8,10 +8,17 @@ import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 const testState = vi.hoisted(() => ({
   updateServer: vi.fn(),
   toast: vi.fn(),
+  continueThreadsAfterServerUpdate: false,
 }));
 
 vi.mock("~/hooks/useCopyToClipboard", () => ({
   useCopyToClipboard: () => ({ copyToClipboard: vi.fn() }),
+}));
+vi.mock("~/hooks/useSettings", () => ({
+  useEnvironmentSettings: (
+    _environmentId: EnvironmentId,
+    selector: (settings: { continueThreadsAfterServerUpdate: boolean }) => unknown,
+  ) => selector({ continueThreadsAfterServerUpdate: testState.continueThreadsAfterServerUpdate }),
 }));
 vi.mock("~/state/server", () => ({
   serverEnvironment: { updateServer: Symbol("updateServer") },
@@ -47,6 +54,7 @@ describe("ServerUpdateAction", () => {
   beforeEach(() => {
     testState.updateServer.mockReset();
     testState.toast.mockReset();
+    testState.continueThreadsAfterServerUpdate = false;
   });
 
   it("reports success only after the shared update flow reconnects", async () => {
@@ -97,6 +105,92 @@ describe("ServerUpdateAction", () => {
     await flushPromises();
 
     expect(testState.toast).not.toHaveBeenCalled();
+  });
+
+  it("keeps the manual instruction for desktop servers without remote update support", () => {
+    const markup = renderToStaticMarkup(
+      <ServerUpdateAction
+        environmentId={"env-test" as EnvironmentId}
+        serverLabel="Test server"
+        selfUpdate="desktop-managed"
+        targetVersion="0.0.31"
+      />,
+    );
+
+    expect(markup).toContain("Update the desktop app on that machine to update this server.");
+    expect(markup).not.toContain("<button");
+  });
+
+  it("updates remote desktop apps through the shared update flow", async () => {
+    testState.updateServer.mockResolvedValue(
+      AsyncResult.success({ targetVersion: "0.0.34", method: "desktop-app" as const }),
+    );
+
+    const action = ServerUpdateAction({
+      environmentId: "env-test" as EnvironmentId,
+      serverLabel: "Test server",
+      selfUpdate: "desktop-managed",
+      desktopAppUpdate: true,
+      targetVersion: "0.0.31",
+    }) as ActionElement;
+
+    // No confirm-dialog host is mounted in this test, which the component
+    // treats as consent: the click itself was the request.
+    action.props.onClick?.();
+    await flushPromises();
+
+    expect(testState.updateServer).toHaveBeenCalledWith({
+      environmentId: "env-test",
+      input: { targetVersion: "0.0.31" },
+    });
+    expect(testState.toast).toHaveBeenCalledWith({
+      type: "success",
+      title: "Test server updated",
+      description: "Desktop app relaunched on 0.0.34.",
+    });
+  });
+
+  it("leaves thread continuation off by default", async () => {
+    testState.updateServer.mockResolvedValue(
+      AsyncResult.success({ targetVersion: "0.0.31", method: "boot-service" as const }),
+    );
+    const action = ServerUpdateAction({
+      environmentId: "env-test" as EnvironmentId,
+      serverLabel: "Test server",
+      selfUpdate: "boot-service",
+      threadContinuation: true,
+      targetVersion: "0.0.31",
+    }) as ActionElement;
+
+    action.props.onClick?.();
+    await flushPromises();
+
+    expect(testState.updateServer).toHaveBeenCalledWith({
+      environmentId: "env-test",
+      input: { targetVersion: "0.0.31" },
+    });
+  });
+
+  it("applies the saved thread continuation preference automatically", async () => {
+    testState.updateServer.mockResolvedValue(
+      AsyncResult.success({ targetVersion: "0.0.31", method: "boot-service" as const }),
+    );
+    testState.continueThreadsAfterServerUpdate = true;
+    const action = ServerUpdateAction({
+      environmentId: "env-test" as EnvironmentId,
+      serverLabel: "Test server",
+      selfUpdate: "boot-service",
+      threadContinuation: true,
+      targetVersion: "0.0.31",
+    }) as ActionElement;
+
+    action.props.onClick?.();
+    await flushPromises();
+
+    expect(testState.updateServer).toHaveBeenCalledWith({
+      environmentId: "env-test",
+      input: { targetVersion: "0.0.31", continueRunningThreads: true },
+    });
   });
 });
 

@@ -196,6 +196,12 @@ describe("mobile connection storage", () => {
     });
   });
 
+  it("drops the removed theme transition preference", async () => {
+    mocks.setPreferencesJson(JSON.stringify({ themeTransition: "circle-bottom-left" }), 10);
+
+    await expect(loadPreferences()).resolves.toEqual({});
+  });
+
   it("falls back to secure storage when SQLite cannot save preferences", async () => {
     mocks.setDatabaseFailures(true, true);
     await expect(savePreferencesPatch({ baseFontSize: 19 })).resolves.toEqual({ baseFontSize: 19 });
@@ -207,33 +213,35 @@ describe("mobile connection storage", () => {
     expect(fallback.updatedAt).toEqual(expect.any(Number));
   });
 
-  it("persists Thread List v2 shelf expansion preferences", async () => {
+  it("persists thread list shelf expansion preferences", async () => {
     await expect(
       savePreferencesPatch({
-        threadListV2SettledShelfExpanded: false,
-        threadListV2SnoozedShelfExpanded: true,
+        threadListSettledShelfExpanded: false,
+        threadListSnoozedShelfExpanded: true,
       }),
     ).resolves.toEqual({
-      threadListV2SettledShelfExpanded: false,
-      threadListV2SnoozedShelfExpanded: true,
+      threadListSettledShelfExpanded: false,
+      threadListSnoozedShelfExpanded: true,
     });
 
     await expect(loadPreferences()).resolves.toEqual({
-      threadListV2SettledShelfExpanded: false,
-      threadListV2SnoozedShelfExpanded: true,
+      threadListSettledShelfExpanded: false,
+      threadListSnoozedShelfExpanded: true,
     });
     expect(JSON.parse(mocks.getPreferencesJson() ?? "")).toEqual({
-      threadListV2SettledShelfExpanded: false,
-      threadListV2SnoozedShelfExpanded: true,
+      threadListSettledShelfExpanded: false,
+      threadListSnoozedShelfExpanded: true,
     });
   });
 
-  it("ignores invalid Thread List v2 shelf expansion preference types", async () => {
+  it("drops legacy and invalid thread list shelf expansion preferences", async () => {
     mocks.setPreferencesJson(
       JSON.stringify({
         baseFontSize: 17,
-        threadListV2SettledShelfExpanded: "false",
-        threadListV2SnoozedShelfExpanded: 1,
+        threadListV2SettledShelfExpanded: true,
+        threadListV2SnoozedShelfExpanded: true,
+        threadListSettledShelfExpanded: "false",
+        threadListSnoozedShelfExpanded: 1,
       }),
       10,
     );
