@@ -9,7 +9,6 @@ import Animated, { FadeIn } from "react-native-reanimated";
 
 import { appBlurTargetRef } from "../lib/appBlurTarget";
 import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
-import { useThemeColor } from "../lib/useThemeColor";
 import { cn } from "../lib/cn";
 import { type AppSymbolName, SymbolView } from "./AppSymbol";
 import { AppText as Text } from "./AppText";
@@ -84,11 +83,6 @@ export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
   const isDarkMode = themeAppearance === "dark";
   const keyboardVisible = useKeyboardState((state) => state.isVisible);
   const keyboardHeight = useKeyboardState((state) => state.height);
-  const rippleColor = useThemeColor("--color-subtle");
-  const iconColor = useThemeColor("--color-icon");
-  const iconSubtleColor = useThemeColor("--color-icon-subtle");
-  const dangerColor = useThemeColor("--color-danger-foreground");
-
   const close = useCallback(() => {
     setAnchor(null);
     setPath([]);
@@ -279,10 +273,9 @@ export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
                     return (
                       <Pressable
                         key={action.id ?? `${index}-${action.title}`}
-                        android_ripple={{ color: rippleColor }}
                         disabled={disabled}
                         className={cn(
-                          "min-h-11 flex-row items-center gap-2.5 px-3.5 py-2.5",
+                          "min-h-11 flex-row items-center gap-2.5 px-3.5 py-2.5 active:bg-subtle",
                           disabled && "opacity-45",
                         )}
                         onPress={() => onPressItem(action)}
@@ -307,21 +300,23 @@ export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
                           <SymbolView
                             name="chevron.right"
                             size={13}
-                            tintColor={iconSubtleColor}
+                            tintColorClassName={"accent-icon-subtle"}
                             type="monochrome"
                           />
                         ) : action.state === "on" ? (
                           <SymbolView
                             name="checkmark"
                             size={15}
-                            tintColor={iconColor}
+                            tintColorClassName={"accent-icon"}
                             type="monochrome"
                           />
                         ) : action.image ? (
                           <SymbolView
                             name={action.image as AppSymbolName}
                             size={15}
-                            tintColor={destructive ? dangerColor : iconColor}
+                            tintColorClassName={
+                              destructive ? "accent-danger-foreground" : "accent-icon"
+                            }
                             type="monochrome"
                           />
                         ) : null}

@@ -1,16 +1,18 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
-  createLinkedPullRequestDetailAtomFamily,
+  createLinkedPullRequestSummaryAtomFamily,
   createPullRequestEnvironmentAtoms,
 } from "@t3tools/client-runtime/state/pull-requests";
 import type {
   EnvironmentId,
   PullRequestListInput,
   PullRequestListStatsInput,
+  PullRequestRef,
+  PullRequestSummary,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
-import { useCallback, useMemo } from "react";
+import { useCallback, useLayoutEffect, useMemo } from "react";
 
 import { connectionAtomRuntime } from "../connection/runtime";
 import { appAtomRegistry } from "../rpc/atomRegistry";
@@ -22,8 +24,54 @@ import {
 import { formatEnvironmentQueryError } from "./query";
 
 export const pullRequestEnvironment = createPullRequestEnvironmentAtoms(connectionAtomRuntime);
-export const linkedPullRequestDetailAtom =
-  createLinkedPullRequestDetailAtomFamily(connectionAtomRuntime);
+export const linkedPullRequestDetailAtom = createLinkedPullRequestSummaryAtomFamily(
+  connectionAtomRuntime,
+  pullRequestEnvironment.refreshes,
+);
+
+const observedPullRequestSummaryAtom = Atom.family((key: string) =>
+  Atom.make<PullRequestSummary | null>(null).pipe(
+    Atom.setIdleTTL(5 * 60_000),
+    Atom.withLabel(`web-pull-requests:observed-summary:${key}`),
+  ),
+);
+
+export function newestPullRequestSummary(
+  current: PullRequestSummary | null,
+  observed: PullRequestSummary | null,
+): PullRequestSummary | null {
+  if (current === null) return observed;
+  if (observed === null) return current;
+  if (current.state === "merged") return current;
+  if (observed.state === "merged") return observed;
+  return Date.parse(observed.updatedAt) >= Date.parse(current.updatedAt) ? observed : current;
+}
+
+export function useSharedPullRequestSummary(
+  environmentId: EnvironmentId | null,
+  reference: PullRequestRef | null,
+  current: PullRequestSummary | null,
+): PullRequestSummary | null {
+  const key =
+    environmentId === null || reference === null
+      ? "none"
+      : JSON.stringify([
+          environmentId,
+          reference.projectId,
+          reference.repository.toLowerCase(),
+          reference.number,
+        ]);
+  const atom = observedPullRequestSummaryAtom(key);
+  const observed = useAtomValue(atom);
+  useLayoutEffect(() => {
+    if (environmentId === null || current === null) return;
+    appAtomRegistry.modify(atom, (previous) => {
+      const next = newestPullRequestSummary(previous, current);
+      return next === previous ? [false, previous] : [true, next];
+    });
+  }, [atom, current, environmentId]);
+  return newestPullRequestSummary(current, observed);
+}
 
 export interface EnvironmentQueryTarget<Input> {
   readonly environmentId: EnvironmentId;
@@ -31,7 +79,7 @@ export interface EnvironmentQueryTarget<Input> {
 }
 
 interface MergedEnvironmentQueryView<A> {
-  /** One entry per environment that has answered, in the order the targets were given. */
+  /** One entry per query target that has answered, in the order the targets were given. */
   readonly values: ReadonlyArray<readonly [EnvironmentId, A]>;
   /** The first environment that failed. Others may still have answered — this is not fatal. */
   readonly error: string | null;
@@ -78,11 +126,16 @@ function createMergedEnvironmentQuery<Input, A>(
   return function useMergedQuery(targets: ReadonlyArray<EnvironmentQueryTarget<Input>>) {
     const key = JSON.stringify(targets);
     const view = useAtomValue(targets.length === 0 ? empty : family(key));
-    const refresh = useCallback(() => {
-      for (const target of JSON.parse(key) as ReadonlyArray<EnvironmentQueryTarget<Input>>) {
-        appAtomRegistry.refresh(atomFor(target));
-      }
-    }, [key]);
+    const refresh = useCallback(
+      (override?: ReadonlyArray<EnvironmentQueryTarget<Input>>) => {
+        const refreshTargets =
+          override ?? (JSON.parse(key) as ReadonlyArray<EnvironmentQueryTarget<Input>>);
+        for (const target of refreshTargets) {
+          appAtomRegistry.refresh(atomFor(target));
+        }
+      },
+      [key],
+    );
     return { ...view, refresh };
   };
 }
@@ -96,6 +149,25 @@ const usePullRequestStatsQuery = createMergedEnvironmentQuery(
   "web-pull-requests:list-stats",
   pullRequestEnvironment.listStats,
 );
+
+const usePullRequestTurnRefreshQuery = createMergedEnvironmentQuery(
+  "web-pull-requests:turn-refreshes",
+  ({ environmentId }: EnvironmentQueryTarget<Readonly<Record<string, never>>>) =>
+    pullRequestEnvironment.refreshes({ environmentId, input: {} }),
+);
+
+export function usePullRequestTurnRefreshes(
+  environmentIds: ReadonlyArray<EnvironmentId>,
+): ReadonlyArray<readonly [EnvironmentId, number]> {
+  return usePullRequestTurnRefreshQuery(
+    environmentIds.map((environmentId) => ({ environmentId, input: {} })),
+  ).values;
+}
+
+export function usePullRequestTurnRefresh(environmentId: EnvironmentId): number | null {
+  const result = useAtomValue(pullRequestEnvironment.refreshes({ environmentId, input: {} }));
+  return Option.getOrNull(AsyncResult.value(result));
+}
 
 export interface MergedPullRequestListView {
   readonly data: MergedPullRequestList | null;
@@ -118,7 +190,10 @@ export function usePullRequestListStats(
   targets: ReadonlyArray<EnvironmentQueryTarget<PullRequestListStatsInput>>,
 ): {
   readonly stats: ReadonlyArray<EnvironmentPullRequestStat> | null;
-  readonly refresh: () => void;
+  readonly isPending: boolean;
+  readonly refresh: (
+    targets?: ReadonlyArray<EnvironmentQueryTarget<PullRequestListStatsInput>>,
+  ) => void;
 } {
   const query = usePullRequestStatsQuery(targets);
   const stats = useMemo(
@@ -130,5 +205,5 @@ export function usePullRequestListStats(
           ),
     [query.values],
   );
-  return { stats, refresh: query.refresh };
+  return { stats, isPending: query.isPending, refresh: query.refresh };
 }

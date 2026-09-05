@@ -3,6 +3,7 @@ import type {
   OrchestrationThreadActivity,
   OrchestrationThreadDetailSnapshot,
 } from "@t3tools/contracts";
+import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -143,23 +144,45 @@ function projectCommandValue(data: Record<string, unknown>): unknown {
   return undefined;
 }
 
-function summarizeToolTextOutput(value: string): string | null {
-  const lines: string[] = [];
-  for (const rawLine of value.split(/\r?\n/u)) {
-    const line = rawLine.replace(/\s+/g, " ").trim();
-    if (line.length > 0) {
-      lines.push(line);
-    }
+function projectViewedImagePath(data: Record<string, unknown>): string | undefined {
+  const directPath = asTrimmedString(data.imagePath);
+  if (directPath && isWorkspaceImagePreviewPath(directPath)) {
+    return directPath;
   }
 
-  const firstLine = lines.find((line) => line !== "```");
-  if (firstLine) {
-    return firstLine.length <= 84 ? firstLine : `${firstLine.slice(0, 83).trimEnd()}…`;
+  const toolName = asTrimmedString(data.toolName)?.toLowerCase();
+  if (toolName !== "read" && toolName !== "read file") {
+    return undefined;
   }
-  if (lines.length > 1) {
-    return `${lines.length.toLocaleString()} lines`;
+  const input = asRecord(data.input);
+  const inputPath = asTrimmedString(input?.file_path) ?? asTrimmedString(input?.path);
+  return inputPath && isWorkspaceImagePreviewPath(inputPath) ? inputPath : undefined;
+}
+
+function summarizeToolTextOutput(value: string): string | null {
+  let meaningfulLineCount = 0;
+  let offset = 0;
+
+  while (offset <= value.length) {
+    const newlineIndex = value.indexOf("\n", offset);
+    const lineEnd = newlineIndex === -1 ? value.length : newlineIndex;
+    const line = value.slice(offset, lineEnd).replace(/\s+/g, " ").trim();
+    if (line.length > 0) {
+      meaningfulLineCount += 1;
+      if (line !== "```") {
+        const summary = line.length <= 84 ? line : `${line.slice(0, 83).trimEnd()}…`;
+        // V8 can retain the full tool output behind a short sliced string.
+        // Join a tiny character array so the returned preview owns its bytes.
+        return Array.from(summary).join("");
+      }
+    }
+    if (newlineIndex === -1) {
+      break;
+    }
+    offset = newlineIndex + 1;
   }
-  return null;
+
+  return meaningfulLineCount > 1 ? `${meaningfulLineCount.toLocaleString()} lines` : null;
 }
 
 /**
@@ -367,6 +390,10 @@ export function projectActivityPayload(
   if (command !== undefined) {
     projectedData.command = command;
   }
+  const imagePath = projectViewedImagePath(data);
+  if (imagePath) {
+    projectedData.imagePath = imagePath;
+  }
 
   const changedFiles: string[] = [];
   collectChangedFiles(data, changedFiles, new Set<string>(), 0);
@@ -381,8 +408,14 @@ export function projectActivityPayload(
   if ("kind" in data) {
     projectedData.kind = data.kind;
   }
+  if ("toolName" in data) {
+    projectedData.toolName = data.toolName;
+  }
 
-  const rawOutput = projectRawOutput(data.rawOutput) ?? projectAcpContent(data.content);
+  const rawOutput =
+    projectRawOutput(data.rawOutput) ??
+    projectAcpContent(data.content) ??
+    (payload.itemType === "command_execution" ? summarizeMcpResult(data.result) : undefined);
   if (rawOutput) {
     projectedData.rawOutput = rawOutput;
   }
@@ -488,9 +521,6 @@ function toolLifecycleIdentity(activity: OrchestrationThreadActivity): string | 
  * update within the turn — a later update belongs to a subsequent call that
  * reuses the same identity and is still in flight. Rows without a lifecycle
  * identity pass through, matching the clients, which never collapse them.
- * Live `thread.activity-appended` events are untouched: updates still stream
- * in real time and the completion supersedes them on the client as before.
- *
  * Deliberate divergence from client collapse: clients fold only *adjacent*
  * lifecycle rows, so a superseded update separated from its completion by an
  * interleaved parallel call renders as its own row today, and this drop
@@ -517,7 +547,7 @@ function dropSupersededToolUpdatedActivities(
     if (!identity) {
       continue;
     }
-    const key = `${activity.turnId ?? ""} ${identity}`;
+    const key = `${activity.turnId ?? ""}\u0000${identity}`;
     const indices = completionIndicesByKey.get(key);
     if (indices) {
       indices.push(index);
@@ -537,7 +567,7 @@ function dropSupersededToolUpdatedActivities(
     if (!identity) {
       return true;
     }
-    const indices = completionIndicesByKey.get(`${activity.turnId ?? ""} ${identity}`);
+    const indices = completionIndicesByKey.get(`${activity.turnId ?? ""}\u0000${identity}`);
     return !indices?.some((completionIndex) => completionIndex > index);
   });
 }

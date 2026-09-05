@@ -23,6 +23,8 @@ export interface ComposerEditorProps {
   readonly placeholder?: string;
   readonly autoFocus?: boolean;
   readonly editable?: boolean;
+  /** Blocks user edits while preserving focus, selection, and the software keyboard on iOS. */
+  readonly readOnly?: boolean;
   readonly scrollEnabled?: boolean;
   readonly autoCorrect?: boolean;
   readonly spellCheck?: boolean;
