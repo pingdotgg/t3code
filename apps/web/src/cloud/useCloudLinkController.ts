@@ -86,7 +86,7 @@ export function useCloudLinkController() {
       reportUpdateFailure(new Error("Local environment is not ready yet."));
       return false;
     }
-    const readManageableLinkState = () => {
+    const canManageLink = () => {
       if (
         !readEnvironmentScope(target.environmentId, AuthRelayReadScope) ||
         !readEnvironmentScope(target.environmentId, AuthRelayWriteScope)
@@ -94,19 +94,22 @@ export function useCloudLinkController() {
         reportUpdateFailure(
           new Error("This connection needs permission to view and manage T3 Connect settings."),
         );
-        return null;
+        return false;
       }
+      return true;
+    };
+    const readLinkState = () => {
       const state = readCachedPrimaryCloudLinkState(target);
       if (state === null) {
         reportUpdateFailure(new Error("Wait until the current T3 Connect settings can be read."));
       }
       return state;
     };
-    if (readManageableLinkState() === null) return false;
-    const tokenResult = await settlePromise(() => getToken(resolveRelayClerkTokenOptions()));
-    const currentLinkState = readManageableLinkState();
-    if (currentLinkState === null) return false;
+    if (!canManageLink()) return false;
     const wantsLink = desired.managedTunnel || desired.publish;
+    if (wantsLink && readLinkState() === null) return false;
+    const tokenResult = await settlePromise(() => getToken(resolveRelayClerkTokenOptions()));
+    if (!canManageLink()) return false;
 
     // A failure after this point may follow a partially applied mutation (e.g.
     // the link succeeded but the preference update did not), so every exit —
@@ -127,6 +130,8 @@ export function useCloudLinkController() {
         return false;
       }
     } else {
+      const currentLinkState = readLinkState();
+      if (currentLinkState === null) return false;
       if (tokenResult._tag === "Failure") {
         reportUpdateFailure(squashAtomCommandFailure(tokenResult));
         return false;
@@ -151,7 +156,7 @@ export function useCloudLinkController() {
           return false;
         }
       }
-      if (readManageableLinkState() === null) {
+      if (!canManageLink() || readLinkState() === null) {
         primaryCloudLinkState.refresh();
         return false;
       }
