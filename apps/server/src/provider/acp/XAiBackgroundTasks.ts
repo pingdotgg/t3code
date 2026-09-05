@@ -488,6 +488,11 @@ export function buildGrokBackgroundTaskEvents(input: {
         const inferredRole = inferRoleFromCommand(result.command);
         const existing = tasks.get(result.taskId);
         const events: GrokBackgroundTaskRuntimeEvent[] = [];
+        if (!existing && inferredType === "subagent") {
+          // Subagent identity is established by #8412, not here. An orphan
+          // poll row must not invent a subagent roster entry.
+          return events;
+        }
         if (!existing) {
           tasks.set(result.taskId, {
             taskType: inferredType,

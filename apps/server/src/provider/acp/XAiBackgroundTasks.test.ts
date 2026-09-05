@@ -254,6 +254,27 @@ describe("XAiBackgroundTasks", () => {
     }
   });
 
+  it("skips orphan subagent poll rows instead of inventing a roster entry", () => {
+    const tasks = new Map();
+    const events = buildGrokBackgroundTaskEvents({
+      tasks,
+      toolMeta: { name: "get_command_or_subagent_output", kind: "background_task_action" },
+      toolCallId: "call-poll-orphan",
+      rawInput: { task_ids: ["01a06da3-71a7-7e50-a759-614f65dd1eb4"] },
+      rawOutput: {
+        type: "TaskOutput",
+        Result: {
+          task_id: "01a06da3-71a7-7e50-a759-614f65dd1eb4",
+          command: "[subagent:executor-cursor] Fix empty Sample Ops UI",
+          status: "running",
+        },
+      },
+      toolCallStatus: "completed",
+    });
+    expect(events).toEqual([]);
+    expect(tasks.size).toBe(0);
+  });
+
   it("ignores a failed kill call and keeps the task live", () => {
     const tasks = new Map([
       ["shell-1", { taskType: "shell", description: "sleep 40", toolUseId: "call-1" }],
