@@ -56,13 +56,13 @@ A feature's baseline demonstrates the old workflow, not an invented defect.
 
 Choose the checks that reach the relevant behavior boundary:
 
-| Claim | Needed observation |
-| --- | --- |
-| Save or persistence | Confirm the authoritative saved value and reopen/reload when persistence is claimed. A success-looking screen alone is insufficient. |
-| Navigation, selection, or reversible action | Exercise the relevant return, repeat, undo, reset, or retained selection; check state that the action should preserve. |
-| Retry or recovery | Reproduce the failure, restore the condition, and observe recovery without lost state or duplicate effects. |
-| Timing, animation, or performance | Measure the claimed quantity under stated conditions. Preserve real timing when timing is the evidence. |
-| Backend behavior | Assert the actual command, storage, protocol, or receipt boundary with focused tests. Add media only when it demonstrates a relevant visible result. |
+| Claim                                       | Needed observation                                                                                                                                   |
+| ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Save or persistence                         | Confirm the authoritative saved value and reopen/reload when persistence is claimed. A success-looking screen alone is insufficient.                 |
+| Navigation, selection, or reversible action | Exercise the relevant return, repeat, undo, reset, or retained selection; check state that the action should preserve.                               |
+| Retry or recovery                           | Reproduce the failure, restore the condition, and observe recovery without lost state or duplicate effects.                                          |
+| Timing, animation, or performance           | Measure the claimed quantity under stated conditions. Preserve real timing when timing is the evidence.                                              |
+| Backend behavior                            | Assert the actual command, storage, protocol, or receipt boundary with focused tests. Add media only when it demonstrates a relevant visible result. |
 
 Apply rows only when the change makes that claim. Keep a compact working map
 of each material claim, its base/candidate observation, supporting test or
