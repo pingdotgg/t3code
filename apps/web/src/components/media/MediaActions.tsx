@@ -66,7 +66,9 @@ export function useMediaActions(source: MediaActionSource) {
   const fileSession = useEnvironmentQuery(
     hostEnvironmentId === null ? null : environmentSession.sessionStateAtom(hostEnvironmentId),
   );
-  const canReadMedia = fileSession.error === null && allowsHostMedia(fileSession.data);
+  const canReadMedia =
+    hostEnvironmentId === null ||
+    (fileSession.error === null && fileSession.data !== null && allowsHostMedia(fileSession.data));
   const assertCanReadMedia = useCallback(() => {
     if (!canReadHostMedia(hostEnvironmentId)) {
       throw new Error("This connection cannot read host files.");

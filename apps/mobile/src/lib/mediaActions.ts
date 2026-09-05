@@ -65,7 +65,9 @@ export function useMediaActions(source: MediaActionsSource | undefined, onOpenFi
   const fileSession = useEnvironmentQuery(
     hostEnvironmentId === null ? null : environmentSession.sessionStateAtom(hostEnvironmentId),
   );
-  const canReadMedia = fileSession.error === null && allowsHostMedia(fileSession.data);
+  const canReadMedia =
+    hostEnvironmentId === null ||
+    (fileSession.error === null && fileSession.data !== null && allowsHostMedia(fileSession.data));
   const refresh = useRefreshAssetUrl(
     source && "environmentId" in source ? source.environmentId : null,
     source && "resource" in source ? source.resource : null,

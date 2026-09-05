@@ -134,6 +134,59 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals());
 
 it.each(["workspace-file", "media-file"] as const)(
+  "waits for the %s grant before enabling host menu actions",
+  (_tag) => {
+    for (const [session, disabled] of [
+      [null, true],
+      [granted, false],
+      [denied, true],
+    ] as const) {
+      if (session === null) state.sessions.delete(environmentId);
+      else state.sessions.set(environmentId, session);
+      openMenu(hostSource(_tag));
+
+      const items = state.showMenu.mock.lastCall![0];
+      expect(items).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ id: "save", disabled }),
+          expect.objectContaining({ id: "copy-image", disabled }),
+          expect.objectContaining({ id: "open-file", disabled }),
+        ]),
+      );
+      expect(items).toContainEqual({ id: "copy-full-path", label: "Copy full path" });
+    }
+    expect(state.mint).not.toHaveBeenCalled();
+    expect(state.download).not.toHaveBeenCalled();
+  },
+);
+
+it("keeps nonhost menu actions available with pending or denied host grants", () => {
+  const sources: MediaActionSource[] = [
+    { kind: "image", name: "image.png", src: "https://cdn.test/image.png" },
+    { kind: "image", name: "image.png", src: "blob:local-image" },
+    {
+      kind: "image",
+      name: "image.png",
+      src: null,
+      asset: { environmentId, resource: { _tag: "attachment", attachmentId: "upload" } },
+    },
+  ];
+  for (const session of [null, denied]) {
+    if (session === null) state.sessions.delete(environmentId);
+    else state.sessions.set(environmentId, session);
+    for (const source of sources) {
+      openMenu(source);
+      expect(state.showMenu.mock.lastCall![0]).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ id: "save", disabled: false }),
+          expect.objectContaining({ id: "copy-image", disabled: false }),
+        ]),
+      );
+    }
+  }
+});
+
+it.each(["workspace-file", "media-file"] as const)(
   "disables denied %s byte actions and prevents imperative requests",
   async (_tag) => {
     const source = hostSource(_tag);
