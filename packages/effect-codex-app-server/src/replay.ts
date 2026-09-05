@@ -354,15 +354,13 @@ export function layerReplayWithDriver(
   return Layer.effect(CodexAppServerClient, makeReplayClientWithState(driver));
 }
 
-const makeReplayClient = Effect.fn("effect-codex-app-server/replay.makeReplayClient")(
-  function* (
-    transcript: CodexAppServerReplayTranscript,
-    options: CodexClient.CodexAppServerClientOptions = {},
-  ) {
-    const driver = yield* makeReplayDriver(transcript);
-    return yield* makeReplayClientWithState(driver, options);
-  },
-);
+const makeReplayClient = Effect.fn("effect-codex-app-server/replay.makeReplayClient")(function* (
+  transcript: CodexAppServerReplayTranscript,
+  options: CodexClient.CodexAppServerClientOptions = {},
+) {
+  const driver = yield* makeReplayDriver(transcript);
+  return yield* makeReplayClientWithState(driver, options);
+});
 
 const makeReplayClientWithState = Effect.fn(
   "effect-codex-app-server/replay.makeReplayClientWithState",
