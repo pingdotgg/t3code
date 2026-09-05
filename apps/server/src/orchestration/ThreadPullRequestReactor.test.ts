@@ -27,6 +27,7 @@ import { TestClock } from "effect/testing";
 
 import { GitManager, type GitBranchPullRequest } from "../git/GitManager.ts";
 import { PullRequestService } from "../pullRequest/PullRequestService.ts";
+import { RepositoryIdentityResolver } from "../project/RepositoryIdentityResolver.ts";
 import { ServerActivation } from "../serverActivation.ts";
 import { OrchestrationEngineService } from "./Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "./Services/ProjectionSnapshotQuery.ts";
@@ -103,7 +104,7 @@ function thread(
   };
 }
 
-const project: OrchestrationProjectShell = {
+const project = {
   id: PROJECT_ID,
   title: "Project",
   workspaceRoot: "/workspace/project",
@@ -121,7 +122,7 @@ const project: OrchestrationProjectShell = {
   scripts: [],
   createdAt: NOW,
   updatedAt: NOW,
-};
+} satisfies OrchestrationProjectShell;
 
 const makeHarness = Effect.fn("makeThreadPullRequestHarness")(function* (options: {
   readonly threads: ReadonlyArray<OrchestrationThreadShell>;
@@ -129,6 +130,7 @@ const makeHarness = Effect.fn("makeThreadPullRequestHarness")(function* (options
   readonly summary?: PullRequestService["Service"]["summary"];
   readonly existingWorktrees?: ReadonlyArray<string>;
   readonly project?: OrchestrationProjectShell;
+  readonly resolveRepositoryIdentity?: RepositoryIdentityResolver["Service"]["resolve"];
 }) {
   const activation = yield* Deferred.make<void>();
   const snapshots = yield* Ref.make<OrchestrationShellSnapshot>({
@@ -166,6 +168,11 @@ const makeHarness = Effect.fn("makeThreadPullRequestHarness")(function* (options
             options.summary?.(input, readOptions) ?? Effect.succeed(summary(input, "open")),
           ),
         ),
+    }),
+    Layer.mock(RepositoryIdentityResolver)({
+      resolve:
+        options.resolveRepositoryIdentity ??
+        (() => Effect.succeed(options.project?.repositoryIdentity ?? project.repositoryIdentity)),
     }),
     Layer.mock(OrchestrationEngineService)({
       subscribeDomainEvents: PubSub.subscribe(events).pipe(
@@ -248,6 +255,7 @@ describe("ThreadPullRequestReactor", () => {
           const reactor = yield* fixture.start();
           expect(yield* Ref.get(fixture.branchCalls)).toEqual([
             { cwd: project.workspaceRoot, branch: "feature", refresh: false },
+            { cwd: project.workspaceRoot, branch: "feature", refresh: false },
           ]);
           expect((yield* Ref.get(fixture.commands)).map((command) => command.threadId)).toEqual([
             "first",
@@ -306,10 +314,13 @@ describe("ThreadPullRequestReactor", () => {
     Effect.scoped(
       Effect.gen(function* () {
         const current = thread("turn-thread");
+        const detected = yield* Ref.make<GitBranchPullRequest | null>(null);
         const fixture = yield* makeHarness({
           threads: [current],
           branchPullRequest: (_input, options) =>
-            Effect.succeed(options?.refresh ? branchPullRequest() : null),
+            options?.refresh
+              ? Ref.set(detected, branchPullRequest()).pipe(Effect.andThen(Ref.get(detected)))
+              : Ref.get(detected),
         });
         yield* Effect.gen(function* () {
           const reactor = yield* fixture.start();
@@ -341,7 +352,9 @@ describe("ThreadPullRequestReactor", () => {
           yield* Queue.take(fixture.reads);
           yield* reactor.drain;
           expect((yield* Ref.get(fixture.commands))[0]?.branchPullRequest).toEqual(reference(42));
-          expect((yield* Ref.get(fixture.branchCalls)).at(-1)?.refresh).toBe(true);
+          expect((yield* Ref.get(fixture.branchCalls)).filter((call) => call.refresh)).toHaveLength(
+            1,
+          );
         }).pipe(Effect.provide(fixture.layer));
       }),
     ),
@@ -360,10 +373,9 @@ describe("ThreadPullRequestReactor", () => {
         });
         yield* Effect.gen(function* () {
           yield* fixture.start();
-          expect((yield* Ref.get(fixture.branchCalls)).map((call) => call.cwd).toSorted()).toEqual([
-            "/workspace/project",
-            "/workspace/worktree",
-          ]);
+          expect(new Set((yield* Ref.get(fixture.branchCalls)).map((call) => call.cwd))).toEqual(
+            new Set(["/workspace/project", "/workspace/worktree"]),
+          );
         }).pipe(Effect.provide(fixture.layer));
       }),
     ),
@@ -485,6 +497,7 @@ describe("ThreadPullRequestReactor", () => {
           expect((yield* Ref.get(fixture.branchCalls)).map((call) => call.branch)).toEqual([
             "feature",
             "feature",
+            "feature",
           ]);
         }).pipe(Effect.provide(fixture.layer));
       }),
@@ -529,5 +542,42 @@ describe("ThreadPullRequestReactor", () => {
         }).pipe(Effect.provide(fixture.layer));
       }),
     ),
+  );
+
+  it.effect.each(["primary", "branch"] as const)(
+    "rejects the group's links if the %s remote changes during a summary read",
+    (changedRemote) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const identity = yield* Ref.make(project.repositoryIdentity);
+          const detected = yield* Ref.make(branchPullRequest());
+          const fixture = yield* makeHarness({
+            threads: [thread("manual", { linkedPullRequest: reference(1) }), thread("automatic")],
+            branchPullRequest: () => Ref.get(detected),
+            resolveRepositoryIdentity: (_cwd, options) =>
+              options?.refresh ? Ref.get(identity) : Effect.succeed(project.repositoryIdentity),
+            summary: (input) =>
+              (changedRemote === "primary"
+                ? Ref.set(identity, {
+                    ...project.repositoryIdentity,
+                    canonicalKey: "github.com/other/repository",
+                    displayName: "other/repository",
+                  })
+                : Ref.set(detected, {
+                    ...branchPullRequest(99),
+                    repositoryKey: "github.com/other/repository",
+                    url: "https://github.com/other/repository/pull/99",
+                  })
+              ).pipe(Effect.as(summary(input, "merged"))),
+          });
+          yield* Effect.gen(function* () {
+            yield* fixture.start();
+            expect(yield* Ref.get(fixture.commands)).toEqual([]);
+            expect((yield* Ref.get(fixture.snapshots)).threads[0]?.linkedPullRequest).toEqual(
+              reference(1),
+            );
+          }).pipe(Effect.provide(fixture.layer));
+        }),
+      ),
   );
 });

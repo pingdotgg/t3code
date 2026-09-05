@@ -18,6 +18,7 @@ import * as Stream from "effect/Stream";
 
 import * as GitManager from "../git/GitManager.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
+import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 import { forkParked } from "../serverActivation.ts";
 import * as OrchestrationEngine from "./Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "./Services/ProjectionSnapshotQuery.ts";
@@ -78,6 +79,7 @@ export const make = Effect.gen(function* () {
   const snapshots = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
   const git = yield* GitManager.GitManager;
   const pullRequests = yield* PullRequestService.PullRequestService;
+  const repositoryIdentities = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
   const crypto = yield* Crypto.Crypto;
   const fileSystem = yield* FileSystem.FileSystem;
   const pendingBackfill = new Set<ThreadId>();
@@ -148,49 +150,88 @@ export const make = Effect.gen(function* () {
                 }
               : null;
 
+          const plans = yield* Effect.forEach(group, (thread) =>
+            Effect.gen(function* () {
+              let branchPullRequest = detectedReference;
+              // Shared checkouts often return to the default branch after
+              // a merge. Keep that thread's terminal PR across the change.
+              if (
+                branchPullRequest === null &&
+                thread.branch !== null &&
+                thread.worktreePath === null &&
+                thread.branchPullRequest != null
+              ) {
+                const previous = yield* pullRequests.summary(thread.branchPullRequest, {
+                  recoverTransientFailure: false,
+                });
+                if (previous.state === "merged" || previous.state === "closed") {
+                  branchPullRequest = thread.branchPullRequest;
+                }
+              }
+
+              let replacement: ThreadLinkedPullRequest | undefined;
+              if (
+                thread.linkedPullRequest != null &&
+                detected?.state === "open" &&
+                detectedReference !== null &&
+                !samePullRequest(thread.linkedPullRequest, detectedReference)
+              ) {
+                const linked = yield* pullRequests.summary(thread.linkedPullRequest, {
+                  recoverTransientFailure: false,
+                });
+                if (linked.state === "merged" || linked.state === "closed") {
+                  replacement = detectedReference;
+                }
+              }
+
+              if (
+                samePullRequest(thread.branchPullRequest, branchPullRequest) &&
+                replacement === undefined
+              ) {
+                pendingBackfill.delete(thread.id);
+                return null;
+              }
+              return { thread, branchPullRequest, replacement };
+            }).pipe(
+              Effect.catchCause((cause) =>
+                Cause.hasInterruptsOnly(cause)
+                  ? Effect.failCause(cause)
+                  : Effect.logWarning("thread pull request discovery failed", {
+                      threadId: thread.id,
+                      cause: Cause.pretty(cause),
+                    }).pipe(Effect.as(null)),
+              ),
+            ),
+          );
+          const updates = plans.filter((plan) => plan !== null);
+          if (updates.length === 0) return;
+
+          if (detected !== null && first.branch !== null) {
+            // Summary reads can outlast a remote edit. Recheck the branch and
+            // the project's primary remote before saving the group's links.
+            const current = yield* git.branchPullRequest({ cwd, branch: first.branch });
+            const currentIdentity = yield* repositoryIdentities.resolve(project.workspaceRoot, {
+              refresh: true,
+            });
+            if (
+              current === null ||
+              current.number !== detected.number ||
+              current.url !== detected.url ||
+              current.state !== detected.state ||
+              current.repositoryKey !== detected.repositoryKey ||
+              !pullRequestMatchesProject(current, {
+                ...project,
+                repositoryIdentity: currentIdentity,
+              })
+            ) {
+              return;
+            }
+          }
+
           yield* Effect.forEach(
-            group,
-            (thread) =>
+            updates,
+            ({ thread, branchPullRequest, replacement }) =>
               Effect.gen(function* () {
-                let branchPullRequest = detectedReference;
-                // Shared checkouts often return to the default branch after
-                // a merge. Keep that thread's terminal PR across the change.
-                if (
-                  branchPullRequest === null &&
-                  thread.branch !== null &&
-                  thread.worktreePath === null &&
-                  thread.branchPullRequest != null
-                ) {
-                  const previous = yield* pullRequests.summary(thread.branchPullRequest, {
-                    recoverTransientFailure: false,
-                  });
-                  if (previous.state === "merged" || previous.state === "closed") {
-                    branchPullRequest = thread.branchPullRequest;
-                  }
-                }
-
-                let replacement: ThreadLinkedPullRequest | undefined;
-                if (
-                  thread.linkedPullRequest != null &&
-                  detected?.state === "open" &&
-                  detectedReference !== null &&
-                  !samePullRequest(thread.linkedPullRequest, detectedReference)
-                ) {
-                  const linked = yield* pullRequests.summary(thread.linkedPullRequest, {
-                    recoverTransientFailure: false,
-                  });
-                  if (linked.state === "merged" || linked.state === "closed") {
-                    replacement = detectedReference;
-                  }
-                }
-
-                if (
-                  samePullRequest(thread.branchPullRequest, branchPullRequest) &&
-                  replacement === undefined
-                ) {
-                  pendingBackfill.delete(thread.id);
-                  return;
-                }
                 const uuid = yield* crypto.randomUUIDv4;
                 yield* engine.dispatch({
                   type: "thread.pull-request.sync",
@@ -214,7 +255,7 @@ export const make = Effect.gen(function* () {
                 Effect.catchCause((cause) =>
                   Cause.hasInterruptsOnly(cause)
                     ? Effect.failCause(cause)
-                    : Effect.logWarning("thread pull request discovery failed", {
+                    : Effect.logWarning("thread pull request update failed", {
                         threadId: thread.id,
                         cause: Cause.pretty(cause),
                       }),
