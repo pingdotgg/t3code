@@ -23,7 +23,7 @@ const ClaudeJsonSchema = Schema.Struct({
 export const TelemetryIdentitySource = Schema.Literals(["codex", "claude", "anonymous"]);
 export type TelemetryIdentitySource = typeof TelemetryIdentitySource.Type;
 
-export class TelemetryIdentityReadError extends Schema.TaggedErrorClass<TelemetryIdentityReadError>()(
+class TelemetryIdentityReadError extends Schema.TaggedErrorClass<TelemetryIdentityReadError>()(
   "TelemetryIdentityReadError",
   {
     source: TelemetryIdentitySource,
@@ -36,7 +36,7 @@ export class TelemetryIdentityReadError extends Schema.TaggedErrorClass<Telemetr
   }
 }
 
-export class TelemetryIdentityDecodeError extends Schema.TaggedErrorClass<TelemetryIdentityDecodeError>()(
+class TelemetryIdentityDecodeError extends Schema.TaggedErrorClass<TelemetryIdentityDecodeError>()(
   "TelemetryIdentityDecodeError",
   {
     source: Schema.Literals(["codex", "claude"]),
