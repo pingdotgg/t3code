@@ -15,6 +15,8 @@ import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "./IdAllocator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import { ServerSettingsService } from "../serverSettings.ts";
+import { restartContinuationRun } from "./RestartContinuation.ts";
 
 export class ProviderRuntimeRecoveryError extends Schema.TaggedErrorClass<ProviderRuntimeRecoveryError>()(
   "ProviderRuntimeRecoveryError",
@@ -52,6 +54,7 @@ export class ProviderRuntimeRecoveryService extends Context.Service<
     readonly reconcile: (
       trigger: "startup" | "shutdown",
     ) => Effect.Effect<ProviderRuntimeReconciliationSummary, ProviderRuntimeRecoveryError>;
+    readonly prepareForShutdown: Effect.Effect<void, ProviderRuntimeRecoveryError>;
     readonly recover: Effect.Effect<ProviderRuntimeRecoverySummary, ProviderRuntimeRecoveryError>;
   }
 >()("t3/orchestration-v2/ProviderRuntimeRecoveryService") {}
@@ -122,13 +125,18 @@ function resolveStaleBackgroundItemProviderInstanceId(
 }
 
 export const make = Effect.gen(function* () {
+  const settings = yield* ServerSettingsService;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const eventSink = yield* EventSink.EventSinkV2;
   const ids = yield* IdAllocator.IdAllocatorV2;
   const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
   const outbox = yield* EffectOutbox.EffectOutboxV2;
   const reconcileProjection = Effect.fn("ProviderRuntimeRecoveryService.reconcileProjection")(
-    function* (projection: OrchestrationV2ThreadProjection, trigger: "startup" | "shutdown") {
+    function* (
+      projection: OrchestrationV2ThreadProjection,
+      trigger: "startup" | "shutdown",
+      continueAfterRestart: boolean,
+    ) {
       const now = yield* DateTime.now;
       const runs = [] as Array<OrchestrationV2ThreadProjection["runs"][number]>;
       for (const run of nonterminalRuns(projection)) {
@@ -181,6 +189,20 @@ export const make = Effect.gen(function* () {
               }),
           ),
         );
+      const continuationRun =
+        continueAfterRestart && trigger === "startup"
+          ? restartContinuationRun(projection)
+          : undefined;
+      const effects: Array<EffectOutbox.PendingOrchestrationEffectV2> = continuationRun
+        ? [
+            {
+              id: `effect:restart-continuation:${continuationRun.id}`,
+              commandId,
+              threadId: projection.thread.id,
+              request: { type: "provider-runtime.continue", sourceRunId: continuationRun.id },
+            },
+          ]
+        : [];
       const events: Array<OrchestrationV2DomainEvent> = [];
       for (const request of requests) {
         events.push({
@@ -473,7 +495,7 @@ export const make = Effect.gen(function* () {
             commandType: "provider-runtime.reconcile",
             acceptedAt: now,
             events,
-            effects: [],
+            effects,
             cancelUnsettledEffects: {
               effectTypes: EffectOutbox.PROCESS_BOUND_EFFECT_TYPES,
               reason: detail,
@@ -502,6 +524,10 @@ export const make = Effect.gen(function* () {
 
   const reconcile = (trigger: "startup" | "shutdown") =>
     Effect.gen(function* () {
+      const continueAfterRestart = yield* settings.getSettings.pipe(
+        Effect.map((value) => value.continueThreadsAfterServerUpdate),
+        Effect.orElseSucceed(() => false),
+      );
       const threadIds = yield* projections
         .getRecoveryThreadIds("runtime")
         .pipe(
@@ -524,7 +550,7 @@ export const make = Effect.gen(function* () {
               }),
           ),
         );
-        const result = yield* reconcileProjection(projection, trigger);
+        const result = yield* reconcileProjection(projection, trigger, continueAfterRestart);
         terminalizedRuns += result.terminalizedRuns;
         stoppedSessions += result.stoppedSessions;
         closedRequests += result.closedRequests;
@@ -544,11 +570,43 @@ export const make = Effect.gen(function* () {
       } satisfies ProviderRuntimeReconciliationSummary;
     });
 
+  // Snapshot intent only while providers are live. A provider may finish while
+  // this commits; reconciliation reads fresh state after shutdown, and delivery
+  // rejects any source run that actually completed.
+  const prepareForShutdown = Effect.gen(function* () {
+    const enabled = yield* settings.getSettings.pipe(
+      Effect.map((value) => value.continueThreadsAfterServerUpdate),
+      Effect.orElseSucceed(() => false),
+    );
+    if (!enabled) return;
+    const threadIds = yield* projections.getRecoveryThreadIds("runtime");
+    for (const threadId of threadIds) {
+      const projection = yield* projections.getThreadProjection(threadId);
+      const run = restartContinuationRun(projection);
+      if (!run) continue;
+      const commandId = CommandId.make(`command:restart-prepare:${run.id}`);
+      yield* eventSink.writeWithEffects({
+        commandId,
+        events: [],
+        effects: [
+          {
+            id: `effect:restart-continuation:${run.id}`,
+            commandId,
+            threadId,
+            request: { type: "provider-runtime.continue", sourceRunId: run.id },
+          },
+        ],
+      });
+    }
+  }).pipe(
+    Effect.mapError((cause) => new ProviderRuntimeRecoveryError({ operation: "reconcile", cause })),
+  );
+
   const recover = Effect.gen(function* () {
     const reconciliation = yield* reconcile("startup");
     let executedEffects = 0;
     while (
-      yield* worker.runOnce.pipe(
+      yield* worker.runRecoveryOnce.pipe(
         Effect.mapError(
           (cause) => new ProviderRuntimeRecoveryError({ operation: "drain-outbox", cause }),
         ),
@@ -559,7 +617,7 @@ export const make = Effect.gen(function* () {
     return { ...reconciliation, executedEffects } satisfies ProviderRuntimeRecoverySummary;
   });
 
-  return ProviderRuntimeRecoveryService.of({ reconcile, recover });
+  return ProviderRuntimeRecoveryService.of({ reconcile, prepareForShutdown, recover });
 });
 
 export const layer = Layer.effect(ProviderRuntimeRecoveryService, make);

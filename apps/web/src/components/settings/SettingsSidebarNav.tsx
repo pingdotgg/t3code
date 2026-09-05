@@ -23,7 +23,7 @@ import {
   Settings2Icon,
   XIcon,
 } from "lucide-react";
-import { useLocation, useNavigate } from "@tanstack/react-router";
+import { useLocation, useNavigate, useRouterState } from "@tanstack/react-router";
 
 import { Button } from "../ui/button";
 import { Collapsible, CollapsiblePanel } from "../ui/collapsible";
@@ -107,6 +107,7 @@ const SETTINGS_PAGE_SECTIONS: Partial<
   "/settings/appearance": [
     { label: "Colors & themes", targetId: "appearance" },
     { label: "Interface", targetId: "appearance-interface" },
+    { label: "Motion", targetId: "motion" },
     { label: "Typography", targetId: "typography" },
   ],
   "/settings/source-control": [
@@ -143,6 +144,9 @@ function SettingsSubmenuCollapse({
 export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   const navigate = useNavigate();
   const currentHash = useLocation({ select: (location) => location.hash });
+  const resolvedPathname = useRouterState({
+    select: (state) => state.resolvedLocation?.pathname,
+  });
   const { isMobile, setOpenMobile, open, setOpen } = useSidebar();
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
@@ -406,8 +410,8 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
             <SidebarMenu className="ps-px">
               {SETTINGS_NAV_ITEMS.map((item) => {
                 const Icon = item.icon;
-                const isActive = pathname === item.to || pathname.startsWith(`${item.to}/`);
                 const pageSections = SETTINGS_PAGE_SECTIONS[item.to];
+                const isActive = activeSettingsPath === item.to;
                 return (
                   <SidebarMenuItem key={item.to}>
                     <SidebarMenuButton
@@ -417,21 +421,28 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                       <Icon />
                       <span className="truncate">{item.label}</span>
                     </SidebarMenuButton>
-                    {isActive && pageSections ? (
-                      <SidebarMenuSub className="border-l-0">
-                        {pageSections.map((section) => (
-                          <SidebarMenuSubItem key={section.targetId}>
-                            <SidebarMenuSubButton
-                              render={<button type="button" />}
-                              size="sm"
-                              className="w-full text-sidebar-muted-foreground/65"
-                              onClick={() => handlePageSectionClick(item.to, section.targetId)}
-                            >
-                              <span className="ms-0.5">{section.label}</span>
-                            </SidebarMenuSubButton>
-                          </SidebarMenuSubItem>
-                        ))}
-                      </SidebarMenuSub>
+                    {pageSections ? (
+                      <SettingsSubmenuCollapse open={isActive}>
+                        <SidebarMenuSub className="border-l-0">
+                          {pageSections.map((section) => (
+                            <SidebarMenuSubItem key={section.targetId}>
+                              <SidebarMenuSubButton
+                                render={<button type="button" />}
+                                size="sm"
+                                data-visible={visiblePageSectionIds.has(section.targetId)}
+                                className={cn(
+                                  "w-full text-sidebar-muted-foreground/65",
+                                  visiblePageSectionIds.has(section.targetId) &&
+                                    "font-medium text-sidebar-foreground",
+                                )}
+                                onClick={() => handlePageSectionClick(item.to, section.targetId)}
+                              >
+                                <span className="ms-0.5">{section.label}</span>
+                              </SidebarMenuSubButton>
+                            </SidebarMenuSubItem>
+                          ))}
+                        </SidebarMenuSub>
+                      </SettingsSubmenuCollapse>
                     ) : null}
                   </SidebarMenuItem>
                 );
