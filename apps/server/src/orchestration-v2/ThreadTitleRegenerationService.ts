@@ -10,6 +10,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Schedule from "effect/Schedule";
 
 import type { ProjectionRepositoryError } from "../persistence/Errors.ts";
 import { ProjectionProjectRepository } from "../persistence/Services/ProjectionProjects.ts";
@@ -233,6 +234,10 @@ export const make = Effect.gen(function* () {
         ? { type: "complete" as const }
         : { type: "complete" as const, title: result.title };
     }).pipe(
+      Effect.retry({
+        times: input.kind.type === "initial" ? 2 : 0,
+        schedule: Schedule.exponential("1 second"),
+      }),
       Effect.catchCause((cause) =>
         Cause.hasInterruptsOnly(cause)
           ? Effect.interrupt
