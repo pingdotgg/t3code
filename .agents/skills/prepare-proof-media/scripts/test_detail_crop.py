@@ -135,6 +135,14 @@ class DetailCropTests(unittest.TestCase):
             self.render(source, before=before)
         self.assertEqual(list((self.root / "out").iterdir()), [])
 
+    def test_gif_threshold_uses_anchor_instead_of_difference_between_extremes(self):
+        source = self.root / "subthreshold.gif"
+        self.magick("-size", "640x480", "-delay", "10", "xc:rgb(127,127,127)",
+                    "xc:rgb(118,118,118)", "xc:rgb(136,136,136)", "-loop", "0", source)
+        receipt = self.render(source)
+        self.assertEqual(receipt["method"], "full-context-no-detected-change")
+        self.assertEqual(receipt["crop"], dict(x=0, y=0, width=640, height=480))
+
     def test_output_cannot_overwrite_source_or_existing_proof(self):
         source = self.screenshot("proof-after-detail.png")
         with self.assertRaisesRegex(crop.ProofMediaError, "overwrite an input"):

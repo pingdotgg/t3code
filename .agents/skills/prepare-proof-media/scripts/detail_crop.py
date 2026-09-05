@@ -43,13 +43,21 @@ def gif_loop(source):
     return int.from_bytes(data[start:start + 2], "little")
 
 
-def difference_box(magick, left, right, threshold):
+def difference_box(magick, anchor, frames, threshold):
     # Flatten transparency as it appears on a light review page. Semantic
     # regions remain the authoritative choice for transparency/layout claims.
+    # Per-channel minima and maxima bound every frame's distance from the
+    # anchor. Reduce them in one process instead of decoding the MIFF per frame.
+    def extreme_difference(operation):
+        return [
+            "(", anchor, "-background", "white", "-alpha", "remove",
+            "(", *map(str, frames), "-background", "white", "-alpha", "remove",
+            "-evaluate-sequence", operation, ")", "-compose", "difference", "-composite", ")",
+        ]
+
     result = run([
-        magick, "(", left, "-background", "white", "-alpha", "remove", ")",
-        "(", right, "-background", "white", "-alpha", "remove", ")",
-        "-compose", "difference", "-composite", "-separate", "-evaluate-sequence", "max",
+        magick, *extreme_difference("min"), *extreme_difference("max"),
+        "-evaluate-sequence", "max", "-separate", "-evaluate-sequence", "max",
         # A black border gives trim a known background even when every source
         # pixel changed. Remove its one-pixel offset from the resulting bounds.
         "-threshold", "{}%".format(threshold), "-bordercolor", "black", "-border", "1",
@@ -136,13 +144,9 @@ def build_detail(args):
         method = "semantic-regions" if boxes else "detected-changes"
         if not boxes:
             anchor = "{}[0]".format(frames.get("before", frames["after"]))
-            for name, frame_path in frames.items():
-                for index in range(len(metadata[name])):
-                    other = "{}[{}]".format(frame_path, index)
-                    if other != anchor:
-                        box = difference_box(magick, anchor, other, args.difference_threshold)
-                        if box:
-                            boxes.append(box)
+            box = difference_box(magick, anchor, frames.values(), args.difference_threshold)
+            if box:
+                boxes.append(box)
             if not boxes:
                 method = "full-context-no-detected-change"
         crop = contextual_box(boxes, width, height, args.padding)
