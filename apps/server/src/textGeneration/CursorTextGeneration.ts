@@ -1,4 +1,4 @@
-import { Agent, type AgentOptions, type RunResult } from "@cursor/sdk";
+import { Agent, type AgentOptions, type Run, type RunResult, type SDKAgent } from "@cursor/sdk";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -44,6 +44,75 @@ function emptyCursorSdkResultDetail(result: RunResult): string {
   }
 }
 
+const ignoreCursorCleanupFailure = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+  effect.pipe(Effect.ignore({ log: true }));
+
+interface CursorSdkRequest {
+  readonly result: Promise<RunResult>;
+  readonly cancel: () => void;
+}
+
+/**
+ * Own the SDK objects and their temporary workspace beyond the caller's
+ * deadline. Cursor's promises do not accept an AbortSignal, so interruption
+ * requests cancellation without awaiting it; this owner removes the workspace
+ * only after create/send and any acquired run have settled.
+ */
+function runCursorSdkRequest(input: {
+  readonly agentOptions: AgentOptions;
+  readonly prompt: string;
+  readonly removeWorkspace: () => Promise<void>;
+}): CursorSdkRequest {
+  let cancellationRequested = false;
+  let run: Run | undefined;
+  let runWait: Promise<RunResult> | undefined;
+  let cancellation: Promise<void> | undefined;
+
+  const cancelRun = () => {
+    if (run === undefined || cancellation !== undefined) return;
+    cancellation = (async () => {
+      const cancel =
+        run.status === "running" && run.supports("cancel") ? run.cancel() : Promise.resolve();
+      const wait = runWait ?? (run.supports("wait") ? run.wait() : Promise.resolve(undefined));
+      await Promise.allSettled([cancel, wait]);
+    })();
+  };
+
+  const result = (async () => {
+    let agent: SDKAgent | undefined;
+    try {
+      agent = await Agent.create(input.agentOptions);
+      if (cancellationRequested) {
+        throw new Error("Cursor SDK request was cancelled before sending.");
+      }
+      run = await agent.send(input.prompt);
+      runWait = run.wait();
+      if (cancellationRequested) {
+        cancelRun();
+        await cancellation;
+      }
+      return await runWait;
+    } finally {
+      if (cancellationRequested) {
+        cancelRun();
+        await cancellation?.catch(() => undefined);
+      }
+      if (agent !== undefined) {
+        await Promise.resolve(agent[Symbol.asyncDispose]()).catch(() => undefined);
+      }
+      await input.removeWorkspace();
+    }
+  })();
+
+  return {
+    result,
+    cancel: () => {
+      cancellationRequested = true;
+      cancelRun();
+    },
+  };
+}
+
 /**
  * Build a Cursor text-generation closure bound to a specific `CursorSettings`
  * payload. See `makeCodexAdapter` for the overall per-instance rationale.
@@ -53,6 +122,8 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
   environment?: NodeJS.ProcessEnv,
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
+  const runtimeContext = yield* Effect.context<never>();
+  const runPromise = Effect.runPromiseWith(runtimeContext);
   const resolvedEnvironment = environment ?? process.env;
 
   const resolveCursorApiKey = (operation: CursorTextGenerationOperation) =>
@@ -88,18 +159,20 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
   }): Effect.Effect<S["Type"], TextGenerationError, S["DecodingServices"]> =>
     Effect.gen(function* () {
       const apiKey = yield* resolveCursorApiKey(operation);
-      const promptResult = yield* Effect.acquireUseRelease(
-        fileSystem.makeTempDirectory({ prefix: CURSOR_METADATA_WORKSPACE_PREFIX }).pipe(
-          Effect.mapError(
-            (cause) =>
-              new TextGenerationError({
-                operation,
-                detail: "Failed to create an isolated Cursor metadata workspace.",
-                cause,
-              }),
-          ),
-        ),
-        (metadataWorkspace) => {
+      const promptResult = yield* Effect.uninterruptibleMask((restore) =>
+        Effect.gen(function* () {
+          const metadataWorkspace = yield* fileSystem
+            .makeTempDirectory({ prefix: CURSOR_METADATA_WORKSPACE_PREFIX })
+            .pipe(
+              Effect.mapError(
+                (cause) =>
+                  new TextGenerationError({
+                    operation,
+                    detail: "Failed to create an isolated Cursor metadata workspace.",
+                    cause,
+                  }),
+              ),
+            );
           const metadataPrompt = [
             "Use only the input below. Do not use tools, read or write files, run commands, or ask questions.",
             "Return only the requested JSON object.",
@@ -119,27 +192,32 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
             },
           } satisfies AgentOptions;
 
-          return Effect.tryPromise({
-            try: () => Agent.prompt(metadataPrompt, agentOptions),
-            catch: (cause) =>
-              new TextGenerationError({
-                operation,
-                detail: "Cursor SDK request failed.",
-                cause,
-              }),
+          const mapCursorSdkError = (cause: unknown) =>
+            new TextGenerationError({
+              operation,
+              detail: "Cursor SDK request failed.",
+              cause,
+            });
+          const request = runCursorSdkRequest({
+            agentOptions,
+            prompt: metadataPrompt,
+            removeWorkspace: () =>
+              runPromise(
+                ignoreCursorCleanupFailure(
+                  fileSystem.remove(metadataWorkspace, { recursive: true, force: true }),
+                ),
+              ),
           });
-        },
-        (metadataWorkspace) =>
-          fileSystem.remove(metadataWorkspace, { recursive: true, force: true }).pipe(
-            Effect.mapError(
-              (cause) =>
-                new TextGenerationError({
-                  operation,
-                  detail: "Failed to remove an isolated Cursor metadata workspace.",
-                  cause,
-                }),
-            ),
-          ),
+          return yield* restore(
+            Effect.callback<RunResult, TextGenerationError>((resume) => {
+              request.result.then(
+                (result) => resume(Effect.succeed(result)),
+                (cause) => resume(Effect.fail(mapCursorSdkError(cause))),
+              );
+              return Effect.sync(request.cancel);
+            }),
+          );
+        }),
       ).pipe(
         Effect.timeoutOption(CURSOR_TIMEOUT_MS),
         Effect.flatMap(
