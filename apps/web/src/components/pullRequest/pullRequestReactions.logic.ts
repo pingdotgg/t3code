@@ -1,4 +1,20 @@
-import type { PullRequestReaction, PullRequestReactionContent } from "@t3tools/contracts";
+import type {
+  PullRequestComment,
+  PullRequestDetail,
+  PullRequestReaction,
+  PullRequestReactionContent,
+} from "@t3tools/contracts";
+
+/** GitLab review rows come from system notes, which cannot receive emoji awards. */
+export function canReactPullRequestComment(
+  detail: Pick<PullRequestDetail, "provider" | "capabilities">,
+  comment: Pick<PullRequestComment, "kind">,
+): boolean {
+  return (
+    detail.capabilities.reactions === true &&
+    !(detail.provider === "gitlab" && comment.kind === "review")
+  );
+}
 
 /** The picker's order, which is GitHub's: the two verdicts first, then the rest as it lists them. */
 export const PULL_REQUEST_REACTION_ORDER: ReadonlyArray<PullRequestReactionContent> = [
