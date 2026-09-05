@@ -73,3 +73,12 @@ export function resolveDesktopRuntimeIdentity(input: {
     distributionId,
   };
 }
+
+/** URL scheme owned by one desktop distribution across release tracks. */
+export function resolveDesktopUrlScheme(
+  isDevelopment: boolean,
+  distributionId?: string | null,
+): string {
+  if (distributionId) return `t3code-${distributionId}`;
+  return isDevelopment ? "t3code-dev" : "t3code";
+}

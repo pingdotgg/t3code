@@ -5,6 +5,13 @@ import * as NodePath from "node:path";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
+import {
+  DesktopPackageMetadata,
+  resolveDesktopRuntimeIdentity,
+  resolveDesktopUrlScheme,
+} from "@t3tools/shared/desktopBuild";
+import { isNightlyDesktopVersion } from "../updates/updateChannels.ts";
 
 import * as Electron from "electron";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
@@ -46,9 +53,39 @@ export class DesktopPreReadyElectronOptions extends Context.Service<
   }
 >()("@t3tools/desktop/app/DesktopPreReadyPlatform/DesktopPreReadyElectronOptions") {}
 
+const decodeEarlyDesktopPackageMetadata = Schema.decodeSync(
+  Schema.fromJsonString(DesktopPackageMetadata),
+);
+
+/** Reads packaged identity synchronously before Electron can emit ready. */
+export function resolveEarlyDesktopSchemeFromProcess(): string | null {
+  // Identity must be known before any asynchronous runtime layer can let
+  // Electron become ready. Clerk later registers the same renderer scheme.
+  const packagedIdentity = Electron.app.isPackaged
+    ? decodeEarlyDesktopPackageMetadata(
+        NodeFS.readFileSync(NodePath.join(Electron.app.getAppPath(), "package.json"), "utf8"),
+      ).t3codeDesktopIdentity
+    : undefined;
+  const distributionId = Electron.app.isPackaged
+    ? resolveDesktopRuntimeIdentity({
+        isDevelopment: false,
+        isPackaged: true,
+        stageLabel: isNightlyDesktopVersion(Electron.app.getVersion()) ? "Nightly" : "Alpha",
+        appName: Electron.app.getName(),
+        ...(packagedIdentity === undefined ? {} : { packagedIdentity }),
+      }).distributionId
+    : null;
+  return distributionId === null ? null : resolveDesktopUrlScheme(false, distributionId);
+}
+
 export const make = Effect.gen(function* () {
   const platform = yield* HostProcessPlatform;
   return yield* Effect.sync((): DesktopPreReadyElectronOptions["Service"] => {
+    const distributionScheme = resolveEarlyDesktopSchemeFromProcess();
+    ElectronProtocol.registerDesktopSchemePrivilegesSync(
+      distributionScheme === null ? [] : [distributionScheme],
+    );
+
     const linuxPasswordStoreCommandLine =
       platform === "linux"
         ? readCommandLineSwitchValue(Electron.app.commandLine, "password-store")
@@ -68,7 +105,4 @@ export const make = Effect.gen(function* () {
 
 // Keep Electron's strict pre-ready setup isolated so later runtime layers cannot
 // observe app readiness before scheme privileges and command-line switches exist.
-export const layer = Layer.mergeAll(
-  ElectronProtocol.layerSchemePrivileges,
-  Layer.effect(DesktopPreReadyElectronOptions, make),
-);
+export const layer = Layer.effect(DesktopPreReadyElectronOptions, make);

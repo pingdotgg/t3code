@@ -369,10 +369,34 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         "com.t3tools.t3code.fork-8e5b1a73152cf01c1ce614f31711fc4159e8ecc177cd4c02975ed0145b3d3d45",
       );
       assert.equal(config.productName, "T3 Code (Fork)");
+      assert.deepEqual((config.mac as Record<string, unknown>).protocols, [
+        { name: "T3 Code", schemes: [`t3code-${identity.distributionId}`] },
+      ]);
       assert.equal(
         (config.dmg as { readonly title: string }).title,
         "T3 Code (Fork) 0.0.17-nightly.20260413.42 Installer",
       );
+    }),
+  );
+
+  it.effect("keeps fork Linux URL schemes separate from the official installation", () =>
+    Effect.gen(function* () {
+      const identity = yield* resolveDesktopBuildIdentity("1.2.3", "Fork");
+      const config = yield* createBuildConfig(
+        "linux",
+        "AppImage",
+        "1.2.3",
+        false,
+        false,
+        undefined,
+        undefined,
+        false,
+        undefined,
+        identity,
+      );
+      assert.deepEqual((config.linux as Record<string, unknown>).protocols, [
+        { name: "T3 Code", schemes: [`t3code-${identity.distributionId}`] },
+      ]);
     }),
   );
 

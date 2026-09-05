@@ -213,7 +213,7 @@ available.
 
 Packaged desktop builds can use a custom GitHub repository as their update source. In the About
 panel, select the desired update track and enter the repository as `owner/repository` in
-**Custom release source**. Leaving the field empty restores the repository bundled into the build.
+**Release source**. Leaving the field empty restores the repository bundled into the build.
 
 The selected track still controls release selection: Stable reads releases and Nightly reads
 prereleases from the custom repository. A downstream Nightly builder can therefore merge selected

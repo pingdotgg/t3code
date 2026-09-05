@@ -3,6 +3,8 @@ import { assert, describe, it } from "@effect/vitest";
 import { ConnectionCatalogDocument } from "@t3tools/client-runtime/platform";
 import { EnvironmentId, type PersistedSavedEnvironmentRecord } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Layer from "effect/Layer";
@@ -191,6 +193,84 @@ describe("DesktopConnectionCatalogStore", () => {
         assert.isTrue(yield* fileSystem.exists(stablePath));
       }).pipe(Effect.provide(NodeServices.layer)),
     ),
+  );
+
+  it.effect("serializes legacy migration with a concurrent catalog save", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-catalog-race-" });
+      const decryptStarted = yield* Deferred.make<void>();
+      const releaseDecrypt = yield* Deferred.make<void>();
+      const saveStarted = yield* Deferred.make<void>();
+      const operations: string[] = [];
+      const oldCatalog = '{"schemaVersion":1,"targets":[]}';
+      const newCatalog = '{"schemaVersion":1,"targets":[],"profiles":[]}';
+      const safeStorageLayer = Layer.succeed(ElectronSafeStorage.ElectronSafeStorage, {
+        isEncryptionAvailable: Effect.succeed(true),
+        selectedStorageBackend: Effect.succeed(Option.none()),
+        encryptString: (value) =>
+          Effect.sync(() => {
+            operations.push(value === oldCatalog ? "migrate" : "save");
+            return textEncoder.encode(`encrypted:${value}`);
+          }),
+        decryptString: (value) =>
+          Effect.gen(function* () {
+            yield* Deferred.succeed(decryptStarted, undefined);
+            yield* Deferred.await(releaseDecrypt);
+            return textDecoder.decode(value).slice("encrypted:".length);
+          }),
+      });
+      const environmentLayer = DesktopEnvironment.layer({
+        dirname: "/repo/apps/desktop/src",
+        homeDirectory: baseDir,
+        platform: "darwin",
+        processArch: "arm64",
+        appVersion: "1.2.3",
+        appName: "T3 Code (Fork Nightly)",
+        appPath: "/repo",
+        isPackaged: true,
+        resourcesPath: "/missing/resources",
+        runningUnderArm64Translation: false,
+      }).pipe(
+        Layer.provide(
+          Layer.mergeAll(NodeServices.layer, DesktopConfig.layerTest({ T3CODE_HOME: baseDir })),
+        ),
+      );
+      const dependencies = Layer.mergeAll(environmentLayer, safeStorageLayer, NodeServices.layer);
+      const saved = DesktopSavedEnvironments.layer.pipe(Layer.provideMerge(dependencies));
+      const store = yield* DesktopConnectionCatalogStore.DesktopConnectionCatalogStore.pipe(
+        Effect.provide(DesktopConnectionCatalogStore.layer.pipe(Layer.provide(saved))),
+      );
+      const environment = yield* DesktopEnvironment.DesktopEnvironment.pipe(
+        Effect.provide(environmentLayer),
+      );
+      const legacyPath = environment.legacyConnectionCatalogPaths[0]!;
+      yield* fileSystem.makeDirectory(`${baseDir}/userdata`, { recursive: true });
+      yield* fileSystem.writeFileString(
+        legacyPath,
+        yield* Schema.encodeEffect(
+          Schema.fromJsonString(
+            Schema.Struct({ version: Schema.Literal(1), encryptedCatalog: Schema.String }),
+          ),
+        )({
+          version: 1,
+          encryptedCatalog: Buffer.from(`encrypted:${oldCatalog}`).toString("base64"),
+        }),
+      );
+      const reading = yield* Effect.forkChild(store.get);
+      yield* Deferred.await(decryptStarted);
+      const saving = yield* Effect.forkChild(
+        Deferred.succeed(saveStarted, undefined).pipe(Effect.andThen(store.set(newCatalog))),
+      );
+      yield* Deferred.await(saveStarted);
+      yield* Effect.yieldNow;
+      assert.deepEqual(operations, []);
+      yield* Deferred.succeed(releaseDecrypt, undefined);
+      yield* Fiber.join(reading);
+      yield* Fiber.join(saving);
+      assert.deepEqual(operations, ["migrate", "save"]);
+      assert.deepEqual(yield* store.get, Option.some(newCatalog));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
   it.effect("migrates legacy relay, SSH, bearer profile, and credential data", () =>

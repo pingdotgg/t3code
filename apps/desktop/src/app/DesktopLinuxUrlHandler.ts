@@ -97,10 +97,16 @@ export const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
 
-  const scheme = ElectronProtocol.getDesktopScheme(environment.isDevelopment);
+  const scheme = ElectronProtocol.getDesktopScheme(
+    environment.isDevelopment,
+    environment.distributionId,
+  );
+  const desktopEntryName = environment.distributionId
+    ? `t3code-${environment.distributionId}-url-handler.desktop`
+    : URL_HANDLER_DESKTOP_ENTRY_NAME;
   const desktopEntryPath = environment.path.join(
     environment.linuxApplicationsDir,
-    URL_HANDLER_DESKTOP_ENTRY_NAME,
+    desktopEntryName,
   );
 
   const writeDesktopEntry = Effect.gen(function* () {
@@ -132,7 +138,7 @@ export const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const command = ChildProcess.make(
         "xdg-mime",
-        ["default", URL_HANDLER_DESKTOP_ENTRY_NAME, `x-scheme-handler/${scheme}`],
+        ["default", desktopEntryName, `x-scheme-handler/${scheme}`],
         {
           stdin: "ignore",
           stdout: "ignore",

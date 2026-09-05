@@ -49,6 +49,7 @@ import type {
   TerminalWriteInput,
 } from "./terminal.ts";
 import * as Schema from "effect/Schema";
+import * as Effect from "effect/Effect";
 import type {
   DiscoveredLocalServerList,
   PreviewCloseInput,
@@ -273,7 +274,7 @@ export const DesktopUpdateStateSchema = Schema.Struct({
   enabled: Schema.Boolean,
   status: DesktopUpdateStatusSchema,
   channel: DesktopUpdateChannelSchema,
-  repository: DesktopUpdateRepositorySchema,
+  repository: DesktopUpdateRepositorySchema.pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   currentVersion: Schema.String,
   hostArch: DesktopRuntimeArchSchema,
   appArch: DesktopRuntimeArchSchema,

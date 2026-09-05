@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { resolveDesktopUrlScheme } from "@t3tools/shared/desktopBuild";
 // @effect-diagnostics nodeBuiltinImport:off - Node's typed junction API avoids Windows symlink privileges while keeping the probe isolated.
 
 import * as NodeFSP from "node:fs/promises";
@@ -2713,7 +2714,9 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       protocols: [
         {
           name: "T3 Code",
-          schemes: ["t3code", "t3code-dev"],
+          schemes: buildIdentity.distributionId
+            ? [resolveDesktopUrlScheme(false, buildIdentity.distributionId)]
+            : ["t3code", "t3code-dev"],
         },
       ],
       ...(stableMacAdhocSignature ? { identity: "-" } : {}),
@@ -2764,7 +2767,9 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       protocols: [
         {
           name: "T3 Code",
-          schemes: ["t3code", "t3code-dev"],
+          schemes: buildIdentity.distributionId
+            ? [resolveDesktopUrlScheme(false, buildIdentity.distributionId)]
+            : ["t3code", "t3code-dev"],
         },
       ],
       desktop: {

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   DesktopEnvironmentBootstrapSchema,
+  DesktopUpdateStateSchema,
   isValidDesktopUpdateRepository,
   normalizeDesktopUpdateRepository,
 } from "./ipc.ts";
@@ -55,4 +56,32 @@ describe("desktop update repository", () => {
       expect(isValidDesktopUpdateRepository(repository)).toBe(false);
     },
   );
+});
+
+describe("desktop update status compatibility", () => {
+  it("accepts protocol-v1 update state without a repository", () => {
+    const state = Schema.decodeUnknownSync(DesktopUpdateStateSchema)({
+      enabled: true,
+      status: "idle",
+      channel: "latest",
+      currentVersion: "1.2.3",
+      hostArch: "arm64",
+      appArch: "arm64",
+      runningUnderArm64Translation: false,
+      availableVersion: null,
+      downloadedVersion: null,
+      releaseNotes: [],
+      omittedReleaseCount: 0,
+      downloadPercent: null,
+      checkedAt: null,
+      message: null,
+      errorContext: null,
+      canRetry: false,
+    });
+    expect(state.repository).toBeNull();
+    expect(
+      Schema.decodeUnknownSync(DesktopUpdateStateSchema)({ ...state, repository: "fork/releases" })
+        .repository,
+    ).toBe("fork/releases");
+  });
 });

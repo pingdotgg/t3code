@@ -21,6 +21,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 
 import * as ElectronSafeStorage from "../electron/ElectronSafeStorage.ts";
 import * as DesktopSavedEnvironments from "../settings/DesktopSavedEnvironments.ts";
@@ -383,6 +384,7 @@ export const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const savedEnvironments = yield* DesktopSavedEnvironments.DesktopSavedEnvironments;
   const catalogPath = environment.connectionCatalogPath;
+  const mutex = yield* Semaphore.make(1);
   const resolveCatalogReadPath = Effect.gen(function* () {
     for (const candidate of [catalogPath, ...environment.legacyConnectionCatalogPaths]) {
       const exists = yield* fileSystem
@@ -528,15 +530,16 @@ export const make = Effect.gen(function* () {
         );
       }
       return Option.some(decrypted);
-    }).pipe(Effect.withSpan("desktop.connectionCatalogStore.get")),
-    set: Effect.fn("desktop.connectionCatalogStore.set")(function* (catalog) {
+    }).pipe(mutex.withPermits(1), Effect.withSpan("desktop.connectionCatalogStore.get")),
+    set: Effect.fn("desktop.connectionCatalogStore.set")(function* (catalog: string) {
       if (!(yield* encryptionAvailable)) {
         return false;
       }
       yield* writeCatalog(catalog);
       return true;
-    }),
+    }, mutex.withPermits(1)),
     clear: fileSystem.remove(catalogPath, { force: true }).pipe(
+      mutex.withPermits(1),
       Effect.catch((error) =>
         Effect.logWarning("Could not clear the desktop connection catalog.", {
           catalogPath,
