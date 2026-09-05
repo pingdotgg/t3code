@@ -19,6 +19,8 @@
         {
           default = pkgs.mkShell {
             packages = [
+              pkgs.nodejs
+              pkgs.pnpm
               pkgs.pkg-config
               pkgs.libsecret
               pkgs.stdenv.cc
