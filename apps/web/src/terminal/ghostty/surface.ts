@@ -527,6 +527,7 @@ export interface GhosttyTerminalSurfaceOptions {
   readonly onSelectionChange: () => void;
   readonly beforeKey: (event: KeyboardEvent) => boolean;
   readonly onLinkActivate: (text: string, event: MouseEvent) => void;
+  readonly canActivateLink?: (text: string) => boolean;
   /**
    * A right-click the running application did not claim through mouse
    * reporting. The host owns the menu, so it also owns preventing the browser
@@ -768,6 +769,12 @@ export class GhosttyTerminalSurface {
     this.requestRender();
   }
 
+  /** Re-evaluate link feedback after the host's available actions change. */
+  refreshLinkActivation(): void {
+    if (this.disposed) return;
+    this.refreshHoveredLink();
+  }
+
   async setFont(font: GhosttyTerminalFont): Promise<void> {
     if (this.disposed) return;
     const fontSize = terminalFontSize(font.size);
@@ -829,6 +836,12 @@ export class GhosttyTerminalSurface {
     }
     this.applyFontMetrics();
   };
+
+  /** Replay the measured grid after the host becomes ready to resize its PTY. */
+  resendSize(): void {
+    this.resizeNotified = false;
+    this.fit();
+  }
 
   fit(): boolean {
     if (this.disposed || !this.visible) return false;
@@ -1834,6 +1847,11 @@ export class GhosttyTerminalSurface {
   }
 
   private linkAt(clientX: number, clientY: number): TerminalLinkWithRange | null {
+    const link = this.findLinkAt(clientX, clientY);
+    return link && this.options.canActivateLink?.(link.text) !== false ? link : null;
+  }
+
+  private findLinkAt(clientX: number, clientY: number): TerminalLinkWithRange | null {
     if (!this.snapshot) return null;
     const cell = terminalGridCellAt({
       bounds: this.canvas.getBoundingClientRect(),

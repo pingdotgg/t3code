@@ -168,7 +168,12 @@ describe("GhosttyTerminalSurface visibility", () => {
       resize() {
         for (const callback of resizeCallbacks) callback();
       },
-      pointer(type: string, clientX: number, buttons: number) {
+      pointer(
+        type: string,
+        clientX: number,
+        buttons: number,
+        modifiers: Partial<Pick<MouseEvent, "ctrlKey" | "metaKey">> = {},
+      ) {
         canvas.dispatchEvent(
           Object.assign(new Event(type, { cancelable: true }), {
             clientX,
@@ -176,6 +181,7 @@ describe("GhosttyTerminalSurface visibility", () => {
             pointerId: 1,
             button: 0,
             buttons,
+            ...modifiers,
           }),
         );
       },
@@ -208,6 +214,108 @@ describe("GhosttyTerminalSurface visibility", () => {
     vi.useRealTimers();
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
+  });
+
+  it.each([
+    { platform: "Linux x86_64", modifiers: { ctrlKey: true, metaKey: false } },
+    { platform: "MacIntel", modifiers: { ctrlKey: false, metaKey: true } },
+  ])(
+    "gates path links and preserves selection and URLs ($platform)",
+    async ({ platform, modifiers }) => {
+      vi.stubGlobal("navigator", { platform });
+      const harness = createHarness();
+      let canOpenPaths = false;
+      const openLink = vi.fn();
+      const surface = await harness.create({
+        canActivateLink: (text) => text.startsWith("https://") || canOpenPaths,
+        onLinkActivate: openLink,
+      });
+      surface.write("/repo/file.ts");
+      harness.flushFrame();
+      harness.pointer("pointermove", 5, 0, modifiers);
+      expect(surface.canvas.style.cursor).toBe("");
+      harness.pointer("pointerdown", 5, 1, modifiers);
+      harness.pointer("pointerup", 5, 0, modifiers);
+      expect(openLink).not.toHaveBeenCalled();
+
+      harness.pointer("pointerdown", 5, 1);
+      harness.pointer("pointermove", 37, 1);
+      harness.pointer("pointerup", 37, 0);
+      expect(surface.getSelection()).toBe("/repo");
+
+      harness.pointer("pointermove", 5, 0, modifiers);
+      canOpenPaths = true;
+      surface.refreshLinkActivation();
+      expect(surface.canvas.style.cursor).toBe("pointer");
+      harness.pointer("pointerdown", 5, 1, modifiers);
+      harness.pointer("pointerup", 5, 0, modifiers);
+      expect(openLink).toHaveBeenCalledExactlyOnceWith("/repo/file.ts", expect.any(Event));
+
+      harness.pointer("pointerdown", 5, 1, modifiers);
+      canOpenPaths = false;
+      surface.refreshLinkActivation();
+      expect(surface.canvas.style.cursor).toBe("");
+      harness.pointer("pointerup", 5, 0, modifiers);
+      expect(openLink).toHaveBeenCalledOnce();
+
+      surface.resetAndWrite("https://t3.codes");
+      harness.flushFrame();
+      harness.pointer("pointermove", 5, 0, modifiers);
+      expect(surface.canvas.style.cursor).toBe("pointer");
+      harness.pointer("pointerdown", 5, 1, modifiers);
+      harness.pointer("pointerup", 5, 0, modifiers);
+      expect(openLink).toHaveBeenLastCalledWith("https://t3.codes", expect.any(Event));
+    },
+  );
+
+  it("resends an unchanged grid when authorization and attachment become ready", async () => {
+    const harness = createHarness();
+    let canOperate = false;
+    let attached = false;
+    const resizePty = vi.fn<(cols: number, rows: number) => void>();
+    const surface = await harness.create({
+      onResize: (cols, rows) => {
+        if (canOperate && attached) resizePty(cols, rows);
+      },
+    });
+    vi.advanceTimersByTime(150);
+    expect(resizePty).not.toHaveBeenCalled();
+
+    canOperate = true;
+    surface.resendSize();
+    vi.advanceTimersByTime(150);
+    expect(resizePty).not.toHaveBeenCalled();
+
+    attached = true;
+    surface.resendSize();
+    vi.advanceTimersByTime(150);
+    expect(resizePty).toHaveBeenCalledExactlyOnceWith(20, 6);
+    surface.fit();
+    vi.advanceTimersByTime(150);
+    expect(resizePty).toHaveBeenCalledOnce();
+
+    canOperate = false;
+    harness.mount.clientWidth = 248;
+    surface.fit();
+    vi.advanceTimersByTime(150);
+    expect(resizePty).toHaveBeenCalledOnce();
+  });
+
+  it("replays the current grid on reveal when a hidden host becomes ready", async () => {
+    const harness = createHarness();
+    const onResize = vi.fn<(cols: number, rows: number) => void>();
+    const surface = await harness.create({ onResize });
+    vi.advanceTimersByTime(150);
+    onResize.mockClear();
+
+    surface.setVisible(false);
+    surface.resendSize();
+    vi.advanceTimersByTime(150);
+    expect(onResize).not.toHaveBeenCalled();
+
+    surface.setVisible(true);
+    vi.advanceTimersByTime(150);
+    expect(onResize).toHaveBeenCalledExactlyOnceWith(20, 6);
   });
 
   it("stops hidden snapshots and paint while preserving live VT replies and the next cursor", async () => {
