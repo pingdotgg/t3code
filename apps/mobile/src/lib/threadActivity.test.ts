@@ -745,12 +745,12 @@ describe("buildThreadFeed", () => {
         tone: "info" as const,
         summary: "Task completed",
         payload: {
-          taskId: "ae3f85a",
+          taskId: "bpxcizf97",
           status: "completed",
           title: "Audit the PR",
           detail: "**Tooling note:** Bash is unusable.\n\n# Audit\n\nNo blockers.",
-          agentKind: "agent",
-          taskType: "local_agent",
+          agentKind: "background",
+          taskType: "local_bash",
         },
       },
       label: "**Tooling note:** Bash is unusable. # Audit No blockers.",
@@ -2745,15 +2745,103 @@ describe("quiet timeline: nested agents", () => {
       const rows = buildThreadFeed(thread).flatMap((entry) =>
         entry.type === "activity-group" ? entry.activities : [],
       );
+      // The agent folds into its spawn batch, which stays live after a resume.
       expect(rows).toMatchObject([
         {
           lifecycleStatus: "inProgress",
-          summary: "Reviewer",
-          workEntry: { label: resumeKind === "task.progress" ? "Review resumed" : "Review" },
+          summary: "Kicked off 1 subagent · 1 working",
+          workEntry: { agentSpawn: { workflowId: null, agentTaskIds: ["agent-1"] } },
         },
       ]);
     },
   );
+
+  it("folds a turn's direct spawns into one batch row that tracks their states", () => {
+    const turnId = TurnId.make("turn-spawn");
+    const agent = (
+      id: string,
+      kind: "task.started" | "task.progress" | "task.completed" | "task.updated",
+      taskId: string,
+      status: string,
+      seconds: number,
+      extra: Record<string, unknown> = {},
+    ) =>
+      makeActivity({
+        id: EventId.make(id),
+        kind,
+        summary: `${taskId} ${status}`,
+        createdAt: `2026-04-01T00:00:${String(seconds).padStart(2, "0")}.000Z`,
+        turnId,
+        payload: {
+          taskId,
+          agentKind: "agent",
+          taskType: "local_agent",
+          title: `Agent ${taskId}`,
+          status,
+          ...extra,
+        },
+      });
+    const shell = makeActivity({
+      id: EventId.make("shell-1"),
+      kind: "task.completed",
+      summary: "Task completed",
+      createdAt: "2026-04-01T00:00:05.000Z",
+      turnId,
+      payload: {
+        taskId: "sh-1",
+        agentKind: "background",
+        taskType: "local_bash",
+        status: "completed",
+        title: "Run tests",
+        detail: "Run tests",
+      },
+    });
+    const activities = [
+      agent("a-start", "task.started", "a", "running", 1),
+      agent("b-start", "task.started", "b", "running", 2),
+      agent("a-progress", "task.progress", "a", "running", 3, { detail: "Reading files" }),
+      shell,
+      agent("b-progress", "task.progress", "b", "running", 6, { detail: "Grepping" }),
+    ];
+    const rowsFor = (extraActivities: ReadonlyArray<ReturnType<typeof makeActivity>>) =>
+      buildThreadFeed(
+        makeThread({
+          id: ThreadId.make("thread-spawn"),
+          projectId: ProjectId.make("project-1"),
+          title: "Spawns",
+          activities: [...activities, ...extraActivities],
+        }),
+      ).flatMap((entry) => (entry.type === "activity-group" ? entry.activities : []));
+
+    const running = rowsFor([]);
+    expect(running.map((row) => [row.id, row.summary])).toEqual([
+      ["a-progress", "Kicked off 2 subagents · 2 working"],
+      ["shell-1", "Run tests"],
+    ]);
+    expect(running[0]).toMatchObject({
+      lifecycleStatus: "inProgress",
+      workEntry: { agentSpawn: { agentTaskIds: ["a", "b"] } },
+    });
+
+    const oneDone = rowsFor([agent("a-done", "task.completed", "a", "completed", 7)]);
+    expect(oneDone[0]).toMatchObject({
+      id: "a-progress",
+      summary: "Kicked off 2 subagents · 1 working",
+      lifecycleStatus: "inProgress",
+    });
+
+    const allDone = rowsFor([
+      agent("a-done", "task.completed", "a", "completed", 7),
+      agent("b-failed", "task.updated", "b", "failed", 8, { error: "boom" }),
+    ]);
+    expect(allDone[0]).toMatchObject({
+      id: "a-progress",
+      summary: "Ran 2 subagents · 1 failed",
+      lifecycleStatus: "failed",
+      status: "failure",
+    });
+    expect(allDone).toHaveLength(2);
+  });
 
   it.each(["cancelled", "failed", "interrupted", "idle"] as const)(
     "replaces Antigravity batch progress with %s",
@@ -2802,14 +2890,21 @@ describe("quiet timeline: nested agents", () => {
       const rows = buildThreadFeed(thread).flatMap((entry) =>
         entry.type === "activity-group" ? entry.activities : [],
       );
+      // Turn-less batches never share a spawn group, so each keeps its own row.
       expect(rows).toHaveLength(2);
       expect(rows[0]).toMatchObject({
         lifecycleStatus: status === "failed" ? "failed" : "stopped",
-        detail,
-        workEntry: { taskId: "trajectory:4", toolTitle: "Antigravity subagent batch" },
+        summary: `Ran 1 subagent · ${status === "failed" ? "1 failed" : "1 stopped"}`,
+        workEntry: {
+          taskId: "trajectory:4",
+          toolTitle: "Antigravity subagent batch",
+          agentSpawn: { agents: [{ detail }] },
+        },
       });
+      expect(rows[0]?.getFullDetail()).toContain(detail);
       expect(rows[1]).toMatchObject({
         lifecycleStatus: "inProgress",
+        summary: "Kicked off 1 subagent · 1 working",
         workEntry: { taskId: "trajectory:5" },
       });
     },
