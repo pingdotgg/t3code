@@ -832,16 +832,27 @@ export function deriveAgentPanelModel({
   let settledCount = 0;
   let totalTokens = 0;
   for (const agent of source) {
-    // A workflow coordinator with members is a container for those members, not
-    // work of its own: it reports running for the whole run and aggregates their
-    // usage upstream in some providers. Counting it would report one more agent
-    // working than there are, and double count tokens.
-    if (agent.kind === "workflow" && (members.get(agent.id) ?? []).length > 0) continue;
-    if (agent.status === "running" || agent.status === "pending") runningCount += 1;
-    else if (agent.status === "waiting") waitingCount += 1;
-    else if (agent.status === "idle") idleCount += 1;
-    else settledCount += 1;
-    totalTokens += agent.usage?.totalTokens ?? 0;
+    const workflowMembers = members.get(agent.id) ?? [];
+    const standsInForMembers =
+      agent.kind === "workflow" &&
+      workflowMembers.length > 0 &&
+      !(
+        isActiveSubagentStatus(agent.status) &&
+        workflowMembers.every((member) => isTerminalSubagentStatus(member.status))
+      );
+
+    if (!standsInForMembers) {
+      if (agent.status === "running" || agent.status === "pending") runningCount += 1;
+      else if (agent.status === "waiting") waitingCount += 1;
+      else if (agent.status === "idle") idleCount += 1;
+      else settledCount += 1;
+    }
+
+    // Workflow usage may aggregate member usage upstream, including while the
+    // coordinator is the only live unit between phases.
+    if (agent.kind !== "workflow" || workflowMembers.length === 0) {
+      totalTokens += agent.usage?.totalTokens ?? 0;
+    }
   }
 
   return {
