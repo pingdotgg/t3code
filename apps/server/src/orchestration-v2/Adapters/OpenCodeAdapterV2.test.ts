@@ -15,6 +15,7 @@ import {
   type OrchestrationV2ProviderTurn,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
@@ -62,8 +63,10 @@ function asyncEventStream() {
   const values: Array<{ value: unknown; handled: ReturnType<typeof promiseGate<void>> }> = [];
   const waiters: Array<(value: IteratorResult<unknown>) => void> = [];
   let previousHandled: ReturnType<typeof promiseGate<void>> | undefined;
+  let closed = false;
   return {
     close() {
+      closed = true;
       for (const waiter of waiters.splice(0)) waiter({ done: true, value: undefined });
     },
     push(value: unknown) {
@@ -85,6 +88,7 @@ function asyncEventStream() {
               previousHandled = entry.handled;
               return Promise.resolve({ done: false as const, value: entry.value });
             }
+            if (closed) return Promise.resolve({ done: true as const, value: undefined });
             return new Promise<IteratorResult<unknown>>((resolve) => waiters.push(resolve));
           },
         };
@@ -918,6 +922,106 @@ describe("OpenCodeAdapterV2", () => {
             (event.type === "provider_session.updated" && event.providerSession.status === "error"),
         ),
       );
+    }).pipe(Effect.provide(idAllocatorLayer), Effect.scoped),
+  );
+
+  it.effect("fails an active turn when the OpenCode event stream ends cleanly", () =>
+    Effect.gen(function* () {
+      const nativeEvents = asyncEventStream();
+      const harness = yield* makeOpenCodeRuntimeHarness(
+        "clean-event-eof",
+        "native-opencode-clean-event-eof",
+        {
+          event: {
+            subscribe: async (_input: unknown, options: { signal?: AbortSignal }) => {
+              options.signal?.addEventListener("abort", () => nativeEvents.close(), { once: true });
+              return { stream: nativeEvents.stream };
+            },
+          },
+          session: {
+            create: async () => ({
+              data: { id: "native-opencode-clean-event-eof", time: { created: 1, updated: 1 } },
+            }),
+            promptAsync: async () => ({ data: true }),
+          },
+        },
+      );
+      yield* harness.startTurn();
+      const terminalEvents = yield* harness.runtime.events.pipe(
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+
+      nativeEvents.close();
+      const received = Array.from(yield* Fiber.join(terminalEvents));
+      assert.isTrue(
+        received.some(
+          (event) =>
+            event.type === "provider_session.updated" && event.providerSession.status === "error",
+        ),
+      );
+      const terminal = received.find((event) => event.type === "turn.terminal");
+      assert.equal(terminal?.status, "failed");
+      assert.equal(terminal?.failure?.class, "transport_error");
+      assert.equal((yield* Effect.exit(harness.startTurn()))._tag, "Failure");
+    }).pipe(Effect.provide(idAllocatorLayer), Effect.scoped),
+  );
+
+  it.effect("does not register a turn after the OpenCode event stream ends", () =>
+    Effect.gen(function* () {
+      const nativeEvents = asyncEventStream();
+      let promptCalls = 0;
+      const harness = yield* makeOpenCodeRuntimeHarness(
+        "event-eof-start-race",
+        "native-opencode-event-eof-start-race",
+        {
+          event: {
+            subscribe: async (_input: unknown, options: { signal?: AbortSignal }) => {
+              options.signal?.addEventListener("abort", () => nativeEvents.close(), { once: true });
+              return { stream: nativeEvents.stream };
+            },
+          },
+          session: {
+            create: async () => ({
+              data: {
+                id: "native-opencode-event-eof-start-race",
+                time: { created: 1, updated: 1 },
+              },
+            }),
+            promptAsync: async () => {
+              promptCalls += 1;
+              return { data: true };
+            },
+          },
+        },
+      );
+      const baseClock = yield* Clock.Clock;
+      const startClockRead = yield* Deferred.make<void>();
+      const releaseStartClockRead = yield* Deferred.make<void>();
+      let blockNextClockRead = true;
+      const blockingClock: Clock.Clock = {
+        ...baseClock,
+        currentTimeMillis: Effect.suspend(() => {
+          if (!blockNextClockRead) return baseClock.currentTimeMillis;
+          blockNextClockRead = false;
+          return Deferred.succeed(startClockRead, undefined).pipe(
+            Effect.andThen(Deferred.await(releaseStartClockRead)),
+            Effect.andThen(baseClock.currentTimeMillis),
+          );
+        }),
+      };
+      const start = yield* harness
+        .startTurn()
+        .pipe(Effect.provideService(Clock.Clock, blockingClock), Effect.exit, Effect.forkScoped);
+      yield* Deferred.await(startClockRead);
+
+      const events = yield* harness.runtime.events.pipe(Stream.runCollect, Effect.forkScoped);
+      nativeEvents.close();
+      yield* Fiber.join(events);
+      yield* Deferred.succeed(releaseStartClockRead, undefined);
+
+      assert.isTrue(Exit.isFailure(yield* Fiber.join(start)));
+      assert.equal(promptCalls, 0);
     }).pipe(Effect.provide(idAllocatorLayer), Effect.scoped),
   );
 

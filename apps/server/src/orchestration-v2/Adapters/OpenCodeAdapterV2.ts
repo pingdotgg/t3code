@@ -935,7 +935,8 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
           updatedAt: now,
           lastError: null,
         };
-        const events = yield* Queue.unbounded<ProviderAdapterV2Event>();
+        const events = yield* Queue.unbounded<ProviderAdapterV2Event, Cause.Done>();
+        let nativeStreamEnded = false;
         const threads = new Map<string, OpenCodeThreadState>();
         const pendingRequests = new Map<string, PendingOpenCodeRequest>();
         const pendingRequestsByNativeId = new Map<string, PendingOpenCodeRequest>();
@@ -2559,8 +2560,11 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
           Effect.exit,
           Effect.flatMap((exit) =>
             Effect.gen(function* () {
-              if (abortController.signal.aborted || Exit.isSuccess(exit)) return;
-              const detail = openCodeRuntimeErrorDetail(Cause.squash(exit.cause));
+              if (abortController.signal.aborted) return;
+              nativeStreamEnded = true;
+              const detail = Exit.isFailure(exit)
+                ? openCodeRuntimeErrorDetail(Cause.squash(exit.cause))
+                : "OpenCode event stream ended unexpectedly. Send another message to reconnect.";
               yield* updateProviderSession("error", detail);
               for (const state of threads.values()) {
                 if (state.activeTurn !== null)
@@ -2569,6 +2573,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
                     threadDisposition: "broken",
                   });
               }
+              yield* Queue.end(events);
             }),
           ),
           Effect.forkIn(scope),
@@ -2788,6 +2793,11 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
             }),
           startTurn: (turnInput) =>
             Effect.gen(function* () {
+              if (nativeStreamEnded) {
+                return yield* protocolError(
+                  "OpenCode event stream has ended; reconnect the provider session before starting another turn.",
+                );
+              }
               const sessionId = nativeThreadId(turnInput.providerThread);
               const state = threads.get(sessionId);
               if (state === undefined) {
@@ -2825,6 +2835,21 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
                 startedAt,
                 completedAt: null,
               };
+              const admissionMessageId = yield* makeOpenCodeMessageId();
+              // No Effect may be yielded between this check and installing the
+              // turn. If the event stream ended while IDs were being prepared,
+              // registering afterward would leave a running turn that the EOF
+              // handler had already finished scanning.
+              if (nativeStreamEnded) {
+                return yield* protocolError(
+                  "OpenCode event stream has ended; reconnect the provider session before starting another turn.",
+                );
+              }
+              if (state.activeTurn !== null) {
+                return yield* protocolError(
+                  `OpenCode provider thread ${turnInput.providerThread.id} already has an active turn`,
+                );
+              }
               const turn: ActiveOpenCodeTurn = {
                 isRoot: true,
                 threadId: turnInput.threadId,
@@ -2845,7 +2870,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
                 providerTurn,
                 nextItemOrdinal: turnInput.providerTurnOrdinal * 100 + 1,
                 nativeUserMessageId: null,
-                admissionMessageId: yield* makeOpenCodeMessageId(),
+                admissionMessageId,
                 interrupted: false,
                 finalized: false,
                 planId: null,
