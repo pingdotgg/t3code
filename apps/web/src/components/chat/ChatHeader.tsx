@@ -421,9 +421,9 @@ export const ChatHeader = memo(function ChatHeader({
       >
         {activeProjectScripts && (
           <ProjectScriptsControl
+            environmentId={activeThreadEnvironmentId}
             scripts={activeProjectScripts}
             fileScripts={fileScripts}
-            keybindings={keybindings}
             preferredScriptId={preferredScriptId}
             onRunScript={onRunProjectScript}
             onAddScript={onAddProjectScript}

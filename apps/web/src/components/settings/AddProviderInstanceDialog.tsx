@@ -4,6 +4,7 @@ import { Radio as RadioPrimitive } from "@base-ui/react/radio";
 import { CheckIcon } from "lucide-react";
 import { useMemo, useState } from "react";
 import {
+  AuthProvidersManageScope,
   ProviderInstanceId,
   ProviderDriverKind,
   type EnvironmentId,
@@ -13,6 +14,7 @@ import {
 import { useEnvironmentSettings, useUpdateEnvironmentSettings } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
 import { normalizeProviderAccentColor } from "../../providerInstances";
+import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 import { Button } from "../ui/button";
 import { ACPRegistryIcon, Gemini, GithubCopilotIcon, PiAgentIcon, type Icon } from "../Icons";
 import {
@@ -130,6 +132,7 @@ export function AddProviderInstanceDialog({
 }: AddProviderInstanceDialogProps) {
   const settings = useEnvironmentSettings(environmentId);
   const updateSettings = useUpdateEnvironmentSettings(environmentId);
+  const canManageProviders = useEnvironmentScope(environmentId, AuthProvidersManageScope);
 
   const [wizardStep, setWizardStep] = useState(0);
   const [driver, setDriver] = useState<ProviderDriverKind>(DEFAULT_DRIVER_KIND);
@@ -188,6 +191,7 @@ export function AddProviderInstanceDialog({
   };
 
   const handleSave = () => {
+    if (!readEnvironmentScope(environmentId, AuthProvidersManageScope)) return;
     setHasAttemptedSubmit(true);
     if (instanceIdError !== null) return;
 
@@ -430,7 +434,9 @@ export function AddProviderInstanceDialog({
             {wizardStep < ADD_PROVIDER_WIZARD_STEPS.length - 1 ? (
               <Button onClick={() => navigateToStep(wizardStep + 1)}>Next</Button>
             ) : (
-              <Button onClick={handleSave}>Add instance</Button>
+              <Button disabled={!canManageProviders} onClick={handleSave}>
+                Add instance
+              </Button>
             )}
           </DialogFooter>
         </div>

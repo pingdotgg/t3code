@@ -22,6 +22,8 @@ const atoms = vi.hoisted(() => ({
 const commands = vi.hoisted(() => ({
   refresh: vi.fn(),
   updateProvider: vi.fn(),
+  canManageProviders: true,
+  canWriteSettings: true,
 }));
 
 const settingsState = vi.hoisted(() => ({
@@ -97,9 +99,24 @@ vi.mock("../../environments/primary", () => ({
 
 vi.mock("../../state/session", () => ({
   useEnvironmentSessionState: () => ({ data: null, hasError: false, isPending: true }),
+  useEnvironmentScope: (environmentId: EnvironmentId, scope: string) =>
+    environmentId === "remote-device" &&
+    (scope === "providers:manage"
+      ? commands.canManageProviders
+      : scope === "settings:write"
+        ? commands.canWriteSettings
+        : scope === "orchestration:read"),
+  readEnvironmentScope: (environmentId: EnvironmentId, scope: string) =>
+    environmentId === "remote-device" &&
+    (scope === "providers:manage"
+      ? commands.canManageProviders
+      : scope === "settings:write"
+        ? commands.canWriteSettings
+        : scope === "orchestration:read"),
 }));
 
 import { EnvironmentProviderSettings } from "./ProviderSettingsPanel";
+import { AddProviderInstanceDialog } from "./AddProviderInstanceDialog";
 
 const environmentId = EnvironmentId.make("remote-device");
 const codexId = ProviderInstanceId.make("codex");
@@ -179,6 +196,8 @@ describe("EnvironmentProviderSettings routing", () => {
     settingsState.updateSettings.mockReset();
     settingsSearchState.targetId = null;
     settingsSearchState.effects = [];
+    commands.canManageProviders = true;
+    commands.canWriteSettings = true;
     commands.refresh.mockReset().mockResolvedValue({ _tag: "Success" });
     commands.updateProvider.mockReset().mockResolvedValue({ _tag: "Success" });
   });
@@ -238,6 +257,7 @@ describe("EnvironmentProviderSettings routing", () => {
   });
 
   it("keeps provider selection available while write controls are read only", () => {
+    commands.canWriteSettings = false;
     settingsState.value = {
       ...DEFAULT_UNIFIED_SETTINGS,
       providerInstances: {
@@ -271,7 +291,7 @@ describe("EnvironmentProviderSettings routing", () => {
     const notice = visitElements(panel, (element) => element.props.title === "Limited permissions");
     expect(notice).not.toBeNull();
 
-    expect(visitElements(panel, isRefreshButton)).toBeNull();
+    expect(visitElements(panel, isRefreshButton)).not.toBeNull();
     expect(visitElements(panel, isAddProviderButton)).toBeNull();
   });
 
@@ -284,6 +304,24 @@ describe("EnvironmentProviderSettings routing", () => {
     ).toBeNull();
     expect(visitElements(panel, isRefreshButton)).not.toBeNull();
     expect(visitElements(panel, isAddProviderButton)).not.toBeNull();
+  });
+
+  it("removes an open add-instance dialog when the provider grant is revoked", () => {
+    let panel = renderPanel();
+    const add = visitElements(panel, isAddProviderButton);
+    if (!add) throw new Error("Missing Add provider action.");
+    (add.props.onClick as () => void)();
+    panel = renderPanel();
+    expect(
+      visitElements(panel, (element) => element.type === AddProviderInstanceDialog),
+    ).not.toBeNull();
+
+    commands.canManageProviders = false;
+    panel = renderPanel({ readOnly: true });
+    expect(
+      visitElements(panel, (element) => element.type === AddProviderInstanceDialog),
+    ).toBeNull();
+    expect(settingsState.updateSettings).not.toHaveBeenCalled();
   });
 
   it("keeps Advanced visible when search targets the provider health interval", () => {

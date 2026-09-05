@@ -1,4 +1,5 @@
 import {
+  AuthSettingsWriteScope,
   ENVIRONMENT_MACHINE_KINDS,
   isEnvironmentMachineKind,
   resolveEnvironmentMachineKind,
@@ -7,18 +8,11 @@ import {
 } from "@t3tools/contracts";
 import { useCallback } from "react";
 
-import { isElectron } from "../../env";
-import { usePrimarySessionState } from "../../environments/primary";
 import { useUpdateEnvironmentSettings } from "../../hooks/useSettings";
-import { usePrimaryEnvironmentId } from "../../state/environments";
-import { useEnvironmentSessionState } from "../../state/session";
+import { useEnvironmentScope } from "../../state/session";
 import { ENVIRONMENT_MACHINE_KIND_LABELS, EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import {
-  resolvePrimaryOperateAccess,
-  resolveRemoteOperateAccess,
-} from "./ProviderSettingsPanel.logic";
 
 const AUTOMATIC_VALUE = "automatic";
 
@@ -36,35 +30,10 @@ export function resolveEnvironmentIconPickerLock(input: {
   if (input.serverConfig.environment.capabilities.environmentIcon !== true) {
     return "This environment's server is too old to keep an icon. Update it to choose one.";
   }
-  if (input.operateAccess === "denied") {
+  if (input.operateAccess !== "granted") {
     return "Your session on this environment cannot change its settings.";
   }
   return null;
-}
-
-// Same split the provider settings use: the desktop app owns its primary
-// server outright, a browser session on the primary checks its cookie
-// session's scopes, and a remote checks the scopes its own server reports.
-function useEnvironmentOperateAccess(environmentId: EnvironmentId) {
-  const isPrimary = usePrimaryEnvironmentId() === environmentId;
-  const primarySession = usePrimarySessionState();
-  const remoteSession = useEnvironmentSessionState(environmentId);
-  if (isPrimary) {
-    return isElectron
-      ? "granted"
-      : resolvePrimaryOperateAccess({
-          isPrimary: true,
-          hasDesktopBridge: false,
-          session: primarySession.data,
-          isPending: primarySession.isPending,
-          hasError: primarySession.error !== null,
-        });
-  }
-  return resolveRemoteOperateAccess({
-    session: remoteSession.data,
-    isPending: remoteSession.isPending,
-    hasError: remoteSession.hasError,
-  });
 }
 
 /**
@@ -85,7 +54,9 @@ export function EnvironmentIconPicker({
   readonly size?: "xs" | "sm";
 }) {
   const updateSettings = useUpdateEnvironmentSettings(environmentId);
-  const operateAccess = useEnvironmentOperateAccess(environmentId);
+  const operateAccess = useEnvironmentScope(environmentId, AuthSettingsWriteScope)
+    ? "granted"
+    : "denied";
   const lock = resolveEnvironmentIconPickerLock({ serverConfig, operateAccess });
   const override = serverConfig?.settings.environmentIcon ?? null;
   const detected = serverConfig?.environment.platform.machine ?? null;

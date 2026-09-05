@@ -4,6 +4,7 @@ import type { CSSProperties, ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAtomValue } from "@effect/atom-react";
 import {
+  AuthSettingsWriteScope,
   type BackgroundActivityProfile,
   type DesktopUpdateChannel,
   ProviderDriverKind,
@@ -91,6 +92,7 @@ import {
 } from "../../state/server";
 import { useProjects } from "../../state/entities";
 import { usePrimaryEnvironmentId } from "../../state/environments";
+import { useEnvironmentScope } from "../../state/session";
 import { useArchivedThreadSnapshots } from "../../lib/archivedThreadsState";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
 import { Button } from "../ui/button";
@@ -786,6 +788,8 @@ function BackgroundActivityAdvancedDialog({
 }) {
   const settings = usePrimarySettings();
   const updateSettings = useUpdatePrimarySettings();
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const canWriteSettings = useEnvironmentScope(primaryEnvironmentId, AuthSettingsWriteScope);
   const resolvedBackgroundActivity = resolveServerBackgroundActivitySettings(settings);
   const activeProfile = resolvedBackgroundActivity.profile;
   const automaticGitFetchIntervalSeconds = durationToSeconds(
@@ -802,7 +806,7 @@ function BackgroundActivityAdvancedDialog({
   );
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open && canWriteSettings} onOpenChange={onOpenChange}>
       <DialogPopup className="max-w-xl">
         <DialogHeader>
           <DialogTitle>Background Activity</DialogTitle>
@@ -811,7 +815,10 @@ function BackgroundActivityAdvancedDialog({
           </DialogDescription>
         </DialogHeader>
         <DialogPanel className="space-y-0 px-6 pb-5">
-          <div className="overflow-hidden rounded-xl border bg-card text-card-foreground">
+          <fieldset
+            disabled={!canWriteSettings}
+            className="min-w-0 overflow-hidden rounded-xl border bg-card text-card-foreground"
+          >
             <div className="flex flex-col gap-3 border-b px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="min-w-0 space-y-1">
                 <div className="text-sm font-medium">Shared policy</div>
@@ -1033,11 +1040,12 @@ function BackgroundActivityAdvancedDialog({
                 </label>
               ))}
             </div>
-          </div>
+          </fieldset>
         </DialogPanel>
         <DialogFooter>
           <Button
             variant="outline"
+            disabled={!canWriteSettings}
             onClick={() => updateSettings(resetBackgroundActivitySettings())}
           >
             Reset all
