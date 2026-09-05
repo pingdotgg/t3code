@@ -3,7 +3,12 @@ import { act, useLayoutEffect } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { useUsage, type EnvironmentUsageStatus, type UsageView } from "./usage";
+import {
+  useUsage,
+  withUsageRefreshAttempt,
+  type EnvironmentUsageStatus,
+  type UsageView,
+} from "./usage";
 
 const testState = vi.hoisted(() => ({ environments: [] as EnvironmentUsageStatus[] }));
 vi.mock("@effect/atom-react", async (importOriginal) => ({
@@ -162,5 +167,20 @@ describe("usage environment selection", () => {
     expect(latest.merged.costUsd).toBe(10);
     expect(latest.isPending).toBe(false);
     expect(latest.isPartial).toBe(false);
+  });
+});
+
+describe("usage refresh attempts", () => {
+  it("gives failed selected environments a fresh token without invalidating unselected ones", () => {
+    const selected = [EnvironmentId.make("a"), EnvironmentId.make("b")];
+    const initial = { a: "old-a", b: "old-b", untouched: "keep" };
+
+    const first = withUsageRefreshAttempt(initial, selected, [], "attempt-1");
+    const second = withUsageRefreshAttempt(first, selected, [], "attempt-2");
+
+    expect(first.a).toBe(first.b);
+    expect(first.a).not.toBe("old-a");
+    expect(second.a).not.toBe(first.a);
+    expect(second.untouched).toBe("keep");
   });
 });

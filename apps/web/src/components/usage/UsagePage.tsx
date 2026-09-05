@@ -411,10 +411,17 @@ export function UsagePage() {
                   </div>
 
                   <div className="flex min-w-0 flex-col gap-3">
-                    <h2 className="text-sm font-medium text-foreground">
-                      {isPast24Hours ? "Hourly" : "Daily"}{" "}
-                      {metric === "tokens" ? "processed tokens" : "cost"}
-                    </h2>
+                    <div className="flex items-baseline justify-between gap-3">
+                      <h2 className="text-sm font-medium text-foreground">
+                        {isPast24Hours ? "Hourly" : "Daily"}{" "}
+                        {metric === "tokens" ? "processed tokens" : "cost"}
+                      </h2>
+                      {isPast24Hours ? null : (
+                        <span className="text-[10px] tracking-wide text-muted-foreground uppercase">
+                          drag to zoom · double-click resets
+                        </span>
+                      )}
+                    </div>
                     <UsageProviderChart
                       providers={activeProviders}
                       days={days}
@@ -425,7 +432,12 @@ export function UsagePage() {
                       referenceTime={window.untilTime}
                       resolution={isPast24Hours ? "hour" : "day"}
                       timeZone={window.timeZone}
-                      {...(isPast24Hours ? {} : { onZoomToDays: selectCustomWindow })}
+                      {...(isPast24Hours
+                        ? {}
+                        : {
+                            onZoomToDays: selectCustomWindow,
+                            onResetZoom: () => selectWindow(windowDays),
+                          })}
                     />
                   </div>
                 </section>

@@ -26,6 +26,7 @@ import {
   type MergedUsage,
   type SettledUsageStatuses,
 } from "@t3tools/shared/usageMerge";
+import { randomUUID } from "../lib/utils";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentPresentations } from "./presentation";
 import { serverEnvironment } from "./server";
@@ -72,6 +73,20 @@ const usageByWindowAtom = Atom.family((windowKey: string) =>
     return statuses;
   }).pipe(Atom.withLabel(`web-usage:window:${windowKey}`)),
 );
+
+export function withUsageRefreshAttempt(
+  current: Readonly<Record<string, string>>,
+  selectedEnvironmentIds: readonly EnvironmentId[],
+  answered: readonly EnvironmentUsage[],
+  nonce: string,
+): Readonly<Record<string, string>> {
+  if (selectedEnvironmentIds.length === 0) return current;
+  const token = JSON.stringify([makeUsageRefreshToken(answered) ?? null, nonce]);
+  return {
+    ...current,
+    ...Object.fromEntries(selectedEnvironmentIds.map((environmentId) => [environmentId, token])),
+  };
+}
 
 export interface UsageView {
   readonly merged: MergedUsage;
@@ -165,15 +180,14 @@ export function useUsage(
   );
 
   // Refreshing only the derived atom would re-read the per-environment SWR
-  // queries within their stale window and change nothing. Refresh each
-  // environment's query so the button always rescans.
+  // queries within their stale window and change nothing. Give every selected
+  // environment a fresh token so each manual attempt rescans, including when
+  // every previous request failed before producing a summary.
   //
   // Each environment refetches model pricing first, so a model released since
   // its last daily fetch gets priced by the rescan. The rescan runs whether or
   // not the refetch succeeds: an offline environment still recounts tokens.
   const refresh = useCallback(() => {
-    const nextToken = makeUsageRefreshToken(answered);
-    const input = JSON.parse(rangeKey) as UsageSummaryInput;
     const rateRefreshes = selectedEnvironments.map(({ environmentId }) =>
       runAtomCommand(
         appAtomRegistry,
@@ -183,30 +197,12 @@ export function useUsage(
       ),
     );
     void Promise.allSettled(rateRefreshes).then(() => {
-      const selectedIds = new Set(selectedEnvironments.map(({ environmentId }) => environmentId));
-      const tokenChanged =
-        nextToken !== undefined &&
-        [...selectedIds].some((environmentId) => refreshTokens[environmentId] !== nextToken);
-      if (tokenChanged) {
-        setRefreshTokens((current) => ({
-          ...current,
-          ...Object.fromEntries(
-            [...selectedIds].map((environmentId) => [environmentId, nextToken]),
-          ),
-        }));
-        return;
-      }
-      for (const { environmentId } of selectedEnvironments) {
-        const refreshToken = refreshTokens[environmentId];
-        appAtomRegistry.refresh(
-          serverEnvironment.usageSummary({
-            environmentId,
-            input: refreshToken === undefined ? input : { ...input, refreshToken },
-          }),
-        );
-      }
+      const selectedIds = selectedEnvironments.map(({ environmentId }) => environmentId);
+      setRefreshTokens((current) =>
+        withUsageRefreshAttempt(current, selectedIds, answered, randomUUID()),
+      );
     });
-  }, [answered, rangeKey, refreshTokens, selectedEnvironments]);
+  }, [answered, selectedEnvironments]);
 
   const merged = useMemo(() => mergeUsage(answered, USAGE_CONTRACT_VERSION), [answered]);
 
