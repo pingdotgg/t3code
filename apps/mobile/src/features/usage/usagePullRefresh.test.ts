@@ -36,6 +36,16 @@ describe("usage pull refresh", () => {
     ).toBe(false);
   });
 
+  it("tracks failed retries without waiting on already-pending environments", () => {
+    const targets = usagePullRefreshTargets([
+      status("failed", null, false),
+      status("already-pending", null, true),
+    ]);
+
+    expect([...targets]).toEqual(["failed"]);
+    expect(usagePullRefreshTargets([status("already-pending", null, true)]).size).toBe(0);
+  });
+
   it("commits a rebased window only after its explicit refresh starts", async () => {
     const events: string[] = [];
     let releaseRates!: () => void;
