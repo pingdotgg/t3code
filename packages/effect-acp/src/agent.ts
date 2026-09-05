@@ -254,6 +254,7 @@ interface AcpCoreAgentRequestHandlers {
 
 const decodeCancelNotification = Schema.decodeUnknownEffect(AcpSchema.CancelNotification);
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.fn("effect-acp/AcpAgent.make")(function* (
   stdio: Stdio.Stdio,
   options: AcpAgentOptions = {},
