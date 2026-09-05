@@ -2,7 +2,6 @@ import { EnvironmentId, type EnvironmentId as EnvironmentIdType } from "@t3tools
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
-import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
@@ -52,8 +51,6 @@ interface EnvironmentQueryAtomOptions<Input, A, E, R> extends EnvironmentAtomOpt
   readonly staleTimeMs?: number;
   readonly idleTtlMs?: number;
   readonly refreshIntervalMs?: number;
-  /** Revalidate settled failures without adding a refresh loop for successes. */
-  readonly refreshOnFailureMs?: number;
   readonly refreshTrigger?: (target: {
     readonly environmentId: EnvironmentIdType;
     readonly input: Input;
@@ -116,11 +113,6 @@ interface AtomCommandLatestBatch {
 interface AtomCommandLatestLane {
   running: boolean;
   pending: AtomCommandLatestBatch | undefined;
-}
-
-interface QueryRetryState {
-  retryFiber: Fiber.Fiber<void, never> | undefined;
-  disposed: boolean;
 }
 
 export interface AtomCommandScheduler {
@@ -514,9 +506,6 @@ export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
   readonly environmentId: EnvironmentIdType;
   readonly input: Input;
 }) => Atom.Atom<AsyncResult.AsyncResult<A, E | ER | Error>> {
-  // A family atom is shared by every AtomRegistry. Retry fibers are lifecycle
-  // state, however, so keep one state per registry and per query atom.
-  const retryStates = new WeakMap<AtomRegistry.AtomRegistry, WeakMap<object, QueryRetryState>>();
   const connectionAtom = Atom.family((environmentId: EnvironmentIdType) =>
     runtime.atom(
       followStreamInEnvironment(
@@ -580,63 +569,10 @@ export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
         }),
         Atom.setIdleTTL(idleTtlMs),
       );
-    const refreshOnFailureMs = options.refreshOnFailureMs;
-    const refreshableQueryAtom =
-      refreshOnFailureMs === undefined
-        ? queryAtom
-        : queryAtom.pipe(
-            Atom.transform(
-              (get) => {
-                const result = get(queryAtom);
-                let states = retryStates.get(get.registry);
-                if (states === undefined) {
-                  states = new WeakMap();
-                  retryStates.set(get.registry, states);
-                }
-                let state = states.get(queryAtom);
-                if (state === undefined) {
-                  state = { retryFiber: undefined, disposed: false };
-                  states.set(queryAtom, state);
-                  const mountedState = state;
-                  get.addFinalizer(() => {
-                    mountedState.disposed = true;
-                    mountedState.retryFiber?.interruptUnsafe();
-                    mountedState.retryFiber = undefined;
-                    if (states?.get(queryAtom) === mountedState) states.delete(queryAtom);
-                  });
-                }
-                if (
-                  result._tag === "Failure" &&
-                  !result.waiting &&
-                  state.retryFiber === undefined
-                ) {
-                  state.disposed = false;
-                  state.retryFiber = Effect.runFork(
-                    Effect.sleep(refreshOnFailureMs).pipe(
-                      Effect.andThen(
-                        Effect.sync(() => {
-                          state!.retryFiber = undefined;
-                          if (!state!.disposed) get.refresh(queryAtom);
-                        }),
-                      ),
-                    ),
-                  );
-                } else if (
-                  (result._tag !== "Failure" || result.waiting) &&
-                  state.retryFiber !== undefined
-                ) {
-                  state.retryFiber.interruptUnsafe();
-                  state.retryFiber = undefined;
-                }
-                return result;
-              },
-              { initialValueTarget: queryAtom },
-            ),
-          );
     const intervalQuery =
       options.refreshIntervalMs === undefined
-        ? refreshableQueryAtom
-        : refreshableQueryAtom.pipe(Atom.withRefresh(options.refreshIntervalMs));
+        ? queryAtom
+        : queryAtom.pipe(Atom.withRefresh(options.refreshIntervalMs));
     const refreshTrigger = options.refreshTrigger?.(target);
     return (
       refreshTrigger === undefined
@@ -688,7 +624,6 @@ export function createEnvironmentRpcQueryAtomFamily<R, ER, TTag extends Environm
     readonly staleTimeMs?: number;
     readonly idleTtlMs?: number;
     readonly refreshIntervalMs?: number;
-    readonly refreshOnFailureMs?: number;
     readonly refreshTrigger?: (target: {
       readonly environmentId: EnvironmentIdType;
       readonly input: EnvironmentRpcInput<TTag>;
@@ -702,9 +637,6 @@ export function createEnvironmentRpcQueryAtomFamily<R, ER, TTag extends Environm
     ...(options.refreshIntervalMs === undefined
       ? {}
       : { refreshIntervalMs: options.refreshIntervalMs }),
-    ...(options.refreshOnFailureMs === undefined
-      ? {}
-      : { refreshOnFailureMs: options.refreshOnFailureMs }),
     ...(options.refreshTrigger === undefined ? {} : { refreshTrigger: options.refreshTrigger }),
     execute: (input: EnvironmentRpcInput<TTag>) => request(options.tag, input),
   });

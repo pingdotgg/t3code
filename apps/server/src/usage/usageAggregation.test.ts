@@ -229,6 +229,91 @@ describe("UsageAggregator", () => {
     expect(bucket.costUsd).toBe(1.5);
   });
 
+  it("applies an explicit override to every row in a mixed-provenance cell", () => {
+    const aggregator = new UsageAggregator({
+      timeZone: "UTC",
+      sinceDay: "2026-08-01",
+      untilDay: "2026-08-31",
+      rates: new Map(),
+      priceOverrides: new Map([
+        [
+          "custom-model",
+          {
+            inputCostPerToken: 1e-6,
+            outputCostPerToken: 1e-6,
+            cacheReadCostPerToken: 0.5e-6,
+            cacheCreationCostPerToken: 1e-6,
+          },
+        ],
+      ]),
+    });
+    aggregator.addAggregate({
+      bucketStartMs: Date.parse("2026-08-07T04:00:00.000Z"),
+      provider: "claude",
+      model: "custom-model",
+      totals: { ...record().totals, outputTokens: 12 },
+      pricedTotals: { ...record().totals, outputTokens: 5 },
+      savingsTotals: { ...record().totals, outputTokens: 12 },
+      reportedCostUsd: 1.5,
+      records: 2,
+      unpricedRecords: 0,
+      providerReportedRecords: 1,
+      dynamicPricing: true,
+      sessions: ["custom-session", "provider-session"],
+    });
+
+    const bucket = aggregator.finish().buckets[0]!;
+    expect(bucket.costUsd).toBeCloseTo(0.000622, 9);
+    expect(bucket.cacheSavingsUsd).toBeCloseTo(0.0005, 9);
+    expect(bucket.unpricedRecords).toBe(0);
+    expect(bucket.costSource).toBe("modelPriced");
+  });
+
+  it("applies an explicit override ahead of a provider-reported aggregate cost", () => {
+    const aggregator = new UsageAggregator({
+      timeZone: "UTC",
+      sinceDay: "2026-08-01",
+      untilDay: "2026-08-31",
+      rates: new Map(),
+      priceOverrides: new Map([
+        [
+          "custom-model",
+          {
+            inputCostPerToken: 1e-6,
+            outputCostPerToken: 1e-6,
+            cacheReadCostPerToken: 0.5e-6,
+            cacheCreationCostPerToken: 1e-6,
+          },
+        ],
+      ]),
+    });
+    aggregator.addAggregate({
+      bucketStartMs: Date.parse("2026-08-07T04:00:00.000Z"),
+      provider: "claude",
+      model: "custom-model",
+      totals: record().totals,
+      pricedTotals: {
+        uncachedInputTokens: 0,
+        cachedInputTokens: 0,
+        cacheCreationTokens: 0,
+        outputTokens: 0,
+        reasoningTokens: 0,
+      },
+      savingsTotals: record().totals,
+      reportedCostUsd: 99,
+      records: 1,
+      unpricedRecords: 0,
+      providerReportedRecords: 1,
+      dynamicPricing: false,
+      sessions: ["provider-session"],
+    });
+
+    const bucket = aggregator.finish().buckets[0]!;
+    expect(bucket.costUsd).toBeCloseTo(0.00066, 9);
+    expect(bucket.unpricedRecords).toBe(0);
+    expect(bucket.costSource).toBe("modelPriced");
+  });
+
   it("counts v2 model-priced records as unpriced when rates are unavailable", () => {
     const aggregator = new UsageAggregator({
       timeZone: "UTC",

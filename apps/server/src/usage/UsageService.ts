@@ -54,12 +54,7 @@ import { resolveClaudeHomePath } from "../provider/Drivers/ClaudeHome.ts";
 import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
 import { makeDayFormatter, UsageAggregator } from "./usageAggregation.ts";
 import { addTotals, EMPTY_TOTALS, type UsageRecord } from "./usageTranscripts.ts";
-import {
-  createOverrideRateTable,
-  parseRateTable,
-  priceUsage,
-  type RateTable,
-} from "./usagePricing.ts";
+import { createOverrideRateTable, parseRateTable, type RateTable } from "./usagePricing.ts";
 import {
   listTranscriptFilesDetailed,
   readDirectoryVolumeIdDetailed,
@@ -141,7 +136,7 @@ const UsageLedgerRecord = Schema.Struct({
     dedupeKey: Schema.NullOr(Schema.String),
   }),
 });
-const UsageLedgerAggregate = Schema.Struct({
+const UsageLedgerAggregateV2 = Schema.Struct({
   hostId: Schema.String,
   provider: Schema.Literals(["claude", "codex", "grok"]),
   resolvedHomePath: Schema.String,
@@ -183,13 +178,24 @@ const UsageLedgerAggregate = Schema.Struct({
   providerReportedRecords: Schema.Number,
   sessions: Schema.Array(Schema.String),
 });
+const UsageLedgerAggregate = Schema.Struct({
+  ...UsageLedgerAggregateV2.fields,
+  /** Null-cost rows retain enough provenance to be repriced from current rates. */
+  dynamicPricing: Schema.Boolean,
+});
 const UsageLedgerFileV1 = Schema.Struct({
   version: Schema.Literal(1),
   generatedAtMs: Schema.Number,
   records: Schema.Array(UsageLedgerRecord),
 });
-const UsageLedgerFile = Schema.Struct({
+const UsageLedgerFileV2 = Schema.Struct({
   version: Schema.Literal(2),
+  generatedAtMs: Schema.Number,
+  aggregates: Schema.Array(UsageLedgerAggregateV2),
+  sources: Schema.Array(UsageSourceSchema),
+});
+const UsageLedgerFile = Schema.Struct({
+  version: Schema.Literal(3),
   generatedAtMs: Schema.Number,
   aggregates: Schema.Array(UsageLedgerAggregate),
   sources: Schema.Array(UsageSourceSchema),
@@ -213,8 +219,12 @@ const encodeUsageSnapshotFile = Schema.encodeEffect(
 );
 const decodeUsageLedgerFile = Schema.decodeUnknownEffect(
   Schema.fromJsonString(
-    Schema.Union([UsageLedgerFile, UsageLedgerFileV1]) as unknown as Schema.Codec<
-      typeof UsageLedgerFile.Type | typeof UsageLedgerFileV1.Type
+    Schema.Union([
+      UsageLedgerFile,
+      UsageLedgerFileV2,
+      UsageLedgerFileV1,
+    ]) as unknown as Schema.Codec<
+      typeof UsageLedgerFile.Type | typeof UsageLedgerFileV2.Type | typeof UsageLedgerFileV1.Type
     >,
   ),
 );
@@ -392,6 +402,7 @@ function ledgerAggregateFromRecord(entry: {
     // cost. Unknown models are counted as unpriced at read time.
     unpricedRecords: 0,
     savingsTotals: record.totals,
+    dynamicPricing: record.reportedCostUsd === null,
     legacyPricing: record.reportedCostUsd === null,
     legacyPricingRecords: record.reportedCostUsd === null ? 1 : 0,
     providerReportedRecords: record.reportedCostUsd === null ? 0 : 1,
@@ -416,6 +427,7 @@ function mergeLedgerAggregate(
     totals: addTotals(existing.totals, incoming.totals),
     pricedTotals: addTotals(existing.pricedTotals, incoming.pricedTotals),
     savingsTotals: addTotals(existing.savingsTotals, incoming.savingsTotals),
+    dynamicPricing: existing.dynamicPricing || incoming.dynamicPricing,
     legacyPricing: existing.legacyPricing || incoming.legacyPricing,
     legacyPricingRecords: existing.legacyPricingRecords + incoming.legacyPricingRecords,
     reportedCostUsd: existing.reportedCostUsd + incoming.reportedCostUsd,
@@ -436,6 +448,7 @@ interface LedgerAggregate {
   readonly totals: UsageRecord["totals"];
   readonly pricedTotals: UsageRecord["totals"];
   readonly savingsTotals: UsageRecord["totals"];
+  readonly dynamicPricing: boolean;
   readonly legacyPricing: boolean;
   readonly legacyPricingRecords: number;
   readonly reportedCostUsd: number;
@@ -524,6 +537,7 @@ export const make = Effect.gen(function* () {
   const usageLedger = new Map<string, LedgerAggregate>();
   const usageLedgerSources = new Map<string, UsageSummary["sources"][number]>();
   let usageLedgerGeneratedAtMs = 0;
+  let usageLedgerVersion: 1 | 2 | 3 | null = null;
   let usageLedgerDirty = false;
   let rates: RateTable = new Map();
   let ratesFetchedAtMs: number | null = null;
@@ -706,7 +720,8 @@ export const make = Effect.gen(function* () {
       );
       if (document === null) return;
       usageLedgerGeneratedAtMs = document.generatedAtMs;
-      if (document.version === 2) {
+      usageLedgerVersion = document.version;
+      if (document.version === 2 || document.version === 3) {
         for (const source of document.sources) {
           usageLedgerSources.set(sourceKey(source.fingerprint), source);
         }
@@ -714,6 +729,7 @@ export const make = Effect.gen(function* () {
           usageLedger.set(ledgerAggregateKey(entry), {
             ...entry,
             savingsTotals: entry.savingsTotals ?? entry.totals,
+            dynamicPricing: "dynamicPricing" in entry ? entry.dynamicPricing : false,
             legacyPricing: entry.legacyPricing ?? false,
             legacyPricingRecords: entry.legacyPricingRecords ?? 0,
           });
@@ -760,7 +776,7 @@ export const make = Effect.gen(function* () {
     if (!usageLedgerDirty) return;
     const aggregates = [...usageLedger.values()];
     yield* encodeUsageLedgerFile({
-      version: 2,
+      version: 3,
       generatedAtMs: usageLedgerGeneratedAtMs,
       aggregates,
       sources: [...usageLedgerSources.values()],
@@ -1083,7 +1099,6 @@ export const make = Effect.gen(function* () {
           // without retaining every transcript record.
           if (record.timestampMs < ledgerStartMs || record.timestampMs >= startedAtMs) continue;
 
-          const priced = priceUsage(rates, record.model, record.totals, record.reportedCostUsd);
           const aggregate: LedgerAggregate = {
             hostId,
             provider,
@@ -1092,15 +1107,18 @@ export const make = Effect.gen(function* () {
             bucketStartMs: Math.floor(record.timestampMs / (15 * 60 * 1000)) * (15 * 60 * 1000),
             model: record.model,
             totals: record.totals,
-            pricedTotals: priced.costSource === "modelPriced" ? record.totals : EMPTY_TOTALS,
+            // Persist every null-cost row independently of today's rate table.
+            // A later base-rate or custom-price change can then reprice the
+            // ledger without rereading transcript files.
+            pricedTotals: record.reportedCostUsd === null ? record.totals : EMPTY_TOTALS,
             savingsTotals: record.totals,
+            dynamicPricing: record.reportedCostUsd === null,
             legacyPricing: false,
             legacyPricingRecords: 0,
-            reportedCostUsd:
-              priced.costSource === "providerReported" ? (record.reportedCostUsd ?? 0) : 0,
+            reportedCostUsd: record.reportedCostUsd ?? 0,
             records: 1,
-            unpricedRecords: priced.costSource === "unpriced" ? 1 : 0,
-            providerReportedRecords: priced.costSource === "providerReported" ? 1 : 0,
+            unpricedRecords: 0,
+            providerReportedRecords: record.reportedCostUsd === null ? 0 : 1,
             sessions: record.sessionId.length === 0 ? [] : [record.sessionId],
           };
           mergeLedgerAggregate(ledgerAggregates, aggregate);
@@ -1222,6 +1240,7 @@ export const make = Effect.gen(function* () {
                   usageLedgerSources.set(sourceKey(source.fingerprint), source);
                 }
                 usageLedgerGeneratedAtMs = result.scanStartedAtMs;
+                usageLedgerVersion = 3;
                 usageLedgerDirty = true;
               }
             }).pipe(Effect.andThen(persistUsageSnapshots), Effect.andThen(persistUsageLedger)),
@@ -1316,9 +1335,19 @@ export const make = Effect.gen(function* () {
   ) {
     const settings = yield* readSettings;
     yield* ensureUsageLedgerLoaded;
-    if (usageLedgerGeneratedAtMs <= 0 && canonicalRefreshWaiter !== null) {
+    const needsV2OverrideRefresh = () =>
+      usageLedgerVersion === 2 && Object.keys(settings.usagePriceOverrides).length > 0;
+    if (
+      (usageLedgerGeneratedAtMs <= 0 || needsV2OverrideRefresh()) &&
+      canonicalRefreshWaiter !== null
+    ) {
       yield* awaitCanonicalRefresh();
     }
+    // v2 classified null-cost rows against the rate table at scan time. An
+    // unknown model therefore has no priceable token provenance for a newly
+    // configured override. Rebuild once instead of presenting a confidently
+    // wrong current price; successful canonical scans persist v3.
+    if (needsV2OverrideRefresh()) return null;
     // `generatedAtMs` is the scan marker. An empty ledger is a valid complete
     // zero snapshot and must not be confused with a never-scanned ledger.
     if (usageLedgerGeneratedAtMs <= 0) return null;
@@ -1357,7 +1386,7 @@ export const make = Effect.gen(function* () {
       sinceDay: input.sinceDay,
       untilDay: effectiveUntil,
       resolution: input.resolution ?? "day",
-      ...(hourlyWindow ?? {}),
+      ...hourlyWindow,
       rates,
       priceOverrides: createOverrideRateTable(settings.usagePriceOverrides),
     });
@@ -1435,9 +1464,15 @@ export const make = Effect.gen(function* () {
       // It is still a useful last-good fallback, but never wins over current
       // canonical ledger data above.
       const cached = usageSnapshots.get(key);
-      if (cached !== undefined) return cached;
+      const mustRefreshV2Ledger =
+        usageLedgerVersion === 2 && Object.keys(settings.usagePriceOverrides).length > 0;
+      if (cached !== undefined && !mustRefreshV2Ledger) return cached;
       const nowMs = yield* Clock.currentTimeMillis;
-      if (isWithinLedgerRetention(input, nowMs)) return yield* runBackgroundRefresh(input);
+      if (isWithinLedgerRetention(input, nowMs)) {
+        if (cached === undefined) return yield* runBackgroundRefresh(input);
+        return yield* runBackgroundRefresh(input).pipe(Effect.orElseSucceed(() => cached));
+      }
+      if (cached !== undefined) return cached;
       return yield* new UsageReadError({
         reason: "scanFailed",
         detail: "No completed usage snapshot covers this preset.",

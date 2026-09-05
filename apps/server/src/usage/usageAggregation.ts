@@ -86,6 +86,8 @@ export interface NormalizedUsageAggregate {
   readonly savingsTotals: UsageTokenTotals;
   /** v1 rows need the current rate table to determine whether they are priced. */
   readonly legacyPricing?: boolean;
+  /** v3 rows retain every null-cost token total for dynamic repricing. */
+  readonly dynamicPricing?: boolean;
   /** Number of null-cost v1 rows represented by this aggregate. */
   readonly legacyPricingRecords?: number;
   readonly reportedCostUsd: number;
@@ -239,7 +241,14 @@ export class UsageAggregator {
       this.#buckets.set(key, bucket);
     }
 
-    const priced = priceUsage(this.#options.rates, aggregate.model, aggregate.pricedTotals, null);
+    const hasPriceOverride = this.#options.priceOverrides?.has(aggregate.model.trim()) === true;
+    const priced = priceUsage(
+      this.#options.rates,
+      aggregate.model,
+      hasPriceOverride ? aggregate.totals : aggregate.pricedTotals,
+      null,
+      this.#options.priceOverrides,
+    );
     // v1 cells did not persist pricing provenance, so their null-cost rows
     // are recovered through `legacyPricingRecords`. v2 cells do persist it,
     // but a missing or corrupt rate cache can still make a previously priced
@@ -257,20 +266,27 @@ export class UsageAggregator {
       aggregate.legacyPricing === true && priced.costSource === "unpriced"
         ? (aggregate.legacyPricingRecords ?? unpricedByMissingRates)
         : 0;
-    const unpricedRecords =
-      aggregate.legacyPricing === true
-        ? legacyUnpricedRecords
-        : aggregate.unpricedRecords + unpricedByMissingRates;
+    const unpricedRecords = hasPriceOverride
+      ? 0
+      : aggregate.dynamicPricing === true
+        ? priced.costSource === "unpriced"
+          ? aggregate.records - aggregate.providerReportedRecords
+          : 0
+        : aggregate.legacyPricing === true
+          ? legacyUnpricedRecords
+          : aggregate.unpricedRecords + unpricedByMissingRates;
     bucket.totals = addTotals(bucket.totals, aggregate.totals);
-    bucket.costUsd += aggregate.reportedCostUsd + (legacyUnpriced ? 0 : priced.costUsd);
+    bucket.costUsd +=
+      (hasPriceOverride ? 0 : aggregate.reportedCostUsd) + (legacyUnpriced ? 0 : priced.costUsd);
     bucket.cacheSavingsUsd += cacheSavingsUsd(
       this.#options.rates,
       aggregate.model,
       aggregate.savingsTotals,
+      this.#options.priceOverrides,
     );
     bucket.records += aggregate.records;
     bucket.unpricedRecords += unpricedRecords;
-    bucket.providerReportedRecords += aggregate.providerReportedRecords;
+    bucket.providerReportedRecords += hasPriceOverride ? 0 : aggregate.providerReportedRecords;
     for (const session of aggregate.sessions) bucket.sessions.add(session);
     return true;
   }

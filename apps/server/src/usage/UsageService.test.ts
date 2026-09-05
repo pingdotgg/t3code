@@ -12,7 +12,6 @@ import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 import { UsageDay, type UsageSummaryInput } from "@t3tools/contracts";
-import * as Duration from "effect/Duration";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -48,12 +47,19 @@ function claudeLine(
   })}\n`;
 }
 
-function claudeModelLine(id: number, outputTokens: number, model: string): string {
+function claudeModelLine(
+  id: number,
+  outputTokens: number,
+  model: string,
+  timestamp = "2026-08-01T10:00:00Z",
+  reportedCostUsd?: number,
+): string {
   return `${JSON.stringify({
     type: "assistant",
-    timestamp: "2026-08-01T10:00:00Z",
+    timestamp,
     requestId: `req_${id}`,
     sessionId: "session-1",
+    ...(reportedCostUsd === undefined ? {} : { costUSD: reportedCostUsd }),
     message: {
       id: `msg_${id}`,
       model,
@@ -130,10 +136,18 @@ function totalOutputTokens(summary: { buckets: readonly { totals: { outputTokens
   return summary.buckets.reduce((sum, bucket) => sum + bucket.totals.outputTokens, 0);
 }
 
-function currentCanonicalWindow(): UsageSummaryInput {
-  const untilMs = Date.parse(new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().slice(0, 10));
+function currentCanonicalWindow(timeZone = "UTC"): UsageSummaryInput {
+  const today = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+  const untilMs = Date.parse(
+    new Date(Date.parse(`${today}T00:00:00Z`) - 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
+  );
   return {
-    timeZone: "UTC",
+    timeZone,
     sinceDay: UsageDay.make(
       new Date(untilMs - 89 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
     ),
@@ -204,6 +218,246 @@ describe("UsageService", () => {
           serviceLayers({ prefix: "usage-service-price-overrides-test", home, settings }),
         ),
       );
+    }).pipe(Effect.scoped),
+  );
+
+  it.live(
+    "reprices mixed canonical ledger costs from current custom prices without rescanning",
+    () =>
+      Effect.gen(function* () {
+        const { transcript, settings, home } = yield* setup;
+        const baseDir = NodePath.join(home, "ledger-price-overrides-state");
+        const canonical = currentCanonicalWindow();
+        const timestamp = `${canonical.sinceDay}T10:00:00Z`;
+        yield* Effect.promise(() =>
+          NodeFSP.writeFile(
+            transcript,
+            claudeModelLine(1, 5, "example-model", timestamp) +
+              claudeModelLine(2, 5, "example-model", timestamp, 7),
+          ),
+        );
+
+        yield* Effect.gen(function* () {
+          const settingsService = yield* ServerSettings.ServerSettingsService;
+          const service = yield* UsageService.make;
+
+          const original = yield* service.refreshSummary(canonical);
+          assert.strictEqual(original.buckets[0]?.costUsd, 7);
+          assert.strictEqual(original.buckets[0]?.unpricedRecords, 1);
+
+          yield* settingsService.updateSettings({
+            usagePriceOverrides: {
+              "example-model": { inputCostPerMillionTokens: 2, outputCostPerMillionTokens: 8 },
+            },
+          });
+          const overridden = yield* service.readSummary(canonical);
+          assert.closeTo(overridden.buckets[0]?.costUsd ?? -1, 0.00012, 1e-12);
+          assert.strictEqual(overridden.buckets[0]?.costSource, "modelPriced");
+          assert.strictEqual(overridden.buckets[0]?.unpricedRecords, 0);
+          assert.deepStrictEqual(overridden.buckets[0]?.totals, original.buckets[0]?.totals);
+
+          yield* settingsService.updateSettings({
+            usagePriceOverrides: {
+              "example-model": { inputCostPerMillionTokens: 4, outputCostPerMillionTokens: 16 },
+            },
+          });
+          const edited = yield* service.readSummary(canonical);
+          assert.closeTo(edited.buckets[0]?.costUsd ?? -1, 0.00024, 1e-12);
+
+          yield* settingsService.updateSettings({ usagePriceOverrides: { "example-model": null } });
+          const restored = yield* service.readSummary(canonical);
+          assert.deepStrictEqual(restored.buckets, original.buckets);
+        }).pipe(
+          Effect.provide(
+            serviceLayers({
+              prefix: "usage-service-ledger-price-overrides-test",
+              baseDir,
+              home,
+              settings,
+            }),
+          ),
+        );
+
+        // The v3 on-disk ledger retains the same dynamic provenance after a
+        // restart. Remove the transcript so this assertion cannot pass by
+        // silently rescanning the source record.
+        yield* Effect.promise(() => NodeFSP.rm(transcript));
+        const restarted = yield* UsageService.make.pipe(
+          Effect.provide(
+            serviceLayers({
+              prefix: "usage-service-ledger-price-overrides-restart-test",
+              baseDir,
+              home,
+              settings: {
+                ...settings,
+                usagePriceOverrides: {
+                  "example-model": { inputCostPerMillionTokens: 2, outputCostPerMillionTokens: 8 },
+                },
+              },
+            }),
+          ),
+        );
+        const restoredFromDisk = yield* restarted.readSummary(canonical);
+        assert.closeTo(restoredFromDisk.buckets[0]?.costUsd ?? -1, 0.00012, 1e-12);
+        assert.strictEqual(restoredFromDisk.buckets[0]?.unpricedRecords, 0);
+      }).pipe(Effect.scoped),
+  );
+
+  it.live("rebuilds a v2 ledger before applying a custom price to an unknown model", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      const baseDir = NodePath.join(home, "v2-ledger-price-upgrade-state");
+      const stateDir = NodePath.join(baseDir, "userdata");
+      const canonical = currentCanonicalWindow();
+      const timestamp = `${canonical.sinceDay}T10:00:00Z`;
+      const totals = {
+        uncachedInputTokens: 10,
+        cachedInputTokens: 0,
+        cacheCreationTokens: 0,
+        outputTokens: 5,
+        reasoningTokens: 0,
+      };
+      yield* Effect.promise(async () => {
+        await NodeFSP.mkdir(stateDir, { recursive: true });
+        await NodeFSP.writeFile(
+          NodePath.join(stateDir, "usage-record-ledger.json"),
+          JSON.stringify({
+            version: 2,
+            generatedAtMs: Date.now(),
+            aggregates: [
+              {
+                hostId: NodeOS.hostname(),
+                provider: "claude",
+                resolvedHomePath: NodePath.dirname(NodePath.dirname(transcript)),
+                volumeId: "legacy-volume",
+                bucketStartMs: Date.parse(timestamp),
+                model: "example-model",
+                totals,
+                pricedTotals: {
+                  uncachedInputTokens: 0,
+                  cachedInputTokens: 0,
+                  cacheCreationTokens: 0,
+                  outputTokens: 0,
+                  reasoningTokens: 0,
+                },
+                savingsTotals: totals,
+                legacyPricing: false,
+                legacyPricingRecords: 0,
+                reportedCostUsd: 0,
+                records: 1,
+                unpricedRecords: 1,
+                providerReportedRecords: 0,
+                sessions: ["session-1"],
+              },
+            ],
+            sources: [],
+          }),
+        );
+        await NodeFSP.writeFile(transcript, claudeModelLine(1, 5, "example-model", timestamp));
+      });
+      const service = yield* UsageService.make.pipe(
+        Effect.provide(
+          serviceLayers({
+            prefix: "usage-service-v2-ledger-price-upgrade-test",
+            baseDir,
+            home,
+            settings: {
+              ...settings,
+              usagePriceOverrides: {
+                "example-model": { inputCostPerMillionTokens: 2, outputCostPerMillionTokens: 8 },
+              },
+            },
+          }),
+        ),
+      );
+
+      const result = yield* service.readSummary(canonical);
+
+      assert.closeTo(result.buckets[0]?.costUsd ?? -1, 0.00006, 1e-12);
+      assert.strictEqual(result.buckets[0]?.unpricedRecords, 0);
+      const persisted = JSON.parse(
+        yield* Effect.promise(() =>
+          NodeFSP.readFile(NodePath.join(stateDir, "usage-record-ledger.json"), "utf8"),
+        ),
+      ) as {
+        version: number;
+        generatedAtMs: number;
+        aggregates: readonly (Record<string, unknown> & { readonly dynamicPricing?: boolean })[];
+        sources: readonly unknown[];
+      };
+      assert.strictEqual(persisted.version, 3);
+
+      // A failed mandatory rebuild still serves the matching last-good
+      // snapshot. Rewrite the fixture as v2 and make its transcript root
+      // unreadable to exercise that upgrade fallback.
+      const emptyTotals = {
+        uncachedInputTokens: 0,
+        cachedInputTokens: 0,
+        cacheCreationTokens: 0,
+        outputTokens: 0,
+        reasoningTokens: 0,
+      };
+      const v2Aggregates = persisted.aggregates.map(
+        ({ dynamicPricing: _dynamicPricing, ...aggregate }) => ({
+          ...aggregate,
+          pricedTotals: emptyTotals,
+          unpricedRecords: 1,
+        }),
+      );
+      const transcriptRoot = NodePath.dirname(NodePath.dirname(transcript));
+      yield* Effect.promise(async () => {
+        await NodeFSP.writeFile(
+          NodePath.join(stateDir, "usage-record-ledger.json"),
+          JSON.stringify({
+            version: 2,
+            generatedAtMs: persisted.generatedAtMs,
+            aggregates: v2Aggregates,
+            sources: persisted.sources,
+          }),
+        );
+        await NodeFSP.rm(transcriptRoot, { recursive: true });
+        await NodeFSP.writeFile(transcriptRoot, "not a directory");
+      });
+      const fallbackService = yield* UsageService.make.pipe(
+        Effect.provide(
+          serviceLayers({
+            prefix: "usage-service-v2-ledger-price-fallback-test",
+            baseDir,
+            home,
+            settings: {
+              ...settings,
+              usagePriceOverrides: {
+                "example-model": { inputCostPerMillionTokens: 2, outputCostPerMillionTokens: 8 },
+              },
+            },
+          }),
+        ),
+      );
+      const fallback = yield* fallbackService.readSummary(canonical);
+      assert.closeTo(fallback.buckets[0]?.costUsd ?? -1, 0.00006, 1e-12);
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("walks first-day transcript files before UTC midnight in a positive-offset zone", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      const canonical = currentCanonicalWindow("Pacific/Kiritimati");
+      const firstDayUtcSpelling = Date.parse(`${canonical.sinceDay}T00:00:00Z`);
+      const firstLocalDayRecord = new Date(firstDayUtcSpelling - 13 * 60 * 60 * 1000);
+      yield* Effect.promise(async () => {
+        await NodeFSP.writeFile(transcript, claudeLine(1, 5, firstLocalDayRecord.toISOString()));
+        await NodeFSP.utimes(transcript, firstLocalDayRecord, firstLocalDayRecord);
+      });
+      const service = yield* UsageService.make.pipe(
+        Effect.provide(
+          serviceLayers({ prefix: "usage-service-positive-offset-walk-test", home, settings }),
+        ),
+      );
+
+      const result = yield* service.refreshSummary(canonical);
+
+      assert.strictEqual(result.buckets[0]?.day, canonical.sinceDay);
+      assert.strictEqual(totalOutputTokens(result), 5);
     }).pipe(Effect.scoped),
   );
 

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "@effect/vitest";
+import { describe, expect, it } from "@effect/vitest";
 import { EnvironmentId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
@@ -12,7 +12,6 @@ import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
-import * as TestClock from "effect/testing/TestClock";
 import { AsyncResult, Atom, AtomRegistry } from "effect/unstable/reactivity";
 
 import {
@@ -82,7 +81,6 @@ function queryConnectionState(
 
 const makeEnvironmentQueryHarness = Effect.fn("TestEnvironmentQuery.makeHarness")(function* <A, E>(
   execute: Effect.Effect<A, E>,
-  options: { readonly refreshOnFailureMs?: number } = {},
 ) {
   const supervisorState = yield* SubscriptionRef.make(queryConnectionState());
   const supervisorSession = yield* SubscriptionRef.make(Option.some(QUERY_RPC_SESSION));
@@ -112,9 +110,6 @@ const makeEnvironmentQueryHarness = Effect.fn("TestEnvironmentQuery.makeHarness"
   const family = createEnvironmentQueryAtomFamily(runtime, {
     label: "test.environment-query",
     staleTimeMs: 60_000,
-    ...(options.refreshOnFailureMs === undefined
-      ? {}
-      : { refreshOnFailureMs: options.refreshOnFailureMs }),
     execute: () => execute,
   });
 
@@ -279,84 +274,6 @@ describe("environmentRpcKey", () => {
 });
 
 describe("environment query lifecycle", () => {
-  it.effect("retries settled failures without polling successful queries", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-        yield* Effect.addFinalizer(() => Effect.sync(() => vi.useRealTimers()));
-
-        const expectedFailure = new TestQueryError({ message: "The ledger is not ready." });
-        let executions = 0;
-        const harness = yield* makeEnvironmentQueryHarness(
-          Effect.suspend(() => {
-            executions += 1;
-            return executions === 1 ? Effect.fail(expectedFailure) : Effect.succeed("ready");
-          }),
-          { refreshOnFailureMs: 5_000 },
-        );
-        const registry = yield* mountEnvironmentQuery(harness.atom);
-        const initial = yield* AtomRegistry.getResult(registry, harness.atom, {
-          suspendOnWaiting: true,
-        }).pipe(Effect.exit);
-        expect(Exit.isFailure(initial)).toBe(true);
-        expect(executions).toBe(1);
-
-        yield* Effect.promise(() => vi.advanceTimersByTimeAsync(4_999));
-        expect(executions).toBe(1);
-        yield* Effect.promise(() => vi.advanceTimersByTimeAsync(1));
-        expect(
-          yield* AtomRegistry.getResult(registry, harness.atom, {
-            suspendOnWaiting: true,
-          }),
-        ).toBe("ready");
-        expect(executions).toBe(2);
-
-        yield* Effect.promise(() => vi.advanceTimersByTimeAsync(60_000));
-        expect(executions).toBe(2);
-      }),
-    ),
-  );
-
-  it.effect("cancels a failure retry while a query is already waiting", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-        yield* Effect.addFinalizer(() => Effect.sync(() => vi.useRealTimers()));
-
-        const expectedFailure = new TestQueryError({ message: "The ledger is not ready." });
-        let executions = 0;
-        const harness = yield* makeEnvironmentQueryHarness(
-          Effect.suspend(() => {
-            executions += 1;
-            if (executions === 1) return Effect.fail(expectedFailure);
-            return Effect.succeed("recovered");
-          }),
-          { refreshOnFailureMs: 5_000 },
-        );
-        const registry = yield* mountEnvironmentQuery(harness.atom);
-        const initial = yield* AtomRegistry.getResult(registry, harness.atom, {
-          suspendOnWaiting: true,
-        }).pipe(Effect.exit);
-        expect(Exit.isFailure(initial)).toBe(true);
-        expect(executions).toBe(1);
-        expect(vi.getTimerCount()).toBe(1);
-
-        yield* SubscriptionRef.set(
-          harness.supervisorState,
-          queryConnectionState({ phase: "connecting", stage: "opening" }),
-        );
-        yield* Effect.yieldNow;
-        const waiting = registry.get(harness.atom);
-        expect(AsyncResult.isFailure(waiting)).toBe(true);
-        expect(waiting.waiting).toBe(true);
-        expect(vi.getTimerCount()).toBe(0);
-
-        yield* Effect.promise(() => vi.advanceTimersByTimeAsync(5_000));
-        expect(executions).toBe(1);
-      }),
-    ),
-  );
-
   it.effect(
     "retries an interrupted query without exposing a failure during session replacement",
     () =>
