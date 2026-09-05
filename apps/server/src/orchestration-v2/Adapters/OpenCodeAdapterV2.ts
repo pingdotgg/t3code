@@ -3230,10 +3230,9 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
                 client.session.abort({ sessionID: sessionId }, { signal }),
               ).pipe(
                 Effect.timeout("10 seconds"),
-                // The turn can settle while the abort is in flight, and
-                // aborting an already-idle session fails. That stop still
-                // succeeded; only surface failures for a turn that is
-                // genuinely still running.
+                // A terminal event can arrive while the abort request is in
+                // flight. Once that event has confirmed completion, a late
+                // transport failure does not mean this turn is still running.
                 Effect.catch((cause) =>
                   turn.finalized
                     ? Effect.void
