@@ -17,6 +17,16 @@ describe("environment speech PCM", () => {
     expect(decodeSpeechPcm(bytes(new Float32Array(16_000))).length).toBe(0);
   });
 
+  it("preserves invalid audio as a structured domain error", () => {
+    try {
+      decodeSpeechPcm(new Uint8Array(3));
+      throw new Error("expected invalid audio");
+    } catch (error) {
+      expect(error).toMatchObject({ _tag: "SpeechInvalidAudioError", byteLength: 3 });
+      expect(error).not.toHaveProperty("cause");
+    }
+  });
+
   it("rejects malformed, invalid, and oversized input", () => {
     expect(() => decodeSpeechPcm(new Uint8Array())).toThrow();
     expect(() => decodeSpeechPcm(new Uint8Array(3))).toThrow();

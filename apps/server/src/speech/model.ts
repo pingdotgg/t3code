@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off globalDate:off globalFetch:off - low-level streaming file boundary.
+// @effect-diagnostics nodeBuiltinImport:off globalFetch:off - streams downloads with global fetch and Node filesystem, stream, and hashing APIs.
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";

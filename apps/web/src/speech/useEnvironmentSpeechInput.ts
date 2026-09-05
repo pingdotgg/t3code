@@ -41,7 +41,12 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     readonly prepared: NonNullable<typeof prepared>;
     readonly value: EnvironmentSpeechStatus;
   } | null>(null);
-  const [state, setState] = useState<VoiceInputState>(INITIAL_STATE);
+  const [controllerState, setControllerState] = useState({ prepared, value: INITIAL_STATE });
+  if (controllerState.prepared !== prepared) {
+    setControllerState({ prepared, value: INITIAL_STATE });
+  }
+  const state: VoiceInputState =
+    controllerState.prepared === prepared ? controllerState.value : INITIAL_STATE;
   const [level, setLevel] = useState(0);
   const controllerRef = useRef<VoiceInputController | null>(null);
   const latestInputRef = useRef(input);
@@ -86,6 +91,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       };
     };
 
+    let disposed = false;
     let controller: VoiceInputController;
     const platform = createBrowserVoiceInputPlatform({
       prepared,
@@ -102,10 +108,13 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       deleteRecording: platform.deleteRecording,
       readDraft,
       commitDraft: (text, selection) => latestInputRef.current.commitDraft(text, selection),
-      onStateChange: setState,
+      onStateChange: (value) => {
+        if (!disposed) setControllerState({ prepared, value });
+      },
     });
     controllerRef.current = controller;
     return () => {
+      disposed = true;
       controller.dispose();
       if (controllerRef.current === controller) controllerRef.current = null;
     };

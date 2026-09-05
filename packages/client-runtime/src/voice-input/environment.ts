@@ -4,9 +4,9 @@ import type {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
-import { RemoteEnvironmentAuthorization } from "../authorization/service.ts";
+import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
 import type { PreparedConnection } from "../connection/model.ts";
-import { ManagedRelayDpopSigner } from "../relay/managedRelay.ts";
+import * as ManagedRelay from "../relay/managedRelay.ts";
 import { makeEnvironmentHttpApiClient, makeEnvironmentHttpApiUrlBuilder } from "../rpc/http.ts";
 import { executeAuthenticatedEnvironmentHttpRequest } from "../state/environmentHttpAuth.ts";
 
@@ -24,8 +24,10 @@ const request = Effect.fn("clientRuntime.voiceInput.environmentRequest")(functio
 }) {
   return yield* executeAuthenticatedEnvironmentHttpRequest({
     prepared: input.prepared,
-    signer: yield* Effect.serviceOption(ManagedRelayDpopSigner),
-    remoteAuthorization: yield* Effect.serviceOption(RemoteEnvironmentAuthorization),
+    signer: yield* Effect.serviceOption(ManagedRelay.ManagedRelayDpopSigner),
+    remoteAuthorization: yield* Effect.serviceOption(
+      RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization,
+    ),
     method: input.method,
     url: input.path,
     timeoutMs: VOICE_REQUEST_TIMEOUT_MS,

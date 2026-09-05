@@ -5,15 +5,16 @@ import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 import {
   annotateEnvironmentRequest,
   failEnvironmentInternal,
+  failEnvironmentInvalidRequest,
   requireEnvironmentScope,
 } from "../auth/http.ts";
-import { MAX_SPEECH_BYTES, SpeechService } from "./SpeechService.ts";
+import * as SpeechService from "./SpeechService.ts";
 
 export const speechHttpApiLayer = HttpApiBuilder.group(
   EnvironmentHttpApi,
   "voice",
   Effect.fnUntraced(function* (handlers) {
-    const speech = yield* SpeechService;
+    const speech = yield* SpeechService.SpeechService;
     return handlers
       .handle(
         "status",
@@ -30,15 +31,18 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
         Effect.fn("environment.voice.transcribe")(function* (args) {
           yield* annotateEnvironmentRequest(args.endpoint.name);
           yield* requireEnvironmentScope(AuthOrchestrationOperateScope);
-          if (args.payload.byteLength > MAX_SPEECH_BYTES) {
-            return yield* failEnvironmentInternal(
-              "internal_error",
-              new Error("voice recording is too large"),
-            );
+          if (args.payload.byteLength > SpeechService.MAX_SPEECH_BYTES) {
+            return yield* failEnvironmentInvalidRequest("invalid_audio");
           }
-          const text = yield* speech
-            .transcribe(args.payload)
-            .pipe(Effect.catch((error) => failEnvironmentInternal("internal_error", error)));
+          const text = yield* speech.transcribe(args.payload).pipe(
+            Effect.catchTags({
+              SpeechInvalidAudioError: () => failEnvironmentInvalidRequest("invalid_audio"),
+              SpeechUnsupportedPlatformError: () =>
+                failEnvironmentInvalidRequest("speech_unavailable"),
+              SpeechBusyError: () => failEnvironmentInvalidRequest("speech_busy"),
+              SpeechOperationError: (error) => failEnvironmentInternal("internal_error", error),
+            }),
+          );
           return { text };
         }),
       )
@@ -48,7 +52,13 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
           yield* annotateEnvironmentRequest(args.endpoint.name);
           yield* requireEnvironmentScope(AuthOrchestrationOperateScope);
           return yield* speech.removeModel.pipe(
-            Effect.catch((error) => failEnvironmentInternal("internal_error", error)),
+            Effect.catchTags({
+              SpeechInvalidAudioError: () => failEnvironmentInvalidRequest("invalid_audio"),
+              SpeechUnsupportedPlatformError: () =>
+                failEnvironmentInvalidRequest("speech_unavailable"),
+              SpeechBusyError: () => failEnvironmentInvalidRequest("speech_busy"),
+              SpeechOperationError: (error) => failEnvironmentInternal("internal_error", error),
+            }),
           );
         }),
       );
