@@ -1,6 +1,6 @@
 import { type TimestampFormat } from "@t3tools/contracts/settings";
 
-export function getTimestampFormatOptions(
+function getTimestampFormatOptions(
   timestampFormat: TimestampFormat,
   includeSeconds: boolean,
 ): Intl.DateTimeFormatOptions {
