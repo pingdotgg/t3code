@@ -15,10 +15,10 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
-import { ProviderRegistry } from "../provider/Services/ProviderRegistry.ts";
+import * as ProviderRegistryModule from "../provider/Services/ProviderRegistry.ts";
 import { makeProviderRegistryLayer } from "../provider/testUtils/providerRegistryMock.ts";
 import * as ServerSettings from "../serverSettings.ts";
-import { EnvironmentMcpService, layer } from "./EnvironmentMcpService.ts";
+import * as EnvironmentMcp from "./EnvironmentMcpService.ts";
 import type { McpInvocationScope } from "./McpInvocationContext.ts";
 
 const encodeEnvironmentMcpReadResult = Schema.encodeUnknownEffect(EnvironmentMcpReadResult);
@@ -91,7 +91,7 @@ const serviceLayer = (input: {
   readonly serverVersion?: string;
   readonly customInstructions?: string;
 }) =>
-  layer.pipe(
+  EnvironmentMcp.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
         environmentLayer(input.label ?? "Test environment", input.serverVersion ?? "1.2.3"),
@@ -128,7 +128,7 @@ const serviceLayer = (input: {
 describe("EnvironmentMcpService", () => {
   it.effect("returns only bounded allowlisted environment and provider diagnostics", () =>
     Effect.gen(function* () {
-      const service = yield* EnvironmentMcpService;
+      const service = yield* EnvironmentMcp.EnvironmentMcpService;
       const result = yield* service.read(scope, { providerLimit: 1 });
       const encoded = yield* encodeEnvironmentMcpReadResult(result);
 
@@ -192,20 +192,20 @@ describe("EnvironmentMcpService", () => {
 
   it.effect("denies credentials without orchestration capability before reading services", () => {
     let providerReads = 0;
-    const providerLayer = Layer.succeed(ProviderRegistry, {
+    const providerLayer = Layer.mock(ProviderRegistryModule.ProviderRegistry)({
       getProviders: Effect.sync(() => {
         providerReads += 1;
         return [];
       }),
-    } as never);
+    });
     return Effect.gen(function* () {
-      const service = yield* EnvironmentMcpService;
+      const service = yield* EnvironmentMcp.EnvironmentMcpService;
       const error = yield* Effect.flip(service.read({ ...scope, capabilities: new Set() }, {}));
       expect(error.code).toBe("capability_denied");
       expect(providerReads).toBe(0);
     }).pipe(
       Effect.provide(
-        layer.pipe(
+        EnvironmentMcp.layer.pipe(
           Layer.provide(
             Layer.mergeAll(
               environmentLayer("Test", "1.0.0"),
@@ -219,17 +219,17 @@ describe("EnvironmentMcpService", () => {
   });
 
   it.effect("distinguishes an unavailable provider registry from a healthy empty result", () => {
-    const unavailableRegistry = Layer.succeed(ProviderRegistry, {
+    const unavailableRegistry = Layer.mock(ProviderRegistryModule.ProviderRegistry)({
       getProviders: Effect.die("SENTINEL_PROVIDER_FAILURE"),
-    } as never);
+    });
     return Effect.gen(function* () {
-      const service = yield* EnvironmentMcpService;
+      const service = yield* EnvironmentMcp.EnvironmentMcpService;
       const error = yield* Effect.flip(service.read(scope, {}));
       expect(error.code).toBe("provider_registry_unavailable");
       expect(error.message).not.toContain("SENTINEL_PROVIDER_FAILURE");
     }).pipe(
       Effect.provide(
-        layer.pipe(
+        EnvironmentMcp.layer.pipe(
           Layer.provide(
             Layer.mergeAll(
               environmentLayer("Test", "1.0.0"),
@@ -245,7 +245,7 @@ describe("EnvironmentMcpService", () => {
   it.effect("rejects an environment mismatch before reading scoped dependencies", () => {
     let providerReads = 0;
     let settingsReads = 0;
-    const providerLayer = Layer.mock(ProviderRegistry)({
+    const providerLayer = Layer.mock(ProviderRegistryModule.ProviderRegistry)({
       getProviders: Effect.sync(() => {
         providerReads += 1;
         return [];
@@ -258,7 +258,7 @@ describe("EnvironmentMcpService", () => {
       }),
     });
     return Effect.gen(function* () {
-      const service = yield* EnvironmentMcpService;
+      const service = yield* EnvironmentMcp.EnvironmentMcpService;
       const error = yield* Effect.flip(
         service.read({ ...scope, environmentId: EnvironmentId.make("environment-other") }, {}),
       );
@@ -268,7 +268,7 @@ describe("EnvironmentMcpService", () => {
       expect(settingsReads).toBe(0);
     }).pipe(
       Effect.provide(
-        layer.pipe(
+        EnvironmentMcp.layer.pipe(
           Layer.provide(
             Layer.mergeAll(environmentLayer("Test", "1.0.0"), providerLayer, settingsLayer),
           ),
