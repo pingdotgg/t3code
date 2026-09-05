@@ -26,6 +26,7 @@
     "tc": "vp run -r --concurrency-limit 2 typecheck",
     "lint": "vp lint --report-unused-disable-directives",
     "knip": "knip",
+    "knip:check": "knip --include files,dependencies --no-config-hints",
     "knip:production": "knip --production",
     "lint:mobile": "node scripts/mobile-native-static-check.ts",
     "test": "vp run -r test",
