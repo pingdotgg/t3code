@@ -1006,7 +1006,58 @@ export function pullRequestActionNeedsHostRefresh(action: PullRequestAction): bo
   return ACTION_NEEDS_HOST_REFRESH[action];
 }
 
-type SnapshotStorage = Pick<Storage, "getItem" | "setItem">;
+type SnapshotStorage = Pick<Storage, "getItem" | "setItem"> &
+  Partial<Pick<Storage, "key" | "length" | "removeItem">>;
+
+export const PULL_REQUEST_DETAIL_SNAPSHOT_MAX_ENTRIES = 20;
+export const PULL_REQUEST_DETAIL_SNAPSHOT_MAX_BYTES = 2 * 1024 * 1024;
+
+const DETAIL_SNAPSHOT_LEGACY_PREFIX = "t3.pullRequests.detail:";
+const DETAIL_SNAPSHOT_PREFIX = "t3.pullRequests.detail.v1:";
+const DETAIL_SNAPSHOT_INDEX_KEY = "t3.pullRequests.detail.index.v1";
+
+const DetailSnapshotIndex = Schema.Array(
+  Schema.Struct({
+    key: Schema.String.check(Schema.isStartsWith(DETAIL_SNAPSHOT_PREFIX)),
+    bytes: Schema.Int.check(
+      Schema.isGreaterThan(0),
+      Schema.isLessThanOrEqualTo(PULL_REQUEST_DETAIL_SNAPSHOT_MAX_BYTES),
+    ),
+  }),
+).check(Schema.isMaxLength(PULL_REQUEST_DETAIL_SNAPSHOT_MAX_ENTRIES));
+
+const decodeDetailSnapshotIndex = Schema.decodeUnknownOption(DetailSnapshotIndex);
+
+// localStorage stores UTF-16 strings. Include keys and the small recency index in the limit.
+function detailSnapshotsFit(
+  index: typeof DetailSnapshotIndex.Type,
+  rawIndex = JSON.stringify(index),
+): boolean {
+  return (
+    index.length <= PULL_REQUEST_DETAIL_SNAPSHOT_MAX_ENTRIES &&
+    index.reduce((total, entry) => total + entry.bytes, 0) +
+      2 * (DETAIL_SNAPSHOT_INDEX_KEY.length + rawIndex.length) <=
+      PULL_REQUEST_DETAIL_SNAPSHOT_MAX_BYTES
+  );
+}
+
+function readDetailSnapshotIndex(storage: SnapshotStorage): typeof DetailSnapshotIndex.Type {
+  try {
+    const raw = storage.getItem(DETAIL_SNAPSHOT_INDEX_KEY);
+    if (!raw || raw.length * 2 > PULL_REQUEST_DETAIL_SNAPSHOT_MAX_BYTES) return [];
+    const decoded = decodeDetailSnapshotIndex(JSON.parse(raw));
+    if (
+      decoded._tag === "None" ||
+      new Set(decoded.value.map((entry) => entry.key)).size !== decoded.value.length ||
+      !detailSnapshotsFit(decoded.value, raw)
+    ) {
+      return [];
+    }
+    return decoded.value;
+  } catch {
+    return [];
+  }
+}
 
 export interface PullRequestDetailSnapshotRef {
   readonly projectId: string;
@@ -1018,26 +1069,42 @@ const pullRequestDetailSnapshotKey = (
   environmentId: string,
   reference: PullRequestDetailSnapshotRef,
 ) =>
-  `t3.pullRequests.detail:${environmentId}:${reference.projectId}:${reference.repository}#${reference.number}`;
+  `${DETAIL_SNAPSHOT_PREFIX}${JSON.stringify([
+    environmentId,
+    reference.projectId,
+    reference.repository,
+    reference.number,
+  ])}`;
 
 const decodeDetailSnapshot = Schema.decodeUnknownOption(PullRequestDetail);
 
-/**
- * The last detail answered for this change request, brought back across a reload. The registry
- * the queries live in is recreated with the renderer, so without this a reopen cold-starts
- * into a full-tab ghost even though the title, author, and the rest barely moved. Hydrated,
- * the chrome stays and the live read replaces fields in place — line counts included.
- */
+/** Hydrates one recent detail after a reload while the live query refreshes it. */
 export function readPullRequestDetailSnapshot(
   storage: SnapshotStorage | undefined,
   environmentId: string,
   reference: PullRequestDetailSnapshotRef,
 ): PullRequestDetail | null {
   try {
-    const raw = storage?.getItem(pullRequestDetailSnapshotKey(environmentId, reference));
-    if (!raw) return null;
+    if (!storage) return null;
+    const key = pullRequestDetailSnapshotKey(environmentId, reference);
+    const index = readDetailSnapshotIndex(storage);
+    const entry = index.find((entry) => entry.key === key);
+    if (!entry) return null;
+    const raw = storage.getItem(key);
+    if (!raw || entry.bytes !== 2 * (key.length + raw.length)) return null;
     const decoded = decodeDetailSnapshot(JSON.parse(raw));
-    return decoded._tag === "Some" ? decoded.value : null;
+    if (decoded._tag === "None") return null;
+    try {
+      if (index.at(-1) !== entry) {
+        storage.setItem(
+          DETAIL_SNAPSHOT_INDEX_KEY,
+          JSON.stringify([...index.filter((entry) => entry.key !== key), entry]),
+        );
+      }
+    } catch {
+      // A failed recency update must not discard a readable snapshot.
+    }
+    return decoded.value;
   } catch {
     return null;
   }
@@ -1050,13 +1117,48 @@ export function writePullRequestDetailSnapshot(
   detail: PullRequestDetail,
 ): void {
   try {
-    storage?.setItem(
-      pullRequestDetailSnapshotKey(environmentId, reference),
-      JSON.stringify(detail),
-    );
+    // Stores without eviction support remain readable but cannot grow this cache.
+    if (!storage?.removeItem || !storage.key || storage.length === undefined) return;
+    const key = pullRequestDetailSnapshotKey(environmentId, reference);
+    const index = readDetailSnapshotIndex(storage);
+    const indexedKeys = new Set(index.map((entry) => entry.key));
+    const retiredKeys: string[] = [];
+    for (let position = 0; position < storage.length; position++) {
+      const storedKey = storage.key(position);
+      if (
+        storedKey !== null &&
+        (storedKey.startsWith(DETAIL_SNAPSHOT_LEGACY_PREFIX) ||
+          (storedKey.startsWith(DETAIL_SNAPSHOT_PREFIX) && !indexedKeys.has(storedKey)))
+      ) {
+        retiredKeys.push(storedKey);
+      }
+    }
+    for (const retiredKey of retiredKeys) storage.removeItem(retiredKey);
+
+    // Remeasure retained values on writes to recover from missing or interrupted writes.
+    const retained = index.flatMap((entry) => {
+      if (entry.key === key) return [];
+      const raw = storage.getItem(entry.key);
+      return raw === null ? [] : [{ key: entry.key, bytes: 2 * (entry.key.length + raw.length) }];
+    });
+    const raw = JSON.stringify(detail);
+    const entry = { key, bytes: 2 * (key.length + raw.length) };
+    const canStore = detailSnapshotsFit([entry]);
+    const next = canStore ? [...retained, entry] : retained;
+    if (!canStore) storage.removeItem(key);
+    while (!detailSnapshotsFit(next)) {
+      const oldest = next.shift();
+      if (oldest) storage.removeItem(oldest.key);
+    }
+    if (canStore) storage.setItem(key, raw);
+    try {
+      storage.setItem(DETAIL_SNAPSHOT_INDEX_KEY, JSON.stringify(next));
+    } catch {
+      // Do not leave a successful payload write outside the index's byte accounting.
+      storage.removeItem(key);
+    }
   } catch {
-    // Quota or a private-mode store: the next open waits on the live read, which is the
-    // cold start this snapshot exists to avoid, not a failure of its own.
+    // Quota or denied storage: the next open can still use the live query.
   }
 }
 
