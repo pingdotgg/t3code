@@ -31,13 +31,13 @@ import {
  * - `unsafe-no-auth`: intentionally unauthenticated mode; this is an explicit
  *   unsafe escape hatch, not a normal deployment mode
  */
-const ServerAuthPolicy = Schema.Literals([
+export const ServerAuthPolicy = Schema.Literals([
   "desktop-managed-local",
   "loopback-browser",
   "remote-reachable",
   "unsafe-no-auth",
 ]);
-type ServerAuthPolicy = typeof ServerAuthPolicy.Type;
+export type ServerAuthPolicy = typeof ServerAuthPolicy.Type;
 
 /**
  * A credential type that can be exchanged for a real authenticated session.
@@ -267,16 +267,16 @@ export const AuthAccessStreamSnapshotEvent = Schema.Struct({
 });
 export type AuthAccessStreamSnapshotEvent = typeof AuthAccessStreamSnapshotEvent.Type;
 
-const AuthAccessStreamPairingLinkUpsertedEvent = Schema.Struct({
+export const AuthAccessStreamPairingLinkUpsertedEvent = Schema.Struct({
   version: Schema.Literal(1),
   revision: Schema.Number,
   type: Schema.Literal("pairingLinkUpserted"),
   payload: AuthPairingLink,
 });
-type AuthAccessStreamPairingLinkUpsertedEvent =
+export type AuthAccessStreamPairingLinkUpsertedEvent =
   typeof AuthAccessStreamPairingLinkUpsertedEvent.Type;
 
-const AuthAccessStreamPairingLinkRemovedEvent = Schema.Struct({
+export const AuthAccessStreamPairingLinkRemovedEvent = Schema.Struct({
   version: Schema.Literal(1),
   revision: Schema.Number,
   type: Schema.Literal("pairingLinkRemoved"),
@@ -284,7 +284,8 @@ const AuthAccessStreamPairingLinkRemovedEvent = Schema.Struct({
     id: TrimmedNonEmptyString,
   }),
 });
-type AuthAccessStreamPairingLinkRemovedEvent = typeof AuthAccessStreamPairingLinkRemovedEvent.Type;
+export type AuthAccessStreamPairingLinkRemovedEvent =
+  typeof AuthAccessStreamPairingLinkRemovedEvent.Type;
 
 export class AuthAccessStreamError extends Schema.TaggedErrorClass<AuthAccessStreamError>()(
   "AuthAccessStreamError",
@@ -301,15 +302,15 @@ export class EnvironmentAuthorizationError extends Schema.TaggedErrorClass<Envir
   },
 ) {}
 
-const AuthAccessStreamClientUpsertedEvent = Schema.Struct({
+export const AuthAccessStreamClientUpsertedEvent = Schema.Struct({
   version: Schema.Literal(1),
   revision: Schema.Number,
   type: Schema.Literal("clientUpserted"),
   payload: AuthClientSession,
 });
-type AuthAccessStreamClientUpsertedEvent = typeof AuthAccessStreamClientUpsertedEvent.Type;
+export type AuthAccessStreamClientUpsertedEvent = typeof AuthAccessStreamClientUpsertedEvent.Type;
 
-const AuthAccessStreamClientRemovedEvent = Schema.Struct({
+export const AuthAccessStreamClientRemovedEvent = Schema.Struct({
   version: Schema.Literal(1),
   revision: Schema.Number,
   type: Schema.Literal("clientRemoved"),
@@ -317,7 +318,7 @@ const AuthAccessStreamClientRemovedEvent = Schema.Struct({
     sessionId: AuthSessionId,
   }),
 });
-type AuthAccessStreamClientRemovedEvent = typeof AuthAccessStreamClientRemovedEvent.Type;
+export type AuthAccessStreamClientRemovedEvent = typeof AuthAccessStreamClientRemovedEvent.Type;
 
 export const AuthAccessStreamEvent = Schema.Union([
   AuthAccessStreamSnapshotEvent,

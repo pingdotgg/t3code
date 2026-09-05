@@ -42,11 +42,13 @@ const THREAD_KEYBINDING_COMMANDS = [
   "thread.pin",
   ...THREAD_JUMP_KEYBINDING_COMMANDS,
 ] as const;
+export type ThreadKeybindingCommand = (typeof THREAD_KEYBINDING_COMMANDS)[number];
 
 const MODEL_PICKER_KEYBINDING_COMMANDS = [
   "modelPicker.toggle",
   ...MODEL_PICKER_JUMP_KEYBINDING_COMMANDS,
 ] as const;
+export type ModelPickerKeybindingCommand = (typeof MODEL_PICKER_KEYBINDING_COMMANDS)[number];
 
 export const STATIC_KEYBINDING_COMMANDS = [
   "sidebar.toggle",
