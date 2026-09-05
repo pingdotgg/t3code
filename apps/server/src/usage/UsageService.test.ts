@@ -6,7 +6,7 @@ import * as NodePath from "node:path";
 
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
+import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { UsageDay, type UsageSummaryInput } from "@t3tools/contracts";
 import * as Duration from "effect/Duration";
 import * as Deferred from "effect/Deferred";
@@ -215,6 +215,77 @@ describe("UsageService", () => {
       }).pipe(
         Effect.provide(serviceLayers({ prefix: "usage-service-price-race-test", home, settings })),
       );
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("canonicalizes aliased homes and keeps missing homes visible", () =>
+    Effect.gen(function* () {
+      const platform = yield* HostProcessPlatform;
+      const home = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "usage-service-homes-test-")),
+      );
+      yield* Effect.addFinalizer(() =>
+        Effect.promise(() => NodeFSP.rm(home, { recursive: true, force: true })),
+      );
+
+      const claudeHome = NodePath.join(home, "claude");
+      const aliasHome = NodePath.join(home, "claude-alias");
+      const missingHome = NodePath.join(home, "claude-missing");
+      const transcriptDir = NodePath.join(claudeHome, "projects", "proj");
+      yield* Effect.promise(() => NodeFSP.mkdir(transcriptDir, { recursive: true }));
+      yield* Effect.promise(() =>
+        NodeFSP.writeFile(NodePath.join(transcriptDir, "session.jsonl"), claudeLine(1, 5)),
+      );
+      yield* Effect.promise(() =>
+        NodeFSP.symlink(claudeHome, aliasHome, platform === "win32" ? "junction" : "dir"),
+      );
+
+      const settings = {
+        providerInstances: {
+          claudeAgent: {
+            driver: "claudeAgent" as const,
+            config: { homePath: claudeHome },
+          },
+          claude_alias: {
+            driver: "claudeAgent" as const,
+            config: { homePath: aliasHome },
+          },
+          claude_missing: {
+            driver: "claudeAgent" as const,
+            config: { homePath: missingHome },
+          },
+          codex: {
+            driver: "codex" as const,
+            config: { homePath: NodePath.join(home, "codex") },
+          },
+        },
+      };
+      const service = yield* UsageService.make.pipe(
+        Effect.provide(serviceLayers({ prefix: "usage-service-homes-test", home, settings })),
+      );
+
+      const summary = yield* service.readSummary(WINDOW);
+      const canonicalDir = yield* Effect.promise(() =>
+        NodeFSP.realpath(NodePath.join(claudeHome, "projects")),
+      );
+      const claudeSources = summary.sources.filter(
+        (source) => source.fingerprint.provider === "claude",
+      );
+      const canonicalSourceIndex = summary.sources.findIndex(
+        (source) => source.fingerprint.resolvedHomePath === canonicalDir,
+      );
+
+      assert.strictEqual(claudeSources.length, 2);
+      assert.strictEqual(claudeSources[0]?.fingerprint.resolvedHomePath, canonicalDir);
+      assert.strictEqual(claudeSources[0]?.status, "ok");
+      assert.strictEqual(
+        claudeSources[1]?.fingerprint.resolvedHomePath,
+        NodePath.join(missingHome, "projects"),
+      );
+      assert.strictEqual(claudeSources[1]?.status, "missing");
+      assert.strictEqual(summary.buckets.length, 1);
+      assert.strictEqual(summary.buckets[0]?.sourceIndex, canonicalSourceIndex);
+      assert.strictEqual(totalOutputTokens(summary), 5);
     }).pipe(Effect.scoped),
   );
 

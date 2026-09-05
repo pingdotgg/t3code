@@ -40,12 +40,10 @@ import * as Semaphore from "effect/Semaphore";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 
 import { ServerConfig } from "../config.ts";
-import { expandHomePath } from "../pathExpansion.ts";
 import * as ServerSettings from "../serverSettings.ts";
-import { resolveClaudeHomePath } from "../provider/Drivers/ClaudeHome.ts";
-import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
 import { UsageAggregator } from "./usageAggregation.ts";
 import { createOverrideRateTable, parseRateTable, type RateTable } from "./usagePricing.ts";
+import { resolveUsageProviderHomes } from "./usageProviderHomes.ts";
 import {
   listTranscriptFiles,
   readDirectoryVolumeId,
@@ -245,30 +243,51 @@ export const make = Effect.gen(function* () {
     ),
   );
 
-  /** Resolves the transcript directory for each provider. */
+  /**
+   * Resolves the transcript directories for each provider. Claude and Codex
+   * can be configured multiple times via provider instances, so both may
+   * contribute several directories; distinct instances sharing a home
+   * collapse to one entry so their records are not double counted.
+   */
   const resolveTranscriptDirs = Effect.fn("UsageService.resolveTranscriptDirs")(function* (
     settings: ServerSettingsValue,
   ) {
-    const claudeHome = yield* resolveClaudeHomePath(settings.providers.claudeAgent);
-    const claudeDir = yield* resolveClaudeTranscriptDir(claudeHome);
-    const codexLayout = yield* resolveCodexHomeLayout(settings.providers.codex);
-    // Grok Settings only expose the binary path; home is `$GROK_HOME` or `~/.grok`.
-    // Empty/whitespace GROK_HOME must fall back: coalescing alone would scan cwd.
-    const grokHomeEnv = hostEnvironment["GROK_HOME"]?.trim() ?? "";
-    const grokHome =
-      grokHomeEnv.length > 0
-        ? path.resolve(expandHomePath(grokHomeEnv))
-        : path.join(NodeOS.homedir(), ".grok");
+    const homes = yield* resolveUsageProviderHomes(settings, hostEnvironment);
 
-    return [
-      { provider: "claude" as const, dir: claudeDir },
-      { provider: "codex" as const, dir: path.join(codexLayout.sharedHomePath, "sessions") },
-      {
-        provider: "grok" as const,
-        dir: path.join(grokHome, "sessions"),
-        fileName: "updates.jsonl",
-      },
-    ];
+    const dirs: Array<{
+      provider: UsageProviderKind;
+      dir: string;
+      fileName?: string;
+    }> = [];
+    const seen = new Set<string>();
+    // Two configured homes can name one physical transcript directory through
+    // symlinks (including Codex shadow overlays). Canonicalize the final
+    // transcript directory before de-duplicating it. If the directory does not
+    // exist, keep its configured path so the scan reports a missing source.
+    const pushDir = Effect.fn("UsageService.pushTranscriptDir")(function* (
+      provider: UsageProviderKind,
+      dir: string,
+      fileName?: string,
+    ) {
+      const canonical = yield* fileSystem
+        .realPath(dir)
+        .pipe(Effect.catchCause(() => Effect.succeed(dir)));
+      const key = `${provider}\u0000${canonical}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      dirs.push({ provider, dir: canonical, ...(fileName === undefined ? {} : { fileName }) });
+    });
+
+    for (const home of homes.claudeHomePaths) {
+      // Distinct homes can probe to the same transcript dir (e.g. `~/x` with
+      // a nested `.claude` next to `~/x/.claude` itself), so dedupe post-probe.
+      yield* pushDir("claude", yield* resolveClaudeTranscriptDir(home));
+    }
+    for (const dir of homes.codexSessionDirs) {
+      yield* pushDir("codex", dir);
+    }
+    yield* pushDir("grok", homes.grokSessionsDir, "updates.jsonl");
+    return dirs;
   });
 
   /**
@@ -482,6 +501,7 @@ export const make = Effect.gen(function* () {
     const walkedRoots: string[] = [];
 
     for (const { provider, dir, volumeId, files } of scannedDirs) {
+      const sourceIndex = sources.length;
       if (files === null) {
         sources.push({
           fingerprint: { hostId, provider, resolvedHomePath: dir, volumeId },
@@ -512,7 +532,7 @@ export const make = Effect.gen(function* () {
         for (const record of file.records) {
           // Only sessions that contributed in-window count: the mtime slack
           // admits boundary files whose records fall outside the range.
-          if (aggregator.add(record) && record.sessionId.length > 0) {
+          if (aggregator.add(record, sourceIndex) && record.sessionId.length > 0) {
             sessionIds.add(record.sessionId);
           }
         }

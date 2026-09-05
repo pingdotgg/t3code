@@ -12,6 +12,7 @@ import { mergeUsage, type EnvironmentUsage } from "./usageMerge.ts";
 
 function bucket(overrides: Partial<UsageBucket> = {}): UsageBucket {
   return {
+    sourceIndex: 0,
     day: "2026-08-07" as UsageDay,
     provider: "claude",
     model: "claude-fable-5",
@@ -124,7 +125,10 @@ describe("mergeUsage", () => {
         environment(
           "env-b",
           summary(
-            [bucket(), bucket({ provider: "codex", model: "gpt-5.6-sol", costUsd: 4 })],
+            [
+              bucket(),
+              bucket({ sourceIndex: 1, provider: "codex", model: "gpt-5.6-sol", costUsd: 4 }),
+            ],
             [sharedClaude, { provider: "codex", hostId: "mac", homePath: "/home/theo/.codex" }],
           ),
         ),
@@ -144,6 +148,72 @@ describe("mergeUsage", () => {
         merged.providers.map((provider) => [provider.provider, provider.sessions]),
       ),
     ).toEqual({ claude: 1, codex: 1 });
+  });
+
+  it("does not double count when environments overlap on some homes but not all", () => {
+    // env-a owns shared H1; env-b's H1 bucket is dropped while its unique H2
+    // bucket survives.
+    const h1 = { provider: "claude" as const, hostId: "mac", homePath: "/home/theo/.claude" };
+    const h2 = { provider: "claude" as const, hostId: "mac", homePath: "/home/theo/.claude-max" };
+    const merged = mergeUsage(
+      [
+        environment("env-a", summary([bucket({ costUsd: 10, records: 5 })], [h1])),
+        environment(
+          "env-b",
+          summary(
+            [
+              bucket({ costUsd: 10, records: 5 }),
+              bucket({ sourceIndex: 1, costUsd: 6, records: 3 }),
+            ],
+            [h1, h2],
+          ),
+        ),
+      ],
+      USAGE_CONTRACT_VERSION,
+    );
+
+    expect(merged.costUsd).toBe(16);
+    expect(merged.records).toBe(8);
+    expect(merged.sessions).toBe(2);
+    expect(merged.contributingEnvironments).toEqual(["env-a", "env-b"]);
+    expect(merged.duplicateSources).toEqual(["env-b: /home/theo/.claude"]);
+  });
+
+  it("retains every unique home across intersecting environment source sets", () => {
+    const source = (homePath: string) => ({
+      provider: "claude" as const,
+      hostId: "mac",
+      homePath,
+    });
+    const h1 = source("/home/theo/.claude-1");
+    const h2 = source("/home/theo/.claude-2");
+    const h3 = source("/home/theo/.claude-3");
+    const h4 = source("/home/theo/.claude-4");
+    const merged = mergeUsage(
+      [
+        environment(
+          "env-a",
+          summary([bucket({ costUsd: 1 }), bucket({ sourceIndex: 1, costUsd: 2 })], [h1, h2]),
+        ),
+        environment(
+          "env-b",
+          summary([bucket({ costUsd: 1 }), bucket({ sourceIndex: 1, costUsd: 3 })], [h1, h3]),
+        ),
+        environment(
+          "env-c",
+          summary([bucket({ costUsd: 2 }), bucket({ sourceIndex: 1, costUsd: 4 })], [h2, h4]),
+        ),
+      ],
+      USAGE_CONTRACT_VERSION,
+    );
+
+    expect(merged.costUsd).toBe(10);
+    expect(merged.sessions).toBe(4);
+    expect(merged.contributingEnvironments).toEqual(["env-a", "env-b", "env-c"]);
+    expect(merged.duplicateSources).toEqual([
+      "env-b: /home/theo/.claude-1",
+      "env-c: /home/theo/.claude-2",
+    ]);
   });
 
   it("excludes an environment reporting an older contract version", () => {
@@ -169,7 +239,7 @@ describe("mergeUsage", () => {
     expect(merged.staleEnvironments).toEqual(["env-b"]);
   });
 
-  it("keeps the previous compatible contract version so additive provider expansions still merge", () => {
+  it("rejects the previous contract version because its buckets lack source ownership", () => {
     const merged = mergeUsage(
       [
         environment(
@@ -191,8 +261,8 @@ describe("mergeUsage", () => {
       USAGE_CONTRACT_VERSION,
     );
 
-    expect(merged.costUsd).toBe(14);
-    expect(merged.staleEnvironments).toEqual([]);
+    expect(merged.costUsd).toBe(10);
+    expect(merged.staleEnvironments).toEqual(["env-b"]);
   });
 
   it("derives provider shares and cost quality", () => {
@@ -203,7 +273,13 @@ describe("mergeUsage", () => {
           summary(
             [
               bucket({ costUsd: 75 }),
-              bucket({ provider: "codex", model: "gpt-5.6-sol", costUsd: 25, unpricedRecords: 5 }),
+              bucket({
+                sourceIndex: 1,
+                provider: "codex",
+                model: "gpt-5.6-sol",
+                costUsd: 25,
+                unpricedRecords: 5,
+              }),
             ],
             [
               { provider: "claude", hostId: "mac", homePath: "/a/.claude" },

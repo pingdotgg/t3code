@@ -77,7 +77,7 @@ export interface MergedUsage {
   readonly daily: readonly DailyTotals[];
   readonly hourly: readonly HourlyTotals[];
   readonly costQuality: CostQuality;
-  /** Environments whose data was dropped as a duplicate of another's. */
+  /** Sources dropped because another environment claimed their directories. */
   readonly duplicateSources: readonly string[];
   readonly contributingEnvironments: readonly EnvironmentId[];
   readonly staleEnvironments: readonly EnvironmentId[];
@@ -105,9 +105,9 @@ function fingerprintKey(fingerprint: UsageSourceFingerprint): string {
  *
  * Several environments on one machine (worktree servers, for instance) resolve
  * the same provider home and would otherwise double count every token. The
- * first environment in a stable order claims a fingerprint; the rest have that
- * provider's buckets dropped. Environments are sorted by id so the winner does
- * not change between renders.
+ * first environment in stable id order claims a fingerprint; the rest drop
+ * only buckets from that source. Source-level ownership preserves unique homes
+ * when environments partially overlap.
  */
 function claimSources(environments: readonly EnvironmentUsage[]): {
   readonly ownerByFingerprint: ReadonlyMap<string, EnvironmentId>;
@@ -115,7 +115,6 @@ function claimSources(environments: readonly EnvironmentUsage[]): {
 } {
   const ownerByFingerprint = new Map<string, EnvironmentId>();
   const duplicates: string[] = [];
-
   const ordered = [...environments].sort((a, b) => a.environmentId.localeCompare(b.environmentId));
 
   for (const environment of ordered) {
@@ -141,24 +140,25 @@ function ownedContribution(
   readonly buckets: readonly UsageBucket[];
   readonly sessionsByProvider: ReadonlyMap<UsageProviderKind, number>;
 } {
-  const ownedProviders = new Set<UsageProviderKind>();
+  const ownedSourceIndexes = new Set<number>();
   const sessionsByProvider = new Map<UsageProviderKind, number>();
-  for (const source of environment.summary.sources) {
+  for (const [sourceIndex, source] of environment.summary.sources.entries()) {
     if (source.status === "missing") continue;
     const key = fingerprintKey(source.fingerprint);
-    if (ownerByFingerprint.get(key) === environment.environmentId) {
-      const provider = source.fingerprint.provider;
-      ownedProviders.add(provider);
-      // Distinct within a directory. Summing per-bucket session counts instead
-      // would count a session once per day and model it spans.
-      sessionsByProvider.set(
-        provider,
-        (sessionsByProvider.get(provider) ?? 0) + source.distinctSessions,
-      );
-    }
+    if (ownerByFingerprint.get(key) !== environment.environmentId) continue;
+    ownedSourceIndexes.add(sourceIndex);
+    const provider = source.fingerprint.provider;
+    // Distinct within a directory. Summing per-bucket session counts instead
+    // would count a session once per day and model it spans.
+    sessionsByProvider.set(
+      provider,
+      (sessionsByProvider.get(provider) ?? 0) + source.distinctSessions,
+    );
   }
   return {
-    buckets: environment.summary.buckets.filter((bucket) => ownedProviders.has(bucket.provider)),
+    buckets: environment.summary.buckets.filter((bucket) =>
+      ownedSourceIndexes.has(bucket.sourceIndex),
+    ),
     sessionsByProvider,
   };
 }
@@ -208,8 +208,7 @@ const EMPTY_MERGED: MergedUsage = {
  * `expectedContractVersion` guards against an environment running older server
  * code: rather than blocking the page, incompatible data is excluded and its
  * id is reported so the UI can say coverage is partial. Versions in
- * [{@link USAGE_MERGE_COMPATIBLE_SINCE}, expected] still merge, so an additive
- * provider expansion does not drop Claude/Codex totals from older servers.
+ * Versions in [{@link USAGE_MERGE_COMPATIBLE_SINCE}, expected] still merge.
  */
 export function mergeUsage(
   environments: readonly EnvironmentUsage[],
