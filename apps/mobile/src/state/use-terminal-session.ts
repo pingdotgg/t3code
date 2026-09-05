@@ -80,7 +80,7 @@ export function useAttachedTerminalSession(input: {
 export function useKnownTerminalSessions(input: {
   readonly environmentId: EnvironmentId | null;
   readonly threadId: ThreadId | null;
-}): ReadonlyArray<KnownTerminalSession> {
+}): ReadonlyArray<KnownTerminalSession> | null {
   const canRead = useEnvironmentScope(input.environmentId, AuthTerminalReadScope);
   const metadata = useEnvironmentQuery(
     input.environmentId === null || !canRead
@@ -91,10 +91,10 @@ export function useKnownTerminalSessions(input: {
         }),
   );
   return useMemo(() => {
-    if (input.environmentId === null) {
-      return [];
+    if (input.environmentId === null || metadata.data === null || metadata.error !== null) {
+      return null;
     }
-    return (metadata.data ?? [])
+    return metadata.data
       .filter((summary) => input.threadId === null || summary.threadId === input.threadId)
       .map((summary) => ({
         target: {
@@ -109,5 +109,5 @@ export function useKnownTerminalSessions(input: {
           numeric: true,
         }),
       );
-  }, [input.environmentId, input.threadId, metadata.data]);
+  }, [input.environmentId, input.threadId, metadata.data, metadata.error]);
 }
