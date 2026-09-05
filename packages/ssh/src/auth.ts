@@ -17,7 +17,7 @@ export interface SshPasswordRequest {
   readonly attempt: number;
 }
 
-export interface SshAskpassFile {
+interface SshAskpassFile {
   readonly path: string;
   readonly contents: string;
   readonly mode?: number;
@@ -71,7 +71,7 @@ function joinSshAskpassPath(
   return platform === "win32" ? `${trimmed}\\${fileName}` : `${trimmed}/${fileName}`;
 }
 
-export const ASKPASS_POSIX_SCRIPT = `#!/bin/sh
+const ASKPASS_POSIX_SCRIPT = `#!/bin/sh
 # Invoked by ssh via SSH_ASKPASS when T3 Code re-runs ssh with a cached password
 # from the renderer's in-app prompt. We never expose a native dialog here - if
 # T3_SSH_AUTH_SECRET is missing, that's a caller bug and we fail loudly.
@@ -83,11 +83,11 @@ printf 'T3 Code ssh-askpass invoked without T3_SSH_AUTH_SECRET.\\n' >&2
 exit 1
 `;
 
-export const ASKPASS_WINDOWS_LAUNCHER_SCRIPT = `@echo off\r
+const ASKPASS_WINDOWS_LAUNCHER_SCRIPT = `@echo off\r
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0ssh-askpass.ps1" %*\r
 `;
 
-export const ASKPASS_WINDOWS_SCRIPT = `# Invoked by ssh via SSH_ASKPASS (through ssh-askpass.cmd) when T3 Code re-runs\r
+const ASKPASS_WINDOWS_SCRIPT = `# Invoked by ssh via SSH_ASKPASS (through ssh-askpass.cmd) when T3 Code re-runs\r
 # ssh with a cached password from the renderer's in-app prompt. We never expose\r
 # a native dialog here - if T3_SSH_AUTH_SECRET is missing, that's a caller bug\r
 # and we fail loudly.\r
@@ -99,7 +99,7 @@ if ($null -ne $env:T3_SSH_AUTH_SECRET) {\r
 exit 1\r
 `;
 
-export const getDefaultSshAskpassDirectory = Effect.fn("ssh/auth.getDefaultSshAskpassDirectory")(
+const getDefaultSshAskpassDirectory = Effect.fn("ssh/auth.getDefaultSshAskpassDirectory")(
   function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -146,31 +146,29 @@ export const buildSshAskpassHelperDescriptor = Effect.fn(
   };
 });
 
-export const ensureSshAskpassHelpers = Effect.fn("ssh/auth.ensureSshAskpassHelpers")(
-  function* (input: {
-    readonly directory: string;
-  }): Effect.fn.Return<string, PlatformError.PlatformError, FileSystem.FileSystem | Path.Path> {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const descriptor = yield* buildSshAskpassHelperDescriptor(input);
-    const platform = yield* HostProcessPlatform;
+const ensureSshAskpassHelpers = Effect.fn("ssh/auth.ensureSshAskpassHelpers")(function* (input: {
+  readonly directory: string;
+}): Effect.fn.Return<string, PlatformError.PlatformError, FileSystem.FileSystem | Path.Path> {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const descriptor = yield* buildSshAskpassHelperDescriptor(input);
+  const platform = yield* HostProcessPlatform;
 
-    yield* fs.makeDirectory(path.dirname(descriptor.launcherPath), { recursive: true });
+  yield* fs.makeDirectory(path.dirname(descriptor.launcherPath), { recursive: true });
 
-    for (const file of descriptor.files) {
-      const existing = yield* fs.exists(file.path);
-      const current = existing ? yield* fs.readFileString(file.path) : null;
-      if (current !== file.contents) {
-        yield* fs.writeFileString(file.path, file.contents);
-      }
-      if (file.mode !== undefined && platform !== "win32") {
-        yield* fs.chmod(file.path, file.mode);
-      }
+  for (const file of descriptor.files) {
+    const existing = yield* fs.exists(file.path);
+    const current = existing ? yield* fs.readFileString(file.path) : null;
+    if (current !== file.contents) {
+      yield* fs.writeFileString(file.path, file.contents);
     }
+    if (file.mode !== undefined && platform !== "win32") {
+      yield* fs.chmod(file.path, file.mode);
+    }
+  }
 
-    return descriptor.launcherPath;
-  },
-);
+  return descriptor.launcherPath;
+});
 
 export const buildSshChildEnvironment = Effect.fn("ssh/auth.buildSshChildEnvironment")(function* (
   input: SshChildEnvironmentOptions = {},
