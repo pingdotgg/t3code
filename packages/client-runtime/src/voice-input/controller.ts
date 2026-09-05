@@ -310,7 +310,7 @@ export class VoiceInputController {
       this.setError("Voice input stopped when the app moved to the background.", "retry");
       return;
     }
-    return this.interruptRecording();
+    // Active capture is owned by the app; native recorder events report interruptions.
   }
 
   handleRecorderStatus(status: VoiceRecorderStatus): Promise<void> | void {

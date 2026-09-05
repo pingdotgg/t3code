@@ -20,8 +20,13 @@ at the start of an operation, before asking for microphone permission. Preparati
 locale and a bound `transcribe` function. The controller retains that result for the recording, so a
 selection change cannot prepare with one implementation and transcribe with another.
 
-[`useVoiceInputController`][hook] supplies Expo audio capture, microphone permissions, audio-session
-management, waveform samples, and app and navigation lifecycle handling. It normalizes Expo's
+Mobile's `VoiceInputProvider` owns Expo audio capture and one `VoiceInputSession` above navigation.
+The session captures an environment-scoped draft key and writes through the durable composer draft
+store, independent of mounted screens. It observes draft mutations to reject stale transcripts.
+[`useVoiceInputController`][hook] subscribes to that session and samples the waveform only for a
+focused, foreground composer. Navigation does not dispose the recorder. iOS background audio mode
+and Expo background recording keep active capture running; backgrounding still cancels preparation.
+The provider normalizes Expo's
 `mediaServicesDidReset` into a generic recorder error. [`voiceTranscription.ios.ts`][ios] adapts
 `@react-native-ai/apple` through `getLocalVoiceTranscriber()`, capturing the requested device locale
 and binding the prepared transcriber to Apple's resolved locale. The other-platform binding returns

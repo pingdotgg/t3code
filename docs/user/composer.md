@@ -204,9 +204,12 @@ is open when you start, it stays open during voice input. You can review and edi
 you send it.
 
 The first use can download Apple's speech model and needs a network connection. Later transcription
-works offline for that language. A recording can be up to five minutes long. Canceling voice input,
-leaving the screen, or an audio interruption discards the new recording and keeps the existing draft
-and attachments. T3 Code deletes the local audio file after transcription or cancellation. It sends
+works offline for that language. A recording can be up to five minutes long. Recording continues
+when you open another thread or switch to another app. Return to the original draft to finish or
+cancel it; only one voice recording can run at a time. At the time limit, the recording finishes
+and its transcript is added to the original draft, even if you are viewing another thread.
+Canceling voice input or an audio interruption discards the new recording and keeps the existing
+draft and attachments. T3 Code deletes the local audio file after transcription or cancellation. It sends
 only the normal message text when you submit the draft.
 
 ## Commands and skills

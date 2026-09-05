@@ -201,6 +201,7 @@ const config: ExpoConfig = {
       `webcredentials:${variant.relyingParty}`,
     ],
     infoPlist: {
+      UIBackgroundModes: ["audio"],
       NSAppTransportSecurity: {
         NSAllowsArbitraryLoads: true,
       },
