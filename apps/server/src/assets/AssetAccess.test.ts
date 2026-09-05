@@ -346,7 +346,39 @@ describe("AssetAccess", () => {
       }).pipe(Effect.provide(testLayer)),
   );
 
-  it.effect("keeps in-place edits readable but requires a new URL after atomic replacement", () =>
+  it.effect("keeps image URLs valid after atomic replacement", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-image-replacement-" });
+      const filePath = path.join(root, "preview.png");
+      yield* fs.writeFileString(filePath, "original");
+      const result = yield* issueAssetUrl({
+        resource: {
+          _tag: "media-file",
+          threadId: ThreadId.make("thread-1"),
+          path: filePath,
+        },
+      });
+      const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+      const separator = suffix.indexOf("/");
+      const token = suffix.slice(0, separator);
+      const name = suffix.slice(separator + 1);
+
+      const replacement = path.join(root, "replacement.png");
+      yield* fs.writeFileString(replacement, "replacement");
+      yield* fs.rename(replacement, filePath);
+      const replaced = yield* resolveAsset(token, name);
+      if (!replaced) throw new Error("Expected the replacement image");
+      const response = HttpServerResponse.toWeb(yield* assetFileResponse(replaced));
+      expect(yield* Effect.promise(() => response.text())).toBe("replacement");
+
+      yield* fs.remove(filePath);
+      expect(yield* resolveAsset(token, name)).toBeNull();
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect("keeps in-place video edits readable but requires a new URL after replacement", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -759,7 +791,7 @@ describe("AssetAccess", () => {
     }).pipe(Effect.provide(testLayer)),
   );
 
-  it.effect("issues an exact capability for a saved favicon outside the workspace", () =>
+  it.effect("streams a saved favicon outside the workspace from its opened descriptor", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -770,6 +802,7 @@ describe("AssetAccess", () => {
         prefix: "t3-asset-favicon-pictures-",
       });
       const externalPath = path.join(pictures, "custom.png");
+      const savedPath = path.join(pictures, "saved.png");
       const siblingPath = path.join(pictures, "sibling.png");
       yield* fileSystem.writeFile(externalPath, new Uint8Array([1, 2, 3]));
       yield* fileSystem.writeFile(siblingPath, new Uint8Array([4, 5, 6]));
@@ -785,15 +818,29 @@ describe("AssetAccess", () => {
 
       expect(result.sourcePath).toBe(externalPath);
       expect(result.relativeUrl).toMatch(/\/v[0-9a-f]{64}-custom\.png$/);
-      expect(
-        yield* resolveAsset(suffix.slice(0, separatorIndex), suffix.slice(separatorIndex + 1)),
-      ).toEqual({ kind: "file", path: canonicalPath });
+      const resolved = yield* resolveAsset(
+        suffix.slice(0, separatorIndex),
+        suffix.slice(separatorIndex + 1),
+      );
+      expect(resolved).toMatchObject({ kind: "file", path: canonicalPath });
+      expect(resolved?.file).toBeDefined();
       const tamperedSuffixResult = yield* resolveAsset(
         suffix.slice(0, separatorIndex),
         "sibling.png",
       );
-      expect(tamperedSuffixResult).toEqual({ kind: "file", path: canonicalPath });
-      expect(tamperedSuffixResult).not.toEqual({ kind: "file", path: canonicalSiblingPath });
+      expect(tamperedSuffixResult).toMatchObject({ kind: "file", path: canonicalPath });
+      expect(tamperedSuffixResult).not.toMatchObject({ kind: "file", path: canonicalSiblingPath });
+
+      if (!resolved) throw new Error("Expected an external favicon");
+      yield* fileSystem.rename(externalPath, savedPath);
+      yield* fileSystem.symlink(siblingPath, externalPath);
+      const response = HttpServerResponse.toWeb(yield* assetFileResponse(resolved));
+      expect(new Uint8Array(yield* Effect.promise(() => response.arrayBuffer()))).toEqual(
+        new Uint8Array([1, 2, 3]),
+      );
+      expect(
+        yield* resolveAsset(suffix.slice(0, separatorIndex), suffix.slice(separatorIndex + 1)),
+      ).toBeNull();
     }).pipe(Effect.provide(testLayer)),
   );
 
@@ -846,13 +893,16 @@ describe("AssetAccess", () => {
         prefix: "t3-asset-favicon-type-",
       });
       yield* fileSystem.writeFileString(path.join(root, "secret.txt"), "not an image");
+      yield* fileSystem.symlink(path.join(root, "secret.txt"), path.join(root, "disguised.png"));
 
-      const error = yield* issueAssetUrl({
-        resource: { _tag: "project-favicon", cwd: root },
-        projectFaviconPath: "secret.txt",
-      }).pipe(Effect.flip);
+      for (const projectFaviconPath of ["secret.txt", "disguised.png"]) {
+        const error = yield* issueAssetUrl({
+          resource: { _tag: "project-favicon", cwd: root },
+          projectFaviconPath,
+        }).pipe(Effect.flip);
 
-      expect(error).toBeInstanceOf(AssetPreviewTypeValidationError);
+        expect(error).toBeInstanceOf(AssetPreviewTypeValidationError);
+      }
     }).pipe(Effect.provide(testLayer)),
   );
 
