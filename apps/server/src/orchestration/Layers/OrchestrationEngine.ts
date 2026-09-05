@@ -28,7 +28,7 @@ import {
   orchestrationCommandsTotal,
   orchestrationCommandDuration,
 } from "../../observability/Metrics.ts";
-import { toPersistenceSqlError } from "../../persistence/Errors.ts";
+import { PersistenceSqlError, toPersistenceSqlError } from "../../persistence/Errors.ts";
 import { OrchestrationEventStore } from "../../persistence/Services/OrchestrationEventStore.ts";
 import { OrchestrationCommandReceiptRepository } from "../../persistence/Services/OrchestrationCommandReceipts.ts";
 import {
@@ -140,19 +140,20 @@ const makeOrchestrationEngine = Effect.gen(function* () {
           commandId: envelope.command.commandId,
         });
         if (Option.isSome(existingReceipt)) {
-          // A receipt only proves this exact command was handled. Replaying it
-          // for a command aimed at another aggregate would report success for
-          // work that never happened.
+          // A receipt only proves that exact command and aggregate were handled.
           if (
             existingReceipt.value.aggregateKind !== aggregateRef.aggregateKind ||
-            existingReceipt.value.aggregateId !== aggregateRef.aggregateId
+            existingReceipt.value.aggregateId !== aggregateRef.aggregateId ||
+            existingReceipt.value.commandType !== envelope.command.type
           ) {
             return yield* new OrchestrationCommandIdConflictError({
               commandId: envelope.command.commandId,
               receiptAggregateKind: existingReceipt.value.aggregateKind,
               receiptAggregateId: existingReceipt.value.aggregateId,
+              receiptCommandType: existingReceipt.value.commandType,
               commandAggregateKind: aggregateRef.aggregateKind,
               commandAggregateId: aggregateRef.aggregateId,
+              commandType: envelope.command.type,
             });
           }
           if (existingReceipt.value.status === "accepted") {
@@ -199,6 +200,21 @@ const makeOrchestrationEngine = Effect.gen(function* () {
               let nextCommandReadModel = commandReadModel;
 
               for (const nextEvent of eventBases) {
+                if (nextEvent.type === "project.deleted") {
+                  const activeV2Threads = yield* sql<{ readonly thread_id: string }>`
+                    SELECT thread_id
+                    FROM orchestration_v2_projection_threads
+                    WHERE project_id = ${nextEvent.payload.projectId}
+                      AND deleted_at IS NULL
+                    LIMIT 1
+                  `;
+                  if (activeV2Threads.length > 0) {
+                    return yield* new PersistenceSqlError({
+                      operation: "OrchestrationEngine.commitProjectDeletion",
+                      detail: `Project ${nextEvent.payload.projectId} still has active V2 threads.`,
+                    });
+                  }
+                }
                 const savedEvent = yield* eventStore.append(nextEvent);
                 nextCommandReadModel = yield* projectEvent(nextCommandReadModel, savedEvent);
                 const cleanup = yield* projectionPipeline.projectEventDeferred(savedEvent);

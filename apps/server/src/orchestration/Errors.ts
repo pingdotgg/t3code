@@ -78,12 +78,14 @@ export class OrchestrationCommandIdConflictError extends Schema.TaggedErrorClass
     commandId: Schema.String,
     receiptAggregateKind: Schema.String,
     receiptAggregateId: Schema.String,
+    receiptCommandType: Schema.String,
     commandAggregateKind: Schema.String,
     commandAggregateId: Schema.String,
+    commandType: Schema.String,
   },
 ) {
   override get message(): string {
-    return `Command id '${this.commandId}' already used for ${this.receiptAggregateKind} '${this.receiptAggregateId}'; refusing to replay its receipt for ${this.commandAggregateKind} '${this.commandAggregateId}'.`;
+    return `Command id '${this.commandId}' already used for ${this.receiptCommandType} on ${this.receiptAggregateKind} '${this.receiptAggregateId}'; refusing to replay its receipt for ${this.commandType} on ${this.commandAggregateKind} '${this.commandAggregateId}'.`;
   }
 }
 

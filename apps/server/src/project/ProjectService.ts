@@ -1,5 +1,5 @@
 import {
-  CommandId,
+  type CommandId,
   ModelSelection,
   ProjectId,
   type Project,
@@ -25,6 +25,7 @@ import {
   layer as threadCommandExecutorLayer,
 } from "../orchestration-v2/ThreadCommandExecutor.ts";
 import { planThreadDeletion } from "../orchestration-v2/ThreadDeletion.ts";
+import { OrchestrationCommandReceiptRepository } from "../persistence/Services/OrchestrationCommandReceipts.ts";
 import * as ProjectionProjects from "../persistence/Services/ProjectionProjects.ts";
 import { ProjectEnrichmentService, type ProjectEnrichment } from "./ProjectEnrichmentService.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
@@ -97,6 +98,7 @@ export class ProjectOperationError extends Schema.TaggedErrorClass<ProjectOperat
     operation: Schema.Literals([
       "normalize-workspace",
       "read-project",
+      "read-command-receipt",
       "list-projects",
       "list-threads",
       "delete-thread",
@@ -144,6 +146,7 @@ export class ProjectService extends Context.Service<
 
 export const make = Effect.gen(function* () {
   const engine = yield* OrchestrationEngineService;
+  const commandReceipts = yield* OrchestrationCommandReceiptRepository;
   const projects = yield* ProjectionProjects.ProjectionProjectRepository;
   const projectEnrichment = yield* ProjectEnrichmentService;
   const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
@@ -387,9 +390,53 @@ export const make = Effect.gen(function* () {
     },
   );
 
+  const replayDeleteReceipt = Effect.fn("ProjectService.replayDeleteReceipt")(function* (
+    input: ProjectDeleteInput,
+  ) {
+    const existingReceipt = yield* commandReceipts
+      .getByCommandId({ commandId: input.commandId })
+      .pipe(
+        Effect.mapError(
+          (cause) =>
+            new ProjectOperationError({
+              operation: "read-command-receipt",
+              projectId: input.projectId,
+              cause,
+            }),
+        ),
+      );
+    if (Option.isNone(existingReceipt)) return Option.none();
+    const receipt = existingReceipt.value;
+    if (
+      receipt.aggregateKind !== "project" ||
+      receipt.aggregateId !== input.projectId ||
+      receipt.commandType !== "project.delete"
+    ) {
+      return yield* new ProjectOperationError({
+        operation: "dispatch-project-command",
+        projectId: input.projectId,
+        cause: `Command ${input.commandId} belongs to ${receipt.aggregateKind} ${receipt.aggregateId} (${receipt.commandType}), not project ${input.projectId} (project.delete).`,
+      });
+    }
+    return Option.some(
+      yield* dispatch(
+        input.projectId,
+        {
+          type: "project.delete",
+          commandId: input.commandId,
+          projectId: input.projectId,
+          ...(input.force === undefined ? {} : { force: input.force }),
+        },
+        readCommitted(input.projectId),
+      ),
+    );
+  });
+
   const deleteProject: ProjectService["Service"]["delete"] = Effect.fn("ProjectService.delete")(
     function* (input) {
       const { projectId } = input;
+      const replay = yield* replayDeleteReceipt(input);
+      if (Option.isSome(replay)) return replay.value;
       const existing = yield* projects
         .getById({ projectId })
         .pipe(
@@ -415,8 +462,8 @@ export const make = Effect.gen(function* () {
         return yield* new ProjectNotEmptyError({ projectId });
       }
 
-      // Delete children durably before the project. Stable command IDs let a retry
-      // finish a partially completed cascade without repeating cleanup effects.
+      // Delete children durably before the project. A retry snapshots only the
+      // children that remain, and fresh IDs keep one rejected child from poisoning it.
       yield* Effect.forEach(
         projectThreads,
         (thread) =>
@@ -432,9 +479,13 @@ export const make = Effect.gen(function* () {
                 ) {
                   return;
                 }
+                const commandId = yield* idAllocator.allocate.command({
+                  fixtureName: `project-delete:${input.commandId}`,
+                  commandName: `thread-delete:${thread.id}`,
+                });
                 const command = {
                   type: "thread.delete" as const,
-                  commandId: CommandId.make(`${input.commandId}:delete-thread:${thread.id}`),
+                  commandId,
                   threadId: thread.id,
                 };
                 const now = yield* DateTime.now;

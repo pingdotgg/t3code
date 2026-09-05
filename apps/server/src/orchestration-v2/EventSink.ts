@@ -37,6 +37,7 @@ import {
 import { EventStoreV2 } from "./EventStore.ts";
 import {
   ORCHESTRATION_V2_PROJECTION_SCHEMA_VERSION,
+  ProjectionStoreApplyEventError,
   ProjectionStoreV2,
 } from "./ProjectionStore.ts";
 import {
@@ -267,6 +268,26 @@ const baseLayer: Layer.Layer<
 
     const applyStoredEvents = (storedEvents: ReadonlyArray<OrchestrationV2StoredEvent>) =>
       Effect.gen(function* () {
+        const createdProjectIds = new Set(
+          storedEvents.flatMap((stored) =>
+            stored.event.type === "thread.created" ? [stored.event.payload.projectId] : [],
+          ),
+        );
+        for (const projectId of createdProjectIds) {
+          const projects = yield* sql<{ readonly deleted_at: string | null }>`
+            SELECT deleted_at
+            FROM projection_projects
+            WHERE project_id = ${projectId}
+            LIMIT 1
+          `;
+          const project = projects[0];
+          if (project !== undefined && project.deleted_at !== null) {
+            return yield* new ProjectionStoreApplyEventError({
+              eventType: "thread.created",
+              cause: `Cannot create a thread for deleted project ${projectId}.`,
+            });
+          }
+        }
         yield* Effect.forEach(storedEvents, (stored) => projectionStore.apply(stored.event), {
           concurrency: 1,
         });
