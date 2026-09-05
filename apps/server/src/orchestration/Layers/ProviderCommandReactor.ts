@@ -1253,29 +1253,6 @@ const make = Effect.gen(function* () {
         ),
       );
 
-    const selection = event.payload.modelSelection ?? thread.modelSelection;
-    const providerSnapshot = (yield* providerRegistry.getProviders).find(
-      (entry) => entry.instanceId === selection.instanceId,
-    );
-    const availability = modelUsageAvailability(
-      providerSnapshot?.usageLimits,
-      selection.model,
-      DateTime.toEpochMillis(yield* DateTime.now),
-    );
-    if (event.payload.providerAvailabilityWait === true && availability.status !== "available")
-      return;
-    if (availability.status === "exhausted") {
-      const detail =
-        "Usage limit reached. Queue a message with Start when available or choose another provider.";
-      yield* setThreadSessionErrorOnTurnStartFailure({
-        threadId: thread.id,
-        detail,
-        createdAt: event.payload.createdAt,
-      });
-      yield* appendTurnStartFailure("Usage limit reached", detail);
-      return;
-    }
-
     const authCommandHandled = yield* Effect.gen(function* () {
       // Native account commands belong to the thread's existing provider session.
       const instanceId =
@@ -1324,6 +1301,29 @@ const make = Effect.gen(function* () {
       return true;
     }).pipe(Effect.catchCause((cause) => recoverTurnStartFailure(cause).pipe(Effect.as(true))));
     if (authCommandHandled) {
+      return;
+    }
+
+    const selection = event.payload.modelSelection ?? thread.modelSelection;
+    const providerSnapshot = (yield* providerRegistry.getProviders).find(
+      (entry) => entry.instanceId === selection.instanceId,
+    );
+    const availability = modelUsageAvailability(
+      providerSnapshot?.usageLimits,
+      selection.model,
+      DateTime.toEpochMillis(yield* DateTime.now),
+    );
+    if (event.payload.providerAvailabilityWait === true && availability.status !== "available")
+      return;
+    if (availability.status === "exhausted") {
+      const detail =
+        "Usage limit reached. Queue a message with Start when available or choose another provider.";
+      yield* setThreadSessionErrorOnTurnStartFailure({
+        threadId: thread.id,
+        detail,
+        createdAt: event.payload.createdAt,
+      });
+      yield* appendTurnStartFailure("Usage limit reached", detail);
       return;
     }
 

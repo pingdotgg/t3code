@@ -773,7 +773,7 @@ describe("ProviderCommandReactor", () => {
   );
 
   effectIt.effect.each(["new", "ready", "stopped"] as const)(
-    "handles sign-out for a %s thread before worktree repair, text helpers, or startup",
+    "handles sign-out for an exhausted %s thread before worktree repair, text helpers, or startup",
     (sessionStatus) =>
       Effect.gen(function* () {
         const instanceId = ProviderInstanceId.make("antigravity-personal");
@@ -785,6 +785,27 @@ describe("ProviderCommandReactor", () => {
               : {
                   threadModelSelection: { instanceId, model: "gemini-3.1-pro" },
                 }),
+            providerRegistry: makeProviderRegistryMock(
+              [instanceId, ProviderInstanceId.make("antigravity-other")].map((id) => ({
+                instanceId: id,
+                driver: ProviderDriverKind.make("antigravity"),
+                enabled: true,
+                installed: true,
+                status: "ready" as const,
+                version: null,
+                auth: { status: "authenticated" as const },
+                checkedAt: "2026-01-01T00:00:00.000Z",
+                models: [],
+                slashCommands: [],
+                skills: [],
+                usageLimits: {
+                  checkedAt: "2026-01-01T00:00:00.000Z",
+                  windows: [
+                    { id: "primary", kind: "session" as const, label: "Session", usedPercent: 100 },
+                  ],
+                },
+              })),
+            ),
             tryHandlePromptCommandEffect: () =>
               Deferred.succeed(handled, undefined).pipe(Effect.as(true)),
           }),

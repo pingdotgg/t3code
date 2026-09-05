@@ -6729,9 +6729,12 @@ export default function ChatView(props: ChatViewProps) {
       } else {
         turnStartSucceeded = true;
         if (submissionIntent === "when-available") {
-          setOptimisticUserMessages((messages) =>
-            messages.filter((message) => message.id !== messageIdForSend),
-          );
+          setOptimisticUserMessages((messages) => {
+            for (const message of messages) {
+              if (message.id === messageIdForSend) revokeUserMessagePreviewUrls(message);
+            }
+            return messages.filter((message) => message.id !== messageIdForSend);
+          });
           resetLocalDispatch();
         }
         if (turnUsesAttachmentUploads) {
@@ -6858,11 +6861,13 @@ export default function ChatView(props: ChatViewProps) {
     }
   };
 
-  const providerWaitCancellation = useRef<string | null>(null);
+  const providerWaitCancellations = useRef(new Set<string>());
   const onCancelProviderWait = async () => {
-    if (!activeThread?.pendingProviderTurn || providerWaitCancellation.current !== null) return;
+    if (!activeThread?.pendingProviderTurn) return;
     const pendingMessageId = activeThread.pendingProviderTurn.message.messageId;
-    providerWaitCancellation.current = pendingMessageId;
+    const cancellationKey = JSON.stringify([environmentId, activeThread.id, pendingMessageId]);
+    if (providerWaitCancellations.current.has(cancellationKey)) return;
+    providerWaitCancellations.current.add(cancellationKey);
     try {
       const result = await interruptThreadTurn({
         environmentId,
@@ -6872,7 +6877,7 @@ export default function ChatView(props: ChatViewProps) {
         setThreadError(activeThread.id, chatActionErrorMessage(squashAtomCommandFailure(result)));
       }
     } finally {
-      providerWaitCancellation.current = null;
+      providerWaitCancellations.current.delete(cancellationKey);
     }
   };
 
