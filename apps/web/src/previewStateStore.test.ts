@@ -19,10 +19,10 @@ import {
   reconcilePreviewServerSessions,
   rememberPreviewUrl,
   resetPreviewStateForTests,
-  subscribeThreadPreviewState,
   setActivePreviewTab,
   updatePreviewServerSnapshot,
 } from "./previewStateStore";
+import { appAtomRegistry } from "./rpc/atomRegistry";
 
 const environmentId = "env-1" as EnvironmentId;
 const ref = scopeThreadRef(environmentId, ThreadId.make("thread-1"));
@@ -352,7 +352,7 @@ describe("previewStateStore (single-tab)", () => {
       },
     };
     let updateCount = 0;
-    const unsubscribe = subscribeThreadPreviewState(ref, () => {
+    const unsubscribe = appAtomRegistry.subscribe(previewStateAtom(scopedThreadKey(ref)), () => {
       updateCount += 1;
     });
 
