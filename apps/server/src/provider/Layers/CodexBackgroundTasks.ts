@@ -53,6 +53,9 @@ const TRUNCATED = "\n[Further watcher output omitted]";
 export class CodexBackgroundTasks {
   private readonly tasks = new Map<string, BackgroundTask>();
   private readonly pending = new Map<string, { processId: string; output: string }>();
+  // The runtime delivers one wake at a time. Unsubscribe can invalidate it
+  // while turn/start is pending, including after the process has exited.
+  private inFlightWake: PendingWake | undefined;
 
   started(command: Command): typeof CodexBackgroundTaskEvent.Type | undefined {
     if (
@@ -81,6 +84,7 @@ export class CodexBackgroundTasks {
   }
 
   unsubscribe(processId: string): void {
+    if (this.inFlightWake?.processId === processId) this.inFlightWake = undefined;
     for (const [id, event] of this.pending)
       if (event.processId === processId) this.pending.delete(id);
     for (const task of this.tasks.values()) {
@@ -112,7 +116,10 @@ export class CodexBackgroundTasks {
     const task = this.tasks.get(command.id);
     if (!task) return;
     this.tasks.delete(command.id);
-    if (command.exitCode === -1) this.pending.delete(command.id);
+    if (command.exitCode === -1) {
+      this.pending.delete(command.id);
+      if (this.inFlightWake?.taskId === command.id) this.inFlightWake = undefined;
+    }
     if (task.monitor && command.exitCode !== -1) {
       this.enqueue(task, task.remainder);
       this.enqueue(task, `Watcher exited with code ${command.exitCode ?? "unknown"}.`);
@@ -141,10 +148,12 @@ export class CodexBackgroundTasks {
     if (!entry) return;
     const [taskId, event] = entry;
     this.pending.delete(taskId);
-    return { taskId, ...event };
+    return (this.inFlightWake = { taskId, ...event });
   }
 
   restoreWake(wake: PendingWake): void {
+    if (this.inFlightWake !== wake) return;
+    this.inFlightWake = undefined;
     const later = this.pending.get(wake.taskId)?.output;
     // Reserve the failed event's place within the same bounded queue.
     if (!this.pending.has(wake.taskId) && this.pending.size >= MAX_PENDING_EVENTS) {
@@ -159,6 +168,7 @@ export class CodexBackgroundTasks {
   /** Disable wakes before interrupting the provider: termination output is
    * not a new event to act on. Keep liveness until actual completion arrives. */
   cancelWakes(): void {
+    this.inFlightWake = undefined;
     this.pending.clear();
     for (const [id, task] of this.tasks)
       this.tasks.set(id, { ...task, monitor: false, remainder: "" });
