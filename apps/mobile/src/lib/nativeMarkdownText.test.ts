@@ -6,11 +6,42 @@ import {
   nativeMarkdownDocumentChunks,
   nativeMarkdownDocumentRuns,
   nativeMarkdownListItemBlocks,
+  nativeMarkdownTextRunKey,
   nativeMarkdownTextRuns,
   nativeMarkdownWithPreservedSoftBreaks,
 } from "@t3tools/mobile-markdown-text/markdown";
 
 describe("nativeMarkdownTextRuns", () => {
+  it("keeps distinct run identities when the streaming tail grows", () => {
+    const before = nativeMarkdownTextRuns({
+      type: "paragraph",
+      children: [
+        { type: "text", content: "Before " },
+        { type: "bold", children: [{ type: "text", content: "bold" }] },
+        { type: "text", content: " and after" },
+      ],
+    });
+    const after = before.map((run, index) =>
+      index === before.length - 1 ? { ...run, text: `${run.text} more text` } : run,
+    );
+    const beforeKeys = before.map(nativeMarkdownTextRunKey);
+    const afterKeys = after.map(nativeMarkdownTextRunKey);
+
+    expect(afterKeys).toEqual(beforeKeys);
+    expect(new Set(afterKeys).size).toBe(after.length);
+    expect(after.map((run) => run.text).join("")).toBe("Before bold and after more text");
+  });
+
+  it("changes run identity when its attributes change", () => {
+    const run = { text: "Docs", href: "https://example.com/docs" };
+    const key = nativeMarkdownTextRunKey(run, 0);
+
+    expect(nativeMarkdownTextRunKey({ ...run, bold: true }, 0)).not.toBe(key);
+    expect(nativeMarkdownTextRunKey({ ...run, href: "https://example.com/other" }, 0)).not.toBe(
+      key,
+    );
+  });
+
   it("links a path-shaped code span without changing the same path in prose", () => {
     expect(
       nativeMarkdownTextRuns({
@@ -509,6 +540,81 @@ describe("nativeMarkdownListItemBlocks", () => {
 });
 
 describe("nativeMarkdownDocumentChunks", () => {
+  it.each(["paragraph", "code_block"] as const)(
+    "keeps a streaming %s identity while its end and contents change",
+    (type) => {
+      const before: MarkdownNode = {
+        type,
+        beg: 0,
+        end: 5,
+        children: [{ type: "text", content: "Hello" }],
+      };
+      const after: MarkdownNode = {
+        ...before,
+        end: 11,
+        children: [{ type: "text", content: "Hello world" }],
+      };
+      const [beforeChunk] = nativeMarkdownDocumentChunks({ type: "document", children: [before] });
+      const [afterChunk] = nativeMarkdownDocumentChunks({ type: "document", children: [after] });
+
+      expect(afterChunk?.key).toBe(beforeChunk?.key);
+      expect(
+        nativeMarkdownDocumentRuns(afterChunk!.node)
+          .map((run) => run.text)
+          .join(""),
+      ).toBe("Hello world");
+    },
+  );
+
+  it("keeps the selectable container when a new paragraph extends it", () => {
+    const first: MarkdownNode = {
+      type: "paragraph",
+      beg: 0,
+      end: 5,
+      children: [{ type: "text", content: "Hello" }],
+    };
+    const before = nativeMarkdownDocumentChunks({ type: "document", children: [first] });
+    const after = nativeMarkdownDocumentChunks({
+      type: "document",
+      children: [
+        first,
+        {
+          type: "paragraph",
+          beg: 7,
+          end: 12,
+          children: [{ type: "text", content: "World" }],
+        },
+      ],
+    });
+
+    expect(after).toHaveLength(1);
+    expect(after[0]?.key).toBe(before[0]?.key);
+    expect(
+      nativeMarkdownDocumentRuns(after[0]!.node)
+        .map((run) => run.text)
+        .join(""),
+    ).toBe("Hello\n\nWorld");
+  });
+
+  it.each([
+    ["paragraph", "heading"],
+    ["code_block", "blockquote"],
+  ] as const)("replaces a %s when it becomes a %s", (beforeType, afterType) => {
+    const node: MarkdownNode = {
+      type: beforeType,
+      beg: 0,
+      end: 5,
+      children: [{ type: "text", content: "Hello" }],
+    };
+    const before = nativeMarkdownDocumentChunks({ type: "document", children: [node] });
+    const after = nativeMarkdownDocumentChunks({
+      type: "document",
+      children: [{ ...node, type: afterType }],
+    });
+
+    expect(after[0]?.key).not.toBe(before[0]?.key);
+  });
+
   it("renders plain blockquotes as rich blocks so their marker spans wrapped lines", () => {
     const blockquote: MarkdownNode = {
       type: "blockquote",
@@ -536,7 +642,7 @@ describe("nativeMarkdownDocumentChunks", () => {
     ).toEqual([
       {
         kind: "rich",
-        key: "rich:blockquote:0:120",
+        key: "rich:blockquote:0",
         node: blockquote,
       },
     ]);
@@ -663,10 +769,22 @@ describe("nativeMarkdownDocumentChunks", () => {
     expect(chunks[0]).toMatchObject({ kind: "selectable" });
     expect(chunks[1]).toEqual({
       kind: "rich",
-      key: "rich:code_block:11:35",
+      key: "rich:code_block:11",
       node: document.children?.[1],
     });
     expect(chunks[2]).toMatchObject({ kind: "selectable" });
+
+    const growingTail: MarkdownNode = {
+      type: "paragraph",
+      beg: 37,
+      end: 53,
+      children: [{ type: "text", content: "Done. More text." }],
+    };
+    const after = nativeMarkdownDocumentChunks({
+      ...document,
+      children: [...document.children!.slice(0, 2), growingTail],
+    });
+    expect(after.map((chunk) => chunk.key)).toEqual(chunks.map((chunk) => chunk.key));
   });
 
   it("keeps a list containing fenced code as one rich AST container", () => {
@@ -700,7 +818,7 @@ describe("nativeMarkdownDocumentChunks", () => {
     expect(nativeMarkdownDocumentChunks(document)).toEqual([
       {
         kind: "rich",
-        key: "rich:list:0:45",
+        key: "rich:list:0",
         node: document.children?.[0],
       },
     ]);
@@ -728,10 +846,11 @@ describe("nativeMarkdownDocumentChunks", () => {
     expect(chunks[0]).toMatchObject({ kind: "selectable" });
     expect(chunks[1]).toEqual({
       kind: "rich",
-      key: "rich:horizontal_rule:1:1",
+      key: "rich:horizontal_rule:index:1",
       node: document.children?.[1],
     });
     expect(chunks[2]).toMatchObject({ kind: "selectable" });
+    expect(new Set(chunks.map((chunk) => chunk.key)).size).toBe(chunks.length);
   });
 
   it("keeps offset-free structural lists isolated without promoting the whole document", () => {
@@ -774,7 +893,7 @@ describe("nativeMarkdownDocumentChunks", () => {
     expect(chunks[0]).toMatchObject({ kind: "selectable" });
     expect(chunks[1]).toEqual({
       kind: "rich",
-      key: "rich:list:1:1",
+      key: "rich:list:index:1",
       node: document.children?.[1],
     });
     expect(chunks[2]).toMatchObject({ kind: "selectable" });

@@ -12,7 +12,7 @@ import {
 
 import { MarkdownTextPrimitive } from "./MarkdownTextPrimitive";
 import { markdownFileIconSource } from "./markdownFileIcons";
-import type { NativeMarkdownTextRun } from "./nativeMarkdownText";
+import { nativeMarkdownTextRunKey, type NativeMarkdownTextRun } from "./nativeMarkdownText";
 import type {
   MarkdownFileContextMenu,
   NativeMarkdownTextStyle,
@@ -46,28 +46,6 @@ const styles = StyleSheet.create({
     transform: [{ translateY: 2 }],
   },
 });
-
-function runKeySignature(run: NativeMarkdownTextRun): string {
-  return [
-    run.text,
-    run.bold,
-    run.italic,
-    run.strikethrough,
-    run.code,
-    run.href,
-    run.externalHost,
-    run.fileIcon,
-    run.skillName,
-    run.skillLabel,
-    run.role,
-    run.headingLevel,
-    run.depth,
-    run.spacing,
-    run.firstLineHeadIndent,
-    run.headIndent,
-    run.paragraphSpacing,
-  ].join(":");
-}
 
 const DEFAULT_BODY_FONT_SIZE = 15;
 const DEFAULT_HEADING_FONT_SIZES = [22, 19, 17, 16, 15, 15] as const;
@@ -190,13 +168,8 @@ export function NativeMarkdownSelectableText(props: {
     },
     [containsInlineFileIcon],
   );
-  const occurrences = new Map<string, number>();
   const prefixedExternalLinks = new Set<string>();
-  const keyedRuns = props.runs.map((run) => {
-    const signature = runKeySignature(run);
-    const occurrence = occurrences.get(signature) ?? 0;
-    occurrences.set(signature, occurrence + 1);
-
+  const keyedRuns = props.runs.map((run, index) => {
     let text = run.text;
     if (run.fileIcon && Platform.OS === "ios") {
       text = `${INLINE_ATTACHMENT_PREFIX}${text}`;
@@ -210,7 +183,7 @@ export function NativeMarkdownSelectableText(props: {
       text = `${EXTERNAL_LINK_PREFIX}${text}`;
     }
 
-    return { key: `${signature}:${occurrence}`, run, text };
+    return { key: nativeMarkdownTextRunKey(run, index), run, text };
   });
   // T3MarkdownText only rebuilds its attributed string during native layout. A
   // color-only child update can otherwise leave the previous appearance cached.

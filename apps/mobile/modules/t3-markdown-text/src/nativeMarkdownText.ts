@@ -36,6 +36,34 @@ export interface NativeMarkdownTextRun {
   readonly paragraphSpacing?: number;
 }
 
+/** Keep text updates in the same run. Attribute changes still replace the run. */
+export function nativeMarkdownTextRunKey(run: NativeMarkdownTextRun, index: number): string {
+  return [
+    index,
+    run.bold,
+    run.italic,
+    run.strikethrough,
+    run.code,
+    run.href,
+    run.externalHost,
+    run.fileIcon,
+    run.skillName,
+    run.skillLabel,
+    run.role,
+    run.headingLevel,
+    run.depth,
+    run.spacing,
+    run.firstLineHeadIndent,
+    run.headIndent,
+    run.paragraphSpacing,
+  ].join(":");
+}
+
+/** The block's end moves during streaming. Its type and start identify the block. */
+export function nativeMarkdownNodeKey(node: MarkdownNode, index: number): string {
+  return `${node.type}:${node.beg ?? `index:${index}`}`;
+}
+
 export type NativeMarkdownDocumentChunk =
   | {
       readonly kind: "selectable";
@@ -699,16 +727,16 @@ export function nativeMarkdownDocumentChunks(
 ): ReadonlyArray<NativeMarkdownDocumentChunk> {
   const chunks: NativeMarkdownDocumentChunk[] = [];
   let selectableNodes: MarkdownNode[] = [];
+  let selectableStartIndex = 0;
 
   const flushSelectable = () => {
-    if (selectableNodes.length === 0) {
+    const first = selectableNodes[0];
+    if (!first) {
       return;
     }
-    const first = selectableNodes[0];
-    const last = selectableNodes.at(-1);
     chunks.push({
       kind: "selectable",
-      key: `selectable:${first?.beg ?? "start"}:${last?.end ?? "end"}`,
+      key: `selectable:${nativeMarkdownNodeKey(first, selectableStartIndex)}`,
       node: {
         type: "document",
         children: selectableNodes,
@@ -719,6 +747,9 @@ export function nativeMarkdownDocumentChunks(
 
   for (const [index, child] of (document.children ?? []).entries()) {
     if (!containsRichBlock(child)) {
+      if (selectableNodes.length === 0) {
+        selectableStartIndex = index;
+      }
       selectableNodes.push(child);
       continue;
     }
@@ -726,7 +757,7 @@ export function nativeMarkdownDocumentChunks(
     flushSelectable();
     chunks.push({
       kind: "rich",
-      key: `rich:${child.type}:${child.beg ?? index}:${child.end ?? index}`,
+      key: `rich:${nativeMarkdownNodeKey(child, index)}`,
       node: child,
     });
   }

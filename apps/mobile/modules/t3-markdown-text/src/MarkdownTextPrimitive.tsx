@@ -60,11 +60,8 @@ function MarkdownTextPrimitiveChild({
     () => [true, flattenedStyle],
     [flattenedStyle],
   );
-  let childPosition = 0;
-  const nativeChildren = React.Children.toArray(children).map((child) => {
-    const position = childPosition;
-    childPosition += 1;
-
+  // Children.map keeps each text child's position key while its text grows.
+  const nativeChildren = React.Children.map(children, (child) => {
     if (React.isValidElement(child)) {
       return child;
     }
@@ -75,12 +72,7 @@ function MarkdownTextPrimitiveChild({
     const text = child.toString();
     return (
       // @ts-expect-error The generated run props do not include inherited Text props.
-      <T3MarkdownTextRunNativeComponent
-        key={`text-${position}-${text.length}-${text}`}
-        style={flattenedStyle}
-        text={text}
-        {...rest}
-      />
+      <T3MarkdownTextRunNativeComponent style={flattenedStyle} text={text} {...rest} />
     );
   });
 

@@ -4,7 +4,11 @@ import type { MarkdownNode } from "react-native-nitro-markdown/headless";
 
 import { CopyTextButton } from "./CopyTextButton";
 import { MarkdownTextPrimitive } from "./MarkdownTextPrimitive";
-import { nativeMarkdownDocumentRuns, nativeMarkdownListItemBlocks } from "./nativeMarkdownText";
+import {
+  nativeMarkdownDocumentRuns,
+  nativeMarkdownListItemBlocks,
+  nativeMarkdownNodeKey,
+} from "./nativeMarkdownText";
 import { NativeMarkdownSelectableText } from "./NativeMarkdownSelectableText.ios";
 import type {
   MarkdownCodeHighlighter,
@@ -27,10 +31,6 @@ const MONO_FONT_FAMILY = Platform.select({
   android: "monospace",
   default: "monospace",
 });
-
-function nodeKey(node: MarkdownNode, index: number): string {
-  return `${node.type}:${node.beg ?? index}:${node.end ?? index}`;
-}
 
 /** Code inside markdown scales with the base text size (12pt at the default 15pt body). */
 function codeBlockFontSize(textStyle: NativeMarkdownTextStyle): number {
@@ -193,14 +193,14 @@ function HighlightedCodeText(props: {
     const tokens = line.map((token) => {
       const start = sourceOffset;
       sourceOffset += token.content.length;
-      const signature = `${start}:${token.content}:${token.color ?? ""}:${token.fontStyle ?? ""}`;
+      const signature = `${start}:${token.color ?? ""}:${token.fontStyle ?? ""}`;
       const occurrence = keyOccurrences.get(signature) ?? 0;
       keyOccurrences.set(signature, occurrence + 1);
       return { key: `${signature}:${occurrence}`, token };
     });
     sourceOffset += 1;
     return {
-      key: `line:${lineStart}:${line.map((token) => token.content).join("")}`,
+      key: `line:${lineStart}`,
       tokens,
     };
   });
@@ -353,7 +353,7 @@ function NativeTable(props: {
       >
         {rows.map((row, rowIndex) => (
           <View
-            key={nodeKey(row, rowIndex)}
+            key={nativeMarkdownNodeKey(row, rowIndex)}
             style={{
               flexDirection: "row",
               backgroundColor: rowIndex === 0 ? props.textStyle.codeBackgroundColor : "transparent",
@@ -363,7 +363,7 @@ function NativeTable(props: {
           >
             {(row.children ?? []).map((cell, cellIndex) => (
               <View
-                key={nodeKey(cell, cellIndex)}
+                key={nativeMarkdownNodeKey(cell, cellIndex)}
                 style={{
                   width: 160,
                   borderLeftColor: props.textStyle.dividerColor,
@@ -482,7 +482,7 @@ function NativeMixedParagraph(props: {
       {inlineGroups(props.node.children ?? []).map((child, index) =>
         child.type === "image" ? (
           <NativeMarkdownImage
-            key={nodeKey(child, index)}
+            key={nativeMarkdownNodeKey(child, index)}
             node={child}
             skills={props.skills}
             textStyle={props.textStyle}
@@ -490,7 +490,7 @@ function NativeMixedParagraph(props: {
           />
         ) : (
           <SelectableNode
-            key={nodeKey(child, index)}
+            key={nativeMarkdownNodeKey(child, index)}
             node={child}
             skills={props.skills}
             textStyle={props.textStyle}
@@ -536,7 +536,7 @@ function NativeList(props: {
         const markerOffset = taskMarker ? 3 : ordered ? 0 : 2;
         return (
           <View
-            key={nodeKey(item, index)}
+            key={nativeMarkdownNodeKey(item, index)}
             style={{ alignItems: "flex-start", flexDirection: "row" }}
           >
             <View
@@ -564,7 +564,7 @@ function NativeList(props: {
             <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
               {nativeMarkdownListItemBlocks(item).map((child, childIndex) => (
                 <NativeMarkdownBlock
-                  key={nodeKey(child, childIndex)}
+                  key={nativeMarkdownNodeKey(child, childIndex)}
                   node={child}
                   skills={props.skills}
                   textStyle={props.textStyle}
@@ -598,7 +598,7 @@ export function NativeMarkdownBlock(props: {
         <View style={{ gap: 8 }}>
           {(props.node.children ?? []).map((child, index) => (
             <NativeMarkdownBlock
-              key={nodeKey(child, index)}
+              key={nativeMarkdownNodeKey(child, index)}
               node={child}
               skills={props.skills}
               textStyle={props.textStyle}
@@ -659,7 +659,7 @@ export function NativeMarkdownBlock(props: {
         >
           {(props.node.children ?? []).map((child, index) => (
             <NativeMarkdownBlock
-              key={nodeKey(child, index)}
+              key={nativeMarkdownNodeKey(child, index)}
               node={child}
               skills={props.skills}
               textStyle={props.textStyle}
@@ -730,7 +730,7 @@ export function NativeMarkdownBlock(props: {
         <View style={{ gap: 4 }}>
           {(props.node.children ?? []).map((child, index) => (
             <NativeMarkdownBlock
-              key={nodeKey(child, index)}
+              key={nativeMarkdownNodeKey(child, index)}
               node={child}
               skills={props.skills}
               textStyle={props.textStyle}
