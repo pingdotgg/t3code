@@ -154,6 +154,10 @@ in web or desktop, use **Add Environment** with the fresh link or code; pairing
 the same environment replaces its saved grant. Reconnecting alone does not change
 permissions.
 
+Grouping checkouts does not combine their permissions. Shared project settings
+require `orchestration:operate` on every member environment; actions on one
+checkout use that checkout's permissions.
+
 Settings changes, provider management, and environment maintenance can be granted
 separately from access administration. New standard pairings include these
 permissions. Existing clients keep their original grants after an update; to
