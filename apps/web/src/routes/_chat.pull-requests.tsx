@@ -86,6 +86,7 @@ import {
   writePullRequestListPreferences,
 } from "../components/pullRequest/pullRequestListPreferences";
 import { assignProjectsToEnvironments } from "../components/pullRequest/pullRequestProjectAssignment.logic";
+import { pullRequestFilterProjects } from "../components/pullRequest/pullRequestProjectFilter.logic";
 import { environmentMachineIcon } from "../components/EnvironmentMachineIcon";
 import { PullRequestDetailPanel } from "../components/pullRequest/PullRequestDetailPanel";
 import {
@@ -292,7 +293,7 @@ function PullRequestsRouteView() {
   const search = Route.useSearch();
   const sort = search.sort ?? "ready";
   const statsPolicy: PullRequestStatsPolicy =
-    sort === "largest" || sort === "smallest" ? "eager" : "visible";
+    sort === "ready" || sort === "largest" || sort === "smallest" ? "eager" : "visible";
   const navigate = useNavigate({ from: Route.fullPath });
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const { environments } = useEnvironments();
@@ -356,27 +357,6 @@ function PullRequestsRouteView() {
       ),
     [environments],
   );
-  const scopedProjects = useMemo(() => {
-    // Two machines can hold the same repository, so a title the workspace carries twice is told
-    // apart by the environment it lives on rather than left as two identical rows.
-    const titleCounts = new Map<string, number>();
-    for (const project of projects) {
-      titleCounts.set(project.title, (titleCounts.get(project.title) ?? 0) + 1);
-    }
-    return projects
-      .map((project) => ({
-        id: project.id,
-        environmentId: project.environmentId,
-        title:
-          (titleCounts.get(project.title) ?? 0) > 1
-            ? `${project.title} · ${environmentLabels.get(project.environmentId) ?? project.environmentId}`
-            : project.title,
-        workspaceRoot: project.workspaceRoot,
-        faviconPath: project.faviconPath ?? null,
-        projectIcon: project.projectIcon ?? null,
-      }))
-      .toSorted((left, right) => left.title.localeCompare(right.title));
-  }, [environmentLabels, projects]);
   // The scope the URL asks for, once the environments have had their say about whether it exists.
   const scopedProjectId = useMemo(
     () => resolveProjectScope(search.projectId, projects, projectsKnown),
@@ -385,6 +365,10 @@ function PullRequestsRouteView() {
   const scopedProject = useMemo(
     () => findScopedProject(projects, scopedEnvironmentId, scopedProjectId),
     [projects, scopedEnvironmentId, scopedProjectId],
+  );
+  const scopedProjects = useMemo(
+    () => pullRequestFilterProjects(projects, environmentLabels, scopedProject),
+    [environmentLabels, projects, scopedProject],
   );
 
   // A link from a thread or the sidebar only knows the repository, so the owning project is
@@ -826,7 +810,7 @@ function PullRequestsRouteView() {
   // from the first moment rather than the second: a button that stays live through the slow half
   // of its own work is a button that gets pressed again, and buys the whole cascade twice.
   const [invalidating, setInvalidating] = useState(false);
-  const refreshFromHost = async () => {
+  const refreshFromHost = async (includeDetail = true) => {
     const requestedStatsScope = statsScopeRef.current;
     setInvalidating(true);
     try {
@@ -851,7 +835,7 @@ function PullRequestsRouteView() {
       setStatsTargetState({ key: requestedStatsScope.key, batches });
       statsQuery.refresh(batches.map(({ environmentId, input }) => ({ environmentId, input })));
     }
-    setDetailRefreshToken((token) => token + 1);
+    if (includeDetail) setDetailRefreshToken((token) => token + 1);
   };
   const refreshing = invalidating || listQuery.isPending;
 
@@ -1270,8 +1254,8 @@ function PullRequestsRouteView() {
     viewers,
   ]);
 
-  // Date sorts keep optional line-count reads near the viewport. Size sorts need every loaded
-  // count before their order is final. Received counts stay cached across both policies.
+  // Date sorts keep optional line-count reads near the viewport. Size and readiness sorts need
+  // every loaded count before their order is final. Counts stay cached across both policies.
   const entriesByStatsKey = useRef<ReadonlyMap<string, EnvironmentPullRequestEntry>>(new Map());
   entriesByStatsKey.current = new Map(
     groups.flatMap((group) =>
@@ -1950,10 +1934,10 @@ function PullRequestsRouteView() {
                 ) ?? null
               }
               refreshToken={detailRefreshToken}
-              // Merging, closing or reopening changes the row this panel was opened from, so
-              // the list behind it is out of date the moment the host takes the action.
+              // Host actions can change both readiness and diff size, so refresh the counts
+              // alongside the list. The panel already refreshes itself after each action.
               onActed={() => {
-                refreshList(true);
+                void refreshFromHost(false);
               }}
             />
           </RightPanelTabs>
