@@ -42,3 +42,17 @@ device queries can otherwise provoke fresh replies that appear as junk at the
 prompt. The server strips query/response traffic from retained history, and the
 [web renderer](../../apps/web/src/terminal/ghostty/core.ts) detaches its PTY writer
 during replay. Preserve both protections when changing retention or renderer code.
+
+## Pinned drawers
+
+Sessions stay keyed by their owning thread. A pin is client-local UI state in
+[`terminalUiStateStore.ts`](../../apps/web/src/terminalUiStateStore.ts): a thread key
+under a pin key that names either a project or a whole environment. While a pin
+exists, every thread it covers resolves its drawer ref (layout, sessions,
+`terminal.toggle`) to the pinned thread through
+[`useTerminalDrawerPin`](../../apps/web/src/hooks/useTerminalDrawerRef.ts); an
+environment pin wins over a project pin. New shells launch from the pinned thread's
+own worktree or project root. Pins to threads that no longer exist, or that moved to
+another project, fall back to the thread's own drawer, and clearing a deleted thread's
+terminal state drops its pins. Right-panel terminals and the mobile terminal ignore
+pins; preview links from a pinned drawer open in the viewed thread's preview.

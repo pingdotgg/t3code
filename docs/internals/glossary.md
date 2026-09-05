@@ -15,6 +15,7 @@ Terms whose meaning matters across T3 Code. Architecture and lifecycle constrain
 | Thread         | The durable conversation and work history for a project. It survives provider process exits.      |
 | Turn           | One user-to-agent work cycle. Provider work can finish before checkpoint and diff work settles.   |
 | Activity       | A non-message timeline item, such as a tool action, approval, or failure.                         |
+| Pinned drawer  | One thread's terminal drawer that every thread in its project, or environment, opens instead.     |
 | T3 home        | The base data directory. Runtime state normally lives under its `userdata` directory.             |
 
 ## Orchestration

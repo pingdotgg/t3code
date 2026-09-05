@@ -74,6 +74,7 @@ import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useOpenPanelPullRequestUrl } from "../hooks/useOpenPanelPullRequestUrl";
 import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
 import { useClientSettings } from "../hooks/useSettings";
+import { useTerminalDrawerRef } from "../hooks/useTerminalDrawerRef";
 import { useTheme } from "../hooks/useTheme";
 import { readLocalApi } from "../localApi";
 import { desktopLocalBackendId } from "../connection/desktopLocal";
@@ -424,9 +425,11 @@ export function CommandPalette({ children }: { children: ReactNode }) {
     select: (params) => resolveThreadRouteTarget(params),
   });
   const routeThreadRef = routeTarget?.kind === "server" ? routeTarget.threadRef : null;
+  const terminalDrawerRef = useTerminalDrawerRef(routeThreadRef);
   const terminalOpen = useTerminalUiStateStore((state) =>
-    routeThreadRef
-      ? selectThreadTerminalUiState(state.terminalUiStateByThreadKey, routeThreadRef).terminalOpen
+    terminalDrawerRef
+      ? selectThreadTerminalUiState(state.terminalUiStateByThreadKey, terminalDrawerRef)
+          .terminalOpen
       : false,
   );
   const previewOpen = useRightPanelStore((state) =>

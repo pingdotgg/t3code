@@ -15,6 +15,7 @@ import { startNewThreadFromContext } from "../lib/chatThreadActions";
 import { isPreviewFocused } from "../lib/previewFocus";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { resolveShortcutCommand } from "../keybindings";
+import { useTerminalDrawerRef } from "../hooks/useTerminalDrawerRef";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { isPreviewSupportedInRuntime } from "../previewStateStore";
 import { selectActiveRightPanel, useRightPanelStore } from "../rightPanelStore";
@@ -42,9 +43,11 @@ function ChatRouteGlobalShortcuts() {
       }).length,
     [primaryEnvironmentId, projectGroupingSettings, projects],
   );
+  const terminalDrawerRef = useTerminalDrawerRef(routeThreadRef);
   const terminalOpen = useTerminalUiStateStore((state) =>
-    routeThreadRef
-      ? selectThreadTerminalUiState(state.terminalUiStateByThreadKey, routeThreadRef).terminalOpen
+    terminalDrawerRef
+      ? selectThreadTerminalUiState(state.terminalUiStateByThreadKey, terminalDrawerRef)
+          .terminalOpen
       : false,
   );
   // The `previewOpen` shortcut-context flag here uses the store-only value;

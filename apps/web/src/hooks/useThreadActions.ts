@@ -290,6 +290,7 @@ export function useThreadActions() {
         });
         if (result._tag === "Success") {
           refreshArchivedThreadsForEnvironment(target.environmentId);
+          clearTerminalUiState(target);
         }
         return result;
       }

@@ -32,6 +32,7 @@ const TERMINAL_UI_STATE_STORAGE_KEY = "t3code:terminal-state:v1";
 interface PersistedTerminalUiStateStoreState {
   terminalUiStateByThreadKey?: Record<string, ThreadTerminalUiState>;
   terminalStateByThreadKey?: Record<string, ThreadTerminalUiState>;
+  pinnedTerminalThreadKeyByPinKey?: Record<string, string>;
 }
 
 export function migratePersistedTerminalUiStateStoreState(
@@ -51,7 +52,12 @@ export function migratePersistedTerminalUiStateStoreState(
     ),
   );
 
-  return { terminalUiStateByThreadKey };
+  return {
+    terminalUiStateByThreadKey,
+    ...(candidate.pinnedTerminalThreadKeyByPinKey
+      ? { pinnedTerminalThreadKeyByPinKey: candidate.pinnedTerminalThreadKeyByPinKey }
+      : {}),
+  };
 }
 
 function createTerminalUiStateStorage() {
@@ -477,6 +483,30 @@ function reconcileThreadTerminalSessionIds(
   });
 }
 
+/** Thread key pinned under `pinKey` (see `projectTerminalPinKey` / `environmentTerminalPinKey`), if any. */
+export function selectPinnedTerminalThreadKey(
+  pinnedTerminalThreadKeyByPinKey: Record<string, string>,
+  pinKey: string | null,
+): string | null {
+  if (pinKey === null) {
+    return null;
+  }
+  return pinnedTerminalThreadKeyByPinKey[pinKey] ?? null;
+}
+
+function removePinsForThreadKey(
+  pinnedTerminalThreadKeyByPinKey: Record<string, string>,
+  threadKey: string,
+): Record<string, string> {
+  let next = pinnedTerminalThreadKeyByPinKey;
+  for (const [pinKey, pinnedThreadKey] of Object.entries(pinnedTerminalThreadKeyByPinKey)) {
+    if (pinnedThreadKey === threadKey) {
+      next = removeRecordEntry(next, pinKey);
+    }
+  }
+  return next;
+}
+
 export function selectThreadTerminalUiState(
   terminalUiStateByThreadKey: Record<string, ThreadTerminalUiState>,
   threadRef: ScopedThreadRef | null | undefined,
@@ -564,6 +594,8 @@ interface TerminalUiStateStoreState {
   terminalUiStateByThreadKey: Record<string, ThreadTerminalUiState>;
   /** Closed ids hidden from stale server metadata until that id is explicitly opened again. */
   suppressedTerminalIdsByThreadKey: Record<string, string[]>;
+  /** Pin key (a project or an environment) → thread key whose drawer those threads open. */
+  pinnedTerminalThreadKeyByPinKey: Record<string, string>;
   setTerminalOpen: (threadRef: ScopedThreadRef, open: boolean) => void;
   setTerminalHeight: (threadRef: ScopedThreadRef, height: number) => void;
   splitTerminal: (threadRef: ScopedThreadRef, terminalId: string) => void;
@@ -580,6 +612,8 @@ interface TerminalUiStateStoreState {
   clearTerminalUiState: (threadRef: ScopedThreadRef) => void;
   removeTerminalUiState: (threadRef: ScopedThreadRef) => void;
   removeOrphanedTerminalUiStates: (activeThreadKeys: Set<string>) => void;
+  pinTerminalDrawer: (pinKey: string, threadRef: ScopedThreadRef) => void;
+  unpinTerminalDrawer: (pinKey: string) => void;
 }
 
 export const useTerminalUiStateStore = create<TerminalUiStateStoreState>()(
@@ -625,6 +659,27 @@ export const useTerminalUiStateStore = create<TerminalUiStateStoreState>()(
       return {
         terminalUiStateByThreadKey: {},
         suppressedTerminalIdsByThreadKey: {},
+        pinnedTerminalThreadKeyByPinKey: {},
+        pinTerminalDrawer: (pinKey, threadRef) =>
+          set((state) => {
+            const threadKey = terminalThreadKey(threadRef);
+            if (state.pinnedTerminalThreadKeyByPinKey[pinKey] === threadKey) {
+              return state;
+            }
+            return {
+              pinnedTerminalThreadKeyByPinKey: {
+                ...state.pinnedTerminalThreadKeyByPinKey,
+                [pinKey]: threadKey,
+              },
+            };
+          }),
+        unpinTerminalDrawer: (pinKey) =>
+          set((state) => {
+            const next = removeRecordEntry(state.pinnedTerminalThreadKeyByPinKey, pinKey);
+            return next === state.pinnedTerminalThreadKeyByPinKey
+              ? state
+              : { pinnedTerminalThreadKeyByPinKey: next };
+          }),
         setTerminalOpen: (threadRef, open) => {
           const terminalState = selectThreadTerminalUiState(
             get().terminalUiStateByThreadKey,
@@ -708,9 +763,16 @@ export const useTerminalUiStateStore = create<TerminalUiStateStoreState>()(
             );
             const hadSuppressedTerminalIds =
               state.suppressedTerminalIdsByThreadKey[threadKey] !== undefined;
+            // A cleared thread is going away; a pin pointing at it would leave
+            // the project with no drawer.
+            const nextPinned = removePinsForThreadKey(
+              state.pinnedTerminalThreadKeyByPinKey,
+              threadKey,
+            );
             if (
               nextTerminalUiStateByThreadKey === state.terminalUiStateByThreadKey &&
-              !hadSuppressedTerminalIds
+              !hadSuppressedTerminalIds &&
+              nextPinned === state.pinnedTerminalThreadKeyByPinKey
             ) {
               return state;
             }
@@ -720,6 +782,7 @@ export const useTerminalUiStateStore = create<TerminalUiStateStoreState>()(
                 state.suppressedTerminalIdsByThreadKey,
                 threadKey,
               ),
+              pinnedTerminalThreadKeyByPinKey: nextPinned,
             };
           }),
         removeTerminalUiState: (threadRef) =>
@@ -728,7 +791,15 @@ export const useTerminalUiStateStore = create<TerminalUiStateStoreState>()(
             const hadTerminalUiState = state.terminalUiStateByThreadKey[threadKey] !== undefined;
             const hadSuppressedTerminalIds =
               state.suppressedTerminalIdsByThreadKey[threadKey] !== undefined;
-            if (!hadTerminalUiState && !hadSuppressedTerminalIds) {
+            const nextPinned = removePinsForThreadKey(
+              state.pinnedTerminalThreadKeyByPinKey,
+              threadKey,
+            );
+            if (
+              !hadTerminalUiState &&
+              !hadSuppressedTerminalIds &&
+              nextPinned === state.pinnedTerminalThreadKeyByPinKey
+            ) {
               return state;
             }
             return {
@@ -740,6 +811,7 @@ export const useTerminalUiStateStore = create<TerminalUiStateStoreState>()(
                 state.suppressedTerminalIdsByThreadKey,
                 threadKey,
               ),
+              pinnedTerminalThreadKeyByPinKey: nextPinned,
             };
           }),
         removeOrphanedTerminalUiStates: (activeThreadKeys) =>
@@ -775,6 +847,7 @@ export const useTerminalUiStateStore = create<TerminalUiStateStoreState>()(
       migrate: migratePersistedTerminalUiStateStoreState,
       partialize: (state) => ({
         terminalUiStateByThreadKey: state.terminalUiStateByThreadKey,
+        pinnedTerminalThreadKeyByPinKey: state.pinnedTerminalThreadKeyByPinKey,
       }),
     },
   ),

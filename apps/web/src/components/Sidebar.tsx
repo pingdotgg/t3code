@@ -87,6 +87,7 @@ import {
   threadTraversalDirectionFromCommand,
 } from "../keybindings";
 import { useShortcutModifierState } from "../shortcutModifierState";
+import { useTerminalDrawerRef } from "../hooks/useTerminalDrawerRef";
 import { useTerminalFocus } from "../hooks/useTerminalFocus";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { isModelPickerOpen } from "../modelPickerVisibility";
@@ -3506,9 +3507,11 @@ export default function Sidebar() {
 
   // Thread jump (cmd+1..9) and prev/next traversal reuse the same commands as
   // v1 — the keybinding layer is shared, only the ordered list differs.
+  const terminalDrawerRef = useTerminalDrawerRef(routeThreadRef);
   const routeTerminalOpen = useTerminalUiStateStore((state) =>
-    routeThreadRef
-      ? selectThreadTerminalUiState(state.terminalUiStateByThreadKey, routeThreadRef).terminalOpen
+    terminalDrawerRef
+      ? selectThreadTerminalUiState(state.terminalUiStateByThreadKey, terminalDrawerRef)
+          .terminalOpen
       : false,
   );
   useEffect(() => {
