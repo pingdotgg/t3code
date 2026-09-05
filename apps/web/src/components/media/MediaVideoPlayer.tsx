@@ -129,7 +129,7 @@ export function MediaVideoPlayer({
           className={cn(
             // Same 16:9 slot as the loading and playing states, so a failed or
             // retried video does not move the rows below it.
-            "flex aspect-video min-h-28 w-full flex-col items-center justify-center gap-3 rounded-lg border border-border/40 bg-muted/40 p-4 text-center text-sm text-muted-foreground",
+            "flex aspect-video max-h-full min-h-28 w-full flex-col items-center justify-center gap-3 rounded-lg border border-border/40 bg-muted/40 p-4 text-center text-sm text-muted-foreground",
             stateClassName,
           )}
         >

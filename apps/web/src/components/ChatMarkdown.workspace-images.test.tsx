@@ -204,25 +204,31 @@ describe("ChatMarkdown workspace images", () => {
     expect(loadedStyle).toHaveProperty(constraint, expectedValue);
   });
 
-  it("keeps all images baseline-aligned and inline", () => {
+  it("keeps images that share a line inline and lets a standalone one reserve a slot", () => {
     const html = render(
       "![remote](https://example.com/badge.svg) ![workspace](.t3/workspace-image.svg)",
     );
-    const classNames = Array.from(
-      html.matchAll(/<span[^>]*class="([^"]*)"[^>]*role="status"/g),
-      (match) => match[1]?.split(" "),
-    );
 
-    expect(classNames).toHaveLength(2);
-    expect(classNames[0]).toContain("inline-block!");
-    expect(classNames[1]).toContain("inline-block!");
+    // Two images in one paragraph are badges: neither reserves a slot.
+    expect(html).not.toContain("aspect-video");
+    expect(html).toContain('src="https://example.com/badge.svg"');
+    expect(html).toContain('src="https://signed.test/workspace-image.svg"');
+    expect(html.match(/<img[^>]*class="[^"]*inline-block![^"]*"/g)).toHaveLength(1);
+    expect(html).not.toContain("invisible");
 
     const centeredHtml = render(
       '<p align="center"><img src=".t3/workspace-image.svg" alt="logo"></p>',
     );
-    const centeredClassName = /<span[^>]*class="([^"]*)"[^>]*role="status"/.exec(centeredHtml)?.[1];
+    const frame = /<span[^>]*role="status"[^>]*>/.exec(centeredHtml)?.[0];
 
-    expect(centeredClassName?.split(" ")).toContain("inline-block!");
+    expect(frame).toContain("inline-block!");
+    expect(frame).toContain("aspect-video");
+  });
+
+  it("reserves a slot for an image that is the only content of its link", () => {
+    const html = render("[![shot](.t3/workspace-image.svg)](https://example.com)");
+
+    expect(html).toContain("aspect-video");
   });
 
   it("retains an authored SVG fragment on the signed URL", () => {
@@ -282,8 +288,10 @@ describe("ChatMarkdown workspace images", () => {
   });
 
   it("reserves the same 16:9 frame while the URL, the bytes, and a failure resolve", () => {
-    const frameClassName = (html: string) =>
-      /<span[^>]*class="([^"]*)"[^>]*role="(?:status|alert)"/.exec(html)?.[1]?.split(" ") ?? [];
+    const frameClassName = (html: string) => {
+      const frame = /<span[^>]*role="(?:status|alert)"[^>]*>/.exec(html)?.[0] ?? "";
+      return /class="([^"]*)"/.exec(frame)?.[1]?.split(" ") ?? [];
+    };
     const markdown = "![shot](.t3/workspace-image.svg)";
 
     testState.assetState = "loading";
@@ -303,7 +311,7 @@ describe("ChatMarkdown workspace images", () => {
     expect(loadingBytes).not.toContain('loading="lazy"');
   });
 
-  it("gives remote images the same frame instead of a bare tag", () => {
+  it("gives a standalone remote image the same frame instead of a bare tag", () => {
     const html = render("![remote](https://example.com/shot.png)");
 
     expect(html).toContain('aria-label="Loading image"');

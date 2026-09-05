@@ -357,6 +357,36 @@ type MarkdownImageHastNode = {
   children?: MarkdownImageHastNode[];
 };
 
+function meaningfulHastChildren(node: MarkdownImageHastNode): MarkdownImageHastNode[] {
+  return (node.children ?? []).filter(
+    (child) => !(child.type === "text" && (child as { value?: string }).value?.trim() === ""),
+  );
+}
+
+/**
+ * An image that is the only content of its block (optionally wrapped in a
+ * link) is almost always a screenshot or figure, so it gets a reserved slot
+ * while it loads. Images mixed with text or other images — badge rows, icons
+ * in a sentence — stay inline at their natural size, since a placeholder taller
+ * than the image would move the page more than the image itself does.
+ */
+function markStandaloneImages(node: MarkdownImageHastNode) {
+  const children = meaningfulHastChildren(node);
+  if (children.length === 1) {
+    let only = children[0];
+    if (only?.type === "element" && only.tagName === "a") {
+      const linkChildren = meaningfulHastChildren(only);
+      only = linkChildren.length === 1 ? linkChildren[0] : undefined;
+    }
+    if (only?.type === "element" && only.tagName === "img") {
+      only.properties = { ...only.properties, dataStandalone: true };
+    }
+  }
+  node.children?.forEach((child) => {
+    if (child.type === "element") markStandaloneImages(child);
+  });
+}
+
 /** Carries authored image source metadata through the sanitizer to the image renderer. */
 function rehypePreserveImageSourceMeta() {
   return (tree: MarkdownImageHastNode) => {
@@ -374,6 +404,7 @@ function rehypePreserveImageSourceMeta() {
     };
 
     visit(tree);
+    markStandaloneImages(tree);
   };
 }
 
@@ -386,7 +417,12 @@ const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
     blockquote: [...(defaultSchema.attributes?.blockquote ?? []), "dataAlert"],
     div: [...(defaultSchema.attributes?.div ?? []), ...CODEX_ARTIFACT_TEMPLATE_HAST_PROPERTIES],
     a: [...(defaultSchema.attributes?.a ?? []), "dataPullRequestAutolink"],
-    img: [...(defaultSchema.attributes?.img ?? []), "dataLocalSrc", "dataMarkdownTitle"],
+    img: [
+      ...(defaultSchema.attributes?.img ?? []),
+      "dataLocalSrc",
+      "dataMarkdownTitle",
+      "dataStandalone",
+    ],
   },
   protocols: {
     ...defaultSchema.protocols,
@@ -1199,6 +1235,10 @@ function authoredImageSizeStyle(
   return undefined;
 }
 
+const CHAT_MARKDOWN_WORKSPACE_IMAGE_CLASS_NAME = cn(
+  CHAT_MARKDOWN_MEDIA_LAYOUT_CLASS_NAME,
+  CHAT_MARKDOWN_MEDIA_FRAME_CLASS_NAME,
+);
 const MarkdownLinkContext = React.createContext(false);
 
 function expandableMarkdownImageProps(
@@ -1250,13 +1290,14 @@ function ChatMarkdownMediaUnavailableLabel(props: {
   );
 }
 
-/** Inline chip for sources that can never load, so nothing is waiting on a response. */
+/** Inline chip for an image that sits in a line of text or can never load. */
 function ChatMarkdownImageFallback(props: {
   readonly alt: string;
   readonly copyMarkdown?: string | undefined;
   readonly kind?: "image" | "video";
+  readonly actionsSource?: MediaActionSource | undefined;
 }) {
-  return (
+  const content = (
     <span
       data-markdown-copy={props.copyMarkdown}
       className={cn(
@@ -1267,6 +1308,11 @@ function ChatMarkdownImageFallback(props: {
       <ChatMarkdownMediaUnavailableLabel alt={props.alt} kind={props.kind} />
     </span>
   );
+  return props.actionsSource ? (
+    <MediaActions source={props.actionsSource}>{content}</MediaActions>
+  ) : (
+    content
+  );
 }
 
 const CHAT_MARKDOWN_IMAGE_FRAME_CLASS_NAME = cn(
@@ -1276,15 +1322,20 @@ const CHAT_MARKDOWN_IMAGE_FRAME_CLASS_NAME = cn(
 );
 
 /**
- * Holds a 16:9 slot (or the authored size) until the image has decoded, and
- * keeps that slot for the failure state, so a timeline row moves at most once:
- * when the natural size arrives. A bare `<img>` is zero height until then.
+ * A standalone image holds a 16:9 slot (or its authored size) until it has
+ * decoded, and keeps that slot if it fails, so a timeline row moves at most
+ * once: when the natural size arrives. A bare `<img>` is zero height until
+ * then. Once decoded the image renders bare again so its box, hit area, and
+ * alignment are exactly the image's own. Inline images (badges, icons in a
+ * sentence) skip the slot: a placeholder taller than the image would move the
+ * page more than the image does.
  */
 function ChatMarkdownImage(props: {
   readonly src: string | null;
   readonly sourceFailed?: boolean | undefined;
   readonly alt: string;
   readonly copyMarkdown: string | undefined;
+  readonly standalone: boolean;
   readonly className?: string | undefined;
   readonly style?: CSSProperties | undefined;
   readonly actionsSource: MediaActionSource;
@@ -1295,37 +1346,77 @@ function ChatMarkdownImage(props: {
   const [failedSrc, setFailedSrc] = useState<string | null>(null);
   const src = props.src;
   const failed = props.sourceFailed === true || (src !== null && failedSrc === src);
-  // Once a size is known it stays; a re-signed URL for the same file must not
-  // drop the row back to the placeholder.
-  const settled = loaded && !failed;
+  // A decoded image keeps its box across a re-signed URL for the same file, so
+  // a periodic refresh never drops the row back to the placeholder; the browser
+  // keeps painting the old bitmap until the new one decodes. A failure clears
+  // that, so the next URL loads behind the slot again.
+  const settled = !failed && (!props.standalone || (loaded && failedSrc === null));
   // Cached images are complete before `onLoad` can fire.
   const markLoadedIfComplete = useCallback((image: HTMLImageElement | null) => {
     if (image?.complete && image.naturalWidth > 0) setLoaded(true);
   }, []);
 
+  if (src !== null && settled) {
+    return (
+      <MediaActions source={props.actionsSource}>
+        <img
+          ref={markLoadedIfComplete}
+          src={src}
+          alt={props.alt}
+          data-markdown-copy={props.copyMarkdown}
+          decoding="async"
+          draggable={false}
+          className={cn(
+            CHAT_MARKDOWN_IMAGE_SIZE_CLASS_NAME,
+            props.className,
+            props.onImageExpand && "cursor-zoom-in",
+          )}
+          style={props.style}
+          {...expandableMarkdownImageProps(
+            props.onImageExpand,
+            src,
+            props.alt,
+            props.originalUrl,
+            props.actionsSource,
+          )}
+          onLoad={() => {
+            setLoaded(true);
+            setFailedSrc(null);
+          }}
+          onError={() => setFailedSrc(src)}
+        />
+      </MediaActions>
+    );
+  }
+  if (!props.standalone) {
+    return failed ? (
+      <ChatMarkdownImageFallback
+        alt={props.alt}
+        copyMarkdown={props.copyMarkdown}
+        actionsSource={props.actionsSource}
+      />
+    ) : (
+      <span
+        data-markdown-copy={props.copyMarkdown}
+        role="status"
+        aria-label="Loading image"
+        className={CHAT_MARKDOWN_MEDIA_LAYOUT_CLASS_NAME}
+      />
+    );
+  }
   return (
     <MediaActions source={props.actionsSource}>
       <span
         data-markdown-copy={props.copyMarkdown}
         className={cn(
           CHAT_MARKDOWN_MEDIA_LAYOUT_CLASS_NAME,
-          settled
-            ? props.onImageExpand && "cursor-zoom-in"
-            : cn(CHAT_MARKDOWN_IMAGE_FRAME_CLASS_NAME, "relative"),
-          props.className,
+          CHAT_MARKDOWN_IMAGE_FRAME_CLASS_NAME,
+          "relative",
         )}
-        style={settled ? undefined : props.style}
+        style={props.style}
         {...(failed
           ? { role: "alert" as const }
-          : settled
-            ? expandableMarkdownImageProps(
-                props.onImageExpand,
-                src ?? "",
-                props.alt,
-                props.originalUrl,
-                props.actionsSource,
-              )
-            : { role: "status" as const, "aria-label": "Loading image" })}
+          : { role: "status" as const, "aria-label": "Loading image" })}
       >
         {failed ? (
           <span className="flex size-full items-center justify-center p-2 text-center text-xs text-muted-foreground">
@@ -1338,17 +1429,11 @@ function ChatMarkdownImage(props: {
             alt={props.alt}
             decoding="async"
             draggable={false}
-            className={
-              settled
-                ? cn(
-                    "block!",
-                    CHAT_MARKDOWN_IMAGE_SIZE_CLASS_NAME,
-                    CHAT_MARKDOWN_MEDIA_FRAME_CLASS_NAME,
-                  )
-                : "invisible absolute inset-0 size-full"
-            }
-            style={settled ? props.style : undefined}
-            onLoad={() => setLoaded(true)}
+            className="invisible absolute inset-0 size-full"
+            onLoad={() => {
+              setLoaded(true);
+              setFailedSrc(null);
+            }}
             onError={() => setFailedSrc(src)}
           />
         ) : null}
@@ -1403,6 +1488,8 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
   readonly alt: string;
   readonly copyMarkdown?: string;
   readonly srcFragment?: string;
+  /** Reserve a slot while loading; off for images that share a line with text. */
+  readonly standalone?: boolean | undefined;
   readonly style?: CSSProperties | undefined;
   readonly workspaceRoot?: string | undefined;
   readonly onImageExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
@@ -1459,6 +1546,8 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
       sourceFailed={assetUrl._tag === "Failure"}
       alt={props.alt}
       copyMarkdown={props.copyMarkdown}
+      standalone={props.standalone ?? true}
+      className={CHAT_MARKDOWN_WORKSPACE_IMAGE_CLASS_NAME}
       style={props.style}
       actionsSource={actionsSource}
       onImageExpand={props.onImageExpand}
@@ -2818,6 +2907,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
     const imageExpand = use(MarkdownLinkContext) ? undefined : expandMedia;
     const localSrc = node?.properties?.dataLocalSrc;
     const markdownTitle = node?.properties?.dataMarkdownTitle;
+    const standalone = node?.properties?.dataStandalone === true;
     const authoredSrc = typeof localSrc === "string" ? localSrc : src;
     const authoredTitle = typeof markdownTitle === "string" ? markdownTitle : title;
     const srcString =
@@ -2857,6 +2947,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
           src={mediaSrc}
           alt={altText}
           copyMarkdown={copyMarkdown}
+          standalone={standalone}
           className={props.className}
           style={authoredSizeStyle}
           actionsSource={actionsSource}
@@ -2878,6 +2969,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
           kind={kind}
           copyMarkdown={copyMarkdown}
           srcFragment={markdownImageSourceFragment(classifiedSrc)}
+          standalone={standalone}
           style={authoredSizeStyle}
           workspaceRoot={cwd}
           onImageExpand={imageExpand}
