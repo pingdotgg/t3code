@@ -2052,3 +2052,48 @@ code {
     transform: scaleX(0.9);
   }
 }
+
+/* A single crest marks regeneration starting, then the dim title stays still
+   until the request completes. Character delays are capped so long titles
+   finish animating within 1.8 seconds too. */
+.title-shimmering {
+  --title-shimmer-dim: color-mix(in oklab, var(--color-foreground) 55%, transparent);
+  --title-shimmer-bright: var(--color-foreground);
+  color: var(--title-shimmer-dim);
+  perspective: 500px;
+}
+
+.title-shimmer-char {
+  display: inline-block;
+  transform-style: preserve-3d;
+  animation: title-shimmer-char 1.2s cubic-bezier(0.4, 0, 0.2, 1) 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* The inert chars inherit the container color, so hand the variant color
+     back — the wrapper's opacity dim is the whole reduced-motion treatment. */
+  .title-shimmering {
+    color: inherit;
+  }
+  .title-shimmer-char {
+    animation: none;
+  }
+}
+
+@keyframes title-shimmer-char {
+  0%,
+  8% {
+    color: var(--title-shimmer-dim);
+    transform: none;
+  }
+  30%,
+  38% {
+    color: var(--title-shimmer-bright);
+    transform: translate(2px, -2px) scale(1.05) rotateY(8deg);
+  }
+  62%,
+  100% {
+    color: var(--title-shimmer-dim);
+    transform: none;
+  }
+}

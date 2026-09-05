@@ -280,6 +280,49 @@ function terminalProcessLabel(count: number): string {
   return `${count} terminal ${count === 1 ? "process" : "processes"} running`;
 }
 
+const TITLE_SHIMMER_STAGGER_MS = 90;
+const TITLE_SHIMMER_MAX_DELAY_MS = 600;
+const titleSegmenter = new Intl.Segmenter();
+
+// Splits the title into glyphs so a bright crest can travel through them
+// once when regeneration starts. Every
+// character runs the same dim → bright(+3D lift) → dim timeline, offset one
+// stagger step from its neighbor, which produces a smooth traveling wave.
+// Whitespace is normalized and text segmented by grapheme cluster, so the
+// shimmering title lays out exactly like the idle one and accents or joined
+// scripts stay whole. Idle titles are a plain string.
+function ShimmeringTitleText(props: { text: string }) {
+  const normalized = props.text.replace(/\s+/g, " ");
+  const children: ReactNode[] = [];
+  let spaceRun = "";
+  [...titleSegmenter.segment(normalized)].forEach((segment, index) => {
+    // Whitespace runs stay plain text so they collapse and lay out exactly
+    // like the idle title; an inline-block space span would either vanish
+    // (collapsible) or render double-width runs (pre).
+    if (/^\s$/.test(segment.segment)) {
+      spaceRun += segment.segment;
+      return;
+    }
+    if (spaceRun) {
+      children.push(spaceRun);
+      spaceRun = "";
+    }
+    children.push(
+      <span
+        key={index}
+        className="title-shimmer-char"
+        style={{
+          animationDelay: `${Math.min(index * TITLE_SHIMMER_STAGGER_MS, TITLE_SHIMMER_MAX_DELAY_MS)}ms`,
+        }}
+      >
+        {segment.segment}
+      </span>,
+    );
+  });
+  children.push(spaceRun);
+  return <>{children}</>;
+}
+
 function SidebarThreadTooltip({
   thread,
   projectTitle,
@@ -1211,11 +1254,10 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   ) : (
     <span
       className={cn(
-        "min-w-0 flex-1 text-sm transition-opacity motion-reduce:transition-none",
+        "min-w-0 flex-1 text-sm",
         shouldRecede ? "font-normal" : "font-medium",
         variant === "card"
           ? cn(
-              "truncate",
               shouldRecede
                 ? "text-secondary-label"
                 : isUnread || isWoke
@@ -1225,7 +1267,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                     : "text-foreground/90",
             )
           : cn(
-              "truncate group-hover/sidebar-row:text-foreground",
+              "group-hover/sidebar-row:text-foreground",
               shouldRecede
                 ? "text-secondary-label/70"
                 : props.isActive || isWoke
@@ -1234,10 +1276,17 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                     ? "text-muted-foreground"
                     : "text-secondary-label/70",
             ),
-        isRegeneratingTitle && "opacity-[0.55]",
       )}
     >
-      {thread.title}
+      <span
+        className={cn(
+          "block truncate",
+          isRegeneratingTitle &&
+            "title-shimmering motion-reduce:opacity-[0.55] motion-reduce:text-inherit",
+        )}
+      >
+        {isRegeneratingTitle ? <ShimmeringTitleText text={thread.title} /> : thread.title}
+      </span>
     </span>
   );
 
