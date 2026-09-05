@@ -125,10 +125,21 @@ describe("collectLimitsGroups", () => {
     const limits = { checkedAt: "2026-09-03T11:00:00.000Z", windows: [window] };
     const codex = provider({ usageLimits: limits });
     const one = new Map([
-      ["env-a", { entry: { target: { label: "Laptop" } }, serverConfig: { providers: [codex] } }],
+      [
+        "env-a",
+        {
+          entry: { target: { label: "Laptop" } },
+          connection: { phase: "connected" },
+          serverConfig: { providers: [codex] },
+        },
+      ],
       [
         "env-b",
-        { entry: { target: { label: "Desktop" } }, serverConfig: { providers: [provider({})] } },
+        {
+          entry: { target: { label: "Desktop" } },
+          connection: { phase: "connected" },
+          serverConfig: { providers: [provider({})] },
+        },
       ],
     ] as const);
     expect(collectLimitsGroups(one as never).map((group) => group.environmentLabel)).toEqual([
@@ -136,8 +147,22 @@ describe("collectLimitsGroups", () => {
     ]);
 
     const two = new Map([
-      ["env-a", { entry: { target: { label: "Laptop" } }, serverConfig: { providers: [codex] } }],
-      ["env-b", { entry: { target: { label: "Desktop" } }, serverConfig: { providers: [codex] } }],
+      [
+        "env-a",
+        {
+          entry: { target: { label: "Laptop" } },
+          connection: { phase: "connected" },
+          serverConfig: { providers: [codex] },
+        },
+      ],
+      [
+        "env-b",
+        {
+          entry: { target: { label: "Desktop" } },
+          connection: { phase: "connected" },
+          serverConfig: { providers: [codex] },
+        },
+      ],
     ] as const);
     expect(collectLimitsGroups(two as never).map((group) => group.environmentLabel)).toEqual([
       "Laptop",
@@ -177,6 +202,7 @@ describe("collectLimitSources", () => {
         EnvironmentId.make("env-a"),
         {
           entry: { target: { label: "Laptop" } },
+          connection: { phase: "connected" },
           serverConfig: { providers, usageLimitSources: [{ ...source, accounts }] },
         },
       ],
@@ -203,12 +229,54 @@ describe("collectLimitSources", () => {
     const input = presentations([]);
     input.set(EnvironmentId.make("env-b"), {
       entry: { target: { label: "Desktop" } },
+      connection: { phase: "connected" },
       serverConfig: { providers: [native], usageLimitSources: [] },
     });
 
     expect(collectLimitSources(input)).toMatchObject([
       { accounts: [], hiddenAccountCount: 1, environmentId: "env-a" },
     ]);
+  });
+
+  it.each(["codex", "claudeAgent"])(
+    "restores hub limits while the native %s environment is disconnected",
+    (kind) => {
+      const driver = ProviderDriverKind.make(kind);
+      const accounts = [{ ...account, driver }];
+      const input = presentations([], accounts);
+      const desktop = {
+        entry: { target: { label: "Desktop" } },
+        connection: { phase: "connected" },
+        serverConfig: { providers: [{ ...native, driver }], usageLimitSources: [] },
+      };
+      input.set(EnvironmentId.make("env-b"), desktop);
+      expect(collectLimitSources(input)[0]?.hiddenAccountCount).toBe(1);
+
+      for (const phase of ["offline", "connecting", "reconnecting", "error", "available"]) {
+        desktop.connection.phase = phase;
+        expect(collectLimitSources(input)).toMatchObject([{ accounts, hiddenAccountCount: 0 }]);
+        expect(collectLimitsGroups(input)).toEqual([]);
+      }
+
+      desktop.connection.phase = "connected";
+      expect(collectLimitSources(input)).toMatchObject([{ accounts: [], hiddenAccountCount: 1 }]);
+      expect(collectLimitsGroups(input)[0]?.providers).toEqual(desktop.serverConfig.providers);
+    },
+  );
+
+  it("omits cached sources from offline environments without adding their labels", () => {
+    const input = presentations([]);
+    input.set(EnvironmentId.make("env-b"), {
+      entry: { target: { label: "Desktop" } },
+      connection: { phase: "offline" },
+      serverConfig: { providers: [], usageLimitSources: [source] },
+    });
+
+    expect(collectLimitSources(input)).toMatchObject([
+      { environmentId: "env-a", label: "hub", accounts: [account] },
+    ]);
+    input.delete(EnvironmentId.make("env-a"));
+    expect(collectLimitSources(input)).toEqual([]);
   });
 
   it("keeps other providers, other emails, and unidentified accounts with the same plan", () => {
@@ -261,6 +329,7 @@ describe("collectLimitSources", () => {
         EnvironmentId.make("env-a"),
         {
           entry: { target: { label: "Laptop" } },
+          connection: { phase: "connected" },
           serverConfig: {
             providers: [native],
             usageLimitSources: [{ ...source, error: "Hub unavailable" }],
@@ -277,11 +346,19 @@ describe("collectLimitSources", () => {
     const one = new Map([
       [
         "env-a",
-        { entry: { target: { label: "Laptop" } }, serverConfig: { usageLimitSources: [source] } },
+        {
+          entry: { target: { label: "Laptop" } },
+          connection: { phase: "connected" },
+          serverConfig: { usageLimitSources: [source] },
+        },
       ],
       [
         "env-b",
-        { entry: { target: { label: "Desktop" } }, serverConfig: { usageLimitSources: [] } },
+        {
+          entry: { target: { label: "Desktop" } },
+          connection: { phase: "connected" },
+          serverConfig: { usageLimitSources: [] },
+        },
       ],
     ] as const);
     expect(collectLimitSources(one as never).map((entry) => [entry.key, entry.label])).toEqual([
@@ -291,11 +368,19 @@ describe("collectLimitSources", () => {
     const two = new Map([
       [
         "env-a",
-        { entry: { target: { label: "Laptop" } }, serverConfig: { usageLimitSources: [source] } },
+        {
+          entry: { target: { label: "Laptop" } },
+          connection: { phase: "connected" },
+          serverConfig: { usageLimitSources: [source] },
+        },
       ],
       [
         "env-b",
-        { entry: { target: { label: "Desktop" } }, serverConfig: { usageLimitSources: [source] } },
+        {
+          entry: { target: { label: "Desktop" } },
+          connection: { phase: "connected" },
+          serverConfig: { usageLimitSources: [source] },
+        },
       ],
     ] as const);
     expect(collectLimitSources(two as never).map((entry) => entry.label)).toEqual([

@@ -53,12 +53,14 @@ export function collectLimitsGroups(
     EnvironmentId,
     {
       readonly entry: { readonly target: { readonly label: string } };
+      readonly connection: { readonly phase: string };
       readonly serverConfig: { readonly providers: readonly ServerProvider[] } | null;
     }
   >,
 ): readonly LimitsGroup[] {
   const groups: LimitsGroup[] = [];
   for (const [environmentId, presentation] of presentations) {
+    if (presentation.connection.phase !== "connected") continue;
     const providers = providersWithLimits(presentation.serverConfig?.providers ?? []);
     if (providers.length === 0) continue;
     groups.push({ environmentId, environmentLabel: presentation.entry.target.label, providers });
@@ -78,6 +80,7 @@ export function collectLimitSources(
     EnvironmentId,
     {
       readonly entry: { readonly target: { readonly label: string } };
+      readonly connection: { readonly phase: string };
       readonly serverConfig: {
         readonly providers?: readonly ServerProvider[] | undefined;
         readonly usageLimitSources?: UsageLimitSourceSnapshots | undefined;
@@ -91,8 +94,11 @@ export function collectLimitSources(
     readonly hiddenAccountCount: number;
   }
 > {
+  const connected = [...presentations].filter(
+    ([, presentation]) => presentation.connection.phase === "connected",
+  );
   const nativeAccounts = new Set<string>();
-  for (const presentation of presentations.values()) {
+  for (const [, presentation] of connected) {
     for (const provider of providersWithLimits(presentation.serverConfig?.providers ?? [])) {
       const key = accountKey(provider.driver, provider.auth.email);
       if (
@@ -109,7 +115,7 @@ export function collectLimitSources(
     readonly environmentLabel: string;
     readonly sources: UsageLimitSourceSnapshots;
   }> = [];
-  for (const [environmentId, presentation] of presentations) {
+  for (const [environmentId, presentation] of connected) {
     const sources = presentation.serverConfig?.usageLimitSources ?? [];
     if (sources.length === 0) continue;
     perEnvironment.push({
