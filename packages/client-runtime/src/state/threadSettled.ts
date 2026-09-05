@@ -202,14 +202,32 @@ function addSnoozeDays(base: Date, days: number): Date {
   return next;
 }
 
+type LocaleWeekInfo = { readonly firstDay: number };
+type LocaleWithWeekInfo = Intl.Locale & {
+  readonly weekInfo?: LocaleWeekInfo;
+  getWeekInfo?: () => LocaleWeekInfo;
+};
+
+function firstDayOfWeek(locale: string | undefined): number {
+  try {
+    const resolvedLocale = new Intl.Locale(
+      locale ?? Intl.DateTimeFormat().resolvedOptions().locale,
+    ) as LocaleWithWeekInfo;
+    const firstDay = resolvedLocale.getWeekInfo?.().firstDay ?? resolvedLocale.weekInfo?.firstDay;
+    return firstDay === undefined ? 1 : firstDay % 7;
+  } catch {
+    return 1;
+  }
+}
+
 /**
  * Shared "snooze until" choices for every client. "This evening" only
  * appears while it is meaningfully before evening; after that the calendar
- * choices start at "Tomorrow". Calendar presets that land on the same
- * instant collapse: on Sundays "Tomorrow" and "Next week" are both Monday
- * morning, so only "Tomorrow" is offered.
+ * choices start at "Tomorrow". "Next week" follows the locale's first
+ * weekday. Calendar presets that land on the same instant collapse, so only
+ * "Tomorrow" is offered when tomorrow starts the next locale week.
  */
-export function resolveSnoozePresets(now: Date): ReadonlyArray<SnoozePreset> {
+export function resolveSnoozePresets(now: Date, locale?: string): ReadonlyArray<SnoozePreset> {
   const inAnHour = new Date(now.getTime() + HOUR_MS);
   const inThreeHours = new Date(now.getTime() + 3 * HOUR_MS);
   const presets: SnoozePreset[] = [
@@ -245,8 +263,9 @@ export function resolveSnoozePresets(now: Date): ReadonlyArray<SnoozePreset> {
     snoozedUntil: tomorrow.toISOString(),
   });
 
-  const daysUntilMonday = (1 - now.getDay() + 7) % 7 || 7;
-  const nextWeek = snoozeAtHour(addSnoozeDays(now, daysUntilMonday), MORNING_HOUR);
+  const weekStart = firstDayOfWeek(locale);
+  const daysUntilNextWeek = (weekStart - now.getDay() + 7) % 7 || 7;
+  const nextWeek = snoozeAtHour(addSnoozeDays(now, daysUntilNextWeek), MORNING_HOUR);
   if (nextWeek.getTime() !== tomorrow.getTime()) {
     presets.push({
       id: "next-week",
