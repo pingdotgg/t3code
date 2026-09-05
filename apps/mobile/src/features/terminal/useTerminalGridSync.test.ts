@@ -6,6 +6,12 @@ import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 
 import { useTerminalGridSync } from "./useTerminalGridSync";
 
+const access = vi.hoisted(() => ({ environments: new Set<string>() }));
+vi.mock("../../state/session", () => ({
+  readEnvironmentScope: (environmentId: string, scope: string) =>
+    scope === "terminal:operate" && access.environments.has(environmentId),
+}));
+
 // Mobile already depends on ReactDOM but does not install its browser type declarations.
 const { createRoot } = NodeModule.createRequire(import.meta.url)("react-dom/client") as {
   createRoot(container: Element): {
@@ -53,6 +59,8 @@ function render(value: Input) {
 
 beforeEach(() => {
   resize.mockClear();
+  access.environments.clear();
+  access.environments.add("environment");
   // The probe renders no DOM, but ReactDOM needs an event target to run real effects.
   const document = {
     nodeType: 9,
@@ -71,6 +79,27 @@ beforeEach(() => {
   vi.stubGlobal("window", { document, HTMLIFrameElement: EventTarget });
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   root = createRoot(container as unknown as HTMLElement);
+});
+
+it("checks the current target grant before dispatching a delayed resize", async () => {
+  const current = input();
+  await render(current);
+  expect(resize).toHaveBeenCalledOnce();
+
+  access.environments.clear();
+  await render({ ...current, size: { cols: 120, rows: 40 } });
+  expect(resize).toHaveBeenCalledOnce();
+
+  access.environments.add("secondary");
+  await render({ ...current, size: { cols: 120, rows: 41 } });
+  expect(resize).toHaveBeenCalledOnce();
+
+  await render({ ...current, environmentId: EnvironmentId.make("secondary") });
+  expect(resize).toHaveBeenCalledTimes(2);
+  expect(resize).toHaveBeenLastCalledWith({
+    environmentId: "secondary",
+    input: { threadId: "thread", terminalId: "term-1", cols: 80, rows: 24 },
+  });
 });
 
 afterEach(async () => {
