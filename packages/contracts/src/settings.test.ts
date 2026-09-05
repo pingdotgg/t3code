@@ -7,6 +7,7 @@ import {
   ClientSettingsPatch,
   ClaudeSettings,
   DEFAULT_SERVER_SETTINGS,
+  DEFAULT_SIDEBAR_THREAD_ROW_LAYOUT,
   defaultEnabledForDriver,
   resolveProviderInstanceEnabled,
   ServerSettings,
@@ -624,5 +625,84 @@ describe("ServerSettings environment icon", () => {
   it("round-trips through encode", () => {
     const settings = decodeServerSettings({ environmentIcon: "laptop" });
     expect(encodeServerSettings(settings).environmentIcon).toBe("laptop");
+  });
+});
+
+describe("ClientSettings thread row layout", () => {
+  it("keeps existing installs standard and preserves the earlier compact preference", () => {
+    const defaults = decodeClientSettings({});
+    expect(defaults.sidebarThreadRowLayoutMode).toBe("standard");
+    expect(defaults.sidebarThreadRowLayout).toEqual(DEFAULT_SIDEBAR_THREAD_ROW_LAYOUT);
+    expect(defaults.sidebarSavedThreadLayouts).toEqual([]);
+    expect(defaults.sidebarActiveThreadLayoutId).toBeNull();
+    expect(decodeClientSettings({ sidebarCompactThreadRows: true }).sidebarCompactThreadRows).toBe(
+      true,
+    );
+  });
+
+  it("round-trips custom order, rows and alignment through persisted settings", () => {
+    const patch = decodeClientSettingsPatch({
+      sidebarThreadRowLayoutMode: "custom",
+      sidebarThreadRowLayout: [
+        { component: "model", row: 2, alignment: "left" },
+        { component: "title", row: 1, alignment: "right" },
+        { component: "project", row: 2, alignment: "left" },
+      ],
+    });
+    const settings = decodeClientSettings(patch);
+    const reloaded = decodeClientSettings(
+      JSON.parse(JSON.stringify(encodeClientSettings(settings))),
+    );
+    expect(reloaded.sidebarThreadRowLayoutMode).toBe("custom");
+    expect(reloaded.sidebarThreadRowLayout).toEqual(patch.sidebarThreadRowLayout);
+  });
+
+  it.each(
+    [
+      [],
+      [{ component: "title", row: 0, alignment: "left" }],
+      [{ component: "title", row: 1, alignment: "center" }],
+      [{ component: "unknown", row: 1, alignment: "left" }],
+      [
+        { component: "title", row: 1, alignment: "left" },
+        { component: "title", row: 2, alignment: "right" },
+      ],
+    ].map((layout) => ({ layout })),
+  )("rejects malformed or ambiguous layouts: $layout", ({ layout }) => {
+    expect(() => decodeClientSettings({ sidebarThreadRowLayout: layout })).toThrow();
+    expect(() => decodeClientSettingsPatch({ sidebarThreadRowLayout: layout })).toThrow();
+  });
+
+  it("allows hiding the title and keeps the custom arrangement when changing modes", () => {
+    const settings = decodeClientSettings({
+      sidebarThreadRowLayoutMode: "custom",
+      sidebarThreadRowLayout: [{ component: "projectIcon", row: 1, alignment: "right" }],
+    });
+    const standard = decodeClientSettings({
+      ...settings,
+      ...decodeClientSettingsPatch({ sidebarThreadRowLayoutMode: "standard" }),
+    });
+    expect(standard.sidebarThreadRowLayout).toEqual(settings.sidebarThreadRowLayout);
+    expect(() => decodeClientSettingsPatch({ sidebarThreadRowLayoutMode: "invalid" })).toThrow();
+  });
+});
+
+describe("saved thread layout settings", () => {
+  const saved = { id: "daily", name: "Daily", layout: DEFAULT_SIDEBAR_THREAD_ROW_LAYOUT };
+  it("round-trips the library and active selection through persistence and patches", () => {
+    const patch = decodeClientSettingsPatch({
+      sidebarSavedThreadLayouts: [saved],
+      sidebarActiveThreadLayoutId: "daily",
+    });
+    const reloaded = decodeClientSettings(
+      JSON.parse(JSON.stringify(encodeClientSettings(decodeClientSettings(patch)))),
+    );
+    expect(reloaded.sidebarSavedThreadLayouts).toEqual([saved]);
+    expect(reloaded.sidebarActiveThreadLayoutId).toBe("daily");
+  });
+  it("rejects duplicate IDs, blank names and invalid nested arrangements", () => {
+    for (const layouts of [[saved, saved], [{ ...saved, name: " " }], [{ ...saved, layout: [] }]]) {
+      expect(() => decodeClientSettingsPatch({ sidebarSavedThreadLayouts: layouts })).toThrow();
+    }
   });
 });

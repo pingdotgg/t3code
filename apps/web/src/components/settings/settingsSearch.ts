@@ -307,6 +307,11 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["response output old compatibility"],
   },
   {
+    id: "compact-thread-list",
+    title: "Thread list layout (standard, compact, custom rows, saved layouts, preview my threads)",
+    to: "/settings/general",
+  },
+  {
     id: "legacy-sidebar",
     title: "Sidebar (legacy)",
     to: "/settings/general",

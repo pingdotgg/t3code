@@ -45,6 +45,63 @@ export const SidebarThreadSortOrder = Schema.Literals(["updated_at", "created_at
 export type SidebarThreadSortOrder = typeof SidebarThreadSortOrder.Type;
 export const DEFAULT_SIDEBAR_THREAD_SORT_ORDER: SidebarThreadSortOrder = "updated_at";
 
+export const SidebarThreadRowLayoutMode = Schema.Literals(["standard", "compact", "custom"]);
+export type SidebarThreadRowLayoutMode = typeof SidebarThreadRowLayoutMode.Type;
+export const SidebarThreadRowComponent = Schema.Literals([
+  "projectIcon",
+  "title",
+  "pin",
+  "activity",
+  "status",
+  "duration",
+  "project",
+  "environment",
+  "provider",
+  "model",
+  "branch",
+  "worktree",
+  "pullRequest",
+  "terminal",
+  "updated",
+  "created",
+  "completed",
+  "snooze",
+]);
+export type SidebarThreadRowComponent = typeof SidebarThreadRowComponent.Type;
+export const SidebarThreadRowPlacement = Schema.Struct({
+  component: SidebarThreadRowComponent,
+  row: Schema.Literals([1, 2, 3]),
+  alignment: Schema.Literals(["left", "right"]),
+});
+export type SidebarThreadRowPlacement = typeof SidebarThreadRowPlacement.Type;
+export const SidebarThreadRowLayout = Schema.Array(SidebarThreadRowPlacement).check(
+  Schema.isMinLength(1),
+  Schema.makeFilter(
+    (items) =>
+      new Set(items.map((item) => item.component)).size === items.length ||
+      "Each thread detail can appear only once",
+  ),
+);
+export const SavedThreadRowLayout = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  name: TrimmedNonEmptyString.check(Schema.isMaxLength(80)),
+  layout: SidebarThreadRowLayout,
+});
+export type SavedThreadRowLayout = typeof SavedThreadRowLayout.Type;
+export const SavedThreadRowLayouts = Schema.Array(SavedThreadRowLayout).check(
+  Schema.makeFilter(
+    (items) =>
+      new Set(items.map((item) => item.id)).size === items.length || "Layout IDs must be unique",
+  ),
+);
+export const DEFAULT_SIDEBAR_THREAD_ROW_LAYOUT: ReadonlyArray<SidebarThreadRowPlacement> = [
+  { component: "projectIcon", row: 1, alignment: "left" },
+  { component: "title", row: 1, alignment: "left" },
+  { component: "pin", row: 1, alignment: "right" },
+  { component: "pullRequest", row: 1, alignment: "right" },
+  { component: "activity", row: 1, alignment: "right" },
+];
+
 export const SidebarProjectGroupingMode = Schema.Literals([
   "repository",
   "repository_path",
@@ -344,6 +401,19 @@ export const ClientSettingsSchema = Schema.Struct({
   ),
   sidebarThreadPreviewCount: SidebarThreadPreviewCount.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_THREAD_PREVIEW_COUNT)),
+  ),
+  sidebarCompactThreadRows: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  sidebarThreadRowLayoutMode: SidebarThreadRowLayoutMode.pipe(
+    Schema.withDecodingDefault(Effect.succeed("standard")),
+  ),
+  sidebarThreadRowLayout: SidebarThreadRowLayout.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_THREAD_ROW_LAYOUT)),
+  ),
+  sidebarSavedThreadLayouts: SavedThreadRowLayouts.pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
+  sidebarActiveThreadLayoutId: Schema.NullOr(TrimmedNonEmptyString).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
   ),
   timestampFormat: TimestampFormat.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_TIMESTAMP_FORMAT)),
@@ -1232,6 +1302,11 @@ export const ClientSettingsPatch = Schema.Struct({
   sidebarProjectSortOrder: Schema.optionalKey(SidebarProjectSortOrder),
   sidebarThreadSortOrder: Schema.optionalKey(SidebarThreadSortOrder),
   sidebarThreadPreviewCount: Schema.optionalKey(SidebarThreadPreviewCount),
+  sidebarCompactThreadRows: Schema.optionalKey(Schema.Boolean),
+  sidebarThreadRowLayoutMode: Schema.optionalKey(SidebarThreadRowLayoutMode),
+  sidebarThreadRowLayout: Schema.optionalKey(SidebarThreadRowLayout),
+  sidebarSavedThreadLayouts: Schema.optionalKey(SavedThreadRowLayouts),
+  sidebarActiveThreadLayoutId: Schema.optionalKey(Schema.NullOr(TrimmedNonEmptyString)),
   timestampFormat: Schema.optionalKey(TimestampFormat),
   wordWrap: Schema.optionalKey(Schema.Boolean),
 });
