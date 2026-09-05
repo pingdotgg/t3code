@@ -48,9 +48,25 @@ export type DesktopSecondaryBootstrapsRead =
       readonly cause: unknown;
     };
 
+/**
+ * What the renderer needs from the desktop's local backend list: the secondary
+ * backends, and the primary's WSL distro when the primary itself runs inside
+ * WSL (wsl-only mode; null in dual mode or before the primary reports a config).
+ */
+export interface DesktopLocalTopology {
+  readonly secondaries: ReadonlyArray<DesktopEnvironmentBootstrap>;
+  readonly primaryWslDistro: string | null;
+}
+
+const EMPTY_DESKTOP_LOCAL_TOPOLOGY: DesktopLocalTopology = {
+  secondaries: [],
+  primaryWslDistro: null,
+};
+
 export interface DesktopSecondaryBootstrapsReader {
   readonly readResult: () => DesktopSecondaryBootstrapsRead;
   readonly readSnapshot: () => ReadonlyArray<DesktopEnvironmentBootstrap>;
+  readonly readTopology: () => DesktopLocalTopology;
 }
 
 /**
@@ -62,19 +78,22 @@ export interface DesktopSecondaryBootstrapsReader {
 export function createDesktopSecondaryBootstrapsReader(
   resolveBridge: () => Pick<DesktopBridge, "getLocalEnvironmentBootstraps"> | undefined,
 ): DesktopSecondaryBootstrapsReader {
-  let snapshot: ReadonlyArray<DesktopEnvironmentBootstrap> = [];
+  let snapshot: DesktopLocalTopology = EMPTY_DESKTOP_LOCAL_TOPOLOGY;
 
   const readResult = (): DesktopSecondaryBootstrapsRead => {
     const bridge = resolveBridge();
     if (bridge === undefined) {
-      snapshot = [];
-      return { _tag: "Success", bootstraps: snapshot };
+      snapshot = EMPTY_DESKTOP_LOCAL_TOPOLOGY;
+      return { _tag: "Success", bootstraps: snapshot.secondaries };
     }
     try {
-      snapshot = bridge
-        .getLocalEnvironmentBootstraps()
-        .filter((entry) => entry.id !== PRIMARY_LOCAL_ENVIRONMENT_ID);
-      return { _tag: "Success", bootstraps: snapshot };
+      const bootstraps = bridge.getLocalEnvironmentBootstraps();
+      const primary = bootstraps.find((entry) => entry.id === PRIMARY_LOCAL_ENVIRONMENT_ID);
+      snapshot = {
+        secondaries: bootstraps.filter((entry) => entry.id !== PRIMARY_LOCAL_ENVIRONMENT_ID),
+        primaryWslDistro: primary?.runningDistro?.trim() || null,
+      };
+      return { _tag: "Success", bootstraps: snapshot.secondaries };
     } catch (cause) {
       return { _tag: "Failure", cause };
     }
@@ -83,14 +102,18 @@ export function createDesktopSecondaryBootstrapsReader(
   return {
     readResult,
     readSnapshot: () => {
-      const result = readResult();
-      return result._tag === "Success" ? result.bootstraps : snapshot;
+      readResult();
+      return snapshot.secondaries;
+    },
+    readTopology: () => {
+      readResult();
+      return snapshot;
     },
   };
 }
 
-const desktopSecondaryBootstrapsReader = createDesktopSecondaryBootstrapsReader(
-  () => window.desktopBridge,
+const desktopSecondaryBootstrapsReader = createDesktopSecondaryBootstrapsReader(() =>
+  typeof window === "undefined" ? undefined : window.desktopBridge,
 );
 
 /** Read the topology while preserving failures for platform cache policy. */
@@ -101,4 +124,9 @@ export function readDesktopSecondaryBootstrapsResult(): DesktopSecondaryBootstra
 /** Read the latest successful topology snapshot for renderer consumers. */
 export function readDesktopSecondaryBootstraps(): ReadonlyArray<DesktopEnvironmentBootstrap> {
   return desktopSecondaryBootstrapsReader.readSnapshot();
+}
+
+/** Read the latest successful topology, including the primary's WSL distro. */
+export function readDesktopLocalTopology(): DesktopLocalTopology {
+  return desktopSecondaryBootstrapsReader.readTopology();
 }

@@ -105,3 +105,42 @@ describe("desktop local topology reads", () => {
     expect(reader.readSnapshot()).toBe(removedSnapshot);
   });
 });
+
+describe("primary WSL distro in topology reads", () => {
+  const primary = {
+    id: PRIMARY_LOCAL_ENVIRONMENT_ID,
+    label: "WSL (Ubuntu)",
+    runningDistro: "Ubuntu",
+    httpBaseUrl: "http://172.20.0.1:3100",
+    wsBaseUrl: "ws://172.20.0.1:3100",
+  };
+
+  it("exposes the primary's running distro in wsl-only mode", () => {
+    const reader = createDesktopSecondaryBootstrapsReader(() => ({
+      getLocalEnvironmentBootstraps: () => [primary],
+    }));
+    expect(reader.readTopology()).toEqual({ secondaries: [], primaryWslDistro: "Ubuntu" });
+  });
+
+  it("reports null in dual mode and outside the desktop", () => {
+    const dual = createDesktopSecondaryBootstrapsReader(() => ({
+      getLocalEnvironmentBootstraps: () => [{ ...primary, label: "Local", runningDistro: null }],
+    }));
+    expect(dual.readTopology().primaryWslDistro).toBeNull();
+    const browser = createDesktopSecondaryBootstrapsReader(() => undefined);
+    expect(browser.readTopology().primaryWslDistro).toBeNull();
+  });
+
+  it("keeps the last known distro across a failed read", () => {
+    let readBootstraps = () => [primary];
+    const reader = createDesktopSecondaryBootstrapsReader(() => ({
+      getLocalEnvironmentBootstraps: () => readBootstraps(),
+    }));
+    expect(reader.readTopology().primaryWslDistro).toBe("Ubuntu");
+
+    readBootstraps = () => {
+      throw new Error("IPC unavailable");
+    };
+    expect(reader.readTopology().primaryWslDistro).toBe("Ubuntu");
+  });
+});

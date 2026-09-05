@@ -28,7 +28,8 @@ vi.mock("../state/entities", () => ({
   readThreadShell: () => null,
   useProjects: () => [],
 }));
-vi.mock("../remoteOpen", () => ({
+vi.mock("../remoteOpen", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../remoteOpen")>()),
   useRemoteOpenResolution: () => ({ state: { mode: "local-exec" }, isResolved: true }),
 }));
 vi.mock("../editorPreferences", () => ({

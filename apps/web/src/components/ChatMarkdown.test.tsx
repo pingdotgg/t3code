@@ -43,7 +43,8 @@ vi.mock("../state/entities", () => ({
   readThreadShell: () => null,
   useProjects: () => [],
 }));
-vi.mock("../remoteOpen", () => ({
+vi.mock("../remoteOpen", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../remoteOpen")>()),
   useRemoteOpenResolution: () => ({ state: { mode: "local-exec" }, isResolved: true }),
 }));
 vi.mock("../editorPreferences", () => ({
@@ -284,20 +285,40 @@ describe("canUseMarkdownFileShellActions", () => {
   const environmentId = EnvironmentId.make("environment-1");
 
   it("allows editor and file manager actions for local environments", () => {
-    expect(canUseMarkdownFileShellActions(environmentId, "local-exec", true)).toBe(true);
+    expect(canUseMarkdownFileShellActions(environmentId, { mode: "local-exec" }, true)).toBe(true);
+  });
+
+  it("keeps shell actions for WSL environments, whose server runs on the same machine", () => {
+    expect(
+      canUseMarkdownFileShellActions(
+        environmentId,
+        { mode: "remote-links", host: { kind: "wsl", host: "Ubuntu" } },
+        true,
+      ),
+    ).toBe(true);
   });
 
   it("hides shell actions until the environment mode is resolved", () => {
-    expect(canUseMarkdownFileShellActions(environmentId, "local-exec", false)).toBe(false);
+    expect(canUseMarkdownFileShellActions(environmentId, { mode: "local-exec" }, false)).toBe(
+      false,
+    );
   });
 
   it("hides editor and file manager actions for remote environments", () => {
-    expect(canUseMarkdownFileShellActions(environmentId, "remote-links", true)).toBe(false);
-    expect(canUseMarkdownFileShellActions(environmentId, "remote-unavailable", true)).toBe(false);
+    expect(
+      canUseMarkdownFileShellActions(
+        environmentId,
+        { mode: "remote-links", host: { kind: "ssh-alias", host: "devbox" } },
+        true,
+      ),
+    ).toBe(false);
+    expect(
+      canUseMarkdownFileShellActions(environmentId, { mode: "remote-unavailable" }, true),
+    ).toBe(false);
   });
 
   it("hides shell actions when no environment owns the markdown", () => {
-    expect(canUseMarkdownFileShellActions(null, "local-exec", true)).toBe(false);
+    expect(canUseMarkdownFileShellActions(null, { mode: "local-exec" }, true)).toBe(false);
   });
 });
 
