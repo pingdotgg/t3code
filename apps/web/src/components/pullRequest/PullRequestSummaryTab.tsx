@@ -60,6 +60,7 @@ import {
 import { PullRequestMarkdown } from "./PullRequestMarkdown";
 import { PullRequestMarkdownEditor } from "./PullRequestMarkdownEditor";
 import { PullRequestReactionBar } from "./PullRequestReactions";
+import { canReactPullRequestComment } from "./pullRequestReactions.logic";
 import { PullRequestConversationGhost } from "./PullRequestGhosts";
 import { pullRequestLabelColor } from "./pullRequestList.logic";
 import { sectionCollapseAnchorScrollTop } from "./pullRequestSummaryScroll.logic";
@@ -893,7 +894,7 @@ export function PullRequestSummaryTab({
                           <PullRequestReactionBar
                             className="mt-2"
                             reactions={comment.reactions ?? []}
-                            canReact={detail.capabilities.reactions === true}
+                            canReact={canReactPullRequestComment(detail, comment)}
                             subjectId={comment.id}
                             environmentId={environmentId}
                             reference={reference}
@@ -922,7 +923,7 @@ export function PullRequestSummaryTab({
                   const reactionBar = (
                     <PullRequestReactionBar
                       reactions={comment.reactions ?? []}
-                      canReact={detail.capabilities.reactions === true}
+                      canReact={canReactPullRequestComment(detail, comment)}
                       subjectId={comment.id}
                       environmentId={environmentId}
                       reference={reference}

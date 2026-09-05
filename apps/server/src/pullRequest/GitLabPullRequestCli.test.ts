@@ -913,6 +913,64 @@ layer("GitLabPullRequestCli.layer", (it) => {
     }),
   );
 
+  it.effect("reads approval history after a full page of unrelated system notes", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(
+          output(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify(
+              Array.from({ length: 100 }, (_, index) => ({
+                id: index + 1,
+                system: true,
+                body: "assigned to @reviewer",
+                created_at: "2026-07-01T00:00:00Z",
+              })),
+            ),
+          ),
+        ),
+      );
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(
+          output(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify([
+              {
+                id: 101,
+                system: true,
+                body: "approved this merge request",
+                author: { username: "reviewer" },
+                created_at: "2026-07-02T00:00:00Z",
+              },
+              {
+                id: 102,
+                system: true,
+                body: "unapproved this merge request",
+                author: { username: "reviewer" },
+                created_at: "2026-07-03T00:00:00Z",
+              },
+            ]),
+          ),
+        ),
+      );
+
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+      const { comments, truncated } = yield* cli.listNotes({
+        cwd: "/w",
+        repository: "acme/web",
+        number: 7,
+      });
+
+      expect(comments).toMatchObject([
+        { id: "101", kind: "review", reviewState: "APPROVED" },
+        { id: "102", kind: "review", reviewState: "DISMISSED" },
+      ]);
+      expect(argsOfCall(1).join(" ")).toContain("page=2");
+      assert.strictEqual(mockedExecute.mock.calls.length, 2);
+      assert.isFalse(truncated);
+    }),
+  );
+
   it.effect("stops the note walk at its bound and says the conversation was cut short", () =>
     Effect.gen(function* () {
       // GitLab that never answers short: the walk has to end itself.
