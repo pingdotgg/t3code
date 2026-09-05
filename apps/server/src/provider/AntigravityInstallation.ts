@@ -43,6 +43,7 @@ import {
 const DRIVER = ProviderDriverKind.make("antigravity");
 const DOWNLOAD_TIMEOUT = "45 minutes";
 const VALIDATION_TIMEOUT = "90 seconds";
+const VALIDATION_DIAGNOSTIC_MAX_CHARS = 4_096;
 const FREE_SPACE_MARGIN = 256 * 1024 * 1024;
 const RECORD_MAX_BYTES = 8 * 1024;
 const RELEASE_RECORD = ".install-complete.json";
@@ -476,7 +477,8 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
           platform,
           baseEnv: environment,
         });
-        const runtime = yield* makeAntigravityAcpRuntime({
+        let diagnosticTail = "";
+        const initialized = yield* makeAntigravityAcpRuntime({
           spawn: buildAntigravityAcpSpawnInput({
             installation: executable,
             profile,
@@ -486,8 +488,27 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
           cwd: profileDirectory,
           childProcessSpawner: spawner,
           clientInfo: { name: "t3-code", version: "0.0.0" },
-        });
-        const initialized = yield* runtime.initialize();
+          onDiagnostic: (message) =>
+            Effect.sync(() => {
+              diagnosticTail = `${diagnosticTail}${message}\n`.slice(
+                -VALIDATION_DIAGNOSTIC_MAX_CHARS,
+              );
+            }),
+        }).pipe(
+          Effect.flatMap((runtime) => runtime.initialize()),
+          Effect.mapError((cause) =>
+            installationError(
+              "verify",
+              [
+                "The downloaded Antigravity runtime could not start in this environment.",
+                diagnosticTail.trim(),
+              ]
+                .filter(Boolean)
+                .join("\n\n"),
+              cause,
+            ),
+          ),
+        );
         if (
           initialized.agentInfo?.name !== "antigravity-acp" ||
           initialized.agentInfo.version !== expectedVersion ||

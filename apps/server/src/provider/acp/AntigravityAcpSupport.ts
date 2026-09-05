@@ -31,12 +31,15 @@ export interface AntigravityAcpRuntimeInput extends Omit<
   | "cancelBehavior"
   | "clientCapabilities"
   | "onStderr"
+  | "onStderrEnd"
   | "resumeMethod"
   | "transformSessionUpdate"
   | "transformStdout"
 > {
   readonly childProcessSpawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
   readonly onAuthorizationUrl?: (url: string) => Effect.Effect<void, EffectAcpErrors.AcpError>;
+  /** Receives native stderr lines with authorization messages excluded. */
+  readonly onDiagnostic?: (message: string) => Effect.Effect<void>;
   /**
    * Advertise `fs.readTextFile` and `fs.writeTextFile`. The agent then routes
    * workspace reads and writes through T3, which turns each edit into a
@@ -57,6 +60,10 @@ export const makeAntigravityAcpRuntime = Effect.fn("makeAntigravityAcpRuntime")(
   EffectAcpErrors.AcpError,
   Crypto.Crypto | Scope.Scope
 > {
+  const handleStderr = makeAntigravityStderrHandler({
+    ...(input.onAuthorizationUrl ? { onAuthorizationUrl: input.onAuthorizationUrl } : {}),
+    ...(input.onDiagnostic ? { onDiagnostic: input.onDiagnostic } : {}),
+  });
   const context = yield* Layer.build(
     AcpSessionRuntime.layer({
       ...input,
@@ -73,9 +80,8 @@ export const makeAntigravityAcpRuntime = Effect.fn("makeAntigravityAcpRuntime")(
       transformStdout: makeAntigravityStdoutTransform(
         input.onAuthorizationUrl ? { onAuthorizationUrl: input.onAuthorizationUrl } : {},
       ),
-      onStderr: makeAntigravityStderrHandler(
-        input.onAuthorizationUrl ? { onAuthorizationUrl: input.onAuthorizationUrl } : {},
-      ),
+      onStderr: handleStderr,
+      ...(input.onDiagnostic ? { onStderrEnd: handleStderr.flushDiagnostics } : {}),
       transformSessionUpdate: normalizeAntigravitySessionUpdate,
     }).pipe(
       Layer.provide(

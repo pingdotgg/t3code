@@ -424,6 +424,105 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
     }),
   );
 
+  it.effect.each([
+    {
+      name: "IPv6 diagnostic",
+      stderr: [
+        "Check failed: AddressFamilySupported(AF_INET6, &loopback6_ok)\n",
+        "Failed to create an AF_INET6 socket.\n",
+      ],
+      expected: "Failed to create an AF_INET6 socket.",
+    },
+    {
+      name: "bounded diagnostic tail",
+      stderr: [`discarded prefix ${"x".repeat(8_000)}\n`, "last startup diagnostic\n"],
+      expected: "last startup diagnostic",
+    },
+    {
+      name: "unterminated diagnostic",
+      stderr: ["Failed to create an AF_INET6 socket."],
+      expected: "Failed to create an AF_INET6 socket.",
+    },
+    {
+      name: "oversized diagnostic",
+      stderr: [`discarded prefix ${"x".repeat(65_536)} last startup diagnostic\n`],
+      expected: "last startup diagnostic",
+    },
+    {
+      name: "fragmented oversized authorization message",
+      stderr: [
+        `${ANTIGRAVITY_AUTH_BROWSER_MARKER}${"x".repeat(65_536)}`,
+        "secret-authorization-tail\nlast startup diagnostic",
+      ],
+      expected: "last startup diagnostic",
+    },
+    {
+      name: "no diagnostic",
+      stderr: [],
+      expected: "The downloaded Antigravity runtime could not start in this environment.",
+    },
+  ])("preserves startup diagnostics when validation exits before initialize: $name", (testCase) =>
+    Effect.gen(function* () {
+      const encoder = new TextEncoder();
+      const spawner = ChildProcessSpawner.make(
+        Effect.fn("test.spawnFailingAntigravityValidator")(function* (command) {
+          if (command._tag !== "StandardCommand") {
+            return yield* Effect.die("Expected one validation process.");
+          }
+          const helper = command.args[0] === "-e";
+          const exited = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
+          const exitObserved = yield* Deferred.make<void>();
+          const terminate = Deferred.succeed(exited, ChildProcessSpawner.ExitCode(1)).pipe(
+            Effect.asVoid,
+          );
+          yield* Effect.addFinalizer(() => terminate);
+          return ChildProcessSpawner.makeHandle({
+            pid: ChildProcessSpawner.ProcessId(helper ? 1 : 2),
+            exitCode: helper
+              ? Effect.succeed(ChildProcessSpawner.ExitCode(0))
+              : Deferred.await(exited).pipe(
+                  Effect.tap(() => Deferred.succeed(exitObserved, undefined)),
+                ),
+            isRunning: Deferred.isDone(exited).pipe(Effect.map((done) => !done)),
+            kill: () => terminate,
+            unref: Effect.succeed(Effect.void),
+            stdin: Sink.drain,
+            stdout: helper
+              ? Stream.empty
+              : Stream.fromEffect(terminate).pipe(Stream.flatMap(() => Stream.empty)),
+            stderr: helper
+              ? Stream.make(
+                  encoder.encode(
+                    `${ANTIGRAVITY_AUTH_BROWSER_MARKER}${encodeJsonString(command.args.at(-1))}\n`,
+                  ),
+                )
+              : Stream.fromEffect(Deferred.await(exitObserved)).pipe(
+                  Stream.flatMap(() =>
+                    Stream.fromIterable(testCase.stderr.map((line) => encoder.encode(line))),
+                  ),
+                ),
+            all: Stream.empty,
+            getInputFd: () => Sink.drain,
+            getOutputFd: () => Stream.empty,
+          });
+        }),
+      );
+      const { installation, stagingReleased } = yield* makeHarness({
+        previous: true,
+        useDefaultValidation: true,
+      }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
+      yield* installation.start;
+      const state = yield* terminalState(installation);
+      expect(state.phase).toBe("failed");
+      expect(state.message).toContain(testCase.expected);
+      expect(state.message?.length).toBeLessThan(4_200);
+      expect(state.message).not.toContain("discarded prefix");
+      expect(state.message).not.toContain("secret-authorization-tail");
+      yield* Deferred.await(stagingReleased);
+      yield* expectPreviousRelease(installation);
+    }),
+  );
+
   it.effect("accepts an encoded Content-Length when the body is compressed", () =>
     Effect.gen(function* () {
       // dl.google.com gzips the archive and reports the encoded size. The decoded

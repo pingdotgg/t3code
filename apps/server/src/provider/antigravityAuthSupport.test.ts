@@ -391,6 +391,60 @@ describe("Antigravity stdout compatibility", () => {
 });
 
 describe("Antigravity stderr compatibility", () => {
+  it.effect.each([
+    { name: "native", prefix: ANTIGRAVITY_AUTH_STDOUT_PREFIX },
+    { name: "browser", prefix: ANTIGRAVITY_AUTH_BROWSER_MARKER },
+    { name: "indented native", prefix: ` ${ANTIGRAVITY_AUTH_STDOUT_PREFIX}` },
+    { name: "indented browser", prefix: ` ${ANTIGRAVITY_AUTH_BROWSER_MARKER}` },
+    { name: "logged native", prefix: `INFO ${ANTIGRAVITY_AUTH_STDOUT_PREFIX}` },
+    { name: "logged browser", prefix: `INFO ${ANTIGRAVITY_AUTH_BROWSER_MARKER}` },
+    {
+      name: "long log prefix",
+      prefix: `${"logged prefix ".repeat(4_096)}${ANTIGRAVITY_AUTH_BROWSER_MARKER}`,
+    },
+    {
+      name: "long indentation",
+      prefix: `${" ".repeat(32_768)}${ANTIGRAVITY_AUTH_BROWSER_MARKER}`,
+    },
+  ])("discards oversized auth messages across fragment boundaries: $name", ({ prefix }) =>
+    Effect.gen(function* () {
+      const diagnostics: string[] = [];
+      const handleStderr = makeAntigravityStderrHandler({
+        onDiagnostic: (message) => Effect.sync(() => void diagnostics.push(message)),
+      });
+      yield* handleStderr(prefix.slice(0, 12));
+      yield* handleStderr(`${prefix.slice(12)}${"x".repeat(32_768)}`);
+      yield* handleStderr("secret-authorization-tail");
+      yield* handleStderr.flushDiagnostics;
+      yield* handleStderr("\nlast startup diagnostic");
+      yield* handleStderr.flushDiagnostics;
+      yield* handleStderr.flushDiagnostics;
+      expect(diagnostics).toEqual(["last startup diagnostic"]);
+    }),
+  );
+
+  it.effect("keeps sign-in URLs out of collected native diagnostics", () =>
+    Effect.gen(function* () {
+      const diagnostics: string[] = [];
+      const handleStderr = makeAntigravityStderrHandler({
+        onAuthorizationUrl: () => Effect.void,
+        onDiagnostic: (message) => Effect.sync(() => void diagnostics.push(message)),
+      });
+      yield* handleStderr("Failed to create an AF_");
+      yield* handleStderr("INET6 socket.\r\n");
+      yield* handleStderr(`${ANTIGRAVITY_AUTH_STDOUT_PREFIX}${authorizationUrl}\n`);
+      yield* handleStderr(
+        `${ANTIGRAVITY_AUTH_BROWSER_MARKER}${encodeUnknownJson(authorizationUrl)}\n`,
+      );
+      yield* handleStderr(` ${ANTIGRAVITY_AUTH_STDOUT_PREFIX}${authorizationUrl}\n`);
+      yield* handleStderr(` ${ANTIGRAVITY_AUTH_BROWSER_MARKER}${authorizationUrl}\n`);
+      yield* handleStderr(`${ANTIGRAVITY_AUTH_BROWSER_MARKER}${authorizationUrl}\n`);
+      yield* handleStderr(`INFO ${ANTIGRAVITY_AUTH_STDOUT_PREFIX}${authorizationUrl}\n`);
+      yield* handleStderr(`INFO ${ANTIGRAVITY_AUTH_BROWSER_MARKER}${authorizationUrl}\n`);
+      expect(diagnostics).toEqual(["Failed to create an AF_INET6 socket."]);
+    }),
+  );
+
   it.effect("forwards fragmented native sign-in URLs from runtime 1.1.1", () =>
     Effect.gen(function* () {
       const urls: string[] = [];
