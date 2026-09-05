@@ -156,20 +156,15 @@ export const make = Effect.gen(function* () {
 
       const fromCheckpointRef =
         input.fromTurnCount === 0
-          ? (() => {
-              const firstRun = projection.runs.find((run) => run.ordinal === 1);
-              const firstScope = projection.checkpointScopes.find(
-                (scope) => scope.runId === firstRun?.id && scope.kind === "root_run",
-              );
-              return firstScope === undefined
-                ? undefined
-                : checkpointRefForScopeOrdinal({
-                    scopeId: firstScope.id,
-                    ordinalWithinScope: 0,
-                  });
-            })()
-          : readyCheckpoints.find((checkpoint) => checkpoint.appRunOrdinal === input.fromTurnCount)
-              ?.ref;
+          ? checkpointRefForScopeOrdinal({
+              scopeId: toCheckpoint.scopeId,
+              ordinalWithinScope: 0,
+            })
+          : readyCheckpoints.find(
+              (checkpoint) =>
+                checkpoint.scopeId === toCheckpoint.scopeId &&
+                checkpoint.appRunOrdinal === input.fromTurnCount,
+            )?.ref;
       if (fromCheckpointRef === undefined) {
         return yield* new CheckpointRefUnavailableError({
           operation,
