@@ -265,7 +265,7 @@ describe("Codex MCP elicitation approvals", () => {
           oneOf: [
             { const: "once", title: "Allow once" },
             { const: "session", title: "Allow for this session" },
-            { const: "always", title: "Always allow Safari" },
+            { const: "always", title: "Allow once" },
           ],
         },
       },
@@ -273,14 +273,14 @@ describe("Codex MCP elicitation approvals", () => {
     },
   } satisfies EffectCodexSchema.McpServerElicitationRequestParams;
 
-  it("preserves the app name and advertised persistence choices", () => {
+  it("uses trusted labels for advertised persistence choices", () => {
     NodeAssert.deepStrictEqual(describeMcpElicitation(request), {
       appName: "Safari",
       options: [
         { decision: "cancel", label: "Cancel" },
         { decision: "decline", label: "Decline" },
-        { decision: "acceptForSession", label: "Allow for this session" },
-        { decision: "acceptAlways", label: "Always allow Safari" },
+        { decision: "acceptForSession", label: "Always allow this session" },
+        { decision: "acceptAlways", label: "Always allow" },
         { decision: "accept", label: "Approve" },
       ],
     });

@@ -319,14 +319,11 @@ function mcpElicitationFormFields(payload: EffectCodexSchema.McpServerElicitatio
   return payload.requestedSchema;
 }
 
-function mcpElicitationFieldOptions(field: typeof McpElicitationFormField.Type) {
+function mcpElicitationFieldValues(field: typeof McpElicitationFormField.Type) {
   if (field.oneOf) {
-    return field.oneOf.map((option) => ({ value: option.const, label: option.title }));
+    return field.oneOf.map((option) => option.const);
   }
-  return (field.enum ?? []).map((value, index) => ({
-    value,
-    label: field.enumNames?.[index],
-  }));
+  return field.enum ?? [];
 }
 
 function isMcpElicitationPersistenceField(
@@ -341,7 +338,7 @@ function isMcpElicitationPersistenceField(
   );
 }
 
-/** Returns the app and approval choices advertised by an MCP elicitation. */
+/** Returns the app and supported approval decisions for an MCP elicitation. */
 export function describeMcpElicitation(
   payload: EffectCodexSchema.McpServerElicitationRequestParams,
 ): { readonly appName: string; readonly options: ReadonlyArray<ProviderApprovalOption> } {
@@ -358,24 +355,24 @@ export function describeMcpElicitation(
     metadata?.connector_name ??
     metadata?.connectorName ??
     payload.serverName;
-  const persistenceOptions = new Map<McpElicitationPersistenceDecision, string>();
+  const persistenceDecisions = new Set<McpElicitationPersistenceDecision>();
   const persist = metadata?.persist;
   for (const value of typeof persist === "string" ? [persist] : (persist ?? [])) {
     const decision = mcpElicitationPersistenceDecision(value);
-    if (decision) persistenceOptions.set(decision, "");
+    if (decision) persistenceDecisions.add(decision);
   }
   if (metadata?.allowPersistentApproval) {
-    persistenceOptions.set("acceptAlways", "");
+    persistenceDecisions.add("acceptAlways");
   }
 
   const form = mcpElicitationFormFields(payload);
   for (const [key, field] of Object.entries(form?.properties ?? {})) {
-    for (const option of mcpElicitationFieldOptions(field)) {
-      const decision = mcpElicitationPersistenceDecision(option.value);
-      if (decision) persistenceOptions.set(decision, option.label ?? "");
+    for (const value of mcpElicitationFieldValues(field)) {
+      const decision = mcpElicitationPersistenceDecision(value);
+      if (decision) persistenceDecisions.add(decision);
     }
     if (field.type === "boolean" && isMcpElicitationPersistenceField(key, field)) {
-      persistenceOptions.set("acceptAlways", field.title ?? "");
+      persistenceDecisions.add("acceptAlways");
     }
   }
 
@@ -384,21 +381,21 @@ export function describeMcpElicitation(
     options: [
       { decision: "cancel", label: "Cancel" },
       { decision: "decline", label: "Decline" },
-      ...(persistenceOptions.has("acceptForSession") &&
+      ...(persistenceDecisions.has("acceptForSession") &&
       toMcpElicitationResponse(payload, "acceptForSession").action === "accept"
         ? [
             {
               decision: "acceptForSession" as const,
-              label: persistenceOptions.get("acceptForSession") || "Always allow this session",
+              label: "Always allow this session",
             },
           ]
         : []),
-      ...(persistenceOptions.has("acceptAlways") &&
+      ...(persistenceDecisions.has("acceptAlways") &&
       toMcpElicitationResponse(payload, "acceptAlways").action === "accept"
         ? [
             {
               decision: "acceptAlways" as const,
-              label: persistenceOptions.get("acceptAlways") || "Always allow",
+              label: "Always allow",
             },
           ]
         : []),
@@ -430,15 +427,14 @@ export function toMcpElicitationResponse(
   const content: Record<string, unknown> = {};
 
   for (const [key, field] of Object.entries(form?.properties ?? {})) {
-    const options = mcpElicitationFieldOptions(field);
-    const chosenOption = options.find((option) =>
+    const chosenValue = mcpElicitationFieldValues(field).find((value) =>
       persist
-        ? mcpElicitationPersistenceDecision(option.value) === decision
-        : /once|accept|approve|allow/i.test(option.value) &&
-          mcpElicitationPersistenceDecision(option.value) === null,
+        ? mcpElicitationPersistenceDecision(value) === decision
+        : /once|accept|approve|allow/i.test(value) &&
+          mcpElicitationPersistenceDecision(value) === null,
     );
-    if (chosenOption) {
-      content[key] = chosenOption.value;
+    if (chosenValue) {
+      content[key] = chosenValue;
     } else if (field.type === "boolean" && isMcpElicitationPersistenceField(key, field)) {
       content[key] = decision === "acceptAlways";
     } else if (field.default !== undefined && field.default !== null) {
