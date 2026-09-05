@@ -5,6 +5,7 @@ import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { scopedThreadKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
+  AuthOrchestrationOperateScope,
   AuthSourceControlWriteScope,
   type EnvironmentId,
   type PullRequestAction,
@@ -71,7 +72,7 @@ import type { ReviewCommentContext } from "~/reviewCommentContext";
 import { useProjects, useServerConfigs } from "~/state/entities";
 import { useEnvironments } from "~/state/environments";
 import { useEnvironmentQuery } from "~/state/query";
-import { useEnvironmentScope } from "~/state/session";
+import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
 import { useLiveRefresh } from "~/hooks/useLiveRefresh";
 import {
   pullRequestEnvironment,
@@ -934,6 +935,7 @@ export function PullRequestDetailPanel({
   const actingEnvironmentId = acting?.environmentId ?? environmentId;
   const checkoutRoot =
     acting?.workspaceRoot ?? detail?.workspaceRoot ?? project?.workspaceRoot ?? null;
+  const canOperateThread = useEnvironmentScope(actingEnvironmentId, AuthOrchestrationOperateScope);
   const prepareThread = usePreparePullRequestThreadAction({
     environmentId: actingEnvironmentId,
     cwd: checkoutRoot,
@@ -1052,7 +1054,8 @@ export function PullRequestDetailPanel({
   };
 
   const attachTarget = composerDraftTarget ?? null;
-  const canFixFindings = attachTarget !== null || prepareThread.isAllowed;
+  const canPrepareWorktree = prepareThread.isAllowed && canOperateThread;
+  const canFixFindings = attachTarget !== null || canPrepareWorktree;
   const handoffLabels = pullRequestHandoffLabels(attachTarget !== null);
 
   const writeTaskToComposer = (target: ScopedThreadRef | DraftId, task: ThreadTask) => {
@@ -1182,6 +1185,12 @@ export function PullRequestDetailPanel({
     }
     if (checkoutRoot === null) return;
     if (!prepareThread.isAllowed) return;
+    if (
+      mode === "worktree" &&
+      !readEnvironmentScope(actingEnvironmentId, AuthOrchestrationOperateScope)
+    ) {
+      return;
+    }
     setHandoff(kind);
     // The menu closes on the press and takes its "Preparing..." label with it, so this is the
     // only thing answering for the checkout. It carries no timeout of its own: a loading toast
@@ -1552,7 +1561,8 @@ export function PullRequestDetailPanel({
           <TooltipPopup>Check out this pull request</TooltipPopup>
         </Tooltip>
         <MenuPopup align="end" side="bottom">
-          <MenuItem onClick={() => startCheckout("worktree")}>
+          <MenuItem disabled={!canPrepareWorktree}
+                      onClick={() => startCheckout("worktree")}>
             <GitBranchIcon className="mt-1 size-3.5 shrink-0 self-start" />
             <span className="flex min-w-0 flex-col">
               <span>In a separate worktree</span>
@@ -1561,7 +1571,8 @@ export function PullRequestDetailPanel({
               </span>
             </span>
           </MenuItem>
-          <MenuItem onClick={() => startCheckout("local")}>
+          <MenuItem disabled={!prepareThread.isAllowed}
+                      onClick={() => startCheckout("local")}>
             <FolderGit2Icon className="mt-1 size-3.5 shrink-0 self-start" />
             <span className="flex min-w-0 flex-col">
               <span>In this repository</span>
