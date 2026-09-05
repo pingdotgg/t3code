@@ -69,6 +69,7 @@ import { WorkspacePageHeader } from "../WorkspacePageHeader";
 import { UsageLimitsSection } from "./UsageLimits";
 import { UsagePriceOverrides } from "./UsagePriceOverrides";
 import { UsageProviderChart, type UsageChartMetric } from "./UsageProviderChart";
+import { UsageBreakdownRow, UsageBreakdownTable } from "./UsageBreakdownTable";
 import { UsageCacheWriteCell } from "./UsageCacheWriteCell";
 import { UsageThreadTable } from "./UsageThreadTable";
 import { PROVIDER_ORDER, PROVIDER_PRESENTATION, providersWithUsage } from "./usageProviders";
@@ -642,126 +643,84 @@ export function UsagePage() {
                       }
                     />
                   ) : breakdown === "project" ? (
-                    <table className="w-full table-fixed text-sm">
-                      <colgroup>
-                        <col className="w-[32%]" />
-                        <col className="w-[17%]" />
-                        <col className="w-[17%]" />
-                        <col className="w-[17%]" />
-                        <col className="w-[17%]" />
-                      </colgroup>
-                      <thead>
-                        <tr className="border-b border-border text-left text-xs text-muted-foreground">
-                          <th className="py-2 font-normal">Project</th>
-                          <th className="py-2 text-right font-normal">Cost</th>
-                          <th className="py-2 text-right font-normal">Cache writes</th>
-                          <th className="py-2 text-right font-normal">Share</th>
-                          <th className="py-2 text-right font-normal">Tokens</th>
+                    <UsageBreakdownTable firstColumnHeading="Project">
+                      {breakdownProjects.length === 0 ? (
+                        <tr>
+                          <td colSpan={5} className="py-6 text-center text-muted-foreground">
+                            {merged.records === 0
+                              ? "No activity in this window."
+                              : "No project attribution in this window."}
+                          </td>
                         </tr>
-                      </thead>
-                      <tbody>
-                        {breakdownProjects.length === 0 ? (
-                          <tr>
-                            <td colSpan={5} className="py-6 text-center text-muted-foreground">
-                              {merged.records === 0
-                                ? "No activity in this window."
-                                : "No project attribution in this window."}
-                            </td>
-                          </tr>
-                        ) : (
-                          breakdownProjects.map((project) => (
-                            <tr
-                              key={project.projectKey ?? "\0"}
-                              className="border-b border-border/50 transition-colors hover:bg-muted/50"
-                            >
-                              <td className="py-2">
-                                {project.project === null ? (
-                                  <span className="text-muted-foreground">Outside projects</span>
-                                ) : (
-                                  <span className="block truncate text-foreground">
-                                    {project.project}
-                                  </span>
-                                )}
-                              </td>
-                              <td className="py-2 text-right text-foreground tabular-nums">
-                                {formatUsd(project.costUsd)}
-                              </td>
-                              <UsageCacheWriteCell
-                                cacheWriteTokens={project.cacheWriteTokens}
-                                cacheWriteUsd={project.cacheWriteUsd}
-                              />
-                              <td className="py-2 text-right text-muted-foreground tabular-nums">
-                                {formatPercent(
-                                  projectFilter === undefined
-                                    ? project.costShare
-                                    : breakdownProjectCostUsd === 0
-                                      ? 0
-                                      : project.costUsd / breakdownProjectCostUsd,
-                                )}
-                              </td>
-                              <td className="py-2 text-right text-muted-foreground tabular-nums">
-                                {formatTokens(project.totalTokens)}
-                              </td>
-                            </tr>
-                          ))
-                        )}
-                      </tbody>
-                    </table>
-                  ) : breakdown === "model" ? (
-                    <table className="w-full table-fixed text-sm">
-                      <colgroup>
-                        <col className="w-[32%]" />
-                        <col className="w-[17%]" />
-                        <col className="w-[17%]" />
-                        <col className="w-[17%]" />
-                        <col className="w-[17%]" />
-                      </colgroup>
-                      <thead>
-                        <tr className="border-b border-border text-left text-xs text-muted-foreground">
-                          <th className="py-2 font-normal">Model</th>
-                          <th className="py-2 text-right font-normal">Cost</th>
-                          <th className="py-2 text-right font-normal">Cache writes</th>
-                          <th className="py-2 text-right font-normal">Share</th>
-                          <th className="py-2 text-right font-normal">Tokens</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {breakdownModels.length === 0 ? (
-                          <tr>
-                            <td colSpan={5} className="py-6 text-center text-muted-foreground">
-                              No activity in this window.
-                            </td>
-                          </tr>
-                        ) : (
-                          breakdownModels.map((model) => (
-                            <tr
-                              key={`${model.provider}:${model.model}`}
-                              className="border-b border-border/50 transition-colors hover:bg-muted/50"
-                            >
-                              <td className="py-2 text-foreground">
-                                <span className="flex items-center gap-2">
-                                  <ProviderMark provider={model.provider} className="size-3.5" />
-                                  {model.model}
+                      ) : (
+                        breakdownProjects.map((project) => (
+                          <UsageBreakdownRow key={project.projectKey ?? "\0"}>
+                            <td className="py-2">
+                              {project.project === null ? (
+                                <span className="text-muted-foreground">Outside projects</span>
+                              ) : (
+                                <span className="block truncate text-foreground">
+                                  {project.project}
                                 </span>
-                              </td>
-                              <td className="py-2 text-right text-foreground tabular-nums">
-                                {formatUsd(model.costUsd)}
-                              </td>
-                              <UsageCacheWriteCell
-                                cacheWriteTokens={model.cacheWriteTokens}
-                                cacheWriteUsd={model.cacheWriteUsd}
-                              />
-                              <td className="py-2 text-right text-muted-foreground tabular-nums">
-                                {formatPercent(model.costShare)}
-                              </td>
-                              <td className="py-2 text-right text-muted-foreground tabular-nums">
-                                {formatTokens(model.totalTokens)}
-                              </td>
-                            </tr>
-                          ))
-                        )}
-                      </tbody>
-                    </table>
+                              )}
+                            </td>
+                            <td className="py-2 text-right text-foreground tabular-nums">
+                              {formatUsd(project.costUsd)}
+                            </td>
+                            <UsageCacheWriteCell
+                              cacheWriteTokens={project.cacheWriteTokens}
+                              cacheWriteUsd={project.cacheWriteUsd}
+                            />
+                            <td className="py-2 text-right text-muted-foreground tabular-nums">
+                              {formatPercent(
+                                projectFilter === undefined
+                                  ? project.costShare
+                                  : breakdownProjectCostUsd === 0
+                                    ? 0
+                                    : project.costUsd / breakdownProjectCostUsd,
+                              )}
+                            </td>
+                            <td className="py-2 text-right text-muted-foreground tabular-nums">
+                              {formatTokens(project.totalTokens)}
+                            </td>
+                          </UsageBreakdownRow>
+                        ))
+                      )}
+                    </UsageBreakdownTable>
+                  ) : breakdown === "model" ? (
+                    <UsageBreakdownTable firstColumnHeading="Model">
+                      {breakdownModels.length === 0 ? (
+                        <tr>
+                          <td colSpan={5} className="py-6 text-center text-muted-foreground">
+                            No activity in this window.
+                          </td>
+                        </tr>
+                      ) : (
+                        breakdownModels.map((model) => (
+                          <UsageBreakdownRow key={`${model.provider}:${model.model}`}>
+                            <td className="py-2 text-foreground">
+                              <span className="flex items-center gap-2">
+                                <ProviderMark provider={model.provider} className="size-3.5" />
+                                {model.model}
+                              </span>
+                            </td>
+                            <td className="py-2 text-right text-foreground tabular-nums">
+                              {formatUsd(model.costUsd)}
+                            </td>
+                            <UsageCacheWriteCell
+                              cacheWriteTokens={model.cacheWriteTokens}
+                              cacheWriteUsd={model.cacheWriteUsd}
+                            />
+                            <td className="py-2 text-right text-muted-foreground tabular-nums">
+                              {formatPercent(model.costShare)}
+                            </td>
+                            <td className="py-2 text-right text-muted-foreground tabular-nums">
+                              {formatTokens(model.totalTokens)}
+                            </td>
+                          </UsageBreakdownRow>
+                        ))
+                      )}
+                    </UsageBreakdownTable>
                   ) : (
                     <table className="w-full table-fixed text-sm">
                       <colgroup>

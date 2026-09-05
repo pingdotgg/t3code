@@ -112,21 +112,26 @@ function claudeCacheLine(
   })}\n`;
 }
 
-function codexRollout(sessionId: string, cwd: string, outputTokens: number): string {
+function codexRollout(
+  sessionId: string,
+  cwd: string,
+  outputTokens: number,
+  timestamp?: string,
+): string {
   return [
     {
       type: "session_meta",
-      timestamp: "2026-08-01T10:00:00Z",
+      timestamp: timestamp ?? "2026-08-01T10:00:00Z",
       payload: { type: "session_meta", id: sessionId, cwd },
     },
     {
       type: "turn_context",
-      timestamp: "2026-08-01T10:00:01Z",
+      timestamp: timestamp ?? "2026-08-01T10:00:01Z",
       payload: { type: "turn_context", model: "gpt-5.2-codex" },
     },
     {
       type: "event_msg",
-      timestamp: "2026-08-01T10:00:05Z",
+      timestamp: timestamp ?? "2026-08-01T10:00:05Z",
       payload: {
         type: "token_count",
         info: { last_token_usage: { input_tokens: 100, output_tokens: outputTokens } },
@@ -383,6 +388,96 @@ describe("UsageService", () => {
         ),
       );
     }).pipe(Effect.scoped),
+  );
+
+  it.live("keeps the summary scan-start cutoff in a cached thread breakdown", () =>
+    Effect.gen(function* () {
+      const { settings, home } = yield* setup;
+      const sessionsDir = NodePath.join(home, "codex", "sessions", "2026", "08", "01");
+      yield* Effect.promise(() => NodeFSP.mkdir(sessionsDir, { recursive: true }));
+      const targetPath = NodePath.join(sessionsDir, "rollout-upper-bound-target.jsonl");
+      const nowMs = Date.now();
+      const futureTimestamp = new Date(nowMs + 60_000).toISOString();
+      yield* Effect.promise(() =>
+        NodeFSP.writeFile(
+          targetPath,
+          codexRollout("target-session", "/work/target", 70, futureTimestamp),
+        ),
+      );
+      const sinceTime = new Date(nowMs - 5 * 60_000).toISOString();
+      const untilTime = new Date(nowMs + 5 * 60_000).toISOString();
+      const hourlyWindow = {
+        timeZone: "UTC",
+        sinceDay: UsageDay.make(sinceTime.slice(0, 10)),
+        untilDay: UsageDay.make(untilTime.slice(0, 10)),
+        sinceTime,
+        untilTime,
+        resolution: "hour" as const,
+      };
+
+      yield* Effect.gen(function* () {
+        const runtimeRepository = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
+        yield* runtimeRepository.upsert({
+          threadId: ThreadId.make("target-thread"),
+          providerName: "codex",
+          providerInstanceId: null,
+          adapterKey: "codex",
+          runtimeMode: "full-access",
+          status: "running",
+          lastSeenAt: new Date(nowMs).toISOString(),
+          resumeCursor: { threadId: "target-session" },
+          runtimePayload: null,
+        });
+        const service = yield* UsageService.make;
+        const summary = yield* service.readSummary(hourlyWindow);
+        const breakdown = yield* service.readThreadBreakdown({
+          ...hourlyWindow,
+          threadId: ThreadId.make("target-thread"),
+        });
+
+        assert.strictEqual(totalOutputTokens(summary), 0);
+        assert.strictEqual(breakdown.rows.length, 0);
+        assert.strictEqual(breakdown.readAt, summary.readAt);
+      }).pipe(
+        Effect.provide(
+          serviceLayers({ prefix: "usage-service-target-upper-bound-test", home, settings }),
+        ),
+      );
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("keeps daily coverage bounded by the reused source snapshot", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      yield* TestClock.setTime(Date.parse("2026-08-03T23:59:45Z"));
+      yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
+
+      yield* Effect.gen(function* () {
+        const service = yield* UsageService.make;
+        const first = yield* service.readSummary({
+          timeZone: "UTC",
+          sinceDay: UsageDay.make("2026-08-01"),
+          untilDay: UsageDay.make("2026-08-03"),
+          resolution: "day",
+        });
+        assert.strictEqual(first.coverage?.availableThroughDay, "2026-08-02");
+
+        yield* TestClock.adjust("30 seconds");
+        const second = yield* service.readSummary({
+          timeZone: "UTC",
+          sinceDay: UsageDay.make("2026-08-01"),
+          untilDay: UsageDay.make("2026-08-04"),
+          resolution: "day",
+        });
+
+        assert.strictEqual(second.readAt, first.readAt);
+        assert.strictEqual(second.coverage?.availableThroughDay, "2026-08-02");
+      }).pipe(
+        Effect.provide(
+          serviceLayers({ prefix: "usage-service-source-coverage-bound-test", home, settings }),
+        ),
+      );
+    }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
   );
 
   it.live("reprices unchanged transcripts when custom prices are added, edited, or removed", () =>

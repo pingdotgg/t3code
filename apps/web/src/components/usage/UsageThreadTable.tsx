@@ -22,6 +22,7 @@ import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Skeleton } from "../ui/skeleton";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { UsageBreakdownRow, UsageBreakdownTable } from "./UsageBreakdownTable";
 import { UsageCacheWriteCell } from "./UsageCacheWriteCell";
 import { PROVIDER_PRESENTATION } from "./usageProviders";
 
@@ -66,75 +67,57 @@ export function UsageThreadTable({
   }
 
   return (
-    <table className="w-full table-fixed text-sm">
-      <colgroup>
-        <col className="w-[32%]" />
-        <col className="w-[17%]" />
-        <col className="w-[17%]" />
-        <col className="w-[17%]" />
-        <col className="w-[17%]" />
-      </colgroup>
-      <thead>
-        <tr className="border-b border-border text-left text-xs text-muted-foreground">
-          <th className="py-2 font-normal">Thread</th>
-          <th className="py-2 text-right font-normal">Cost</th>
-          <th className="py-2 text-right font-normal">Cache writes</th>
-          <th className="py-2 text-right font-normal">Share</th>
-          <th className="py-2 text-right font-normal">Tokens</th>
+    <UsageBreakdownTable firstColumnHeading="Thread">
+      {rows.length === 0 ? (
+        <tr>
+          <td colSpan={5} className="py-6 text-center text-muted-foreground">
+            {unavailableEnvironments > 0
+              ? "Thread activity could not be loaded for this window."
+              : "No activity in this window."}
+          </td>
         </tr>
-      </thead>
-      <tbody>
-        {rows.length === 0 ? (
-          <tr>
-            <td colSpan={5} className="py-6 text-center text-muted-foreground">
-              {unavailableEnvironments > 0
-                ? "Thread activity could not be loaded for this window."
-                : "No activity in this window."}
-            </td>
-          </tr>
-        ) : (
-          rows.map((row) => {
-            const viewKey = `${row.environmentId}\u0000${row.key}`;
-            const open = openRows.has(viewKey);
-            const tokens =
-              row.totals.uncachedInputTokens +
-              row.totals.cachedInputTokens +
-              row.totals.cacheCreationTokens +
-              row.totals.outputTokens;
-            return (
-              <ThreadRowGroup
-                key={viewKey}
-                row={row}
-                open={open}
-                tokens={tokens}
-                share={totalCostUsd === 0 ? 0 : row.costUsd / totalCostUsd}
-                sinceDay={input.sinceDay}
-                untilDay={input.untilDay}
-                onToggle={() => toggleRow(viewKey)}
-              />
-            );
-          })
-        )}
-        {truncatedRows > 0 ? (
-          <tr>
-            <td colSpan={5} className="py-2 text-xs text-muted-foreground">
-              {truncatedRows === 1
-                ? "1 lower-cost thread row is grouped above."
-                : `${truncatedRows} lower-cost thread rows are grouped above.`}
-            </td>
-          </tr>
-        ) : null}
-        {unavailableEnvironments > 0 && rows.length > 0 ? (
-          <tr>
-            <td colSpan={5} className="py-2 text-xs text-muted-foreground">
-              {unavailableEnvironments === 1
-                ? "1 environment could not report threads."
-                : `${unavailableEnvironments} environments could not report threads.`}
-            </td>
-          </tr>
-        ) : null}
-      </tbody>
-    </table>
+      ) : (
+        rows.map((row) => {
+          const viewKey = `${row.environmentId}\u0000${row.key}`;
+          const open = openRows.has(viewKey);
+          const tokens =
+            row.totals.uncachedInputTokens +
+            row.totals.cachedInputTokens +
+            row.totals.cacheCreationTokens +
+            row.totals.outputTokens;
+          return (
+            <ThreadRowGroup
+              key={viewKey}
+              row={row}
+              open={open}
+              tokens={tokens}
+              share={totalCostUsd === 0 ? 0 : row.costUsd / totalCostUsd}
+              sinceDay={input.sinceDay}
+              untilDay={input.untilDay}
+              onToggle={() => toggleRow(viewKey)}
+            />
+          );
+        })
+      )}
+      {truncatedRows > 0 ? (
+        <tr>
+          <td colSpan={5} className="py-2 text-xs text-muted-foreground">
+            {truncatedRows === 1
+              ? "1 lower-cost thread row is grouped above."
+              : `${truncatedRows} lower-cost thread rows are grouped above.`}
+          </td>
+        </tr>
+      ) : null}
+      {unavailableEnvironments > 0 && rows.length > 0 ? (
+        <tr>
+          <td colSpan={5} className="py-2 text-xs text-muted-foreground">
+            {unavailableEnvironments === 1
+              ? "1 environment could not report threads."
+              : `${unavailableEnvironments} environments could not report threads.`}
+          </td>
+        </tr>
+      ) : null}
+    </UsageBreakdownTable>
   );
 }
 
@@ -160,7 +143,7 @@ function ThreadRowGroup({
   const threadId = row.threadId;
   return (
     <>
-      <tr className="border-b border-border/50 transition-colors hover:bg-muted/50 has-aria-expanded:bg-muted/50">
+      <UsageBreakdownRow className="has-aria-expanded:bg-muted/50">
         <td className="py-2 text-foreground">
           <div className="flex min-w-0 items-center gap-1">
             <Tooltip>
@@ -225,7 +208,7 @@ function ThreadRowGroup({
         <td className="py-2 text-right text-muted-foreground tabular-nums">
           {formatTokens(tokens)}
         </td>
-      </tr>
+      </UsageBreakdownRow>
       {open ? (
         <tr className="border-b border-border/50">
           <td colSpan={5} className="py-3 ps-9">

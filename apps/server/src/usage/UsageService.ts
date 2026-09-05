@@ -1107,6 +1107,7 @@ export const make = Effect.gen(function* () {
 
   interface SourceSnapshot {
     readonly completedAtMs: number;
+    readonly recordUpperBoundMs: number;
     readonly windowStartMs: number;
     readonly sourceKey: string;
     readonly dirs: readonly ScannedDir[];
@@ -1180,6 +1181,7 @@ export const make = Effect.gen(function* () {
 
   const getSourceSnapshot = Effect.fn("UsageService.getSourceSnapshot")(function* (
     windowStartMs: number,
+    recordUpperBoundMs: number,
     refreshToken: string | undefined,
     settings: ServerSettingsValue,
   ) {
@@ -1229,6 +1231,7 @@ export const make = Effect.gen(function* () {
         const completedAtMs = Math.max(now, (currentSnapshot?.completedAtMs ?? now - 1) + 1);
         const nextSnapshot = {
           completedAtMs,
+          recordUpperBoundMs,
           windowStartMs: scanWindowStartMs,
           sourceKey,
           dirs,
@@ -1299,7 +1302,6 @@ export const make = Effect.gen(function* () {
     }
 
     const startedAtMs = yield* Clock.currentTimeMillis;
-    const completeThroughDay = previousCalendarDay(input.timeZone, startedAtMs);
     yield* ensureScanCacheLoaded;
 
     const hostId = NodeOS.hostname();
@@ -1312,9 +1314,18 @@ export const make = Effect.gen(function* () {
     }
     const windowStartMs =
       (hourlyWindow?.sinceTimeMs ?? DateTime.toEpochMillis(windowStart.value)) - MTIME_SLACK_MS;
-    const currentSnapshot = yield* getSourceSnapshot(windowStartMs, input.refreshToken, settings);
+    const currentSnapshot = yield* getSourceSnapshot(
+      windowStartMs,
+      startedAtMs,
+      input.refreshToken,
+      settings,
+    );
     const scannedDirs = currentSnapshot.dirs;
     const sourceReadAtMs = currentSnapshot.completedAtMs;
+    const completeThroughDay = previousCalendarDay(
+      input.timeZone,
+      currentSnapshot.recordUpperBoundMs,
+    );
 
     const resolveProject = yield* resolveProjects();
     const aggregator = new UsageAggregator({
@@ -1377,7 +1388,7 @@ export const make = Effect.gen(function* () {
           // The scan-start instant is the upper bound for both the summary and
           // the durable ledger. Records appended while the walk is in flight
           // belong to the next refresh.
-          if (record.timestampMs >= startedAtMs) continue;
+          if (record.timestampMs >= currentSnapshot.recordUpperBoundMs) continue;
 
           // The viewer aggregate and canonical ledger share the same
           // directory-scoped, final-snapshot dedupe decision above.
@@ -1387,7 +1398,12 @@ export const make = Effect.gen(function* () {
           // viewer zone. Keep quarter-hour cells so IANA offsets at :30/:45
           // and rolling windows aligned to the half hour can be rebucketed
           // without retaining every transcript record.
-          if (record.timestampMs < ledgerStartMs || record.timestampMs >= startedAtMs) continue;
+          if (
+            record.timestampMs < ledgerStartMs ||
+            record.timestampMs >= currentSnapshot.recordUpperBoundMs
+          ) {
+            continue;
+          }
 
           const resolvedProject = resolveProject?.(record.cwd) ?? null;
           const projectAttribution =
@@ -1470,12 +1486,18 @@ export const make = Effect.gen(function* () {
           ? input.untilDay
           : UsageDay.make(completeThroughDay)
         : UsageDay.make(
-            makeDayFormatter(input.timeZone)(Math.min(hourlyWindow.untilTimeMs, startedAtMs) - 1),
+            makeDayFormatter(input.timeZone)(
+              Math.min(hourlyWindow.untilTimeMs, currentSnapshot.recordUpperBoundMs) - 1,
+            ),
           );
     const availableThroughTime =
       hourlyWindow === null
         ? null
-        : DateTime.formatIso(DateTime.makeUnsafe(Math.min(hourlyWindow.untilTimeMs, startedAtMs)));
+        : DateTime.formatIso(
+            DateTime.makeUnsafe(
+              Math.min(hourlyWindow.untilTimeMs, currentSnapshot.recordUpperBoundMs),
+            ),
+          );
 
     return {
       summary: {
@@ -2027,12 +2049,14 @@ export const make = Effect.gen(function* () {
       provider: UsageProviderKind,
       filePath: string,
       records: readonly UsageRecord[],
+      recordUpperBoundMs?: number,
     ) => {
       if (records.length === 0) return;
       const isSubagent =
         provider === "claude" && path.basename(path.dirname(filePath)) === "subagents";
       const agentId = isSubagent ? path.basename(filePath, ".jsonl") : null;
       for (const record of records) {
+        if (recordUpperBoundMs !== undefined && record.timestampMs >= recordUpperBoundMs) continue;
         const sessionKey =
           record.sessionId.length > 0
             ? `${provider}:${record.sessionId}`
@@ -2065,7 +2089,7 @@ export const make = Effect.gen(function* () {
             continue;
           }
           livePaths.add(file.path);
-          addRecords(provider, file.path, file.records);
+          addRecords(provider, file.path, file.records, currentSnapshot.recordUpperBoundMs);
         }
       }
     } else {
