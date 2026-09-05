@@ -94,6 +94,7 @@ const makeHarness = Effect.fn("TestThreadAtoms.makeHarness")(function* (options?
   readonly snapshot?: OrchestrationThreadDetailSnapshot;
   readonly connected?: boolean;
   readonly httpNone?: boolean;
+  readonly initialLoad?: Effect.Effect<Option.Option<OrchestrationThreadDetailSnapshot>>;
   readonly stream?: Stream.Stream<OrchestrationThreadStreamItem, Error>;
 }) {
   const clock = yield* Clock.Clock;
@@ -221,8 +222,12 @@ const makeHarness = Effect.fn("TestThreadAtoms.makeHarness")(function* (options?
             if (window?.beforeCursor === undefined) {
               return Effect.sync(() => {
                 httpLoads += 1;
-                return options?.httpNone ? Option.none() : Option.some(snapshot);
-              });
+              }).pipe(
+                Effect.andThen(
+                  options?.initialLoad ??
+                    Effect.succeed(options?.httpNone ? Option.none() : Option.some(snapshot)),
+                ),
+              );
             }
             return Effect.gen(function* () {
               const response =
@@ -290,6 +295,27 @@ describe("createEnvironmentThreadStateAtoms", () => {
     vi.useRealTimers();
     vi.restoreAllMocks();
   });
+
+  it.effect("exposes snapshot loader defects before the RPC subscription starts", () =>
+    Effect.gen(function* () {
+      const completed = yield* Deferred.make<void>();
+      const h = yield* makeHarness({
+        connected: true,
+        initialLoad: Effect.die(
+          new Error("SYNTHETIC_RAW_SNAPSHOT_DEFECT_SHOULD_NOT_REACH_THREAD_UI"),
+        ).pipe(Effect.ensuring(Deferred.succeed(completed, undefined))),
+      });
+      const unmount = h.registry.mount(h.stateAtom);
+      yield* Deferred.await(completed);
+      yield* TestClock.adjust("1 second");
+      const failed = h.registry.get(h.stateAtom);
+      expect(failed.status).toBe("empty");
+      expect(failed.error).toEqual(Option.some("Could not synchronize the thread."));
+      expect(failed.data).toEqual(Option.none());
+      expect(h.counts()).toEqual({ httpLoads: 1, diskLoads: 1, opened: 0, active: 0 });
+      unmount();
+    }),
+  );
 
   it.effect.each([
     { kind: "protocol", httpNone: true },
