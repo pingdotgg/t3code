@@ -384,7 +384,7 @@ export class VoiceInputController {
   }
 
   handleRecorderStatus(status: VoiceRecorderStatus): Promise<void> | void {
-    if (this.state.phase !== "recording") return;
+    if (this.state.phase !== "recording" || this.streaming) return;
     if (status.hasError) {
       return this.interruptRecording(
         status.error ?? "Voice recording was interrupted.",

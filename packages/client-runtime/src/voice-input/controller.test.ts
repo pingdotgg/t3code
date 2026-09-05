@@ -665,6 +665,31 @@ function createLiveHarness() {
 }
 
 describe("streaming draft ownership", () => {
+  it("ignores idle file-recorder status while native streaming owns capture", async () => {
+    const h = createLiveHarness();
+    await h.controller.start();
+
+    await h.controller.handleRecorderStatus({
+      isFinished: false,
+      hasError: true,
+      error: "Idle recorder error",
+      url: null,
+    });
+    await h.controller.handleRecorderStatus({
+      isFinished: true,
+      hasError: false,
+      error: null,
+      url: "file:///idle-recorder.m4a",
+    });
+    h.emit("still speaking");
+
+    expect(h.controller.currentState.phase).toBe("recording");
+    expect(h.text).toBe("hello still speaking");
+    expect(h.stop).not.toHaveBeenCalled();
+    expect(h.cancel).not.toHaveBeenCalled();
+    h.controller.cancel();
+  });
+
   it("revises interim words in place and flushes final punctuation once", async () => {
     const h = createLiveHarness();
     await h.controller.start();
