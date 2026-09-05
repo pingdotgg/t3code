@@ -3,7 +3,11 @@ import type {
   AtomCommandOptions,
   AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
-import { AuthOrchestrationOperateScope, type EnvironmentId } from "@t3tools/contracts";
+import {
+  AuthOrchestrationOperateScope,
+  EnvironmentAuthorizationError,
+  type EnvironmentId,
+} from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { useCallback } from "react";
@@ -15,13 +19,18 @@ import { useAtomCommand } from "./use-atom-command";
 export function useOrchestrationCommand<W extends { readonly environmentId: EnvironmentId }, A, E>(
   command: AtomCommand<W, A, E>,
   options?: string | AtomCommandOptions,
-): (value: W) => Promise<AtomCommandResult<A, E | Error>> {
+): (value: W) => Promise<AtomCommandResult<A, E | EnvironmentAuthorizationError>> {
   const run = useAtomCommand(command, options);
   return useCallback(
-    async (value: W): Promise<AtomCommandResult<A, E | Error>> => {
+    async (value: W): Promise<AtomCommandResult<A, E | EnvironmentAuthorizationError>> => {
       if (!readEnvironmentScope(value.environmentId, AuthOrchestrationOperateScope)) {
         return AsyncResult.failure(
-          Cause.fail(new Error("This connection cannot change threads or projects.")),
+          Cause.fail(
+            new EnvironmentAuthorizationError({
+              requiredScope: AuthOrchestrationOperateScope,
+              message: "This connection cannot change threads or projects.",
+            }),
+          ),
         );
       }
       return run(value);

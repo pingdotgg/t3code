@@ -2,6 +2,7 @@ import {
   AuthOrchestrationOperateScope,
   EDITORS,
   EditorId,
+  EnvironmentAuthorizationError,
   EnvironmentId,
 } from "@t3tools/contracts";
 import {
@@ -84,7 +85,7 @@ export function useOpenInPreferredEditor(
         | OpenInEditorError
         | PreferredEditorEnvironmentRequiredError
         | PreferredEditorUnavailableError
-        | Error
+        | EnvironmentAuthorizationError
       >
     > => {
       if (environmentId === null) {
@@ -98,7 +99,12 @@ export function useOpenInPreferredEditor(
       }
       if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) {
         return AsyncResult.failure(
-          Cause.fail(new Error("This connection cannot open an editor on this environment.")),
+          Cause.fail(
+            new EnvironmentAuthorizationError({
+              requiredScope: AuthOrchestrationOperateScope,
+              message: "This connection cannot open an editor on this environment.",
+            }),
+          ),
         );
       }
       const editor = resolveAndPersistPreferredEditor(availableEditors);

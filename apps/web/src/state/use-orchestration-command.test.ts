@@ -1,7 +1,12 @@
 import type { AtomCommand } from "@t3tools/client-runtime/state/runtime";
-import { AuthOrchestrationOperateScope, EnvironmentId } from "@t3tools/contracts";
+import {
+  AuthOrchestrationOperateScope,
+  EnvironmentAuthorizationError,
+  EnvironmentId,
+} from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/unstable/reactivity";
-import { beforeEach, expect, it, vi } from "vite-plus/test";
+import { assert, beforeEach, expect, it, vi } from "vite-plus/test";
 
 const state = vi.hoisted(() => ({
   allowed: new Set<string>(),
@@ -38,7 +43,11 @@ beforeEach(() => {
 it("checks the command's environment instead of borrowing the primary grant", async () => {
   state.allowed.add(first);
   const mutate = useOrchestrationCommand(command, { reportFailure: false });
-  expect((await mutate(target(second)))._tag).toBe("Failure");
+  const result = await mutate(target(second));
+  assert(result._tag === "Failure");
+  const error = Cause.squash(result.cause);
+  expect(error).toBeInstanceOf(EnvironmentAuthorizationError);
+  expect(error).toMatchObject({ requiredScope: AuthOrchestrationOperateScope });
   expect(state.run).not.toHaveBeenCalled();
 
   expect(await mutate(target(first))).toMatchObject({ _tag: "Success", value: "receipt" });
