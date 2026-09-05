@@ -66,7 +66,7 @@ describe("EnvironmentLinks", () => {
 
       expect(error).toMatchObject({
         _tag: "EnvironmentLinkUserListPersistenceError",
-        operation: "list-delivery-users",
+        message: "Environment link user query 'list-delivery-users' failed for environment 'env-1'",
         environmentId: "env-1",
       });
       expect(error.cause).toBe(cause);
