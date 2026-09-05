@@ -16,7 +16,6 @@ import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
-import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -681,12 +680,17 @@ const make = Effect.gen(function* () {
               active: thread.activeRunId !== null,
               callingThread: thread.id === scope.threadId,
             }));
-          const statusExit = yield* Effect.exit(readWorkspaceStatus(workspacePath));
-          if (Exit.isFailure(statusExit)) {
+          const statusResult = yield* readWorkspaceStatus(workspacePath).pipe(
+            Effect.match({
+              onFailure: (error) => ({ _tag: "failure" as const, error }),
+              onSuccess: (status) => ({ _tag: "success" as const, status }),
+            }),
+          );
+          if (statusResult._tag === "failure") {
             const exists = yield* fileSystem
               .exists(workspacePath)
               .pipe(Effect.orElseSucceed(() => false));
-            const detail = errorMessage(Cause.squash(statusExit.cause));
+            const detail = errorMessage(statusResult.error);
             yield* Effect.logWarning("unable to read listed worktree status", {
               workspacePath,
               detail,
@@ -704,7 +708,7 @@ const make = Effect.gen(function* () {
               bindingCount: bindings.length,
             } as const;
           }
-          const actual = statusExit.value;
+          const actual = statusResult.status;
           if (!actual.isRepo) {
             const exists = yield* fileSystem
               .exists(workspacePath)

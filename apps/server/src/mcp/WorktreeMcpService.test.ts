@@ -194,6 +194,7 @@ interface HarnessOptions {
   >;
   readonly worktreeInventoryFailsFor?: ReadonlySet<string>;
   readonly localStatusFailsOnCall?: number;
+  readonly localStatusFailure?: "typed" | "defect" | "interrupt";
   readonly projectThreads?: ReadonlyArray<{
     readonly id: ThreadId;
     readonly title: string;
@@ -449,6 +450,15 @@ const makeHarness = (options: HarnessOptions = {}) => {
   let localStatusCallCount = 0;
   const localStatus = vi.fn((input: { readonly cwd: string }) => {
     localStatusCallCount += 1;
+    if (localStatusCallCount === 1 && options.localStatusFailure === "defect") {
+      return Effect.die(new Error("simulated local status defect"));
+    }
+    if (localStatusCallCount === 1 && options.localStatusFailure === "interrupt") {
+      return Effect.failCause(Cause.interrupt()) as never;
+    }
+    if (localStatusCallCount === 1 && options.localStatusFailure === "typed") {
+      return Effect.fail("simulated local status failure") as never;
+    }
     if (options.localStatusFailsOnCall === localStatusCallCount) {
       return Effect.fail("simulated local status failure") as never;
     }
@@ -1485,6 +1495,31 @@ describe("t3_worktree_list", () => {
       expect(harness.localStatus).toHaveBeenCalledTimes(1);
     });
   });
+
+  it.effect("reports typed status failures without swallowing defects or interruption", () =>
+    Effect.gen(function* () {
+      const typedResult = yield* runList(makeHarness({ localStatusFailure: "typed" }), {
+        limit: 1,
+      });
+      expect(typedResult.worktrees[0]).toMatchObject({ availability: "missing" });
+
+      const defectExit = yield* Effect.exit(
+        runList(makeHarness({ localStatusFailure: "defect" }), { limit: 1 }),
+      );
+      expect(Exit.isFailure(defectExit)).toBe(true);
+      if (Exit.isFailure(defectExit)) {
+        expect(Cause.hasDies(defectExit.cause)).toBe(true);
+      }
+
+      const interruptExit = yield* Effect.exit(
+        runList(makeHarness({ localStatusFailure: "interrupt" }), { limit: 1 }),
+      );
+      expect(Exit.isFailure(interruptExit)).toBe(true);
+      if (Exit.isFailure(interruptExit)) {
+        expect(Cause.hasInterruptsOnly(interruptExit.cause)).toBe(true);
+      }
+    }),
+  );
 
   it.effect("marks a stale checkout missing when status reports a non-repository path", () => {
     const stalePath = "/worktrees/project/stale";
