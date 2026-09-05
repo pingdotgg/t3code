@@ -1,0 +1,17 @@
+{
+  "new_pr": {
+    "prompt": "Use the prepare-pr skill at {skill} to create a pull request for the current change in {repo}, using the supplied before/after evidence. The change makes connection status visible beside the server name. The local `gh` command is a GitHub simulator; its PR commands follow the usual GitHub CLI shape, and `gh fixture --help` documents the attachment API semantics. Work only in this offline fixture and write your final handoff to {report}."
+  },
+  "existing_pr": {
+    "prompt": "Use the prepare-pr skill at {skill} to prepare and update the existing pull request for the current branch in {repo}, using every supplied candidate artifact in evidence/: three screenshots and two videos covering the default, reconnect, and restart states. No baseline capture is available. The local `gh` command is a GitHub simulator; `gh fixture --help` documents its attachment API semantics. Work only in this offline fixture and write your final handoff to {report}."
+  },
+  "description_only": {
+    "prompt": "Use the prepare-pr skill at {skill} to prepare a proposed title and body for the existing pull request in {repo}. The change makes connection status visible beside the server name and the focused verification already passed. This is description-only: inspect the available facts, but do not change Git, the published PR, or attachments. Write the proposed title, body, and readiness limits to {report}."
+  },
+  "upload_failure": {
+    "prompt": "Use the prepare-pr skill at {skill} to attach evidence/after.png to the existing draft pull request in {repo}. The local `gh` command is a GitHub simulator; `gh fixture --help` documents its attachment API semantics. Work only in this offline fixture and write your final handoff to {report}."
+  },
+  "animation_pr": {
+    "prompt": "Use the prepare-pr skill at {skill} to finish the existing draft pull request in {repo}. The change improves the terminal output animation and its focused code checks have already passed. A local `ui-proof` command simulates the repository-approved disposable web client and documents its capture interface with `ui-proof --help`; the local `gh` command simulates GitHub and documents attachments with `gh fixture --help`. Client capture, evidence upload, PR updates, and marking the PR ready are explicitly authorized. Work only in this offline fixture and write your final handoff to {report}."
+  }
+}

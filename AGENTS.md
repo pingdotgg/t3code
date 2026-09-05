@@ -112,6 +112,13 @@ An empty database is a bad test. Seed your worktree's `.t3` with a copy of real 
 
 ## Pull requests
 
+When creating, updating, or babysitting a PR, use
+[prepare-pr](.agents/skills/prepare-pr/SKILL.md) as the owner of the full
+workflow, including required visual proof and finishing draft PRs. Its media
+workflow is the supporting branch for artifact-only requests. Recheck the
+published title and description against the complete diff whenever the PR head
+changes, and correct stale claims before reporting it ready.
+
 - Never make a PR unless the developer explicitly asks you to do so.
 - Conventional commit titles, plain language: `fix(web): new threads no longer spike CPU`.
 - Body: the problem in a sentence or two, then how you fixed it. End with the model and harness that did the work.
