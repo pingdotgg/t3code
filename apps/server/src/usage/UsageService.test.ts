@@ -8,6 +8,7 @@ import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 import { UsageDay, type UsageSummaryInput } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as Duration from "effect/Duration";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -21,6 +22,7 @@ import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import * as ServerConfig from "../config.ts";
 import { ProjectionProjectRepositoryLive } from "../persistence/Layers/ProjectionProjects.ts";
 import { ProjectionThreadRepositoryLive } from "../persistence/Layers/ProjectionThreads.ts";
+import { PersistenceSqlError } from "../persistence/Errors.ts";
 import { ProjectionProjectRepository } from "../persistence/Services/ProjectionProjects.ts";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import * as ProviderSessionRuntime from "../persistence/ProviderSessionRuntime.ts";
@@ -131,6 +133,36 @@ function totalOutputTokens(summary: { buckets: readonly { totals: { outputTokens
 }
 
 describe("UsageService", () => {
+  it.live("does not hide a project repository defect as unknown attribution", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
+      const defect = new Error("project repository defect");
+      const repositoryDefect = Effect.die(defect);
+      const defectRepository: ProjectionProjectRepository["Service"] = {
+        upsert: () => repositoryDefect,
+        getById: () => repositoryDefect,
+        listAll: () => repositoryDefect,
+        deleteById: () => repositoryDefect,
+      };
+      const exit = yield* Effect.gen(function* () {
+        const service = yield* UsageService.make;
+        return yield* Effect.exit(service.readSummary(WINDOW));
+      }).pipe(
+        Effect.provide(
+          serviceLayers({
+            prefix: "usage-service-project-defect-test",
+            home,
+            settings,
+            projectRepository: defectRepository,
+          }),
+        ),
+      );
+      assert.isTrue(Exit.isFailure(exit));
+      if (Exit.isFailure(exit)) assert.strictEqual(Cause.squash(exit.cause), defect);
+    }).pipe(Effect.scoped),
+  );
+
   it.live("reprices unchanged transcripts when custom prices are added, edited, or removed", () =>
     Effect.gen(function* () {
       const { transcript, settings, home } = yield* setup;
@@ -218,7 +250,9 @@ describe("UsageService", () => {
       yield* Effect.promise(() =>
         NodeFSP.writeFile(transcript, claudeLine(1, 5, "claude-fable-5", "/work/app")),
       );
-      const repositoryFailure = Effect.die(new Error("project repository unavailable"));
+      const repositoryFailure = Effect.fail(
+        new PersistenceSqlError({ operation: "ProjectionProjectRepository.listAll:test" }),
+      );
       const projectRepository: ProjectionProjectRepository["Service"] = {
         upsert: () => repositoryFailure,
         getById: () => repositoryFailure,
