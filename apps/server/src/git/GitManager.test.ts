@@ -2543,6 +2543,51 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
     }),
   );
 
+  it.effect("preserves the exact index when commit message generation fails", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "README.md"), "staged before commit flow\n");
+      yield* runGit(repoDir, ["add", "README.md"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "new-file.txt"), "new\n");
+
+      const indexPath = NodePath.join(repoDir, ".git", "index");
+      const originalIndex = NodeFS.readFileSync(indexPath);
+      const headBefore = yield* runGit(repoDir, ["rev-parse", "HEAD"]).pipe(
+        Effect.map((result) => result.stdout.trim()),
+      );
+      const { manager } = yield* makeManager({
+        textGeneration: {
+          generateCommitMessage: () =>
+            Effect.fail(
+              new TextGenerationError({
+                operation: "generateCommitMessage",
+                detail: "API key is not configured",
+              }),
+            ),
+        },
+      });
+
+      const error = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "commit",
+      }).pipe(Effect.flip);
+
+      expect(error._tag).toBe("TextGenerationError");
+      expect(NodeFS.readFileSync(indexPath).equals(originalIndex)).toBe(true);
+      expect(
+        yield* runGit(repoDir, ["rev-parse", "HEAD"]).pipe(
+          Effect.map((result) => result.stdout.trim()),
+        ),
+      ).toBe(headBefore);
+      const status = yield* runGit(repoDir, ["status", "--porcelain"]).pipe(
+        Effect.map((result) => result.stdout),
+      );
+      expect(status).toContain("M  README.md");
+      expect(status).toContain("?? new-file.txt");
+    }),
+  );
+
   it.effect("creates a commit when working tree is dirty", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");

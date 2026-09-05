@@ -1836,48 +1836,128 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       })),
     );
 
+  const stageCommitChanges = Effect.fn("stageCommitChanges")(function* (
+    cwd: string,
+    filePaths: readonly string[] | undefined,
+    env: NodeJS.ProcessEnv | undefined,
+  ) {
+    if (filePaths && filePaths.length > 0) {
+      const head = yield* executeGit(
+        "GitVcsDriver.stageCommitChanges.resolveHead",
+        cwd,
+        ["rev-parse", "--verify", "HEAD"],
+        { allowNonZeroExit: true },
+      );
+      yield* runGit(
+        "GitVcsDriver.stageCommitChanges.reset",
+        cwd,
+        head.exitCode === 0
+          ? env?.GIT_INDEX_FILE
+            ? ["read-tree", "HEAD"]
+            : ["reset"]
+          : ["read-tree", "--empty"],
+        { env },
+      );
+      yield* runGit(
+        "GitVcsDriver.stageCommitChanges.addSelected",
+        cwd,
+        ["--literal-pathspecs", "add", "-A", "--force", "--", ...filePaths],
+        { env },
+      );
+    } else {
+      yield* runGit("GitVcsDriver.stageCommitChanges.addAll", cwd, ["add", "-A"], { env });
+    }
+  });
+
   const prepareCommitContext: GitVcsDriver.GitVcsDriver["Service"]["prepareCommitContext"] =
     Effect.fn("prepareCommitContext")(function* (cwd, filePaths) {
-      if (filePaths && filePaths.length > 0) {
-        yield* runGit("GitVcsDriver.prepareCommitContext.reset", cwd, ["reset"]).pipe(
-          Effect.catchTags({
-            GitCommandError: () => Effect.void,
-          }),
-        );
-        yield* runGit("GitVcsDriver.prepareCommitContext.addSelected", cwd, [
-          "--literal-pathspecs",
-          "add",
-          "-A",
-          "--",
-          ...filePaths,
-        ]);
-      } else {
-        yield* runGit("GitVcsDriver.prepareCommitContext.addAll", cwd, ["add", "-A"]);
-      }
+      return yield* Effect.scoped(
+        Effect.gen(function* () {
+          const tempDirectory = yield* fileSystem
+            .makeTempDirectoryScoped({ prefix: "t3code-git-index-" })
+            .pipe(
+              Effect.mapError(
+                (cause) =>
+                  new GitCommandError({
+                    ...gitCommandContext({
+                      operation: "GitVcsDriver.prepareCommitContext.createTemporaryIndex",
+                      cwd,
+                      args: ["diff", "--cached"],
+                    }),
+                    detail: "Failed to create a temporary Git index.",
+                    cause,
+                  }),
+              ),
+            );
+          const temporaryIndexPath = path.join(tempDirectory, "index");
+          const env = { GIT_INDEX_FILE: temporaryIndexPath } satisfies NodeJS.ProcessEnv;
+          const rawIndexPath = yield* runGitStdout(
+            "GitVcsDriver.prepareCommitContext.resolveIndex",
+            cwd,
+            ["rev-parse", "--git-path", "index"],
+          ).pipe(Effect.map((stdout) => stdout.trim()));
+          const indexPath = path.isAbsolute(rawIndexPath)
+            ? rawIndexPath
+            : path.resolve(cwd, rawIndexPath);
+          const mapIndexFileError = (cause: PlatformError.PlatformError) =>
+            new GitCommandError({
+              ...gitCommandContext({
+                operation: "GitVcsDriver.prepareCommitContext.copyIndex",
+                cwd,
+                args: ["rev-parse", "--git-path", "index"],
+              }),
+              detail: "Failed to copy the Git index for commit message generation.",
+              cause,
+            });
+          const indexExists = yield* fileSystem
+            .exists(indexPath)
+            .pipe(Effect.mapError(mapIndexFileError));
+          if (indexExists) {
+            yield* fileSystem
+              .copyFile(indexPath, temporaryIndexPath)
+              .pipe(Effect.mapError(mapIndexFileError));
+          } else {
+            const head = yield* executeGit(
+              "GitVcsDriver.prepareCommitContext.resolveHead",
+              cwd,
+              ["rev-parse", "--verify", "HEAD"],
+              { allowNonZeroExit: true },
+            );
+            yield* runGit(
+              "GitVcsDriver.prepareCommitContext.readTree",
+              cwd,
+              head.exitCode === 0 ? ["read-tree", "HEAD"] : ["read-tree", "--empty"],
+              { env },
+            );
+          }
+          yield* stageCommitChanges(cwd, filePaths, env);
 
-      const stagedSummary = yield* runGitStdout(
-        "GitVcsDriver.prepareCommitContext.stagedSummary",
-        cwd,
-        ["diff", "--cached", "--name-status"],
-      ).pipe(Effect.map((stdout) => stdout.trim()));
-      if (stagedSummary.length === 0) {
-        return null;
-      }
+          const stagedSummary = yield* runGitStdoutWithOptions(
+            "GitVcsDriver.prepareCommitContext.stagedSummary",
+            cwd,
+            ["diff", "--cached", "--name-status"],
+            { env },
+          ).pipe(Effect.map((stdout) => stdout.trim()));
+          if (stagedSummary.length === 0) {
+            return null;
+          }
 
-      const stagedPatch = yield* runGitStdoutWithOptions(
-        "GitVcsDriver.prepareCommitContext.stagedPatch",
-        cwd,
-        ["diff", "--no-ext-diff", "--cached", "--patch", "--minimal"],
-        {
-          maxOutputBytes: PREPARED_COMMIT_PATCH_MAX_OUTPUT_BYTES,
-          appendTruncationMarker: true,
-        },
+          const stagedPatch = yield* runGitStdoutWithOptions(
+            "GitVcsDriver.prepareCommitContext.stagedPatch",
+            cwd,
+            ["diff", "--no-ext-diff", "--cached", "--patch", "--minimal"],
+            {
+              env,
+              maxOutputBytes: PREPARED_COMMIT_PATCH_MAX_OUTPUT_BYTES,
+              appendTruncationMarker: true,
+            },
+          );
+          return {
+            stagedSummary,
+            stagedPatch,
+          };
+        }),
       );
-
-      return {
-        stagedSummary,
-        stagedPatch,
-      };
     });
 
   const commit: GitVcsDriver.GitVcsDriver["Service"]["commit"] = Effect.fn("commit")(function* (
@@ -1901,6 +1981,10 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             onStderrLine: (line: string) =>
               options.progress?.onOutputLine?.({ stream: "stderr", text: line }) ?? Effect.void,
           };
+    if (options?.stage) {
+      yield* stageCommitChanges(cwd, options.stage.filePaths, undefined);
+    }
+
     yield* executeGit("GitVcsDriver.commit.commit", cwd, args, {
       ...(options?.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
       ...(progress ? { progress } : {}),

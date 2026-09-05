@@ -1864,6 +1864,7 @@ export const make = Effect.gen(function* () {
     const { commitSha } = yield* gitCore.commit(cwd, suggestion.subject, suggestion.body, {
       timeoutMs: COMMIT_TIMEOUT_MS,
       ...(commitProgress ? { progress: commitProgress } : {}),
+      stage: filePaths ? { filePaths } : {},
     });
     if (currentHookName !== null) {
       yield* emit({
