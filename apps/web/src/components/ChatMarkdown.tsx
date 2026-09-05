@@ -1331,8 +1331,13 @@ const CHAT_MARKDOWN_IMAGE_FRAME_CLASS_NAME = cn(
  * alignment are exactly the image's own. Inline images (badges, icons in a
  * sentence) skip the slot: a placeholder taller than the image would move the
  * page more than the image does.
+ *
+ * Callers key this on the file's identity, not its URL: a re-signed URL for
+ * the same file keeps the decoded image on screen while the new bytes arrive,
+ * and a different file starts from the slot again.
  */
 function ChatMarkdownImage(props: {
+  /** Null while the URL is being resolved; the last decoded image stays up. */
   readonly src: string | null;
   readonly sourceFailed?: boolean | undefined;
   readonly alt: string;
@@ -1344,21 +1349,28 @@ function ChatMarkdownImage(props: {
   readonly originalUrl?: string | undefined;
   readonly onImageExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
 }) {
-  const [loaded, setLoaded] = useState(false);
+  const [loadedSrc, setLoadedSrc] = useState<string | null>(null);
   const [failedSrc, setFailedSrc] = useState<string | null>(null);
-  const src = props.src;
+  const src = props.src ?? loadedSrc;
   const failed = props.sourceFailed === true || (src !== null && failedSrc === src);
-  // A decoded image keeps its box across a re-signed URL for the same file, so
-  // a periodic refresh never drops the row back to the placeholder; the browser
-  // keeps painting the old bitmap until the new one decodes. A failure clears
-  // that, so the next URL loads behind the slot again.
-  const settled = !failed && (!props.standalone || (loaded && failedSrc === null));
+  // A failure forgets the decoded image so the next URL loads behind the slot.
+  const settled = src !== null && !failed && (!props.standalone || loadedSrc !== null);
   // Cached images are complete before `onLoad` can fire.
   const markLoadedIfComplete = useCallback((image: HTMLImageElement | null) => {
-    if (image?.complete && image.naturalWidth > 0) setLoaded(true);
+    if (image?.complete && image.naturalWidth > 0) setLoadedSrc(image.currentSrc || image.src);
   }, []);
+  const imageEvents = (loadingSrc: string) => ({
+    onLoad: () => {
+      setLoadedSrc(loadingSrc);
+      setFailedSrc(null);
+    },
+    onError: () => {
+      setFailedSrc(loadingSrc);
+      setLoadedSrc(null);
+    },
+  });
 
-  if (src !== null && settled) {
+  if (settled) {
     return (
       <MediaActions source={props.actionsSource}>
         <img
@@ -1381,11 +1393,7 @@ function ChatMarkdownImage(props: {
             props.originalUrl,
             props.actionsSource,
           )}
-          onLoad={() => {
-            setLoaded(true);
-            setFailedSrc(null);
-          }}
-          onError={() => setFailedSrc(src)}
+          {...imageEvents(src)}
         />
       </MediaActions>
     );
@@ -1432,11 +1440,7 @@ function ChatMarkdownImage(props: {
             decoding="async"
             draggable={false}
             className="invisible absolute inset-0 size-full"
-            onLoad={() => {
-              setLoaded(true);
-              setFailedSrc(null);
-            }}
-            onError={() => setFailedSrc(src)}
+            {...imageEvents(src)}
           />
         ) : null}
       </span>
@@ -1544,6 +1548,7 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
 
   return (
     <ChatMarkdownImage
+      key={JSON.stringify([props.environmentId, props.resource, props.srcFragment])}
       src={src}
       sourceFailed={assetUrl._tag === "Failure"}
       alt={props.alt}
@@ -2946,6 +2951,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
       }
       return (
         <ChatMarkdownImage
+          key={mediaSrc}
           src={mediaSrc}
           alt={altText}
           copyMarkdown={copyMarkdown}
