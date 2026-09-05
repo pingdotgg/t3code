@@ -174,7 +174,9 @@ describe("ProviderCommandReactor", () => {
     readonly titleRegenerationCompletionDispatchFailures?: number;
     readonly titleRegenerationBeforeStart?: "one" | "two";
     readonly serverActivation?: Effect.Effect<void>;
+    readonly afterActivityAppend?: (kind: string) => Effect.Effect<void>;
     readonly beforeReadySessionDispatch?: () => Effect.Effect<void>;
+    readonly listSessionsEffect?: ProviderServiceShape["listSessions"];
     readonly compactThreadEffect?: () => Effect.Effect<void, ProviderAdapterRequestError>;
     readonly interruptTurnEffect?: () => Effect.Effect<void, ProviderAdapterRequestError>;
     readonly stopSessionEffect?: () => Effect.Effect<void, ProviderAdapterRequestError>;
@@ -358,7 +360,7 @@ describe("ProviderCommandReactor", () => {
       respondToRequest: respondToRequest as ProviderServiceShape["respondToRequest"],
       respondToUserInput: respondToUserInput as ProviderServiceShape["respondToUserInput"],
       stopSession: stopSession as ProviderServiceShape["stopSession"],
-      listSessions: () => Effect.succeed(runtimeSessions),
+      listSessions: input?.listSessionsEffect ?? (() => Effect.succeed(runtimeSessions)),
       getCapabilities: (_provider) =>
         Effect.succeed({
           sessionModelSwitch: input?.sessionModelSwitch ?? "in-session",
@@ -435,7 +437,14 @@ describe("ProviderCommandReactor", () => {
               command.type === "thread.session.set" && command.session.status === "ready"
                 ? (input?.beforeReadySessionDispatch?.() ?? Effect.void)
                 : Effect.void
-            ).pipe(Effect.andThen(engine.dispatch(command)));
+            ).pipe(
+              Effect.andThen(engine.dispatch(command)),
+              Effect.tap(() =>
+                command.type === "thread.activity.append"
+                  ? (input?.afterActivityAppend?.(command.activity.kind) ?? Effect.void)
+                  : Effect.void,
+              ),
+            );
           },
           get streamDomainEvents() {
             return engine.streamDomainEvents;
@@ -615,6 +624,65 @@ describe("ProviderCommandReactor", () => {
       },
     };
   }
+
+  effectIt.effect.each([249_999, 250_000, 250_001])(
+    "enforces persisted context usage of %i tokens before provider work",
+    (usedTokens) =>
+      Effect.gen(function* () {
+        const decision = yield* Deferred.make<void>();
+        const harness = yield* Effect.promise(() =>
+          createHarness({
+            startSessionEffect: (session) =>
+              Deferred.succeed(decision, undefined).pipe(Effect.as(session)),
+            afterActivityAppend: (kind) =>
+              kind === "provider.turn.start.failed"
+                ? Deferred.succeed(decision, undefined).pipe(Effect.asVoid)
+                : Effect.void,
+          }),
+        );
+        yield* harness.engine.dispatch({
+          type: "thread.activity.append",
+          commandId: CommandId.make("context-admission-activity"),
+          threadId: ThreadId.make("thread-1"),
+          activity: {
+            id: EventId.make("context-admission-activity"),
+            kind: "context-window.updated",
+            tone: "info",
+            summary: "Context updated",
+            payload: { usedTokens, maxTokens: 400_000 },
+            turnId: null,
+            createdAt: "2026-01-01T00:00:00.000Z",
+          },
+          createdAt: "2026-01-01T00:00:00.000Z",
+        });
+        yield* harness.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make("context-admission-turn"),
+          threadId: ThreadId.make("thread-1"),
+          message: {
+            messageId: asMessageId("context-admission-message"),
+            role: "user",
+            text: "Continue",
+            attachments: [],
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          createdAt: "2026-01-01T00:00:01.000Z",
+        });
+        yield* Deferred.await(decision);
+        yield* Effect.promise(harness.drain);
+        expect(harness.sendTurn).toHaveBeenCalledTimes(usedTokens < 250_000 ? 1 : 0);
+        if (usedTokens >= 250_000) {
+          const snapshot = yield* Effect.promise(harness.readModel);
+          const thread = snapshot.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+          expect(
+            thread?.activities.some(
+              (activity) => activity.summary === "T3 usage limit stopped provider work",
+            ),
+          ).toBe(true);
+        }
+      }),
+  );
 
   effectIt.effect.each(["new", "ready", "stopped"] as const)(
     "handles sign-out for a %s thread before worktree repair, text helpers, or startup",

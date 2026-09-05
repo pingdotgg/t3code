@@ -233,6 +233,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "thread-context-token-limit",
+    title: "Thread token limit",
+    to: "/settings/general",
+    searchTerms: ["context window usage hard limit handover new thread compact tokens"],
+  },
+  {
     id: "new-threads",
     title: "New threads",
     to: "/settings/general",
