@@ -236,7 +236,7 @@ describe("OrchestrationEngine", () => {
       }
       const events = await system.run(Stream.runCollect(system.engine.readEvents(0)));
       let replay = createEmptyReadModel(now());
-      for (const event of events) replay = await Effect.runPromise(projectEvent(replay, event));
+      for (const event of events) replay = await system.run(projectEvent(replay, event));
       for (const entry of cases) {
         expect(
           replay.threads.find((thread) => thread.id === `recall-${entry.id}`)?.messages[0]
