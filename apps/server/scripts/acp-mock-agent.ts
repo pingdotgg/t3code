@@ -350,6 +350,17 @@ const grokAcpModels: ReadonlyArray<AcpSchema.ModelInfo> = [
 ];
 
 function modelState(): AcpSchema.SessionModelState {
+  if (process.env.T3_ACP_CURSOR_MODELS_ERROR === "missing") {
+    return {
+      currentModelId: " grok-4.6 ",
+      availableModels: [
+        { modelId: " grok-4.6 ", name: " Grok 4.6 " },
+        { modelId: "grok-mock-alt", name: " Grok Mock Alt " },
+        { modelId: "blank-name", name: " " },
+        { modelId: " ", name: "Invalid" },
+      ],
+    };
+  }
   if (antigravityProfile) {
     return { currentModelId, availableModels: antigravityModels };
   }
@@ -1287,6 +1298,12 @@ const program = Effect.gen(function* () {
       });
     }
     if (method === "cursor/list_available_models") {
+      if (process.env.T3_ACP_CURSOR_MODELS_ERROR === "missing") {
+        return Effect.fail(AcpError.AcpRequestError.methodNotFound(method));
+      }
+      if (process.env.T3_ACP_CURSOR_MODELS_ERROR === "internal") {
+        return Effect.fail(AcpError.AcpRequestError.internalError("Mock model discovery failure"));
+      }
       return Effect.succeed({
         models: availableModels(),
       });

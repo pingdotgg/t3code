@@ -559,10 +559,40 @@ const discoverCursorModelsViaListAvailableModels = (
     cursorSettings,
     (acp) =>
       Effect.gen(function* () {
-        yield* acp.start();
-        const response = yield* acp.request("cursor/list_available_models", {});
-        const decoded = yield* decodeCursorListAvailableModelsResponse(response);
-        return buildCursorDiscoveredModelsFromAvailableModelsResponse(decoded);
+        const started = yield* acp.start();
+        return yield* acp.request("cursor/list_available_models", {}).pipe(
+          Effect.flatMap(decodeCursorListAvailableModelsResponse),
+          Effect.map(buildCursorDiscoveredModelsFromAvailableModelsResponse),
+          Effect.catchTags({
+            AcpRequestError: (error) => {
+              const models = started.sessionSetupResult.models;
+              if (error.code !== -32601 || !models?.availableModels.length) {
+                return Effect.fail(error);
+              }
+              return Effect.succeed(
+                buildCursorDiscoveredModels(
+                  models.availableModels.flatMap((model) => {
+                    const slug = model.modelId.trim();
+                    const name = model.name.trim();
+                    return slug && name
+                      ? [
+                          {
+                            slug,
+                            name,
+                            capabilities: EMPTY_CAPABILITIES,
+                          },
+                        ]
+                      : [];
+                  }),
+                ).map((model) =>
+                  model.slug === models.currentModelId.trim()
+                    ? { ...model, isDefault: true }
+                    : model,
+                ),
+              );
+            },
+          }),
+        );
       }),
     environment,
   );
@@ -1120,8 +1150,8 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
  *
  * Used by `CursorDriver` as the `makeManagedServerProvider.enrichSnapshot`
  * hook: republishes update/version advisory metadata without performing any
- * model or capability discovery. Cursor model data comes exclusively from
- * `cursor/list_available_models` during provider status checks.
+ * model or capability discovery. Provider checks prefer
+ * `cursor/list_available_models`, falling back to the session catalog on older CLIs.
  */
 export const enrichCursorSnapshot = (input: {
   readonly settings: CursorSettings;
