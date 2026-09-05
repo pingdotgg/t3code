@@ -33,6 +33,20 @@ enum VoiceDraft {
       correctedWords[shared].value == provisionalWords[shared].value { shared += 1 }
     let correctedTail = correctedWords.dropFirst(shared)
     let provisionalTail = provisionalWords.dropFirst(shared)
+    // Normal suffix revisions leave a tiny tail, where the full matrix is cheaper.
+    if correctedTail.count >= 64, let alignedBoundary = smallAlignedBoundary(
+      corrected: correctedTail,
+      provisional: provisionalTail
+    ) {
+      let boundary = shared + alignedBoundary
+      guard boundary < provisionalWords.count else { return corrected }
+      let tailStart = provisionalWords[boundary].range.lowerBound
+      let previousEnd = boundary > 0
+        ? provisionalWords[boundary - 1].range.upperBound
+        : provisional.startIndex
+      let separator = provisional[previousEnd..<tailStart].filter(\.isWhitespace)
+      return corrected.trimmingCharacters(in: .whitespacesAndNewlines) + separator + provisional[tailStart...]
+    }
     var costs = Array(0...provisionalTail.count)
     var precedingCosts = costs
     for (row, word) in correctedTail.enumerated() {
@@ -60,6 +74,83 @@ enum VoiceDraft {
     let previousEnd = boundary > 0 ? provisionalWords[boundary - 1].range.upperBound : provisional.startIndex
     let separator = provisional[previousEnd..<tailStart].filter(\.isWhitespace)
     return corrected.trimmingCharacters(in: .whitespacesAndNewlines) + separator + provisional[tailStart...]
+  }
+
+  /// Computes the same boundary as the full edit-distance matrix when the two
+  /// tails are already positionally aligned with only a few substitutions.
+  /// Keep this uncommon large-tail path out of the normal merge's instruction body.
+  @inline(never)
+  private static func smallAlignedBoundary(
+    corrected: ArraySlice<Word>,
+    provisional: ArraySlice<Word>
+  ) -> Int? {
+    guard provisional.count >= corrected.count else { return nil }
+    let corrected = Array(corrected)
+    let provisional = Array(provisional)
+
+    let maximumSubstitutions = 8
+    let substitutions = zip(corrected, provisional).filter { $0.0.value != $0.1.value }.count
+    guard substitutions <= maximumSubstitutions else { return nil }
+    guard !hasCompoundAlignment(corrected: corrected, provisional: provisional) else { return nil }
+
+    // The positional comparison gives an upper bound at corrected.count. With
+    // no compound transitions, a path of that cost cannot leave this band.
+    let infinity = substitutions + 1
+    var costs = Array(repeating: infinity, count: provisional.count + 1)
+    var next = costs
+    for column in 0...min(substitutions, provisional.count) { costs[column] = column }
+    var previousLower = 0
+    var previousUpper = min(substitutions, provisional.count)
+
+    for (rowIndex, word) in corrected.enumerated() {
+      let row = rowIndex + 1
+      let lower = max(0, row - substitutions)
+      let upper = min(provisional.count, row + substitutions)
+      for column in lower...upper { next[column] = infinity }
+      if lower == 0 { next[0] = row }
+
+      if upper >= max(1, lower) {
+        for column in max(1, lower)...upper {
+          let deletion = column >= previousLower && column <= previousUpper
+            ? costs[column] + 1
+            : infinity
+          let insertion = column - 1 >= lower ? next[column - 1] + 1 : infinity
+          let substitution = column - 1 >= previousLower && column - 1 <= previousUpper
+            ? costs[column - 1] + (word.value == provisional[column - 1].value ? 0 : 1)
+            : infinity
+          next[column] = min(deletion, insertion, substitution)
+        }
+      }
+      swap(&costs, &next)
+      previousLower = lower
+      previousUpper = upper
+    }
+
+    var minimum = infinity
+    var boundary = corrected.count
+    for column in previousLower...previousUpper where costs[column] <= minimum {
+      minimum = costs[column]
+      boundary = column
+    }
+    return boundary
+  }
+
+  private static func hasCompoundAlignment(
+    corrected: [Word],
+    provisional: [Word]
+  ) -> Bool {
+    let correctedValues = Set(corrected.map(\.value))
+    for index in provisional.indices.dropFirst()
+    where correctedValues.contains(provisional[index - 1].value + provisional[index].value) {
+      return true
+    }
+
+    let provisionalValues = Set(provisional.map(\.value))
+    for index in corrected.indices.dropFirst()
+    where provisionalValues.contains(corrected[index - 1].value + corrected[index].value) {
+      return true
+    }
+    return false
   }
 
   private struct Word {

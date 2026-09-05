@@ -235,20 +235,10 @@ export function resolveNativeMarkdownTypography(baseFontSize: number): NativeMar
   };
 }
 
-export function stepBaseFontSize(current: number, direction: -1 | 1): number {
-  const next = direction === -1 ? current - BASE_FONT_SIZE_STEP : current + BASE_FONT_SIZE_STEP;
-  return normalizeBaseFontSize(next);
-}
-
 export function stepTerminalFontSize(current: number, direction: -1 | 1): number {
   const next =
     direction === -1 ? current - TERMINAL_FONT_SIZE_STEP : current + TERMINAL_FONT_SIZE_STEP;
   return normalizeTerminalFontSize(next);
-}
-
-export function stepCodeFontSize(current: number, direction: -1 | 1): number {
-  const next = direction === -1 ? current - CODE_FONT_SIZE_STEP : current + CODE_FONT_SIZE_STEP;
-  return normalizeCodeFontSize(next);
 }
 
 export {

@@ -188,7 +188,7 @@ export const mergeProviderSnapshot = (
           : {}),
       };
 
-export const haveProvidersChanged = (
+const haveProvidersChanged = (
   previousProviders: ReadonlyArray<ServerProvider>,
   nextProviders: ReadonlyArray<ServerProvider>,
 ): boolean => !Equal.equals(previousProviders, nextProviders);
@@ -532,14 +532,19 @@ export const ProviderRegistryLive = Layer.effect(
 
     const getProviderMaintenanceCapabilitiesForInstance = Effect.fn(
       "getProviderMaintenanceCapabilitiesForInstance",
-    )(function* (instanceId: ProviderInstanceId, provider: ProviderDriverKind) {
-      const instance = Array.from((yield* Ref.get(liveSubsRef)).values()).find(
-        (candidate) => candidate.instanceId === instanceId,
-      );
-      return (
-        instance?.snapshot.maintenanceCapabilities ??
-        makeManualProviderMaintenanceCapabilities(provider)
-      );
+    )(function* (
+      instanceId: ProviderInstanceId,
+      provider: ProviderDriverKind,
+      options?: { readonly fresh?: boolean },
+    ) {
+      // Read the instance registry, not `liveSubsRef`: the latter trails
+      // reconciliation, and an update must never run a retired instance's
+      // command against a freshly configured executable.
+      const instance = yield* instanceRegistry.getInstance(instanceId);
+      if (!instance || instance.driverKind !== provider) {
+        return makeManualProviderMaintenanceCapabilities(provider);
+      }
+      return yield* instance.snapshot.resolveMaintenance(options);
     });
 
     /**
