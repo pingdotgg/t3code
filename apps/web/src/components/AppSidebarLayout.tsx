@@ -14,7 +14,11 @@ import { getLocalStorageItem, removeLocalStorageItem } from "../hooks/useLocalSt
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
 import { cn, isMacPlatform } from "../lib/utils";
 import { primaryServerKeybindingsAtom } from "../state/server";
-import { useEnvironmentIdentificationMode, useLegacySidebarEnabled } from "../hooks/useSettings";
+import {
+  useEnvironmentIdentificationMode,
+  useLegacySidebarEnabled,
+  useSidebarProjectRailEnabled,
+} from "../hooks/useSettings";
 import {
   PanelAnimationSuppressionProvider,
   usePanelAnimationSettings,
@@ -23,6 +27,7 @@ import {
 import LegacyThreadSidebar from "./LegacySidebar";
 import ThreadSidebar from "./Sidebar";
 import { SettingsSidebarNav } from "./settings/SettingsSidebarNav";
+import { PROJECT_RAIL_WIDTH } from "./sidebar/project-rail/projectRail.constants";
 import { SidebarChromeHeader } from "./sidebar/SidebarChrome";
 import {
   resolveSidebarStageFocusRingOffsetClass,
@@ -57,15 +62,16 @@ function readViewportWidth(): number {
   return window.innerWidth;
 }
 
-function readInitialThreadSidebarWidth(): number {
+function readInitialThreadSidebarWidth(extraWidth: number): number {
   try {
     return resolveInitialThreadSidebarWidth(
       getLocalStorageItem(THREAD_SIDEBAR_WIDTH_STORAGE_KEY, Schema.Finite),
       window.innerWidth,
+      extraWidth,
     );
   } catch (error) {
     console.error("Could not read persisted thread sidebar width.", error);
-    return resolveInitialThreadSidebarWidth(null, window.innerWidth);
+    return resolveInitialThreadSidebarWidth(null, window.innerWidth, extraWidth);
   }
 }
 
@@ -153,20 +159,34 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
   const routePanelAnimationsActive = panelAnimationsActive && !panelAnimationsSuppressed;
   const isOnSettings = pathname === "/settings" || pathname.startsWith("/settings/");
   const isMacosDesktop = isElectron && isMacPlatform(navigator.platform);
-  const [sidebarWidth, setSidebarWidth] = useState(readInitialThreadSidebarWidth);
+  // The rail lives inside the sidebar, so it widens the whole panel rather than
+  // eating into the thread column.
+  const projectRailEnabled = useSidebarProjectRailEnabled() && !legacySidebarEnabled;
+  const sidebarExtraWidth = projectRailEnabled ? PROJECT_RAIL_WIDTH : 0;
+  const [sidebarWidth, setSidebarWidth] = useState(() =>
+    readInitialThreadSidebarWidth(sidebarExtraWidth),
+  );
   // Subscribed rather than read once: the clamp must track live window size,
   // and a clamped drag ends with an unchanged width, which skips the re-render
   // that would otherwise refresh a render-time snapshot.
   const viewportWidth = useSyncExternalStore(subscribeToViewportWidth, readViewportWidth);
   const sidebarMaximumWidth = resolveThreadSidebarMaximumWidth(viewportWidth);
+  const sidebarMinimumWidth = THREAD_SIDEBAR_MIN_WIDTH + sidebarExtraWidth;
   const resetSidebarWidth = () => {
     try {
       removeLocalStorageItem(THREAD_SIDEBAR_WIDTH_STORAGE_KEY);
     } catch (error) {
       console.error("Could not clear persisted thread sidebar width.", error);
     }
-    setSidebarWidth(resolveInitialThreadSidebarWidth(null, viewportWidth));
+    setSidebarWidth(resolveInitialThreadSidebarWidth(null, viewportWidth, sidebarExtraWidth));
   };
+  // Toggling the rail while the app is open must not leave the thread column
+  // narrower than its floor, so the persisted width is re-clamped against the
+  // current floor rather than only at mount.
+  const clampedSidebarWidth = Math.min(
+    Math.max(sidebarWidth, sidebarMinimumWidth),
+    Math.max(sidebarMinimumWidth, sidebarMaximumWidth),
+  );
   const [isWindowFullscreen, setIsWindowFullscreen] = useState(() => {
     const getWindowFullscreenState = window.desktopBridge?.getWindowFullscreenState;
     return isMacosDesktop && typeof getWindowFullscreenState === "function"
@@ -174,7 +194,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
       : false;
   });
   const sidebarProviderStyle = {
-    "--sidebar-width": `${sidebarWidth}px`,
+    "--sidebar-width": `${clampedSidebarWidth}px`,
     "--panel-animation-duration": `${panelAnimationDurationMs}ms`,
     ...(isMacosDesktop && !isWindowFullscreen
       ? { "--workspace-controls-left": MACOS_TRAFFIC_LIGHTS_LEFT_INSET }
@@ -234,7 +254,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
           className="border-r border-sidebar-border bg-sidebar text-sidebar-foreground"
           resizable={{
             maxWidth: sidebarMaximumWidth,
-            minWidth: THREAD_SIDEBAR_MIN_WIDTH,
+            minWidth: sidebarMinimumWidth,
             shouldAcceptWidth: ({ currentWidth, nextWidth, wrapper }) =>
               nextWidth <= currentWidth ||
               wrapper.clientWidth - nextWidth >= THREAD_MAIN_CONTENT_MIN_WIDTH,

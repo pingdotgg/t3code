@@ -359,12 +359,16 @@ export function isSidebarNestedLinkClick(target: EventTarget | null): boolean {
 // Shift+click on the new thread button creates directly in the current
 // project, skipping the command palette's project picker. With a single
 // project there is nothing to pick, so a plain click already creates
-// immediately and the modifier changes nothing.
-export function shouldCreateNewThreadInCurrentProject(
-  shiftKey: boolean,
-  projectGroupCount: number,
-): boolean {
-  return shiftKey || projectGroupCount <= 1;
+// immediately and the modifier changes nothing. Scoping the sidebar to one
+// project (the scope combobox or a project rail tile) is the same statement
+// made a different way: the answer the picker would ask for is already given,
+// so it stays out of the way until the scope goes back to all projects.
+export function shouldCreateNewThreadInCurrentProject(input: {
+  readonly shiftKey: boolean;
+  readonly projectGroupCount: number;
+  readonly projectScoped: boolean;
+}): boolean {
+  return input.shiftKey || input.projectScoped || input.projectGroupCount <= 1;
 }
 
 export function orderItemsByPreferredIds<TItem, TId>(input: {

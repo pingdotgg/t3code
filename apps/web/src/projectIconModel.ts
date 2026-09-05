@@ -123,7 +123,11 @@ const PROJECT_ICON_MODEL: ReadonlyArray<ProjectIconClass> = [
   },
 ];
 
-const GENERIC_PROJECT_ICONS: ReadonlyArray<ProjectIconName> = [
+// Chosen by hash when no term matched, so one of these means "the model did
+// not recognize this name" rather than "this project is about code". Callers
+// that want to show something more identifying (the project rail's initials)
+// key off this list.
+export const GENERIC_PROJECT_ICONS: ReadonlyArray<ProjectIconName> = [
   "code",
   "braces",
   "circuit",
@@ -189,4 +193,9 @@ export function selectProjectIcon(
   const icon: ProjectIconSelection = { kind: "lucide", icon: iconName };
   projectIconCache.set(cacheKey, icon);
   return icon;
+}
+
+/** True when `selectProjectIcon` fell back to a generic icon instead of classifying the name. */
+export function isGenericProjectIcon(selection: ProjectIconSelection): boolean {
+  return selection.kind === "lucide" && GENERIC_PROJECT_ICONS.includes(selection.icon);
 }

@@ -5,7 +5,9 @@ import { useEffect, useMemo } from "react";
 import { isCommandPaletteOpen } from "../commandPaletteBus";
 import { useClientSettings, useLegacySidebarEnabled } from "../hooks/useSettings";
 import { openCommandPalette } from "../commandPaletteBus";
+import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { useProjects } from "../state/entities";
+import { useUiStateStore } from "../uiStateStore";
 import { usePrimaryEnvironmentId } from "../state/environments";
 import { selectProjectGroupingSettings } from "../logicalProject";
 import { buildSidebarProjectSnapshots } from "../sidebarProjectGrouping";
@@ -32,15 +34,26 @@ function ChatRouteGlobalShortcuts() {
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
   const projects = useProjects();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
-  const projectGroupCount = useMemo(
+  const projectGroups = useMemo(
     () =>
       buildSidebarProjectSnapshots({
         projects,
         settings: projectGroupingSettings,
         primaryEnvironmentId,
         resolveEnvironmentLabel: () => null,
-      }).length,
+      }),
     [primaryEnvironmentId, projectGroupingSettings, projects],
+  );
+  const projectGroupCount = projectGroups.length;
+  // The sidebar's project scope answers the picker's question ahead of time,
+  // so chat.new creates straight into the scoped project instead of asking.
+  const projectScopeKey = useUiStateStore((store) => store.sidebarProjectScopeKey);
+  const scopedProjectGroup = useMemo(
+    () =>
+      projectScopeKey === null
+        ? null
+        : (projectGroups.find((project) => project.projectKey === projectScopeKey) ?? null),
+    [projectGroups, projectScopeKey],
   );
   const terminalOpen = useTerminalUiStateStore((state) =>
     routeThreadRef
@@ -95,7 +108,7 @@ function ChatRouteGlobalShortcuts() {
         // The default sidebar routes creation through the command palette
         // whenever there is a real choice to make; the legacy sidebar (and
         // single-project setups) keep the immediate contextual create.
-        if (!legacySidebarEnabled && projectGroupCount > 1) {
+        if (!legacySidebarEnabled && projectGroupCount > 1 && scopedProjectGroup === null) {
           openCommandPalette({ open: "new-thread-in" });
           return;
         }
@@ -104,6 +117,10 @@ function ChatRouteGlobalShortcuts() {
           activeThread: activeThread ?? undefined,
           defaultProjectRef,
           handleNewThread,
+          projectRefOverride:
+            !legacySidebarEnabled && scopedProjectGroup
+              ? scopeProjectRef(scopedProjectGroup.environmentId, scopedProjectGroup.id)
+              : null,
         });
         return;
       }
@@ -165,6 +182,7 @@ function ChatRouteGlobalShortcuts() {
     defaultProjectRef,
     previewOpen,
     projectGroupCount,
+    scopedProjectGroup,
     routeThreadRef,
     selectedThreadKeysSize,
     legacySidebarEnabled,
