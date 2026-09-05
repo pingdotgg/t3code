@@ -455,6 +455,24 @@ describe("Cursor skills", () => {
       "please /review this",
     );
   });
+
+  it("detects and invokes digit-leading Cursor skills without rewriting money", () => {
+    const names = new Set(["2spec", "20k", "100M", "1e6"]);
+    // Repeated presence checks must not carry a global-regex cursor.
+    expect(hasCursorSkillMention("use $2spec here")).toBe(true);
+    expect(hasCursorSkillMention("use $2spec here")).toBe(true);
+    expect(rewriteCursorSkillMentions("use $2spec here", names)).toBe("use /2spec here");
+    expect(rewriteCursorSkillMentions("use $2spec here", new Set())).toBe("use $2spec here");
+    for (const text of [
+      "pay $20 tomorrow",
+      "budget $20k here",
+      "cost $100M total",
+      "limit $1e6 here",
+    ]) {
+      expect(hasCursorSkillMention(text)).toBe(false);
+      expect(rewriteCursorSkillMentions(text, names)).toBe(text);
+    }
+  });
 });
 
 describe("getCursorFallbackModels", () => {

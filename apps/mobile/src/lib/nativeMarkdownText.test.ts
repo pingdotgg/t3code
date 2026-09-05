@@ -226,6 +226,29 @@ describe("nativeMarkdownDocumentRuns", () => {
     ]);
   });
 
+  it("decorates known skill references that begin with a digit", () => {
+    const node: MarkdownNode = {
+      type: "document",
+      children: [
+        {
+          type: "paragraph",
+          children: [{ type: "text", content: "Use $2spec for this." }],
+        },
+      ],
+    };
+
+    expect(nativeMarkdownDocumentRuns(node, [{ name: "2spec", displayName: "2Spec" }])).toEqual([
+      { text: "Use ", role: "body" },
+      {
+        text: "$2spec",
+        role: "body",
+        skillName: "2spec",
+        skillLabel: "2Spec",
+      },
+      { text: " for this.", role: "body" },
+    ]);
+  });
+
   it("decorates known skill references inside blockquotes", () => {
     const node: MarkdownNode = {
       type: "blockquote",

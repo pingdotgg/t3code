@@ -2,7 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { planClaudeSkillDispatch } from "./ClaudeSkillDispatch.ts";
 
-const SKILLS = new Set(["implement", "review", "re-release-version"]);
+const SKILLS = new Set(["2spec", "implement", "review", "re-release-version"]);
 
 describe("planClaudeSkillDispatch", () => {
   it("leaves a prompt without a known skill untouched", () => {
@@ -27,6 +27,14 @@ describe("planClaudeSkillDispatch", () => {
     });
   });
 
+  it("dispatches a known skill whose name begins with a digit", () => {
+    expect(planClaudeSkillDispatch("use $2spec for this", SKILLS)).toEqual({
+      leadingText: "use",
+      commandText: "/2spec for this",
+      skillName: "2spec",
+    });
+  });
+
   it("dispatches the last mention and rewrites earlier ones inline", () => {
     expect(planClaudeSkillDispatch("$review the diff, then $implement the fixes", SKILLS)).toEqual({
       leadingText: "/review the diff, then",
@@ -37,5 +45,11 @@ describe("planClaudeSkillDispatch", () => {
 
   it("ignores a dollar token glued to other text", () => {
     expect(planClaudeSkillDispatch("cost is 5$implement", SKILLS)).toBeUndefined();
+  });
+
+  it("ignores currency amounts and compact monetary expressions", () => {
+    const skillsWithCurrency = new Set([...SKILLS, "20", "20k", "100M"]);
+    expect(planClaudeSkillDispatch("pay $20 tomorrow", skillsWithCurrency)).toBeUndefined();
+    expect(planClaudeSkillDispatch("budget is $20k tomorrow", skillsWithCurrency)).toBeUndefined();
   });
 });
