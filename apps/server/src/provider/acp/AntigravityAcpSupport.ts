@@ -1,3 +1,5 @@
+import * as NodeOS from "node:os";
+
 import {
   ANTIGRAVITY_DEFAULT_MODEL,
   type AntigravityAuthMethod,
@@ -11,6 +13,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Schedule from "effect/Schedule";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
@@ -18,6 +21,7 @@ import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/schema";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
+import { isProcessAlive } from "../../serverRuntimeState.ts";
 import {
   makeAntigravityStderrHandler,
   makeAntigravityStdoutTransform,
@@ -36,6 +40,9 @@ export interface AntigravityAcpRuntimeInput extends Omit<
   | "transformStdout"
 > {
   readonly childProcessSpawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
+  readonly fileSystem: FileSystem.FileSystem;
+  readonly path: Path.Path;
+  readonly platform: NodeJS.Platform;
   readonly onAuthorizationUrl?: (url: string) => Effect.Effect<void, EffectAcpErrors.AcpError>;
   /**
    * Advertise `fs.readTextFile` and `fs.writeTextFile`. The agent then routes
@@ -49,6 +56,107 @@ export interface AntigravityAcpRuntimeInput extends Omit<
   readonly authMethod?: AntigravityAuthMethod;
 }
 
+const windowsTempEnvironmentKeys = new Set(["TEMP", "TMP"]);
+const runtimeTempDirectoryPrefix = "t3-antigravity-runtime-";
+const runtimeTempDirectoryOwner = /^t3-antigravity-runtime-(\d+)-.+$/u;
+const runtimeTempDirectoryMarkerName = ".t3-antigravity-runtime-owner";
+
+function runtimeTempDirectoryMarkerContents(directory: string, ownerProcessId: number): string {
+  return `${JSON.stringify({ schemaVersion: 1, ownerProcessId, directory })}\n`;
+}
+
+function withWindowsRuntimeTempDirectory(
+  spawn: AcpSessionRuntime.AcpSpawnInput,
+  directory: string,
+): AcpSessionRuntime.AcpSpawnInput {
+  const environment = Object.fromEntries(
+    Object.entries(spawn.env ?? {}).filter(
+      ([key]) => !windowsTempEnvironmentKeys.has(key.toUpperCase()),
+    ),
+  );
+  return {
+    ...spawn,
+    env: { ...environment, TEMP: directory, TMP: directory },
+  };
+}
+
+const removeRuntimeTempDirectory = Effect.fn("removeRuntimeTempDirectory")(function* (
+  fileSystem: FileSystem.FileSystem,
+  directory: string,
+) {
+  yield* fileSystem.remove(directory, { recursive: true, force: true }).pipe(
+    Effect.retry({ times: 5, schedule: Schedule.exponential("100 millis") }),
+    Effect.catch((cause) =>
+      Effect.logWarning("antigravity runtime temp cleanup failed", { directory, cause }),
+    ),
+  );
+});
+
+/** Recovers hard-exit residue without touching directories owned by another live T3 server. */
+const reclaimOrphanedRuntimeTempDirectories = Effect.fn("reclaimOrphanedRuntimeTempDirectories")(
+  function* (fileSystem: FileSystem.FileSystem, path: Path.Path, parent: string) {
+    const entries = yield* fileSystem.readDirectory(parent).pipe(Effect.orElseSucceed(() => []));
+    for (const entry of entries) {
+      const owner = runtimeTempDirectoryOwner.exec(entry)?.[1];
+      if (!owner) continue;
+      const ownerProcessId = Number(owner);
+      if (
+        !Number.isSafeInteger(ownerProcessId) ||
+        ownerProcessId <= 0 ||
+        isProcessAlive(ownerProcessId)
+      ) {
+        continue;
+      }
+      const candidate = path.join(parent, entry);
+      const markerMatches = yield* fileSystem
+        .readFileString(path.join(candidate, runtimeTempDirectoryMarkerName))
+        .pipe(
+          Effect.map(
+            (contents) => contents === runtimeTempDirectoryMarkerContents(entry, ownerProcessId),
+          ),
+          Effect.orElseSucceed(() => false),
+        );
+      if (!markerMatches) continue;
+      yield* removeRuntimeTempDirectory(fileSystem, candidate);
+    }
+  },
+);
+
+/** Contains PyInstaller extraction residue inside a directory owned by this runtime scope. */
+const makeWindowsRuntimeTempDirectory = Effect.fn("makeWindowsRuntimeTempDirectory")(function* (
+  fileSystem: FileSystem.FileSystem,
+  path: Path.Path,
+) {
+  yield* reclaimOrphanedRuntimeTempDirectories(fileSystem, path, NodeOS.tmpdir());
+  const directory = yield* fileSystem
+    .makeTempDirectory({ prefix: `${runtimeTempDirectoryPrefix}${process.pid}-` })
+    .pipe(
+      Effect.mapError(
+        (cause) =>
+          new EffectAcpErrors.AcpTransportError({
+            detail: "Could not create an isolated Antigravity runtime temp directory.",
+            cause,
+          }),
+      ),
+    );
+  yield* Effect.addFinalizer(() => removeRuntimeTempDirectory(fileSystem, directory));
+  yield* fileSystem
+    .writeFileString(
+      path.join(directory, runtimeTempDirectoryMarkerName),
+      runtimeTempDirectoryMarkerContents(path.basename(directory), process.pid),
+    )
+    .pipe(
+      Effect.mapError(
+        (cause) =>
+          new EffectAcpErrors.AcpTransportError({
+            detail: "Could not mark the isolated Antigravity runtime temp directory.",
+            cause,
+          }),
+      ),
+    );
+  return directory;
+});
+
 /** Normal launches reject browser login; only the auth flow supplies `onAuthorizationUrl`. */
 export const makeAntigravityAcpRuntime = Effect.fn("makeAntigravityAcpRuntime")(function* (
   input: AntigravityAcpRuntimeInput,
@@ -57,30 +165,42 @@ export const makeAntigravityAcpRuntime = Effect.fn("makeAntigravityAcpRuntime")(
   EffectAcpErrors.AcpError,
   Crypto.Crypto | Scope.Scope
 > {
+  const {
+    authMethod,
+    childProcessSpawner,
+    clientFileSystem,
+    fileSystem,
+    onAuthorizationUrl,
+    path,
+    platform,
+    ...runtimeInput
+  } = input;
+  const runtimeTempDirectory =
+    platform === "win32" ? yield* makeWindowsRuntimeTempDirectory(fileSystem, path) : undefined;
+  const spawn = runtimeTempDirectory
+    ? withWindowsRuntimeTempDirectory(runtimeInput.spawn, runtimeTempDirectory)
+    : runtimeInput.spawn;
   const context = yield* Layer.build(
     AcpSessionRuntime.layer({
-      ...input,
-      authMethodId: input.authMethod ?? "oauth-personal",
+      ...runtimeInput,
+      spawn,
+      authMethodId: authMethod ?? "oauth-personal",
       resumeMethod: "resume",
       cancelBehavior: "wait-for-prompt",
       clientCapabilities: {
         fs: {
-          readTextFile: input.clientFileSystem === true,
-          writeTextFile: input.clientFileSystem === true,
+          readTextFile: clientFileSystem === true,
+          writeTextFile: clientFileSystem === true,
         },
         terminal: false,
       },
       transformStdout: makeAntigravityStdoutTransform(
-        input.onAuthorizationUrl ? { onAuthorizationUrl: input.onAuthorizationUrl } : {},
+        onAuthorizationUrl ? { onAuthorizationUrl } : {},
       ),
-      onStderr: makeAntigravityStderrHandler(
-        input.onAuthorizationUrl ? { onAuthorizationUrl: input.onAuthorizationUrl } : {},
-      ),
+      onStderr: makeAntigravityStderrHandler(onAuthorizationUrl ? { onAuthorizationUrl } : {}),
       transformSessionUpdate: normalizeAntigravitySessionUpdate,
     }).pipe(
-      Layer.provide(
-        Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, input.childProcessSpawner),
-      ),
+      Layer.provide(Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner)),
     ),
   );
   return yield* Effect.service(AcpSessionRuntime.AcpSessionRuntime).pipe(Effect.provide(context));
