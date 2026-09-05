@@ -922,6 +922,28 @@ export function ThreadWorkGroupToggle(props: {
   );
 }
 
+export function ThreadThinkingRow(props: {
+  readonly rowSizing: ReturnType<typeof deriveThreadWorkLogSizing>;
+  readonly iconSubtleColor: ColorValue;
+}) {
+  return (
+    <View
+      accessible
+      accessibilityLabel="Thinking"
+      className="-mx-1 min-h-8 flex-row items-center px-1.5 py-0"
+      style={{ minHeight: props.rowSizing.estimatedRowHeight }}
+    >
+      <ShimmeringWorkContent
+        key={props.rowSizing.textSizeKey}
+        icon="brain"
+        iconSubtleColor={props.iconSubtleColor}
+        label="Thinking"
+        showIcon
+      />
+    </View>
+  );
+}
+
 function ToolActivityIconView(props: {
   readonly environmentId: EnvironmentId;
   readonly icon?: ToolActivityIcon;

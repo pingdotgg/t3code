@@ -1566,7 +1566,8 @@ describe("buildThreadFeed", () => {
           summaryToolIcon: "browser",
           hasFailure,
           live: true,
-          shimmer: false,
+          // A successful trailing call keeps shining; a failure hands off to "Thinking".
+          shimmer: !hasFailure,
         },
         {
           type: "activity-group",
@@ -1580,6 +1581,7 @@ describe("buildThreadFeed", () => {
             },
           ],
         },
+        ...(hasFailure ? [{ type: "thinking", turnId }] : []),
       ]);
       const terminalGroup = terminalRows[1];
       if (terminalGroup?.type !== "activity-group") return;
@@ -2128,7 +2130,7 @@ describe("buildThreadFeed", () => {
       (
         [
           { lifecycleStatus: "inProgress", summary: "Running pnpm", shimmer: true },
-          { lifecycleStatus: "completed", summary: "Running pnpm", shimmer: false },
+          { lifecycleStatus: "completed", summary: "Running pnpm", shimmer: true },
           { lifecycleStatus: "failed", summary: "Failed pnpm", shimmer: false },
           { lifecycleStatus: "declined", summary: "Declined pnpm", shimmer: false },
           { lifecycleStatus: "stopped", summary: "Stopped pnpm", shimmer: false },
@@ -2228,8 +2230,12 @@ describe("buildThreadFeed", () => {
         shimmer,
       });
       expect(rows[0]).toMatchObject({ live: false, shimmer: false });
+      // Exactly one live activity: the shimmering call, or "Thinking" once it fails.
+      expect(rows.filter((entry) => entry.type === "thinking")).toHaveLength(shimmer ? 0 : 1);
+      expect(rows.at(-1)?.type).toBe(shimmer ? "work-toggle" : "thinking");
 
       const stoppedRows = deriveThreadFeedPresentation(feed, latestTurn, new Set());
+      expect(stoppedRows.some((entry) => entry.type === "thinking")).toBe(false);
       expect(stoppedRows.filter((entry) => entry.type === "work-toggle")).toMatchObject([
         { live: false, shimmer: false },
         {
@@ -2252,6 +2258,109 @@ describe("buildThreadFeed", () => {
       ]);
     },
   );
+
+  it("shows one Thinking row while a turn works without live tool activity", () => {
+    const turnId = TurnId.make("turn-thinking");
+    const latestTurn = {
+      turnId,
+      state: "running" as const,
+      requestedAt: "2026-04-01T00:00:00.000Z",
+      startedAt: "2026-04-01T00:00:00.000Z",
+      completedAt: null,
+      assistantMessageId: null,
+    };
+    const feed = buildThreadFeed(
+      makeThread({
+        id: ThreadId.make("thread-thinking"),
+        projectId: ProjectId.make("project-1"),
+        title: "Thinking",
+        latestTurn,
+        messages: [
+          {
+            id: MessageId.make("user-1"),
+            role: "user",
+            text: "hello",
+            turnId,
+            streaming: false,
+            createdAt: "2026-04-01T00:00:00.000Z",
+            updatedAt: "2026-04-01T00:00:00.000Z",
+          },
+        ],
+      }),
+    );
+
+    const rows = deriveThreadFeedPresentation(feed, latestTurn, new Set(), new Set(), "now");
+    expect(rows.map((entry) => entry.type)).toEqual(["message", "thinking"]);
+    expect(rows[1]).toMatchObject({ id: "thinking", createdAt: "now", turnId });
+    // The row identity is stable across re-derivations so the list can reuse it.
+    expect(deriveThreadFeedPresentation(feed, latestTurn, new Set(), new Set(), "now")[1]).toBe(
+      rows[1],
+    );
+    // Idle threads show no live activity.
+    expect(
+      deriveThreadFeedPresentation(feed, latestTurn, new Set(), new Set(), null).map(
+        (entry) => entry.type,
+      ),
+    ).toEqual(["message"]);
+  });
+
+  it("hands a settled tool run off to Thinking once assistant text streams after it", () => {
+    const turnId = TurnId.make("turn-streaming-tail");
+    const latestTurn = {
+      turnId,
+      state: "running" as const,
+      requestedAt: "2026-04-01T00:00:00.000Z",
+      startedAt: "2026-04-01T00:00:00.000Z",
+      completedAt: null,
+      assistantMessageId: null,
+    };
+    const feed = buildThreadFeed(
+      makeThread({
+        id: ThreadId.make("thread-streaming-tail"),
+        projectId: ProjectId.make("project-1"),
+        title: "Streaming tail",
+        latestTurn,
+        messages: [
+          {
+            id: MessageId.make("assistant-1"),
+            role: "assistant",
+            text: "Here is what I found",
+            turnId,
+            streaming: true,
+            createdAt: "2026-04-01T00:00:05.000Z",
+            updatedAt: "2026-04-01T00:00:06.000Z",
+          },
+        ],
+        activities: [
+          makeActivity({
+            id: EventId.make("read-completed"),
+            kind: "tool.completed",
+            tone: "tool",
+            summary: "Read file",
+            createdAt: "2026-04-01T00:00:02.000Z",
+            turnId,
+            payload: {
+              itemType: "file_read",
+              toolCallId: "read-1",
+              title: "Read file",
+              status: "completed",
+              detail: "src/index.ts",
+            },
+          }),
+        ],
+      }),
+    );
+
+    const rows = deriveThreadFeedPresentation(
+      feed,
+      latestTurn,
+      new Set(),
+      new Set(),
+      latestTurn.startedAt,
+    );
+    expect(rows.map((entry) => entry.type)).toEqual(["work-toggle", "message", "thinking"]);
+    expect(rows[0]).toMatchObject({ live: false, shimmer: false });
+  });
 
   it("preserves serialized shell wrappers with non-matching boundary quotes", () => {
     const turnId = TurnId.make("turn-serialized-shell-wrapper");
