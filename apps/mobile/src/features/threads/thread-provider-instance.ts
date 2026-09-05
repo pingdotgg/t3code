@@ -4,7 +4,12 @@ import {
   resolveProviderInstanceDisplayName,
   shouldShowInstanceBadge,
 } from "@t3tools/client-runtime/state/provider-instance-display";
-import type { EnvironmentId, ProviderDriverKind, ServerConfig } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  ProviderDriverKind,
+  ServerConfig,
+  ServerProvider,
+} from "@t3tools/contracts";
 
 /** What a thread row needs to draw the provider glyph and its account badge. */
 export interface ThreadRowProviderInstance {
@@ -12,6 +17,8 @@ export interface ThreadRowProviderInstance {
   readonly displayName: string;
   readonly accentColor?: string | undefined;
   readonly showBadge: boolean;
+  /** Feeds the row's "Until limits reset" snooze preset. */
+  readonly usageLimits: ServerProvider["usageLimits"];
 }
 
 /**
@@ -34,6 +41,7 @@ export function resolveThreadProviderInstance(
   };
   return {
     ...entry,
+    usageLimits: snapshot.usageLimits,
     showBadge: shouldShowInstanceBadge(
       entry,
       providers.map((provider) => ({ driverKind: provider.driver })),

@@ -68,6 +68,35 @@ describe("resolveSnoozePresets", () => {
     expect(twelveHour.find((preset) => preset.id === "evening")!.whenLabel).toMatch(/PM/i);
     expect(twentyFourHour.find((preset) => preset.id === "evening")!.whenLabel).toBe("18:00");
   });
+
+  it("prepends the limits-reset preset, time-only today and weekday-qualified otherwise", () => {
+    const now = localDate(2026, 4, 8, 10);
+    const sameDay = resolveSnoozePresets(now, "24-hour", {
+      limitsResetAt: localDate(2026, 4, 8, 18).toISOString(),
+    });
+    expect(sameDay[0]?.id).toBe("limits-reset");
+    expect(sameDay[0]?.whenLabel).toBe("18:01");
+
+    const laterWeek = resolveSnoozePresets(now, "24-hour", {
+      limitsResetAt: localDate(2026, 4, 13, 9).toISOString(),
+    });
+    expect(laterWeek[0]?.whenLabel).toMatch(/Mon/);
+  });
+
+  it("omits the limits-reset preset with no option or a past/malformed reset", () => {
+    const now = localDate(2026, 4, 8, 10);
+    expect(resolveSnoozePresets(now, "24-hour").some((p) => p.id === "limits-reset")).toBe(false);
+    expect(
+      resolveSnoozePresets(now, "24-hour", { limitsResetAt: null }).some(
+        (p) => p.id === "limits-reset",
+      ),
+    ).toBe(false);
+    expect(
+      resolveSnoozePresets(now, "24-hour", {
+        limitsResetAt: localDate(2026, 4, 8, 9).toISOString(),
+      }).some((p) => p.id === "limits-reset"),
+    ).toBe(false);
+  });
 });
 
 describe("snoozeWakeDescription", () => {
