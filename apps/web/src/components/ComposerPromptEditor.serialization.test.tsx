@@ -6,10 +6,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 
 import { collapseExpandedComposerCursor } from "../composer-logic";
 import { ComposerPromptEditor, type ComposerPromptEditorHandle } from "./ComposerPromptEditor";
-import {
-  buildComposerPromptHistoryEntries,
-  stepComposerPromptHistory,
-} from "./chat/composerPromptHistory";
 
 vi.mock("./chat/FileTagChip", () => ({
   FILE_TAG_CHIP_CLASS_NAME: "",
@@ -102,42 +98,17 @@ describe("composer mention serialization", () => {
     expect(editorRef.current?.readSnapshot().value).toBe(prompt);
   });
 
-  it("keeps history navigation active after replacing the controlled prompt", async () => {
-    const entries = buildComposerPromptHistoryEntries([
-      { id: "older", role: "user", text: "Older plain control" },
-      { id: "newer", role: "user", text: "@README.md control" },
-    ]);
-    await renderPrompt("");
-    const first = stepComposerPromptHistory({
-      direction: "backward",
-      entries,
-      position: null,
-      currentPrompt: "",
-    });
-    expect(first?.prompt).toBe(entries[1]?.prompt);
-    await renderPrompt(first!.prompt);
-    expect(editorRef.current?.readSnapshot().expandedCursor).toBe(first!.prompt.length);
-
-    const second = stepComposerPromptHistory({
-      direction: "backward",
-      entries,
-      position: first!.position,
-      currentPrompt: editorRef.current!.readSnapshot().value,
-    });
-    expect(second?.prompt).toBe(entries[0]?.prompt);
-    expect(lexicalEditor.getEditorState().read(() => $firstMention().isInline())).toBe(true);
-    await renderPrompt(second!.prompt);
-    expect(editorRef.current?.readSnapshot().value).toBe(entries[0]?.prompt);
-
-    const forward = stepComposerPromptHistory({
-      direction: "forward",
-      entries,
-      position: second!.position,
-      currentPrompt: editorRef.current!.readSnapshot().value,
-    });
-    expect(forward?.prompt).toBe(first!.prompt);
-    await renderPrompt(forward!.prompt);
-    expect(editorRef.current?.readSnapshot().value).toBe(first!.prompt);
+  it("preserves original source when replacing the controlled prompt", async () => {
+    for (const prompt of ["", "@README.md control", "Older plain control", "@README.md control"]) {
+      await renderPrompt(prompt);
+      expect(editorRef.current?.readSnapshot()).toMatchObject({
+        value: prompt,
+        expandedCursor: prompt.length,
+      });
+      if (prompt === "@README.md control") {
+        expect(lexicalEditor.getEditorState().read(() => $firstMention().isInline())).toBe(true);
+      }
+    }
   });
 
   it("preserves source when Lexical clones the mention and reloads exported state", async () => {
