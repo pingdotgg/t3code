@@ -1092,11 +1092,17 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     }).pipe(Effect.provide(settingsLayer));
   });
 
-  for (const { label, variable, expected } of [
+  for (const { label, variable, expected, duplicate } of [
     {
       label: "preserves an inline secret on a redacted settings save",
       variable: { name: "API_TOKEN", value: "", sensitive: true, valueRedacted: true },
       expected: "inline-test-token",
+    },
+    {
+      label: "preserves the effective last inline secret when names are duplicated",
+      variable: { name: "API_TOKEN", value: "", sensitive: true, valueRedacted: true },
+      expected: "last-inline-test-token",
+      duplicate: true,
     },
     {
       label: "replaces an inline secret with an explicit value",
@@ -1117,7 +1123,9 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         const fileSystem = yield* FileSystem.FileSystem;
         yield* fileSystem.writeFileString(
           serverConfig.settingsPath,
-          '{"providerInstances":{"codex_personal":{"driver":"codex","environment":[{"name":"API_TOKEN","value":"inline-test-token","sensitive":true}],"config":{}}}}',
+          duplicate
+            ? '{"providerInstances":{"codex_personal":{"driver":"codex","environment":[{"name":"API_TOKEN","value":"inline-test-token","sensitive":true},{"name":"API_TOKEN","value":"last-inline-test-token","sensitive":true}],"config":{}}}}'
+            : '{"providerInstances":{"codex_personal":{"driver":"codex","environment":[{"name":"API_TOKEN","value":"inline-test-token","sensitive":true}],"config":{}}}}',
         );
         const initial = yield* serverSettings.getSettings;
         assert.equal(
@@ -1130,7 +1138,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
             [instanceId]: {
               driver: ProviderDriverKind.make("codex"),
               displayName: "Renamed provider",
-              environment: [variable],
+              environment: duplicate ? [variable, variable] : [variable],
               config: {},
             },
           },
