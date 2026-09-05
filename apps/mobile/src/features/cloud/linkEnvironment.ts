@@ -397,16 +397,6 @@ export function getCloudEnvironmentStatus(input: {
   });
 }
 
-export function cloudEnvironmentsPendingStatus(
-  environments: ReadonlyArray<RelayClientEnvironmentRecord>,
-): ReadonlyArray<CloudEnvironmentRecordWithStatus> {
-  return environments.map((environment) => ({
-    environment,
-    status: null,
-    statusError: "Checking status...",
-  }));
-}
-
 export function loadCloudEnvironmentStatuses(input: {
   readonly clerkToken: string;
   readonly environments: ReadonlyArray<RelayClientEnvironmentRecord>;
