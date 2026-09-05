@@ -3,6 +3,7 @@ import {
   type OrchestrationV2Run,
   OrchestrationV2DomainEvent,
   OrchestrationV2StoredEvent,
+  ProjectId,
   ProviderThreadId,
   RunAttemptId,
   RunId,
@@ -72,6 +73,15 @@ export class EventSinkStreamError extends Schema.TaggedErrorClass<EventSinkStrea
     return this.threadId === undefined
       ? "Failed to stream orchestration V2 events."
       : `Failed to stream orchestration V2 events for thread ${this.threadId}.`;
+  }
+}
+
+class ThreadProjectDeletedError extends Schema.TaggedErrorClass<ThreadProjectDeletedError>()(
+  "ThreadProjectDeletedError",
+  { projectId: ProjectId },
+) {
+  override get message(): string {
+    return `Cannot create a thread for deleted project ${this.projectId}.`;
   }
 }
 
@@ -267,6 +277,23 @@ const baseLayer: Layer.Layer<
 
     const applyStoredEvents = (storedEvents: ReadonlyArray<OrchestrationV2StoredEvent>) =>
       Effect.gen(function* () {
+        const createdProjectIds = new Set(
+          storedEvents.flatMap((stored) =>
+            stored.event.type === "thread.created" ? [stored.event.payload.projectId] : [],
+          ),
+        );
+        for (const projectId of createdProjectIds) {
+          const projects = yield* sql<{ readonly deleted_at: string | null }>`
+            SELECT deleted_at
+            FROM projection_projects
+            WHERE project_id = ${projectId}
+            LIMIT 1
+          `;
+          const project = projects[0];
+          if (project !== undefined && project.deleted_at !== null) {
+            return yield* new ThreadProjectDeletedError({ projectId });
+          }
+        }
         yield* Effect.forEach(storedEvents, (stored) => projectionStore.apply(stored.event), {
           concurrency: 1,
         });

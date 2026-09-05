@@ -54,19 +54,35 @@ const makeOrchestrationCommandReceiptRepository = Effect.gen(function* () {
   const findReceiptByCommandId = SqlSchema.findOneOption({
     Request: GetByCommandIdInput,
     Result: OrchestrationCommandReceipt,
+    // Migration 053 could not type existing receipts. Recover only from the
+    // accepted receipt's exact durable result event; unmatched rows stay legacy.
     execute: ({ commandId }) =>
       sql`
         SELECT
-          command_id AS "commandId",
-          aggregate_kind AS "aggregateKind",
-          aggregate_id AS "aggregateId",
-          command_type AS "commandType",
-          accepted_at AS "acceptedAt",
-          result_sequence AS "resultSequence",
-          status,
-          error
-        FROM orchestration_command_receipts
-        WHERE command_id = ${commandId}
+          receipts.command_id AS "commandId",
+          receipts.aggregate_kind AS "aggregateKind",
+          receipts.aggregate_id AS "aggregateId",
+          CASE
+            WHEN receipts.command_type = 'legacy' AND receipts.status = 'accepted'
+            THEN CASE result_event.event_type
+              WHEN 'project.created' THEN 'project.create'
+              WHEN 'project.meta-updated' THEN 'project.meta.update'
+              WHEN 'project.deleted' THEN 'project.delete'
+              ELSE 'legacy'
+            END
+            ELSE receipts.command_type
+          END AS "commandType",
+          receipts.accepted_at AS "acceptedAt",
+          receipts.result_sequence AS "resultSequence",
+          receipts.status,
+          receipts.error
+        FROM orchestration_command_receipts AS receipts
+        LEFT JOIN orchestration_events AS result_event
+          ON result_event.sequence = receipts.result_sequence
+          AND result_event.command_id = receipts.command_id
+          AND result_event.aggregate_kind = receipts.aggregate_kind
+          AND result_event.stream_id = receipts.aggregate_id
+        WHERE receipts.command_id = ${commandId}
       `,
   });
 

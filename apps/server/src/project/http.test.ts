@@ -1,8 +1,9 @@
 import { assert, it } from "@effect/vitest";
-import { ProjectId } from "@t3tools/contracts";
+import { CommandId, ProjectId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
 import {
+  ProjectCommandReceiptConflictError,
   ProjectConflictError,
   ProjectNotEmptyError,
   ProjectNotFoundError,
@@ -20,6 +21,13 @@ it.effect.each([
     projectId,
     workspaceRoot: "/workspace/project",
     conflictingProjectId: ProjectId.make("project:http-mutation-conflict"),
+  }),
+  new ProjectCommandReceiptConflictError({
+    commandId: CommandId.make("command:http-mutation-conflict"),
+    projectId,
+    receiptAggregateKind: "project",
+    receiptAggregateId: projectId,
+    receiptCommandType: "project.meta.update",
   }),
 ])("maps expected project mutation failures to invalid requests", (cause) =>
   Effect.gen(function* () {

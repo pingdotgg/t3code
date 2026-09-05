@@ -158,6 +158,7 @@ import * as GitWorkflowService from "./git/GitWorkflowService.ts";
 import * as ReviewService from "./review/ReviewService.ts";
 import * as ProjectEnrichmentService from "./project/ProjectEnrichmentService.ts";
 import * as ProjectService from "./project/ProjectService.ts";
+import { projectMutationOperation } from "./project/ProjectMutation.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as RemoteOpenTargets from "./environment/RemoteOpenTargets.ts";
 import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
@@ -1265,48 +1266,9 @@ const makeWsRpcLayer = (
       });
 
       const mutateProject = Effect.fn("ws.projects.mutate")(function* (mutation: ProjectMutation) {
-        switch (mutation.type) {
-          case "project.create":
-            return yield* projectService.create({
-              commandId: mutation.commandId,
-              projectId: mutation.projectId,
-              title: mutation.title,
-              workspaceRoot: mutation.workspaceRoot,
-              ...(mutation.createWorkspaceRootIfMissing === undefined
-                ? {}
-                : { createWorkspaceRootIfMissing: mutation.createWorkspaceRootIfMissing }),
-              ...(mutation.defaultModelSelection === undefined
-                ? {}
-                : { defaultModelSelection: mutation.defaultModelSelection }),
-              ...(mutation.scripts === undefined ? {} : { scripts: mutation.scripts }),
-            });
-          case "project.update":
-            return yield* projectService.update({
-              commandId: mutation.commandId,
-              projectId: mutation.projectId,
-              ...(mutation.title === undefined ? {} : { title: mutation.title }),
-              ...(mutation.workspaceRoot === undefined
-                ? {}
-                : { workspaceRoot: mutation.workspaceRoot }),
-              ...(mutation.defaultModelSelection === undefined
-                ? {}
-                : { defaultModelSelection: mutation.defaultModelSelection }),
-              ...(mutation.autoPull === undefined ? {} : { autoPull: mutation.autoPull }),
-              ...(mutation.projectIcon === undefined ? {} : { projectIcon: mutation.projectIcon }),
-              ...(mutation.faviconPath === undefined ? {} : { faviconPath: mutation.faviconPath }),
-              ...(mutation.defaultThreadEnvMode === undefined
-                ? {}
-                : { defaultThreadEnvMode: mutation.defaultThreadEnvMode }),
-              ...(mutation.scripts === undefined ? {} : { scripts: mutation.scripts }),
-            });
-          case "project.delete": {
-            return yield* projectService.delete({
-              commandId: mutation.commandId,
-              projectId: mutation.projectId,
-              ...(mutation.force === undefined ? {} : { force: mutation.force }),
-            });
-          }
-        }
+        return yield* projectMutationOperation(mutation).pipe(
+          Effect.provideService(ProjectService.ProjectService, projectService),
+        );
       });
 
       const handlers = ServerWsRpcGroup.of({
@@ -2182,7 +2144,8 @@ const makeWsRpcLayer = (
                   new ProjectMutationError({
                     commandId: mutation.commandId,
                     message:
-                      cause._tag === "ProjectNotEmptyError"
+                      cause._tag === "ProjectNotEmptyError" ||
+                      cause._tag === "ProjectCommandReceiptConflictError"
                         ? cause.message
                         : "Failed to mutate project.",
                     cause,

@@ -30,6 +30,7 @@ import * as ProjectEnrichmentService from "../project/ProjectEnrichmentService.t
 import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import { projectMutationOperation } from "../project/ProjectMutation.ts";
 import * as T3ProjectFileLoader from "../project/T3ProjectFileLoader.ts";
 import {
   clearPersistedServerRuntimeState,
@@ -426,41 +427,10 @@ const runProjectMutation = Effect.fn("runProjectMutation")(function* (
       const output = yield* run({
         snapshot,
         dispatch: (command) =>
-          command.type === "project.create"
-            ? projects
-                .create({
-                  commandId: command.commandId,
-                  projectId: command.projectId,
-                  title: command.title,
-                  workspaceRoot: command.workspaceRoot,
-                  ...(command.defaultModelSelection === undefined
-                    ? {}
-                    : { defaultModelSelection: command.defaultModelSelection }),
-                  ...(command.scripts === undefined ? {} : { scripts: command.scripts }),
-                })
-                .pipe(Effect.asVoid)
-            : command.type === "project.update"
-              ? projects
-                  .update({
-                    commandId: command.commandId,
-                    projectId: command.projectId,
-                    ...(command.title === undefined ? {} : { title: command.title }),
-                    ...(command.workspaceRoot === undefined
-                      ? {}
-                      : { workspaceRoot: command.workspaceRoot }),
-                    ...(command.defaultModelSelection === undefined
-                      ? {}
-                      : { defaultModelSelection: command.defaultModelSelection }),
-                    ...(command.scripts === undefined ? {} : { scripts: command.scripts }),
-                  })
-                  .pipe(Effect.asVoid)
-              : projects
-                  .delete({
-                    commandId: command.commandId,
-                    projectId: command.projectId,
-                    ...(command.force === undefined ? {} : { force: command.force }),
-                  })
-                  .pipe(Effect.asVoid),
+          projectMutationOperation(command).pipe(
+            Effect.provideService(ProjectService.ProjectService, projects),
+            Effect.asVoid,
+          ),
         mode: "offline",
       });
       yield* Console.log(output);

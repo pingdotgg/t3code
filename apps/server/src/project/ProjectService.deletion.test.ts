@@ -18,6 +18,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { ServerConfig } from "../config.ts";
 import { OrchestrationLayerLive } from "../orchestration/runtimeLayer.ts";
+import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
 import { OrchestrationEffectRequestV2 } from "../orchestration-v2/EffectOutbox.ts";
 import {
   EventSinkV2,
@@ -241,14 +242,15 @@ it.effect("retries a partial project deletion without repeating child events or 
         partialCleanup,
       );
       for (const threadId of threadIds) {
-        const expectedCommandId = `${commandId}:delete-thread:${threadId}`;
+        const deletedEvent = finalEvents.find((event) => event.stream_id === threadId);
+        assert.isDefined(deletedEvent);
         assert.deepEqual(
           finalCleanup.filter((effect) => effect.thread_id === threadId),
           [
             {
-              effect_id: `effect:${expectedCommandId}:terminal.cleanup`,
+              effect_id: `effect:${deletedEvent.command_id}:terminal.cleanup`,
               thread_id: threadId,
-              command_id: expectedCommandId,
+              command_id: deletedEvent.command_id,
               effect_type: "terminal.cleanup",
             },
           ],
@@ -360,7 +362,15 @@ it.effect(
         WHERE thread_id = ${threadId} AND effect_type = 'attachment.cleanup'
       `;
         assert.lengthOf(cleanup, 1);
-        assert.equal(cleanup[0]?.command_id, `${commandId}:delete-thread:${threadId}`);
+        const deletionEvents = yield* sql<{ readonly command_id: string }>`
+          SELECT command_id
+          FROM orchestration_events
+          WHERE stream_id = ${threadId}
+            AND event_type = 'thread.deleted'
+            AND application_event_version = 2
+        `;
+        assert.lengthOf(deletionEvents, 1);
+        assert.equal(cleanup[0]?.command_id, deletionEvents[0]?.command_id);
         assert.equal(cleanup[0]?.status, "pending");
         const request = yield* decodeEffectRequest(cleanup[0]?.payload_json);
         assert.deepEqual(request, {
@@ -371,31 +381,48 @@ it.effect(
     }).pipe(Effect.provide(databaseLayer)),
 );
 
-it.effect("rejects a child deletion command ID already accepted for an unrelated thread", () =>
+it.effect("retries a rejected child deletion with a fresh command ID", () =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
-    const projectId = ProjectId.make("project:receipt-collision");
-    const otherProjectId = ProjectId.make("project:unrelated-receipt");
-    const threadId = ThreadId.make("thread:receipt-collision");
-    const otherThreadId = ThreadId.make("thread:unrelated-receipt");
-    const commandId = CommandId.make("command:collision-project-delete");
+    const projectId = ProjectId.make("project:rejected-child-retry");
+    const threadId = ThreadId.make("thread:rejected-child-retry");
+    const commandId = CommandId.make("command:rejected-child-retry");
     yield* seedProject(projectId);
-    yield* seedProject(otherProjectId);
 
     yield* Effect.gen(function* () {
       const eventSink = yield* EventSinkV2;
       const projections = yield* ProjectionStoreV2;
-      const service = yield* ProjectService.make;
       yield* eventSink.write({ events: [nativeThreadCreated(projectId, threadId)] });
-      const accepted = yield* eventSink.commitCommand({
-        commandId: CommandId.make(`${commandId}:delete-thread:${threadId}`),
-        commandType: "thread.create",
-        threadId: otherThreadId,
-        acceptedAt: DateTime.makeUnsafe("2026-01-01T00:00:00.000Z"),
-        events: [nativeThreadCreated(otherProjectId, otherThreadId)],
-        effects: [],
+      const attempts: CommandId[] = [];
+      let rejectedCommandId: CommandId | undefined;
+      const rejectingEventSink = EventSinkV2.of({
+        ...eventSink,
+        commitCommand: Effect.fn("ProjectDeletionTest.rejectFirstChild")(function* (
+          input: Parameters<EventSinkV2Shape["commitCommand"]>[0],
+        ) {
+          attempts.push(input.commandId);
+          if (rejectedCommandId === undefined) {
+            rejectedCommandId = input.commandId;
+            const receipt = yield* eventSink.commitRejectedCommand({
+              commandId: input.commandId,
+              threadId: input.threadId,
+              commandType: input.commandType,
+              rejectedAt: input.acceptedAt,
+              error: "Injected child rejection",
+            });
+            return {
+              receipt,
+              storedEvents: [],
+              committed: false,
+              cancelledEffectCount: 0,
+            };
+          }
+          return yield* eventSink.commitCommand(input);
+        }),
       });
-      assert.equal(accepted.receipt.status, "accepted");
+      const service = yield* ProjectService.make.pipe(
+        Effect.provideService(EventSinkV2, rejectingEventSink),
+      );
 
       const failure = yield* service
         .delete({ commandId, projectId, force: true })
@@ -405,18 +432,188 @@ it.effect("rejects a child deletion command ID already accepted for an unrelated
       assert.equal(failure.operation, "delete-thread");
       assert.isTrue(Option.isSome(yield* service.getById(projectId)));
       assert.isNull((yield* projections.getThreadProjection(threadId)).thread.deletedAt);
-      assert.isNull((yield* projections.getThreadProjection(otherThreadId)).thread.deletedAt);
-      const deletions = yield* sql`
-        SELECT sequence FROM orchestration_events
+
+      const deleted = yield* service.delete({ commandId, projectId, force: true });
+      assert.isNotNull(deleted.deletedAt);
+      assert.lengthOf(attempts, 2);
+      assert.notEqual(attempts[0], attempts[1]);
+      assert.equal(attempts[0], rejectedCommandId);
+      const successfulCommandId = attempts[1] ?? assert.fail("Retry was not attempted");
+      assert.isNotNull((yield* projections.getThreadProjection(threadId)).thread.deletedAt);
+      const deletionEvents = yield* sql<{ readonly command_id: string }>`
+        SELECT command_id
+        FROM orchestration_events
+        WHERE stream_id = ${threadId} AND event_type = 'thread.deleted'
+      `;
+      assert.deepEqual(deletionEvents, [{ command_id: successfulCommandId }]);
+    }).pipe(Effect.provide(servicesLayer));
+  }).pipe(Effect.provide(databaseLayer)),
+);
+
+it.effect("rejects a recovered legacy create receipt before deleting children", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const projectId = ProjectId.make("project:legacy-create-receipt");
+    const threadId = ThreadId.make("thread:legacy-create-receipt");
+    const commandId = CommandId.make("command:legacy-create-receipt");
+
+    yield* Effect.gen(function* () {
+      const eventSink = yield* EventSinkV2;
+      const projections = yield* ProjectionStoreV2;
+      const service = yield* ProjectService.make;
+      yield* service.create({
+        commandId,
+        projectId,
+        title: "Legacy create receipt",
+        workspaceRoot: "/work/legacy-create-receipt",
+      });
+      yield* sql`
+        UPDATE orchestration_command_receipts
+        SET command_type = 'legacy'
+        WHERE command_id = ${commandId}
+      `;
+      yield* eventSink.write({ events: [nativeThreadCreated(projectId, threadId)] });
+
+      const failure = yield* service
+        .delete({ commandId, projectId, force: true })
+        .pipe(Effect.flip);
+      assert.instanceOf(failure, ProjectService.ProjectCommandReceiptConflictError);
+      if (failure._tag !== "ProjectCommandReceiptConflictError") {
+        return assert.fail("Expected receipt conflict");
+      }
+      assert.equal(failure.commandId, commandId);
+      assert.equal(failure.projectId, projectId);
+      assert.equal(failure.receiptAggregateKind, "project");
+      assert.equal(failure.receiptAggregateId, projectId);
+      assert.equal(failure.receiptCommandType, "project.create");
+      assert.isTrue(Option.isSome(yield* service.getById(projectId)));
+      assert.isNull((yield* projections.getThreadProjection(threadId)).thread.deletedAt);
+      const deletionEvents = yield* sql`
+        SELECT sequence
+        FROM orchestration_events
         WHERE event_type IN ('thread.deleted', 'project.deleted')
-          AND stream_id IN (${threadId}, ${otherThreadId}, ${projectId})
+          AND stream_id IN (${threadId}, ${projectId})
       `;
-      assert.deepEqual(deletions, []);
-      const cleanup = yield* sql`
-        SELECT effect_id FROM orchestration_v2_effect_outbox
-        WHERE thread_id = ${threadId}
+      assert.deepEqual(deletionEvents, []);
+    }).pipe(Effect.provide(servicesLayer));
+  }).pipe(Effect.provide(databaseLayer)),
+);
+
+it.effect("rejects a parent receipt committed after the deletion preflight", () =>
+  Effect.gen(function* () {
+    const projectId = ProjectId.make("project:racing-parent-receipt");
+    const threadId = ThreadId.make("thread:racing-parent-receipt");
+    const commandId = CommandId.make("command:racing-parent-receipt");
+    yield* seedProject(projectId);
+
+    yield* Effect.gen(function* () {
+      const engine = yield* OrchestrationEngineService;
+      const eventSink = yield* EventSinkV2;
+      const projections = yield* ProjectionStoreV2;
+      yield* eventSink.write({ events: [nativeThreadCreated(projectId, threadId)] });
+      let injectedReceipt = false;
+      const racingEventSink = EventSinkV2.of({
+        ...eventSink,
+        commitCommand: Effect.fn("ProjectDeletionTest.commitRacingParentReceipt")(function* (
+          input: Parameters<EventSinkV2Shape["commitCommand"]>[0],
+        ) {
+          const result = yield* eventSink.commitCommand(input);
+          if (!injectedReceipt) {
+            injectedReceipt = true;
+            yield* engine
+              .dispatch({
+                type: "project.meta.update",
+                commandId,
+                projectId,
+                title: "Concurrent update",
+              })
+              .pipe(Effect.orDie);
+          }
+          return result;
+        }),
+      });
+      const service = yield* ProjectService.make.pipe(
+        Effect.provideService(EventSinkV2, racingEventSink),
+      );
+
+      const failure = yield* service
+        .delete({ commandId, projectId, force: true })
+        .pipe(Effect.flip);
+      assert.equal(failure._tag, "ProjectOperationError");
+      if (failure._tag !== "ProjectOperationError") return assert.fail("Expected receipt conflict");
+      assert.equal(failure.operation, "dispatch-project-command");
+      assert.isTrue(Option.isSome(yield* service.getById(projectId)));
+      assert.isNotNull((yield* projections.getThreadProjection(threadId)).thread.deletedAt);
+
+      const retry = yield* service.delete({
+        commandId: CommandId.make("command:racing-parent-receipt-retry"),
+        projectId,
+        force: true,
+      });
+      assert.isNotNull(retry.deletedAt);
+    }).pipe(Effect.provide(servicesLayer));
+  }).pipe(Effect.provide(databaseLayer)),
+);
+
+it.effect("replays an accepted legacy deletion before checking project existence", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const projectId = ProjectId.make("project:accepted-delete-replay");
+    const commandId = CommandId.make("command:accepted-delete-replay");
+    yield* seedProject(projectId);
+
+    yield* Effect.gen(function* () {
+      const service = yield* ProjectService.make;
+      const input = { commandId, projectId, force: true } as const;
+      const deleted = yield* service.delete(input);
+      assert.isNotNull(deleted.deletedAt);
+      assert.isTrue(Option.isNone(yield* service.getById(projectId)));
+      yield* sql`
+        UPDATE orchestration_command_receipts
+        SET command_type = 'legacy'
+        WHERE command_id = ${commandId}
       `;
-      assert.deepEqual(cleanup, []);
+      assert.deepEqual(yield* service.delete(input), deleted);
+    }).pipe(Effect.provide(servicesLayer));
+  }).pipe(Effect.provide(databaseLayer)),
+);
+
+it.effect("prevents either commit order from orphaning a V2 thread", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const projectId = ProjectId.make("project:commit-order-guard");
+    const threadId = ThreadId.make("thread:commit-order-existing");
+    const lateThreadId = ThreadId.make("thread:commit-order-late");
+    const commandId = CommandId.make("command:commit-order-delete");
+    yield* seedProject(projectId);
+
+    yield* Effect.gen(function* () {
+      const engine = yield* OrchestrationEngineService;
+      const eventSink = yield* EventSinkV2;
+      const projections = yield* ProjectionStoreV2;
+      const service = yield* ProjectService.make;
+      yield* eventSink.write({ events: [nativeThreadCreated(projectId, threadId)] });
+
+      const blockedDelete = yield* engine
+        .dispatch({ type: "project.delete", commandId, projectId, force: true })
+        .pipe(Effect.flip);
+      assert.equal(blockedDelete._tag, "OrchestrationProjectHasActiveThreadsError");
+      assert.isTrue(Option.isSome(yield* service.getById(projectId)));
+
+      const deleted = yield* service.delete({ commandId, projectId, force: true });
+      assert.isNotNull(deleted.deletedAt);
+      assert.isNotNull((yield* projections.getThreadProjection(threadId)).thread.deletedAt);
+
+      const blockedCreate = yield* eventSink
+        .write({ events: [nativeThreadCreated(projectId, lateThreadId)] })
+        .pipe(Effect.flip);
+      assert.instanceOf(blockedCreate, EventSinkWriteError);
+      const lateThreads = yield* sql`
+        SELECT thread_id
+        FROM orchestration_v2_projection_threads
+        WHERE thread_id = ${lateThreadId}
+      `;
+      assert.deepEqual(lateThreads, []);
     }).pipe(Effect.provide(servicesLayer));
   }).pipe(Effect.provide(databaseLayer)),
 );

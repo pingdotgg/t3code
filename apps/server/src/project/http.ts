@@ -13,15 +13,17 @@ import {
   requireEnvironmentScope,
 } from "../auth/http.ts";
 import * as ServerRuntimeStartup from "../serverRuntimeStartup.ts";
-import { ProjectService, type ProjectServiceError } from "./ProjectService.ts";
+import * as ProjectService from "./ProjectService.ts";
+import { projectMutationOperation } from "./ProjectMutation.ts";
 
 export const failProjectMutation = Effect.fn("environment.projects.failMutation")(function* (
-  cause: ProjectServiceError | ServerRuntimeStartup.ServerRuntimeStartupError,
+  cause: ProjectService.ProjectServiceError | ServerRuntimeStartup.ServerRuntimeStartupError,
 ) {
   if (
     cause._tag === "ProjectNotFoundError" ||
     cause._tag === "ProjectConflictError" ||
-    cause._tag === "ProjectNotEmptyError"
+    cause._tag === "ProjectNotEmptyError" ||
+    cause._tag === "ProjectCommandReceiptConflictError"
   ) {
     return yield* failEnvironmentInvalidRequest("invalid_command");
   }
@@ -32,7 +34,7 @@ export const projectHttpApiLayer = HttpApiBuilder.group(
   EnvironmentHttpApi,
   "projects",
   Effect.fnUntraced(function* (handlers) {
-    const projects = yield* ProjectService;
+    const projects = yield* ProjectService.ProjectService;
     const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
 
     return handlers
@@ -51,37 +53,9 @@ export const projectHttpApiLayer = HttpApiBuilder.group(
         Effect.fn("environment.projects.mutate")(function* (args) {
           yield* annotateEnvironmentRequest(args.endpoint.name);
           yield* requireEnvironmentScope(AuthOrchestrationOperateScope);
-          const mutation = args.payload;
-          const operation =
-            mutation.type === "project.create"
-              ? projects.create({
-                  commandId: mutation.commandId,
-                  projectId: mutation.projectId,
-                  title: mutation.title,
-                  workspaceRoot: mutation.workspaceRoot,
-                  ...(mutation.defaultModelSelection === undefined
-                    ? {}
-                    : { defaultModelSelection: mutation.defaultModelSelection }),
-                  ...(mutation.scripts === undefined ? {} : { scripts: mutation.scripts }),
-                })
-              : mutation.type === "project.update"
-                ? projects.update({
-                    commandId: mutation.commandId,
-                    projectId: mutation.projectId,
-                    ...(mutation.title === undefined ? {} : { title: mutation.title }),
-                    ...(mutation.workspaceRoot === undefined
-                      ? {}
-                      : { workspaceRoot: mutation.workspaceRoot }),
-                    ...(mutation.defaultModelSelection === undefined
-                      ? {}
-                      : { defaultModelSelection: mutation.defaultModelSelection }),
-                    ...(mutation.scripts === undefined ? {} : { scripts: mutation.scripts }),
-                  })
-                : projects.delete({
-                    commandId: mutation.commandId,
-                    projectId: mutation.projectId,
-                    ...(mutation.force === undefined ? {} : { force: mutation.force }),
-                  });
+          const operation = projectMutationOperation(args.payload).pipe(
+            Effect.provideService(ProjectService.ProjectService, projects),
+          );
           return yield* startup.enqueueCommand(operation).pipe(Effect.catch(failProjectMutation));
         }),
       );
