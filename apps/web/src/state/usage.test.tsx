@@ -10,10 +10,31 @@ import {
   type UsageView,
 } from "./usage";
 
-const testState = vi.hoisted(() => ({ environments: [] as EnvironmentUsageStatus[] }));
+function deferred() {
+  let resolve = () => {};
+  let reject = (_reason?: unknown) => {};
+  const promise = new Promise<void>((resolvePromise, rejectPromise) => {
+    resolve = () => resolvePromise();
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
+const testState = vi.hoisted(() => ({
+  environments: [] as EnvironmentUsageStatus[],
+  windowLabel: "",
+  runAtomCommand: vi.fn(),
+}));
+vi.mock("@t3tools/client-runtime/state/runtime", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@t3tools/client-runtime/state/runtime")>()),
+  runAtomCommand: testState.runAtomCommand,
+}));
 vi.mock("@effect/atom-react", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@effect/atom-react")>()),
-  useAtomValue: () => testState.environments,
+  useAtomValue: (atom: { readonly label?: readonly [string, string] }) => {
+    testState.windowLabel = atom.label?.[0] ?? "";
+    return testState.environments;
+  },
 }));
 
 const input = {
@@ -95,6 +116,7 @@ async function select(...ids: string[]) {
 }
 
 beforeEach(async () => {
+  testState.runAtomCommand.mockReset();
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   testState.environments = [environment("a", 10), environment("b", 20), environment("slow", null)];
   await act(() => {
@@ -182,5 +204,31 @@ describe("usage refresh attempts", () => {
     expect(first.a).not.toBe("old-a");
     expect(second.a).not.toBe(first.a);
     expect(second.untouched).toBe("keep");
+  });
+});
+
+describe("independent environment refresh", () => {
+  it("rescans a healthy environment without waiting for another rate request", async () => {
+    const fast = deferred();
+    const slow = deferred();
+    testState.runAtomCommand.mockImplementation(
+      (_registry, _command, { environmentId }: { environmentId: EnvironmentId }) =>
+        environmentId === "a" ? fast.promise : slow.promise,
+    );
+    await select("a", "b");
+    await act(() => latest.refresh());
+    expect(testState.runAtomCommand).toHaveBeenCalledTimes(2);
+    await act(() => fast.resolve());
+    const fastTokens = JSON.parse(
+      testState.windowLabel.slice("web-usage:window:".length),
+    ).refreshTokens;
+    expect(fastTokens.a).toEqual(expect.any(String));
+    expect(fastTokens.b).toBeUndefined();
+    await act(() => slow.reject(new Error("Rates unavailable")));
+    const finalTokens = JSON.parse(
+      testState.windowLabel.slice("web-usage:window:".length),
+    ).refreshTokens;
+    expect(finalTokens.a).toBe(fastTokens.a);
+    expect(finalTokens.b).toBe(fastTokens.a);
   });
 });

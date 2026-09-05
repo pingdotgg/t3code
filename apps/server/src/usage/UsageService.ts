@@ -384,12 +384,14 @@ export const make = Effect.gen(function* () {
 
   interface SourceSnapshot {
     readonly completedAtMs: number;
+    readonly scanRevision: number;
     readonly windowStartMs: number;
     readonly sourceKey: string;
     readonly dirs: readonly ScannedDir[];
   }
 
   let sourceSnapshot: SourceSnapshot | null = null;
+  let sourceScanRevision = 0;
   let lastRefreshToken: string | null = null;
   const sourceScanSemaphore = yield* Semaphore.make(1);
 
@@ -468,6 +470,8 @@ export const make = Effect.gen(function* () {
         // Pricing only matters once records are aggregated, so the rate table
         // loads while transcripts stream instead of gating them: a cold rates
         // fetch on a slow network no longer delays the scan by its own timeout.
+        sourceScanRevision += 1;
+        const scanRevision = sourceScanRevision;
         const [, dirs] = yield* Effect.all(
           [ensureRates(false), collectDirs(scanWindowStartMs, settings)],
           { concurrency: 2 },
@@ -476,6 +480,7 @@ export const make = Effect.gen(function* () {
         const completedAtMs = Math.max(now, (currentSnapshot?.completedAtMs ?? now - 1) + 1);
         const nextSnapshot = {
           completedAtMs,
+          scanRevision,
           windowStartMs: scanWindowStartMs,
           sourceKey,
           dirs,
@@ -601,14 +606,19 @@ export const make = Effect.gen(function* () {
       });
     }
 
-    const pruned = pruneScanCache(fileCache, {
-      livePaths,
-      walkedRoots,
-      windowStartMs,
-      retentionCutoffMs: startedAtMs - CACHE_RETENTION_DAYS * 24 * 60 * 60 * 1000,
-    });
-    if (pruned > 0) cacheDirty = true;
-    yield* persistScanCache();
+    // A newer source walk may have populated files after this snapshot left
+    // the scan lane. Only the latest walk can prove that an unseen path
+    // disappeared and persist the resulting cache.
+    if (currentSnapshot.scanRevision === sourceScanRevision) {
+      const pruned = pruneScanCache(fileCache, {
+        livePaths,
+        walkedRoots,
+        windowStartMs,
+        retentionCutoffMs: startedAtMs - CACHE_RETENTION_DAYS * 24 * 60 * 60 * 1000,
+      });
+      if (pruned > 0) cacheDirty = true;
+      yield* persistScanCache();
+    }
 
     const aggregated = aggregator.finish();
     const finishedAtMs = yield* Clock.currentTimeMillis;
@@ -644,7 +654,7 @@ export const make = Effect.gen(function* () {
       input.resolution ?? "day",
       input.sinceTime ?? null,
       input.untilTime ?? null,
-      input.refreshToken ?? null,
+      input.refreshToken === undefined ? null : "refresh",
       priceOverrides,
     ]);
 

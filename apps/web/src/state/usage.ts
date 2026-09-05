@@ -188,21 +188,21 @@ export function useUsage(
   // its last daily fetch gets priced by the rescan. The rescan runs whether or
   // not the refetch succeeds: an offline environment still recounts tokens.
   const refresh = useCallback(() => {
-    const rateRefreshes = selectedEnvironments.map(({ environmentId }) =>
-      runAtomCommand(
-        appAtomRegistry,
-        serverEnvironment.refreshUsageRates,
-        { environmentId, input: {} },
-        { reportFailure: false },
-      ),
-    );
-    void Promise.allSettled(rateRefreshes).then(() => {
-      const selectedIds = selectedEnvironments.map(({ environmentId }) => environmentId);
-      const attemptId = randomUUID();
-      setRefreshTokens((current) =>
-        withUsageRefreshAttempt(current, selectedIds, answered, attemptId),
-      );
-    });
+    const attemptId = randomUUID();
+    for (const { environmentId } of selectedEnvironments) {
+      void Promise.allSettled([
+        runAtomCommand(
+          appAtomRegistry,
+          serverEnvironment.refreshUsageRates,
+          { environmentId, input: {} },
+          { reportFailure: false },
+        ),
+      ]).then(() => {
+        setRefreshTokens((current) =>
+          withUsageRefreshAttempt(current, [environmentId], answered, attemptId),
+        );
+      });
+    }
   }, [answered, selectedEnvironments]);
 
   const merged = useMemo(() => mergeUsage(answered, USAGE_CONTRACT_VERSION), [answered]);
