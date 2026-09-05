@@ -3,6 +3,7 @@ import { beforeEach, expect, it, vi } from "vite-plus/test";
 import { useComposerDraftStore } from "./composerDraftStore";
 import {
   questionAttachmentDraftId,
+  questionAttachmentDraftPrefix,
   changeQuestionAttachmentPreparation,
   clearQuestionAttachmentDraft,
   useQuestionAttachmentPreparation,
@@ -60,4 +61,20 @@ it("scopes provider request ids to their environment and thread", () => {
     questionAttachmentDraftId(environmentId, ThreadId.make("thread-2"), requestId, "q"),
   ];
   expect(new Set(keys).size).toBe(3);
+});
+it("does not match drafts belonging to threads with a shared id prefix", () => {
+  const prefix = questionAttachmentDraftPrefix(environmentId, threadId);
+  expect(
+    questionAttachmentDraftId(environmentId, threadId, requestId, "q").startsWith(prefix),
+  ).toBe(true);
+  for (const suffix of ["-extra", ":extra", "/extra", "%extra"]) {
+    expect(
+      questionAttachmentDraftId(
+        environmentId,
+        ThreadId.make(`${threadId}${suffix}`),
+        requestId,
+        "q",
+      ).startsWith(prefix),
+    ).toBe(false);
+  }
 });

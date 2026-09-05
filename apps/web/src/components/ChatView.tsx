@@ -7172,10 +7172,10 @@ export default function ChatView(props: ChatViewProps) {
       if (!activeThreadId || !activePendingUserInput || activePendingIsResponding) return;
       const responseKey = JSON.stringify([environmentId, activeThreadId, requestId]);
       if (userInputResponsesInFlight.current.has(responseKey)) return;
-      const attachmentsByQuestionId: Record<
+      const attachmentsByQuestionId = new Map<
         string,
         import("@t3tools/contracts").UserInputAttachments[string]
-      > = {};
+      >();
       for (const question of activePendingUserInput.questions) {
         const target = questionAttachmentDraftId(
           environmentId,
@@ -7195,8 +7195,10 @@ export default function ChatView(props: ChatViewProps) {
           );
           return;
         }
-        attachmentsByQuestionId[question.id] =
-          uploaded as import("@t3tools/contracts").UserInputAttachments[string];
+        attachmentsByQuestionId.set(
+          question.id,
+          uploaded as import("@t3tools/contracts").UserInputAttachments[string],
+        );
       }
       userInputResponsesInFlight.current.add(responseKey);
       setRespondingUserInputRequestIds((existing) =>
@@ -7208,7 +7210,9 @@ export default function ChatView(props: ChatViewProps) {
           threadId: activeThreadId,
           requestId,
           answers,
-          ...(Object.keys(attachmentsByQuestionId).length > 0 ? { attachmentsByQuestionId } : {}),
+          ...(attachmentsByQuestionId.size > 0
+            ? { attachmentsByQuestionId: Object.fromEntries(attachmentsByQuestionId) }
+            : {}),
         },
       });
       if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {

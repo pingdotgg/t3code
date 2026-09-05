@@ -9,6 +9,7 @@ import {
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { Alert, View } from "react-native";
+import { useEffect, useRef } from "react";
 import { ComposerAttachmentButton } from "../../components/ComposerAttachmentButton";
 import { ComposerAttachmentStrip } from "../../components/ComposerAttachmentStrip";
 import { pickComposerFiles, pickComposerMedia } from "../../lib/composerImages";
@@ -39,6 +40,20 @@ export function QuestionAttachments(props: {
   const { selectedThread } = useThreadSelection();
   const configs = useServerConfigs();
   const drafts = useAtomValue(composerDraftsAtom);
+  const scopeKey = JSON.stringify([
+    selectedThread?.environmentId,
+    selectedThread?.id,
+    props.requestId,
+    props.question.id,
+  ]);
+  const pickerScope = useRef<{ key: string; active: boolean } | null>(null);
+  useEffect(() => {
+    const scope = { key: scopeKey, active: true };
+    pickerScope.current = scope;
+    return () => {
+      scope.active = false;
+    };
+  }, [scopeKey]);
   const append = (
     key: string,
     attachments: Parameters<typeof appendComposerDraftAttachments>[1],
@@ -59,6 +74,7 @@ export function QuestionAttachments(props: {
     });
   };
   const paste = useNativePaste((uris) => {
+    const scope = pickerScope.current;
     if (
       !selectedThread ||
       props.disabled ||
@@ -77,9 +93,13 @@ export function QuestionAttachments(props: {
       existingCount: appAtomRegistry.get(composerDraftsAtom)[key]?.attachments.length ?? 0,
     })
       .then(async (images) => {
-        if ((appAtomRegistry.get(questionAttachmentPreparationAtom)[key] ?? 0) > 0)
-          append(key, images);
-        else await releaseUnusedComposerAttachmentFiles(images);
+        if (
+          scope?.active &&
+          (appAtomRegistry.get(questionAttachmentPreparationAtom)[key] ?? 0) > 0
+        ) {
+          if (append(key, images) > 0)
+            Alert.alert("Could not paste image", "Too many attachments.");
+        } else await releaseUnusedComposerAttachmentFiles(images);
       })
       .catch((error) =>
         Alert.alert("Could not paste image", error instanceof Error ? error.message : "Try again."),
@@ -98,6 +118,7 @@ export function QuestionAttachments(props: {
   );
   const attachments = drafts[key]?.attachments ?? [];
   const pick = async (kind: "media" | "files") => {
+    const scope = pickerScope.current;
     changeQuestionAttachmentPreparation(key, 1);
     try {
       const existingCount = appAtomRegistry.get(composerDraftsAtom)[key]?.attachments.length ?? 0;
@@ -113,7 +134,10 @@ export function QuestionAttachments(props: {
             });
       const picked = "files" in result ? result.files : result.attachments;
       // Resolution on another client clears the reservation while the picker is open.
-      if ((appAtomRegistry.get(questionAttachmentPreparationAtom)[key] ?? 0) === 0) {
+      if (
+        !scope?.active ||
+        (appAtomRegistry.get(questionAttachmentPreparationAtom)[key] ?? 0) === 0
+      ) {
         await releaseUnusedComposerAttachmentFiles(picked);
         return;
       }
