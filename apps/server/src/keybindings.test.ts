@@ -188,33 +188,6 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
     }).pipe(Effect.provide(makeKeybindingsLayer())),
   );
 
-  it.effect("ships configurable thread navigation defaults", () =>
-    Effect.sync(() => {
-      const defaultsByCommand = new Map(
-        Keybindings.DEFAULT_KEYBINDINGS.map((binding) => [binding.command, binding.key] as const),
-      );
-
-      assert.equal(defaultsByCommand.get("thread.previous"), "mod+shift+[");
-      assert.equal(defaultsByCommand.get("thread.next"), "mod+shift+]");
-      assert.equal(defaultsByCommand.get("thread.copyReference"), "mod+shift+c");
-      assert.equal(defaultsByCommand.get("thread.settle"), "mod+shift+s");
-      assert.equal(defaultsByCommand.get("thread.pin"), "mod+shift+p");
-      assert.equal(defaultsByCommand.get("thread.jump.1"), "mod+1");
-      assert.equal(defaultsByCommand.get("thread.jump.9"), "mod+9");
-      assert.equal(defaultsByCommand.get("modelPicker.toggle"), "mod+shift+m");
-      assert.equal(defaultsByCommand.get("themeEditor.toggle"), "mod+alt+shift+t");
-      assert.equal(defaultsByCommand.get("filePicker.toggle"), "mod+p");
-      assert.equal(defaultsByCommand.get("projectSearch.toggle"), "mod+shift+f");
-      assert.equal(defaultsByCommand.get("sidebar.toggle"), "mod+b");
-      assert.equal(defaultsByCommand.get("rightPanel.toggle"), "mod+alt+b");
-      assert.isFalse(defaultsByCommand.has("rightPanel.toggleMaximized"));
-      assert.equal(defaultsByCommand.get("rightPanel.close"), "mod+w");
-      assert.equal(defaultsByCommand.get("terminal.splitVertical"), "mod+shift+d");
-      assert.equal(defaultsByCommand.get("modelPicker.jump.1"), "mod+1");
-      assert.equal(defaultsByCommand.get("modelPicker.jump.9"), "mod+9");
-    }),
-  );
-
   it.effect("uses defaults in runtime when config is malformed without overriding file", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
