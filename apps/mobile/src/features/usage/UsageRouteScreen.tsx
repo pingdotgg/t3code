@@ -48,7 +48,6 @@ const METRIC_OPTIONS = [
 ] as const satisfies readonly { value: UsageChartMetric; label: string }[];
 
 const CHART_HEIGHT = 180;
-const REFRESH_INDICATOR_TIMEOUT_MS = 30_000;
 
 /**
  * Two tabs over one screen. Usage is the transcript-derived spend for a
@@ -65,7 +64,6 @@ export function UsageRouteScreen() {
   }));
   const [metric, setMetric] = useState<UsageChartMetric>("cost");
   const [isPullRefreshing, setIsPullRefreshing] = useState(false);
-  const refreshIndicatorTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   const refreshRequest = useRef(0);
   const { days: windowDays, window } = windowSelection;
   const isPast24Hours = windowDays === 1;
@@ -101,19 +99,12 @@ export function UsageRouteScreen() {
   useEffect(
     () => () => {
       refreshRequest.current += 1;
-      if (refreshIndicatorTimeout.current !== null) {
-        clearTimeout(refreshIndicatorTimeout.current);
-      }
     },
     [],
   );
   const selectWindow = (days: number) => {
     refreshRequest.current += 1;
     setIsPullRefreshing(false);
-    if (refreshIndicatorTimeout.current !== null) {
-      clearTimeout(refreshIndicatorTimeout.current);
-      refreshIndicatorTimeout.current = null;
-    }
     setWindowSelection({
       days,
       window: makeWindow(days, undefined, days === 1 ? "hour" : "day"),
@@ -123,25 +114,10 @@ export function UsageRouteScreen() {
     const request = ++refreshRequest.current;
     const targets = usagePullRefreshTargets(environments);
     setIsPullRefreshing(targets.size > 0);
-    if (refreshIndicatorTimeout.current !== null) {
-      clearTimeout(refreshIndicatorTimeout.current);
-    }
-    refreshIndicatorTimeout.current =
-      targets.size > 0
-        ? setTimeout(() => {
-            refreshRequest.current += 1;
-            setIsPullRefreshing(false);
-            refreshIndicatorTimeout.current = null;
-          }, REFRESH_INDICATOR_TIMEOUT_MS)
-        : null;
     const completeRefresh = () => {
       if (request !== refreshRequest.current) return false;
       refreshRequest.current += 1;
       setIsPullRefreshing(false);
-      if (refreshIndicatorTimeout.current !== null) {
-        clearTimeout(refreshIndicatorTimeout.current);
-        refreshIndicatorTimeout.current = null;
-      }
       return true;
     };
     const failRefresh = (error: unknown) => {
