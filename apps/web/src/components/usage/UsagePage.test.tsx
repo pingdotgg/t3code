@@ -5,8 +5,9 @@ import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const testState = vi.hoisted(() => ({
   useUsage: vi.fn(),
-  metric: "cost" as "cost" | "tokens",
+  metric: "cost" as "cost" | "tokens" | "limits",
   breakdown: "time" as "model" | "time",
+  setPreferences: vi.fn(),
 }));
 
 vi.mock("react", async (importOriginal) => {
@@ -37,6 +38,9 @@ vi.mock("react", async (importOriginal) => {
 });
 
 vi.mock("../../env", () => ({ isElectron: false }));
+vi.mock("../../hooks/useLocalStorage", () => ({
+  useLocalStorage: () => [{ metric: testState.metric, windowDays: 30 }, testState.setPreferences],
+}));
 vi.mock("../../state/usage", () => ({ useUsage: testState.useUsage }));
 vi.mock("../ui/button", () => ({ Button: "button" }));
 vi.mock("../ui/scroll-area", () => ({ ScrollArea: "div" }));

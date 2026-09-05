@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import * as Schema from "effect/Schema";
 import {
   USAGE_CONTRACT_VERSION,
   type EnvironmentId,
@@ -20,6 +21,7 @@ import {
 } from "@t3tools/shared/usageMerge";
 
 import { isElectron } from "../../env";
+import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { cn } from "../../lib/utils";
 import { environmentPresentations } from "../../state/presentation";
 import { serverEnvironment } from "../../state/server";
@@ -70,6 +72,20 @@ const METRIC_OPTIONS = [
   { value: "limits", label: "Limits" },
 ] as const satisfies readonly { value: UsageMetric; label: string }[];
 
+const USAGE_PAGE_PREFERENCES_STORAGE_KEY = "t3code:usage-page-preferences:v1";
+const UsageMetricSchema = Schema.Literals(["cost", "tokens", "limits"]);
+const UsageWindowDaysSchema = Schema.Literals([1, 7, 30, 90]);
+type UsageWindowDays = typeof UsageWindowDaysSchema.Type;
+const UsagePagePreferencesSchema = Schema.Struct({
+  metric: UsageMetricSchema,
+  windowDays: UsageWindowDaysSchema,
+});
+type UsagePagePreferences = typeof UsagePagePreferencesSchema.Type;
+const DEFAULT_USAGE_PAGE_PREFERENCES: UsagePagePreferences = {
+  metric: "cost",
+  windowDays: 30,
+};
+
 function isUsageMetric(value: string | null | undefined): value is UsageMetric {
   return METRIC_OPTIONS.some((option) => option.value === value);
 }
@@ -81,12 +97,25 @@ const WINDOW_OPTIONS = [
   { days: 90, label: "90 days" },
 ] as const;
 
+function isUsageWindowDays(value: number): value is UsageWindowDays {
+  return WINDOW_OPTIONS.some((option) => option.days === value);
+}
+
 export function UsagePage() {
+  const [preferences, setPreferences] = useLocalStorage(
+    USAGE_PAGE_PREFERENCES_STORAGE_KEY,
+    DEFAULT_USAGE_PAGE_PREFERENCES,
+    UsagePagePreferencesSchema,
+  );
   const [windowSelection, setWindowSelection] = useState(() => ({
-    days: 30,
-    window: makeWindow(30),
+    days: preferences.windowDays,
+    window: makeWindow(
+      preferences.windowDays,
+      undefined,
+      preferences.windowDays === 1 ? "hour" : "day",
+    ),
   }));
-  const [metric, setMetric] = useState<UsageMetric>("cost");
+  const metric = preferences.metric;
   const showingLimits = metric === "limits";
   const [breakdown, setBreakdown] = useState<"model" | "time">("model");
   const [selectedEnvironmentIds, setSelectedEnvironmentIds] =
@@ -132,10 +161,15 @@ export function UsagePage() {
   const timeValueColumnWidth = `${60 / (activeProviders.length + 2)}%`;
 
   const selectWindow = (days: number) => {
+    if (!isUsageWindowDays(days)) return;
+    setPreferences((current) => ({ ...current, windowDays: days }));
     setWindowSelection({
       days,
       window: makeWindow(days, undefined, days === 1 ? "hour" : "day"),
     });
+  };
+  const selectMetric = (nextMetric: UsageMetric) => {
+    setPreferences((current) => ({ ...current, metric: nextMetric }));
   };
   const refreshWindow = () => {
     if (showingLimits) {
@@ -195,7 +229,7 @@ export function UsagePage() {
           value={[metric]}
           onValueChange={(next) => {
             const value = next[0];
-            if (isUsageMetric(value)) setMetric(value);
+            if (isUsageMetric(value)) selectMetric(value);
           }}
         >
           {METRIC_OPTIONS.map((option) => (
@@ -235,7 +269,7 @@ export function UsagePage() {
         <Select
           value={metric}
           onValueChange={(value) => {
-            if (isUsageMetric(value)) setMetric(value);
+            if (isUsageMetric(value)) selectMetric(value);
           }}
         >
           <SelectTrigger
