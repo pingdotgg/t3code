@@ -350,6 +350,26 @@ it.layer(TestLayer)("CheckpointStore.layer", (it) => {
         expect(yield* checkpointStore.readWorkspaceFingerprint(nested)).not.toBe(initial);
       }),
     );
+
+    it.effect("fingerprints a nested cwd containing a tab", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        yield* initRepoWithCommit(tmp);
+        const nested = NodePath.join(tmp, "packages", "nested\tworkspace");
+        const nestedFile = NodePath.join(nested, "file.txt");
+        const fileSystem = yield* FileSystem.FileSystem;
+        yield* fileSystem.makeDirectory(nested, { recursive: true });
+        yield* writeTextFile(nestedFile, "nested\n");
+        yield* git(tmp, ["add", "."]);
+        yield* git(tmp, ["commit", "-m", "add tabbed nested workspace"]);
+        const checkpointStore = yield* CheckpointStore.CheckpointStore;
+
+        const initial = yield* checkpointStore.readWorkspaceFingerprint(nested);
+        yield* writeTextFile(nestedFile, "changed\n");
+
+        expect(yield* checkpointStore.readWorkspaceFingerprint(nested)).not.toBe(initial);
+      }),
+    );
   });
 
   describe("diffCheckpoints", () => {

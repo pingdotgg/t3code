@@ -807,7 +807,10 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
             workspaceTreeIdentity = "absent";
           } else {
             const entries = subtreeResult.stdout.split("\0").filter((entry) => entry.length > 0);
-            const [metadata, entryPath] = entries[0]?.split("\t") ?? [];
+            const entry = entries[0];
+            const separator = entry?.indexOf("\t") ?? -1;
+            const metadata = separator < 0 ? undefined : entry?.slice(0, separator);
+            const entryPath = separator < 0 ? undefined : entry?.slice(separator + 1);
             const [, entryType, entryOid] = metadata?.split(" ") ?? [];
             if (
               entries.length !== 1 ||
