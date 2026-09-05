@@ -46,22 +46,81 @@ export function isModelSelectionProviderEnabled(
   );
 }
 
+function isWriterProviderUsable(provider: ServerProvider): boolean {
+  return (
+    provider.enabled === true &&
+    isProviderAvailable(provider) &&
+    provider.auth.status !== "unauthenticated"
+  );
+}
+
+function findWriterProvider(
+  providers: ReadonlyArray<ServerProvider> | undefined,
+  selection: ModelSelection,
+): ServerProvider | undefined {
+  return providers?.find((candidate) => candidate.instanceId === selection.instanceId);
+}
+
+function isDedicatedWriterUsable(
+  settings: ServerSettings,
+  selection: ModelSelection,
+  providers?: ReadonlyArray<ServerProvider>,
+): boolean {
+  if (!isModelSelectionProviderEnabled(settings, selection)) {
+    return false;
+  }
+  if (providers === undefined) {
+    return true;
+  }
+  const provider = findWriterProvider(providers, selection);
+  return provider !== undefined && isWriterProviderUsable(provider);
+}
+
+function isFallbackWriterUsable(
+  settings: ServerSettings,
+  selection: ModelSelection,
+  providers?: ReadonlyArray<ServerProvider>,
+): boolean {
+  return isDedicatedWriterUsable(settings, selection, providers);
+}
+
+function firstAvailableWriterModelSelection(
+  providers?: ReadonlyArray<ServerProvider>,
+): ModelSelection | undefined {
+  if (providers === undefined) {
+    return undefined;
+  }
+  for (const provider of providers) {
+    if (!isWriterProviderUsable(provider)) {
+      continue;
+    }
+    const model =
+      provider.models.find((candidate) => candidate.isDefault === true)?.slug ??
+      provider.models[0]?.slug;
+    if (!model) {
+      continue;
+    }
+    return createModelSelection(provider.instanceId, model);
+  }
+  return undefined;
+}
+
 export function resolveSourceControlWriterModelSelection(
   settings: ServerSettings,
   providers?: ReadonlyArray<ServerProvider>,
+  preferredFallback?: ModelSelection | null,
 ): ModelSelection {
-  const selection = settings.sourceControlWriterModelSelection;
-  if (!selection || !isModelSelectionProviderEnabled(settings, selection)) {
+  const dedicated = settings.sourceControlWriterModelSelection;
+  if (dedicated && isDedicatedWriterUsable(settings, dedicated, providers)) {
+    return dedicated;
+  }
+  if (preferredFallback && isFallbackWriterUsable(settings, preferredFallback, providers)) {
+    return preferredFallback;
+  }
+  if (isFallbackWriterUsable(settings, settings.textGenerationModelSelection, providers)) {
     return settings.textGenerationModelSelection;
   }
-  if (providers === undefined) {
-    return selection;
-  }
-
-  const provider = providers.find((candidate) => candidate.instanceId === selection.instanceId);
-  return provider?.enabled === true && isProviderAvailable(provider)
-    ? selection
-    : settings.textGenerationModelSelection;
+  return firstAvailableWriterModelSelection(providers) ?? settings.textGenerationModelSelection;
 }
 
 export interface PersistedServerObservabilitySettings {
