@@ -455,7 +455,7 @@ export const makeEnvironmentServerConfigState = Effect.fn("EnvironmentServerConf
   },
 );
 
-export function serverConfigStateChanges(
+function serverConfigStateChanges(
   environmentId: EnvironmentId,
   subscription: ServerConfigSubscriptionOptions,
 ) {
@@ -580,7 +580,7 @@ export const makeEnvironmentServerWelcomeState = Effect.fn("EnvironmentServerWel
   },
 );
 
-export function serverWelcomeStateChanges(environmentId: EnvironmentId) {
+function serverWelcomeStateChanges(environmentId: EnvironmentId) {
   return followStreamInEnvironment(
     environmentId,
     Stream.unwrap(

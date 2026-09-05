@@ -20,7 +20,7 @@ import * as Struct from "effect/Struct";
 import type { EnvironmentConnectionPhase } from "../connection/presentation.ts";
 
 /** Server keys that hold a user preference rather than machine config. */
-export const SHARED_SERVER_SETTING_KEYS = [
+const SHARED_SERVER_SETTING_KEYS = [
   "continueThreadsAfterServerUpdate",
   "sidebarAutoSettleAfterDays",
   "sidebarAutoSettleOnMerge",

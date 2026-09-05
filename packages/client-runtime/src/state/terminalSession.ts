@@ -96,7 +96,7 @@ export function nextTerminalAttachSeedState(): TerminalBufferState {
   };
 }
 
-export function terminalBufferStateFromSnapshot(
+function terminalBufferStateFromSnapshot(
   snapshot: TerminalSessionSnapshot,
   maxBufferBytes: number,
   current: TerminalBufferState = EMPTY_TERMINAL_BUFFER_STATE,

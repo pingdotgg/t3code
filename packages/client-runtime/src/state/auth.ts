@@ -61,7 +61,7 @@ export function applyAuthAccessStreamEvent(
   }
 }
 
-export function projectAuthAccessSnapshot(
+function projectAuthAccessSnapshot(
   current: AuthAccessSnapshot,
   event: AuthAccessStreamEvent,
 ): readonly [AuthAccessSnapshot, ReadonlyArray<AuthAccessStreamEvent>] {

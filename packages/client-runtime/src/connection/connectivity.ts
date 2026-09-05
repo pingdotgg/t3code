@@ -13,7 +13,7 @@ export class Connectivity extends Context.Service<
   }
 >()("@t3tools/client-runtime/connection/connectivity") {}
 
-export const make = (service: Connectivity["Service"]) => Connectivity.of(service);
+const make = (service: Connectivity["Service"]) => Connectivity.of(service);
 
 export const layer = (service: Connectivity["Service"]) =>
   Layer.succeed(Connectivity, make(service));
