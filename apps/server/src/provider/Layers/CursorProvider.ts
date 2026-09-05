@@ -51,6 +51,12 @@ import { CursorListAvailableModelsResponse } from "../acp/CursorAcpExtension.ts"
 const decodeCursorListAvailableModelsResponse = Schema.decodeUnknownEffect(
   CursorListAvailableModelsResponse,
 );
+export const CURSOR_API_KEY_ENV = "CURSOR_API_KEY";
+
+export function hasCursorApiKey(environment?: NodeJS.ProcessEnv): boolean {
+  return (environment?.[CURSOR_API_KEY_ENV]?.trim() ?? "").length > 0;
+}
+
 const CURSOR_PRESENTATION = {
   displayName: "Cursor",
   badgeLabel: "Early Access",
@@ -421,6 +427,7 @@ const makeCursorAcpProbeRuntime = (
         cwd: process.cwd(),
         clientInfo: { name: "t3-code-provider-probe", version: "0.0.0" },
         authMethodId: "cursor_login",
+        skipAuthenticate: hasCursorApiKey(environment),
         clientCapabilities: CURSOR_PARAMETERIZED_MODEL_PICKER_CAPABILITIES,
       }).pipe(Layer.provide(Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner))),
     );
@@ -838,7 +845,8 @@ export function parseCursorAboutOutput(result: CommandResult): CursorAboutResult
         version,
         status: "error",
         auth: { status: "unauthenticated" },
-        message: "Cursor Agent is not authenticated. Run `agent login` and try again.",
+        message:
+          "Cursor Agent is not authenticated. Run `agent login` or set `CURSOR_API_KEY` and try again.",
       };
     }
 
@@ -871,7 +879,8 @@ export function parseCursorAboutOutput(result: CommandResult): CursorAboutResult
         version,
         status: "error",
         auth: { status: "unauthenticated" },
-        message: "Cursor Agent is not authenticated. Run `agent login` and try again.",
+        message:
+          "Cursor Agent is not authenticated. Run `agent login` or set `CURSOR_API_KEY` and try again.",
       };
     }
 
@@ -931,7 +940,8 @@ export function parseCursorAboutOutput(result: CommandResult): CursorAboutResult
       version,
       status: "error",
       auth: { status: "unauthenticated" },
-      message: "Cursor Agent is not authenticated. Run `agent login` and try again.",
+      message:
+        "Cursor Agent is not authenticated. Run `agent login` or set `CURSOR_API_KEY` and try again.",
     };
   }
 
@@ -940,6 +950,25 @@ export function parseCursorAboutOutput(result: CommandResult): CursorAboutResult
     version,
     status: "ready",
     auth: { status: "authenticated", email: userEmail },
+  };
+}
+
+export function applyCursorApiKeyAuth(
+  parsed: CursorAboutResult,
+  environment?: NodeJS.ProcessEnv,
+): CursorAboutResult {
+  if (!hasCursorApiKey(environment) || parsed.auth.status !== "unauthenticated") {
+    return parsed;
+  }
+
+  return {
+    version: parsed.version,
+    status: "ready",
+    auth: {
+      status: "authenticated",
+      type: "apiKey",
+      label: "Cursor API Key",
+    },
   };
 }
 
@@ -1057,7 +1086,10 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
     });
   }
 
-  const parsed = parseCursorAboutOutput(aboutProbe.success.value);
+  const parsed = applyCursorApiKeyAuth(
+    parseCursorAboutOutput(aboutProbe.success.value),
+    environment,
+  );
   const cursorCliConfigChannel = yield* readCursorCliConfigChannel();
   const parameterizedModelPickerUnsupportedMessage =
     getCursorParameterizedModelPickerUnsupportedMessage({

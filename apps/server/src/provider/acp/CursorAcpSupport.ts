@@ -12,6 +12,7 @@ import type * as EffectAcpErrors from "effect-acp/errors";
 
 import {
   CURSOR_PARAMETERIZED_MODEL_PICKER_CAPABILITIES,
+  hasCursorApiKey,
   resolveCursorAcpBaseModelId,
   resolveCursorAcpConfigUpdates,
 } from "../Layers/CursorProvider.ts";
@@ -82,6 +83,7 @@ export const makeCursorAcpRuntime = (
           input.runtimeMode,
         ),
         authMethodId: "cursor_login",
+        skipAuthenticate: hasCursorApiKey(input.environment),
         clientCapabilities: CURSOR_PARAMETERIZED_MODEL_PICKER_CAPABILITIES,
       }).pipe(
         Layer.provide(
