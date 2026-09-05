@@ -47,9 +47,6 @@ import { layer as threadForkServiceLayer } from "./ThreadForkService.ts";
 import { layer as turnItemPositionStoreLayer } from "./TurnItemPositionStore.ts";
 import { layer as scheduledTaskServiceLayer } from "../scheduledTasks/ScheduledTaskService.ts";
 
-export const ProjectServiceLayerLive = projectServiceLayer.pipe(
-  Layer.provide(Layer.merge(ProjectionProjectRepositoryLive, OrchestrationLayerLive)),
-);
 const runtimePolicyProvided = runtimePolicyLayerFromProjectRepository.pipe(
   Layer.provide(ProjectionProjectRepositoryLive),
 );
@@ -75,6 +72,19 @@ const eventSinkProvided = OrchestrationV2EventSinkLayerLive;
 const projectionMaintenanceProvided = projectionMaintenanceLayer.pipe(Layer.provide(storesLayer));
 const legacyV1ThreadImporterProvided = legacyV1ThreadImporterLayer.pipe(
   Layer.provide(Layer.mergeAll(eventSinkProvided, eventStoreProvided)),
+);
+
+export const ProjectServiceLayerLive = projectServiceLayer.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      ProjectionProjectRepositoryLive,
+      OrchestrationLayerLive,
+      projectionStoreLayer,
+      eventSinkProvided,
+      idAllocatorLayer,
+      legacyV1ThreadImporterProvided,
+    ),
+  ),
 );
 
 const providerEventIngestorProvided = providerEventIngestorLayer.pipe(
