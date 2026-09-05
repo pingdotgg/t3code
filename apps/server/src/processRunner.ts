@@ -1,3 +1,5 @@
+import * as NodeCrypto from "node:crypto";
+
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -28,6 +30,7 @@ export interface ProcessRunInput {
   readonly maxOutputBytes?: number | undefined;
   readonly outputMode?: "error" | "truncate" | undefined;
   readonly truncatedMarker?: string | undefined;
+  readonly stdoutDigest?: "sha256" | undefined;
   /**
    * On timeout, return a synthetic timedOut result.
    * Partial stdout/stderr are not preserved.
@@ -44,6 +47,7 @@ export interface ProcessRunOutput {
   readonly stderrTruncated: boolean;
   readonly stdoutInvalidUtf8: boolean;
   readonly stderrInvalidUtf8: boolean;
+  readonly stdoutDigest?: string | undefined;
 }
 
 const ProcessInvocationFields = {
@@ -247,6 +251,35 @@ const collectText = Effect.fn("processRunner.collectText")(function* (input: {
   );
 });
 
+const digestStream = Effect.fn("processRunner.digestStream")(function* (input: {
+  readonly command: string;
+  readonly args: ReadonlyArray<string>;
+  readonly cwd?: string | undefined;
+  readonly spawnCwd?: string | undefined;
+  readonly stream: Stream.Stream<Uint8Array, PlatformError.PlatformError>;
+}) {
+  const digest = NodeCrypto.createHash("sha256");
+  yield* input.stream.pipe(
+    Stream.mapError(
+      (cause) =>
+        new ProcessReadError({
+          command: input.command,
+          argumentCount: input.args.length,
+          cwd: input.cwd,
+          spawnCwd: input.spawnCwd,
+          stream: "stdout",
+          cause,
+        }),
+    ),
+    Stream.runForEach((chunk) =>
+      Effect.sync(() => {
+        digest.update(chunk);
+      }),
+    ),
+  );
+  return digest.digest("hex");
+});
+
 function finalizeRunProcess<R>(
   effect: Effect.Effect<ProcessRunOutput, ProcessRunError, R | Scope.Scope>,
   input: ProcessRunInput,
@@ -349,17 +382,32 @@ const runProcessCore = Effect.fn("processRunner.runProcessCore")(function* (
 
   const [stdout, stderr] = yield* Effect.all(
     [
-      collectText({
-        command: input.command,
-        args: input.args,
-        cwd: input.cwd,
-        spawnCwd: input.spawnCwd,
-        streamName: "stdout",
-        stream: child.stdout,
-        maxOutputBytes,
-        outputMode,
-        truncatedMarker,
-      }),
+      input.stdoutDigest === "sha256"
+        ? digestStream({
+            command: input.command,
+            args: input.args,
+            cwd: input.cwd,
+            spawnCwd: input.spawnCwd,
+            stream: child.stdout,
+          }).pipe(
+            Effect.map((digest) => ({
+              text: "",
+              truncated: false,
+              invalidUtf8: false,
+              digest,
+            })),
+          )
+        : collectText({
+            command: input.command,
+            args: input.args,
+            cwd: input.cwd,
+            spawnCwd: input.spawnCwd,
+            streamName: "stdout",
+            stream: child.stdout,
+            maxOutputBytes,
+            outputMode,
+            truncatedMarker,
+          }),
       collectText({
         command: input.command,
         args: input.args,
@@ -399,6 +447,7 @@ const runProcessCore = Effect.fn("processRunner.runProcessCore")(function* (
     stderrTruncated: stderr.truncated,
     stdoutInvalidUtf8: stdout.invalidUtf8,
     stderrInvalidUtf8: stderr.invalidUtf8,
+    ...("digest" in stdout ? { stdoutDigest: stdout.digest } : {}),
   } satisfies ProcessRunOutput;
 });
 

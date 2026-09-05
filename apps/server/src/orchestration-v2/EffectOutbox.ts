@@ -81,6 +81,8 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
     providerThreadId: ProviderThreadId,
     checkpointId: CheckpointId,
     scopeId: CheckpointScopeId,
+    expectedIdle: Schema.optional(Schema.Literal(true)),
+    expectedWorkspaceFingerprint: Schema.optional(Schema.String),
   }),
   Schema.Struct({
     type: Schema.Literal("checkpoint.capture"),
@@ -131,6 +133,12 @@ export const OrchestrationEffectStatusV2 = Schema.Literals([
 ]);
 export type OrchestrationEffectStatusV2 = typeof OrchestrationEffectStatusV2.Type;
 
+export const OrchestrationEffectFailureCodeV2 = Schema.Literals([
+  "checkpoint_restore_rejected",
+  "checkpoint_restore_partial",
+]);
+export type OrchestrationEffectFailureCodeV2 = typeof OrchestrationEffectFailureCodeV2.Type;
+
 export interface OrchestrationEffectV2 {
   readonly id: string;
   readonly commandId: CommandId;
@@ -145,6 +153,7 @@ export interface OrchestrationEffectV2 {
   readonly updatedAt: string;
   readonly completedAt: string | null;
   readonly lastError: string | null;
+  readonly failureCode?: OrchestrationEffectFailureCodeV2;
 }
 
 export interface PendingOrchestrationEffectV2 {
@@ -215,6 +224,7 @@ export interface EffectOutboxV2Shape {
     readonly effectId: string;
     readonly workerId: string;
     readonly error: string;
+    readonly failureCode?: OrchestrationEffectFailureCodeV2;
   }) => Effect.Effect<boolean, EffectOutboxError>;
 }
 
@@ -243,24 +253,57 @@ const encodeRequest = Schema.encodeSync(Schema.fromJsonString(OrchestrationEffec
 const decodeRequest = Schema.decodeUnknownEffect(
   Schema.fromJsonString(OrchestrationEffectRequestV2),
 );
+const StoredEffectFailure = Schema.Struct({
+  code: OrchestrationEffectFailureCodeV2,
+  message: Schema.String,
+});
+const encodeStoredEffectFailure = Schema.encodeSync(Schema.fromJsonString(StoredEffectFailure));
+const decodeStoredEffectFailure = Schema.decodeUnknownOption(
+  Schema.fromJsonString(StoredEffectFailure),
+);
+const STORED_EFFECT_FAILURE_PREFIX = "t3-effect-failure:";
+
+function decodeLastError(value: string | null): {
+  readonly lastError: string | null;
+  readonly failureCode?: OrchestrationEffectFailureCodeV2;
+} {
+  if (value === null || !value.startsWith(STORED_EFFECT_FAILURE_PREFIX)) {
+    return { lastError: value };
+  }
+  const decoded = decodeStoredEffectFailure(value.slice(STORED_EFFECT_FAILURE_PREFIX.length));
+  return Option.match(decoded, {
+    onNone: () => ({ lastError: value }),
+    onSome: (failure) => ({ lastError: failure.message, failureCode: failure.code }),
+  });
+}
+
+function encodeLastError(error: string, failureCode?: OrchestrationEffectFailureCodeV2): string {
+  return failureCode === undefined
+    ? error
+    : `${STORED_EFFECT_FAILURE_PREFIX}${encodeStoredEffectFailure({ code: failureCode, message: error })}`;
+}
 
 const rowToEffect = (row: EffectRow) =>
   decodeRequest(row.payload_json).pipe(
-    Effect.map((request): OrchestrationEffectV2 => ({
-      id: row.effect_id,
-      commandId: CommandId.make(row.command_id),
-      threadId: ThreadId.make(row.thread_id),
-      request,
-      status: row.status as OrchestrationEffectStatusV2,
-      attemptCount: row.attempt_count,
-      availableAt: row.available_at,
-      leaseOwner: row.lease_owner,
-      leaseExpiresAt: row.lease_expires_at,
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
-      completedAt: row.completed_at,
-      lastError: row.last_error,
-    })),
+    Effect.map((request): OrchestrationEffectV2 => {
+      const failure = decodeLastError(row.last_error);
+      return {
+        id: row.effect_id,
+        commandId: CommandId.make(row.command_id),
+        threadId: ThreadId.make(row.thread_id),
+        request,
+        status: row.status as OrchestrationEffectStatusV2,
+        attemptCount: row.attempt_count,
+        availableAt: row.available_at,
+        leaseOwner: row.lease_owner,
+        leaseExpiresAt: row.lease_expires_at,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+        completedAt: row.completed_at,
+        lastError: failure.lastError,
+        ...(failure.failureCode === undefined ? {} : { failureCode: failure.failureCode }),
+      };
+    }),
   );
 
 export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = Layer.effect(
@@ -436,6 +479,38 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
         }),
       reconcileAfterProcessLoss: Effect.gen(function* () {
         const now = DateTime.formatIso(yield* DateTime.now);
+        const rollbackRows = yield* sql<EffectRow>`
+          SELECT *
+          FROM orchestration_v2_effect_outbox
+          WHERE status = 'running'
+            AND effect_type = 'provider-thread.rollback'
+        `;
+        const rollbackEffects = yield* Effect.forEach(rollbackRows, rowToEffect);
+        const uncertainGuardedRollbackIds = rollbackEffects
+          .filter(
+            (effect) =>
+              effect.request.type === "provider-thread.rollback" &&
+              effect.request.expectedWorkspaceFingerprint !== undefined,
+          )
+          .map((effect) => effect.id);
+        if (uncertainGuardedRollbackIds.length > 0) {
+          const uncertainError = encodeLastError(
+            "The server process ended while a guarded checkpoint restore was running; its filesystem/provider outcome is uncertain and the restore was not repeated.",
+            "checkpoint_restore_partial",
+          );
+          yield* sql`
+            UPDATE orchestration_v2_effect_outbox
+            SET
+              status = 'failed',
+              lease_owner = NULL,
+              lease_expires_at = NULL,
+              completed_at = ${now},
+              updated_at = ${now},
+              last_error = ${uncertainError}
+            WHERE effect_id IN ${sql.in(uncertainGuardedRollbackIds)}
+              AND status = 'running'
+          `;
+        }
         const cancelledRows = yield* sql<{ readonly effect_id: string }>`
           UPDATE orchestration_v2_effect_outbox
           SET
@@ -585,9 +660,10 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
             (cause) => new EffectOutboxError({ operation: "retry", effectId, cause }),
           ),
         ),
-      fail: ({ effectId, workerId, error }) =>
+      fail: ({ effectId, workerId, error, failureCode }) =>
         Effect.gen(function* () {
           const now = DateTime.formatIso(yield* DateTime.now);
+          const storedError = encodeLastError(error, failureCode);
           const rows = yield* sql<{ readonly effect_id: string }>`
             UPDATE orchestration_v2_effect_outbox
             SET
@@ -596,7 +672,7 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
               lease_expires_at = NULL,
               completed_at = ${now},
               updated_at = ${now},
-              last_error = ${error}
+              last_error = ${storedError}
             WHERE effect_id = ${effectId}
               AND status = 'running'
               AND lease_owner = ${workerId}

@@ -2245,6 +2245,114 @@ it.layer(TestLayer)("orchestration V2 foundation persistence", (it) => {
     }),
   );
 
+  it.effect("does not repeat a guarded checkpoint restore after process loss", () =>
+    Effect.gen(function* () {
+      const outbox = yield* EffectOutboxV2;
+      const commandId = CommandId.make("command:foundation-rollback-process-loss");
+      const rollbackThreadId = ThreadId.make("thread:foundation-rollback-process-loss");
+      const rollbackProviderThreadId = ProviderThreadId.make(
+        "provider-thread:foundation-rollback-process-loss",
+      );
+      const checkpointId = CheckpointId.make("checkpoint:foundation-rollback-process-loss");
+      const scopeId = CheckpointScopeId.make("scope:foundation-rollback-process-loss");
+      yield* outbox.enqueue([
+        {
+          id: "effect:a-foundation-guarded-rollback",
+          commandId,
+          threadId: rollbackThreadId,
+          request: {
+            type: "provider-thread.rollback",
+            providerThreadId: rollbackProviderThreadId,
+            checkpointId,
+            scopeId,
+            expectedIdle: true,
+            expectedWorkspaceFingerprint: "workspace-before-restore",
+          },
+        },
+        {
+          id: "effect:b-foundation-legacy-rollback",
+          commandId,
+          threadId: ThreadId.make("thread:foundation-legacy-rollback-process-loss"),
+          request: {
+            type: "provider-thread.rollback",
+            providerThreadId: rollbackProviderThreadId,
+            checkpointId,
+            scopeId,
+          },
+        },
+        {
+          id: "effect:c-foundation-fingerprint-rollback",
+          commandId,
+          threadId: ThreadId.make("thread:foundation-fingerprint-rollback-process-loss"),
+          request: {
+            type: "provider-thread.rollback",
+            providerThreadId: rollbackProviderThreadId,
+            checkpointId,
+            scopeId,
+            expectedWorkspaceFingerprint: "workspace-before-restore",
+          },
+        },
+      ]);
+      assert.isTrue(
+        Option.isSome(
+          yield* outbox.claimNext({ workerId: "crashed-worker", leaseDurationMs: 30_000 }),
+        ),
+      );
+      assert.isTrue(
+        Option.isSome(
+          yield* outbox.claimNext({ workerId: "crashed-worker", leaseDurationMs: 30_000 }),
+        ),
+      );
+      assert.isTrue(
+        Option.isSome(
+          yield* outbox.claimNext({ workerId: "crashed-worker", leaseDurationMs: 30_000 }),
+        ),
+      );
+
+      const runningGuarded = yield* outbox.get("effect:a-foundation-guarded-rollback");
+      assert.isTrue(Option.isSome(runningGuarded));
+      if (
+        Option.isSome(runningGuarded) &&
+        runningGuarded.value.request.type === "provider-thread.rollback"
+      ) {
+        assert.equal(runningGuarded.value.status, "running");
+        assert.isTrue(runningGuarded.value.request.expectedIdle);
+        assert.equal(
+          runningGuarded.value.request.expectedWorkspaceFingerprint,
+          "workspace-before-restore",
+        );
+      }
+
+      assert.deepEqual(yield* outbox.reconcileAfterProcessLoss, {
+        cancelled: 0,
+        requeued: 1,
+      });
+      const guarded = yield* outbox.get("effect:a-foundation-guarded-rollback");
+      assert.isTrue(Option.isSome(guarded));
+      if (Option.isSome(guarded)) {
+        assert.equal(guarded.value.status, "failed");
+        assert.equal(guarded.value.failureCode, "checkpoint_restore_partial");
+        assert.include(guarded.value.lastError ?? "", "outcome is uncertain");
+      }
+      const fingerprintGuarded = yield* outbox.get("effect:c-foundation-fingerprint-rollback");
+      assert.isTrue(Option.isSome(fingerprintGuarded));
+      if (Option.isSome(fingerprintGuarded)) {
+        assert.equal(fingerprintGuarded.value.status, "failed");
+        assert.equal(fingerprintGuarded.value.failureCode, "checkpoint_restore_partial");
+        assert.include(fingerprintGuarded.value.lastError ?? "", "outcome is uncertain");
+      }
+      const recovered = yield* outbox.claimNext({
+        workerId: "recovery-worker",
+        leaseDurationMs: 30_000,
+      });
+      assert.isTrue(Option.isSome(recovered));
+      if (Option.isSome(recovered)) {
+        assert.equal(recovered.value.id, "effect:b-foundation-legacy-rollback");
+        yield* outbox.succeed({ effectId: recovered.value.id, workerId: "recovery-worker" });
+      }
+    }),
+  );
+
   for (const replayRequest of [
     { type: "terminal.cleanup" },
     { type: "provider-runtime.continue", sourceRunId: RunId.make("run:restart-replay") },

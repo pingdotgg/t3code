@@ -30,6 +30,7 @@ import { layerFromProviderInstanceRegistry as providerAdapterRegistryLayerFromPr
 import { layer as providerContinuationRequestsLayer } from "./ProviderContinuationRequests.ts";
 import { workerLive as providerContinuationWorkerLive } from "./ProviderContinuationService.ts";
 import { layer as threadTitleRegenerationServiceLayer } from "./ThreadTitleRegenerationService.ts";
+import { layer as threadCommandExecutorLayer } from "./ThreadCommandExecutor.ts";
 import { layer as providerEventIngestorLayer } from "./ProviderEventIngestor.ts";
 import { layer as providerSessionManagerLayer } from "./ProviderSessionManager.ts";
 import { layer as providerRuntimeRecoveryLayer } from "./ProviderRuntimeRecoveryService.ts";
@@ -157,6 +158,7 @@ const checkpointRollbackServiceProvided = checkpointRollbackServiceLayer.pipe(
       projectionStoreLayer,
       providerSessionManagerProvided,
       runtimePolicyProvided,
+      threadCommandExecutorLayer,
     ),
   ),
 );

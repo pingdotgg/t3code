@@ -77,8 +77,22 @@ export class CheckpointCaptureError extends Schema.TaggedErrorClass<CheckpointCa
   }
 }
 
-export class CheckpointRestoreError extends Schema.TaggedErrorClass<CheckpointRestoreError>()(
-  "CheckpointRestoreError",
+export class CheckpointRestorePreconditionError extends Schema.TaggedErrorClass<CheckpointRestorePreconditionError>()(
+  "CheckpointRestorePreconditionError",
+  {
+    scopeId: CheckpointScopeId,
+    checkpointId: CheckpointId,
+    reason: Schema.Literals(["precondition-changed", "target-unavailable"]),
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Checkpoint ${this.checkpointId} for scope ${this.scopeId} no longer satisfies its restore preconditions.`;
+  }
+}
+
+export class CheckpointRestorePreflightError extends Schema.TaggedErrorClass<CheckpointRestorePreflightError>()(
+  "CheckpointRestorePreflightError",
   {
     scopeId: CheckpointScopeId,
     checkpointId: CheckpointId,
@@ -86,7 +100,20 @@ export class CheckpointRestoreError extends Schema.TaggedErrorClass<CheckpointRe
   },
 ) {
   override get message(): string {
-    return `Failed to restore checkpoint ${this.checkpointId} for scope ${this.scopeId}.`;
+    return `Failed to verify checkpoint ${this.checkpointId} for scope ${this.scopeId} before restoring files.`;
+  }
+}
+
+export class CheckpointRestoreOutcomeUnknownError extends Schema.TaggedErrorClass<CheckpointRestoreOutcomeUnknownError>()(
+  "CheckpointRestoreOutcomeUnknownError",
+  {
+    scopeId: CheckpointScopeId,
+    checkpointId: CheckpointId,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Checkpoint ${this.checkpointId} for scope ${this.scopeId} may have been partially restored.`;
   }
 }
 
@@ -108,12 +135,12 @@ export const CheckpointServiceV2Error = Schema.Union([
   CheckpointScopeEnsureError,
   CheckpointBaselineCaptureError,
   CheckpointCaptureError,
-  CheckpointRestoreError,
+  CheckpointRestorePreconditionError,
+  CheckpointRestorePreflightError,
+  CheckpointRestoreOutcomeUnknownError,
   CheckpointDeleteStaleRefsError,
 ]);
 export type CheckpointServiceV2Error = typeof CheckpointServiceV2Error.Type;
-
-const isCheckpointRestoreError = Schema.is(CheckpointRestoreError);
 
 export interface CheckpointServiceV2Shape {
   readonly prepareRootRunScope: (input: {
@@ -146,6 +173,11 @@ export interface CheckpointServiceV2Shape {
   readonly restore: (input: {
     readonly scope: OrchestrationV2CheckpointScope;
     readonly checkpoint: OrchestrationV2Checkpoint;
+    readonly expectedWorkspaceFingerprint?: string;
+    readonly validateBeforeRestore?: Effect.Effect<
+      void,
+      CheckpointRestorePreconditionError | CheckpointRestorePreflightError
+    >;
   }) => Effect.Effect<void, CheckpointServiceV2Error>;
   readonly deleteStaleRefs: (input: {
     readonly scope: OrchestrationV2CheckpointScope;
@@ -491,37 +523,66 @@ export const layer: Layer.Layer<
       withWorkspaceLock(
         input.scope.cwd,
         Effect.gen(function* () {
+          if (input.validateBeforeRestore !== undefined) {
+            yield* input.validateBeforeRestore;
+          }
           if (input.checkpoint.status !== "ready") {
-            return yield* new CheckpointRestoreError({
+            return yield* new CheckpointRestorePreconditionError({
               scopeId: input.scope.id,
               checkpointId: input.checkpoint.id,
+              reason: "target-unavailable",
               cause: `Checkpoint status is ${input.checkpoint.status}.`,
             });
           }
 
-          const restored = yield* checkpointStore.restoreCheckpoint({
-            cwd: input.scope.cwd,
-            checkpointRef: input.checkpoint.ref,
-            fallbackToHead: false,
-          });
+          if (input.expectedWorkspaceFingerprint !== undefined) {
+            const currentFingerprint = yield* checkpointStore
+              .readWorkspaceFingerprint(input.scope.cwd)
+              .pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new CheckpointRestorePreflightError({
+                      scopeId: input.scope.id,
+                      checkpointId: input.checkpoint.id,
+                      cause,
+                    }),
+                ),
+              );
+            if (currentFingerprint !== input.expectedWorkspaceFingerprint) {
+              return yield* new CheckpointRestorePreconditionError({
+                scopeId: input.scope.id,
+                checkpointId: input.checkpoint.id,
+                reason: "precondition-changed",
+                cause: "Workspace changed after rollback admission; current files were preserved.",
+              });
+            }
+          }
+
+          const restored = yield* checkpointStore
+            .restoreCheckpoint({
+              cwd: input.scope.cwd,
+              checkpointRef: input.checkpoint.ref,
+              fallbackToHead: false,
+            })
+            .pipe(
+              Effect.mapError(
+                (cause) =>
+                  new CheckpointRestoreOutcomeUnknownError({
+                    scopeId: input.scope.id,
+                    checkpointId: input.checkpoint.id,
+                    cause,
+                  }),
+              ),
+            );
           if (!restored) {
-            return yield* new CheckpointRestoreError({
+            return yield* new CheckpointRestorePreconditionError({
               scopeId: input.scope.id,
               checkpointId: input.checkpoint.id,
+              reason: "target-unavailable",
               cause: "Checkpoint ref is unavailable.",
             });
           }
         }),
-      ).pipe(
-        Effect.mapError((cause) =>
-          isCheckpointRestoreError(cause)
-            ? cause
-            : new CheckpointRestoreError({
-                scopeId: input.scope.id,
-                checkpointId: input.checkpoint.id,
-                cause,
-              }),
-        ),
       );
 
     const deleteStaleRefs: CheckpointServiceV2Shape["deleteStaleRefs"] = (input) =>

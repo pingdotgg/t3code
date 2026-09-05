@@ -1,4 +1,5 @@
 import {
+  CommandId,
   CheckpointMcpFailure,
   checkpointRollbackAppRunOrdinal,
   type CheckpointMcpDiffInput,
@@ -6,6 +7,8 @@ import {
   type CheckpointMcpListInput,
   type CheckpointMcpListResult,
   type CheckpointMcpRestoreBlocker,
+  type CheckpointMcpRestoreInput,
+  type CheckpointMcpRestoreResult,
   type CheckpointMcpSummary,
   type OrchestrationV2Checkpoint,
   type OrchestrationV2CheckpointScope,
@@ -15,10 +18,16 @@ import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
-import { OrchestratorProjectionError } from "../orchestration-v2/Orchestrator.ts";
+import {
+  OrchestratorCheckpointRollbackNotIdleError,
+  OrchestratorCheckpointRollbackTargetUnsupportedError,
+  OrchestratorCommandIdConflictError,
+  OrchestratorProjectionError,
+} from "../orchestration-v2/Orchestrator.ts";
 import { ProjectionStoreThreadNotFoundError } from "../orchestration-v2/ProjectionStore.ts";
 import {
   ThreadManagementProjectionLoadError,
@@ -42,6 +51,10 @@ export class CheckpointMcpService extends Context.Service<
       scope: McpInvocationScope,
       input: CheckpointMcpDiffInput,
     ) => Effect.Effect<CheckpointMcpDiffResult, CheckpointMcpFailure>;
+    readonly restore: (
+      scope: McpInvocationScope,
+      input: CheckpointMcpRestoreInput,
+    ) => Effect.Effect<CheckpointMcpRestoreResult, CheckpointMcpFailure>;
   }
 >()("t3/mcp/CheckpointMcpService") {}
 
@@ -63,6 +76,20 @@ const isProjectionStoreThreadNotFoundError = Schema.is(ProjectionStoreThreadNotF
 
 function isMissingThreadProjection(error: unknown): boolean {
   return isOrchestratorProjectionError(error) && isProjectionStoreThreadNotFoundError(error.cause);
+}
+
+function restoreEffectDetail(input: {
+  readonly status: "pending" | "running" | "succeeded" | "failed" | "cancelled";
+  readonly failureCode?: "checkpoint_restore_rejected" | "checkpoint_restore_partial";
+}): string | null {
+  if (input.status !== "failed" && input.status !== "cancelled") return null;
+  if (input.failureCode === "checkpoint_restore_partial") {
+    return "The restore may have changed filesystem or provider state. Inspect the current thread and workspace before retrying.";
+  }
+  if (input.failureCode === "checkpoint_restore_rejected") {
+    return "The restore was rejected before a verified filesystem change.";
+  }
+  return "The restore did not complete. Inspect the current thread and workspace before retrying.";
 }
 
 function providerTurnForRun(projection: OrchestrationV2ThreadProjection, runOrdinal: number) {
@@ -258,6 +285,73 @@ export const make = Effect.gen(function* () {
           }),
         }),
       );
+  });
+
+  const readAcceptedRestore = Effect.fn("CheckpointMcpService.readAcceptedRestore")(function* (
+    scope: McpInvocationScope,
+    input: CheckpointMcpRestoreInput,
+    commandId: CommandId,
+  ) {
+    const receiptOption = yield* threadManagement
+      .getCommandReceipt(commandId)
+      .pipe(
+        Effect.mapError((error) =>
+          failure("operation_failed", `Unable to read restore receipt: ${errorMessage(error)}`),
+        ),
+      );
+    if (Option.isNone(receiptOption)) return Option.none<CheckpointMcpRestoreResult>();
+    if (receiptOption.value.status !== "accepted") {
+      return yield* failure(
+        "operation_failed",
+        `Checkpoint restore '${commandId}' has no durable accepted receipt.`,
+      );
+    }
+    const effects = yield* threadManagement
+      .listCommandEffects(commandId)
+      .pipe(
+        Effect.mapError((error) =>
+          failure("operation_failed", `Unable to read restore effect: ${errorMessage(error)}`),
+        ),
+      );
+    const rollbackEffect = effects.find(
+      (effect) => effect.request.type === "provider-thread.rollback",
+    );
+    const intendedThreadId = input.threadId ?? scope.threadId;
+    if (
+      rollbackEffect?.request.type !== "provider-thread.rollback" ||
+      rollbackEffect.threadId !== intendedThreadId ||
+      rollbackEffect.request.scopeId !== input.scopeId ||
+      rollbackEffect.request.checkpointId !== input.checkpointId
+    ) {
+      return yield* failure(
+        "idempotency_conflict",
+        `clientRequestId '${input.clientRequestId}' was already accepted for a different checkpoint restore.`,
+      );
+    }
+    const status =
+      rollbackEffect.status === "succeeded"
+        ? ("APPLIED" as const)
+        : rollbackEffect.status === "failed" &&
+            rollbackEffect.failureCode === "checkpoint_restore_partial"
+          ? ("PARTIAL" as const)
+          : rollbackEffect.status === "failed" || rollbackEffect.status === "cancelled"
+            ? ("FAILED" as const)
+            : ("REQUESTED" as const);
+    const receipt = receiptOption.value;
+    return Option.some<CheckpointMcpRestoreResult>({
+      commandId,
+      threadId: rollbackEffect.threadId,
+      scopeId: rollbackEffect.request.scopeId,
+      checkpointId: rollbackEffect.request.checkpointId,
+      status,
+      receipt: {
+        status: "accepted",
+        acceptedAt: DateTime.formatIso(receipt.acceptedAt),
+        sequence: receipt.resultSequence,
+      },
+      effectStatus: rollbackEffect.status,
+      detail: restoreEffectDetail(rollbackEffect),
+    });
   });
 
   const list: CheckpointMcpService["Service"]["list"] = Effect.fn("CheckpointMcpService.list")(
@@ -461,7 +555,177 @@ export const make = Effect.gen(function* () {
     },
   );
 
-  return CheckpointMcpService.of({ list, diff });
+  const restore: CheckpointMcpService["Service"]["restore"] = Effect.fn(
+    "CheckpointMcpService.restore",
+  )(function* (scope, input) {
+    yield* requireCapability(scope);
+    const commandId = CommandId.make(
+      [
+        "command",
+        "mcp",
+        encodeURIComponent(scope.providerSessionId),
+        "checkpoint-restore",
+        encodeURIComponent(input.clientRequestId),
+      ].join(":"),
+    );
+    const acceptedRestore = yield* readAcceptedRestore(scope, input, commandId);
+    if (Option.isSome(acceptedRestore)) return acceptedRestore.value;
+
+    const projection = yield* loadThread(scope, input.threadId);
+    const checkpointScope = projection.checkpointScopes.find(
+      (candidate) => candidate.id === input.scopeId && candidate.threadId === projection.thread.id,
+    );
+    if (checkpointScope === undefined) {
+      return yield* failure(
+        "scope_mismatch",
+        `Checkpoint scope '${input.scopeId}' does not belong to thread '${projection.thread.id}'.`,
+      );
+    }
+    const checkpoint = projection.checkpoints.find(
+      (candidate) => candidate.id === input.checkpointId,
+    );
+    if (checkpoint === undefined || checkpoint.threadId !== projection.thread.id) {
+      return yield* failure(
+        "checkpoint_not_found",
+        `Checkpoint '${input.checkpointId}' was not found on thread '${projection.thread.id}'.`,
+      );
+    }
+    if (checkpoint.scopeId !== checkpointScope.id) {
+      return yield* failure(
+        "scope_mismatch",
+        `Checkpoint '${checkpoint.id}' belongs to scope '${checkpoint.scopeId}', not '${checkpointScope.id}'.`,
+      );
+    }
+    const refAvailable = yield* checkpointStore
+      .hasCheckpointRef({ cwd: checkpointScope.cwd, checkpointRef: checkpoint.ref })
+      .pipe(
+        Effect.mapError((error) =>
+          failure(
+            "operation_failed",
+            `Unable to verify checkpoint availability: ${errorMessage(error)}`,
+          ),
+        ),
+      );
+    const blockers = restoreBlockers({
+      projection,
+      checkpoint,
+      scope: checkpointScope,
+      refAvailable,
+    });
+    if (blockers.includes("thread_active")) {
+      return yield* failure(
+        "thread_active",
+        `Thread '${projection.thread.id}' must be idle with no queued runs before restore.`,
+      );
+    }
+    if (blockers.length > 0) {
+      const unsupported = blockers.some((blocker) =>
+        [
+          "active_provider_thread_missing",
+          "provider_thread_mismatch",
+          "provider_session_missing",
+          "provider_rollback_unsupported",
+          "provider_snapshot_unsupported",
+          "provider_turn_missing",
+          "rollback_target_ambiguous",
+        ].includes(blocker),
+      );
+      return yield* failure(
+        unsupported ? "unsupported" : "checkpoint_unavailable",
+        `Checkpoint '${checkpoint.id}' cannot be restored: ${blockers.join(", ")}.`,
+      );
+    }
+
+    const expectedWorkspaceFingerprint = yield* checkpointStore
+      .readWorkspaceFingerprint(checkpointScope.cwd)
+      .pipe(
+        Effect.mapError((error) =>
+          failure(
+            "operation_failed",
+            `Unable to capture the current workspace guard: ${errorMessage(error)}`,
+          ),
+        ),
+      );
+    const dispatched = yield* threadManagement
+      .dispatch({
+        type: "checkpoint.rollback",
+        commandId,
+        threadId: projection.thread.id,
+        scopeId: checkpointScope.id,
+        checkpointId: checkpoint.id,
+        expectedIdle: true,
+        expectedWorkspaceFingerprint,
+      })
+      .pipe(
+        Effect.catchTags({
+          OrchestratorCommandIdConflictError: (error: OrchestratorCommandIdConflictError) =>
+            failure(
+              "idempotency_conflict",
+              `Checkpoint restore was not accepted: ${error.message}`,
+            ),
+          OrchestratorCheckpointRollbackNotIdleError: (
+            error: OrchestratorCheckpointRollbackNotIdleError,
+          ) => failure("thread_active", `Checkpoint restore was not accepted: ${error.message}`),
+          OrchestratorCheckpointRollbackTargetUnsupportedError: (
+            error: OrchestratorCheckpointRollbackTargetUnsupportedError,
+          ) => failure("unsupported", `Checkpoint restore was not accepted: ${error.message}`),
+        }),
+        Effect.mapError((error) =>
+          isCheckpointMcpFailure(error)
+            ? error
+            : failure(
+                "operation_failed",
+                `Checkpoint restore was not accepted: ${errorMessage(error)}`,
+              ),
+        ),
+      );
+    const rollbackEvent = dispatched.storedEvents.find(
+      (stored) => stored.event.type === "checkpoint.rollback-requested",
+    );
+    if (
+      rollbackEvent?.event.type !== "checkpoint.rollback-requested" ||
+      rollbackEvent.event.payload.scopeId !== checkpointScope.id ||
+      rollbackEvent.event.payload.checkpointId !== checkpoint.id
+    ) {
+      return yield* failure(
+        "idempotency_conflict",
+        `clientRequestId '${input.clientRequestId}' was already accepted for a different checkpoint restore.`,
+      );
+    }
+
+    const observation = yield* readAcceptedRestore(scope, input, commandId).pipe(
+      Effect.match({
+        onFailure: (error) => ({ type: "unavailable" as const, error }),
+        onSuccess: (accepted) => ({ type: "available" as const, accepted }),
+      }),
+    );
+    if (observation.type === "available" && Option.isSome(observation.accepted)) {
+      return observation.accepted.value;
+    }
+    if (observation.type === "unavailable" && observation.error.code === "idempotency_conflict") {
+      return yield* observation.error;
+    }
+    const observationDetail =
+      observation.type === "unavailable"
+        ? observation.error.message
+        : "The durable command receipt was not yet readable.";
+    return {
+      commandId,
+      threadId: projection.thread.id,
+      scopeId: checkpointScope.id,
+      checkpointId: checkpoint.id,
+      status: "REQUESTED",
+      receipt: {
+        status: "accepted",
+        acceptedAt: DateTime.formatIso(rollbackEvent.event.occurredAt),
+        sequence: dispatched.sequence,
+      },
+      effectStatus: "unavailable",
+      detail: `Checkpoint restore was accepted, but its effect status is unavailable: ${observationDetail} Reuse the same clientRequestId to observe this request.`,
+    };
+  });
+
+  return CheckpointMcpService.of({ list, diff, restore });
 });
 
 export const layer: Layer.Layer<

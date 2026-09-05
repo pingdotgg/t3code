@@ -1,11 +1,15 @@
 import { assert, it, vi } from "@effect/vitest";
 import {
+  CheckpointId,
+  CheckpointRef,
   CheckpointScopeId,
   NodeId,
   ProviderThreadId,
   RunId,
   ThreadId,
+  VcsProcessExitError,
   type OrchestrationV2CheckpointScope,
+  type OrchestrationV2Checkpoint,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -68,5 +72,127 @@ it.effect("materializes the captured baseline at the requested scope ordinal", (
       cwd: scope.cwd,
       checkpointRef: baseline.ref,
     });
+  }).pipe(Effect.provide(testLayer));
+});
+
+it.effect("preserves concurrently changed files before locked restore", () => {
+  const scope: OrchestrationV2CheckpointScope = {
+    id: CheckpointScopeId.make("checkpoint-scope:guarded-restore"),
+    threadId: ThreadId.make("thread:guarded-restore"),
+    runId: null,
+    nodeId: NodeId.make("node:guarded-restore"),
+    parentScopeId: null,
+    providerThreadId: ProviderThreadId.make("provider-thread:guarded-restore"),
+    kind: "manual",
+    ordinalWithinParent: 0,
+    advancesAppRunCount: false,
+    cwd: "/repo",
+    createdAt: DateTime.makeUnsafe("2026-08-29T00:00:00.000Z"),
+  };
+  const checkpoint: OrchestrationV2Checkpoint = {
+    id: CheckpointId.make("checkpoint:guarded-restore"),
+    threadId: scope.threadId,
+    scopeId: scope.id,
+    runId: null,
+    nodeId: scope.nodeId,
+    parentCheckpointId: null,
+    ordinalWithinScope: 0,
+    appRunOrdinal: null,
+    ref: CheckpointRef.make("refs/t3/guarded-restore"),
+    status: "ready",
+    files: [],
+    capturedAt: scope.createdAt,
+  };
+  const restoreCheckpoint = vi.fn(() => Effect.succeed(true));
+  const testLayer = checkpointServiceLayer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        idAllocatorLayer,
+        Layer.mock(CheckpointStore.CheckpointStore)({
+          readWorkspaceFingerprint: () => Effect.succeed("tree:changed"),
+          restoreCheckpoint,
+        }),
+      ),
+    ),
+  );
+
+  return Effect.gen(function* () {
+    const checkpoints = yield* CheckpointServiceV2;
+    const error = yield* checkpoints
+      .restore({
+        scope,
+        checkpoint,
+        expectedWorkspaceFingerprint: "tree:admitted",
+      })
+      .pipe(Effect.flip);
+
+    assert.equal(error._tag, "CheckpointRestorePreconditionError");
+    assert.equal(restoreCheckpoint.mock.calls.length, 0);
+  }).pipe(Effect.provide(testLayer));
+});
+
+it.effect("classifies fingerprint read failures as retryable preflight failures", () => {
+  const scope: OrchestrationV2CheckpointScope = {
+    id: CheckpointScopeId.make("checkpoint-scope:fingerprint-read-failure"),
+    threadId: ThreadId.make("thread:fingerprint-read-failure"),
+    runId: null,
+    nodeId: NodeId.make("node:fingerprint-read-failure"),
+    parentScopeId: null,
+    providerThreadId: ProviderThreadId.make("provider-thread:fingerprint-read-failure"),
+    kind: "manual",
+    ordinalWithinParent: 0,
+    advancesAppRunCount: false,
+    cwd: "/repo",
+    createdAt: DateTime.makeUnsafe("2026-08-29T00:00:00.000Z"),
+  };
+  const checkpoint: OrchestrationV2Checkpoint = {
+    id: CheckpointId.make("checkpoint:fingerprint-read-failure"),
+    threadId: scope.threadId,
+    scopeId: scope.id,
+    runId: null,
+    nodeId: scope.nodeId,
+    parentCheckpointId: null,
+    ordinalWithinScope: 0,
+    appRunOrdinal: null,
+    ref: CheckpointRef.make("refs/t3/fingerprint-read-failure"),
+    status: "ready",
+    files: [],
+    capturedAt: scope.createdAt,
+  };
+  const fingerprintError = new VcsProcessExitError({
+    operation: "CheckpointStore.readWorkspaceFingerprint",
+    command: "git ls-files --stage",
+    cwd: scope.cwd,
+    exitCode: 0,
+    detail: "staged-state output was truncated",
+  });
+  const restoreCheckpoint = vi.fn(() => Effect.succeed(true));
+  const testLayer = checkpointServiceLayer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        idAllocatorLayer,
+        Layer.mock(CheckpointStore.CheckpointStore)({
+          readWorkspaceFingerprint: () => Effect.fail(fingerprintError),
+          restoreCheckpoint,
+        }),
+      ),
+    ),
+  );
+
+  return Effect.gen(function* () {
+    const checkpoints = yield* CheckpointServiceV2;
+    const error = yield* checkpoints
+      .restore({
+        scope,
+        checkpoint,
+        expectedWorkspaceFingerprint: "tree:admitted",
+      })
+      .pipe(Effect.flip);
+
+    assert.equal(error._tag, "CheckpointRestorePreflightError");
+    if (error._tag === "CheckpointRestorePreflightError") {
+      assert.strictEqual(error.cause, fingerprintError);
+    }
+    assert.equal(restoreCheckpoint.mock.calls.length, 0);
   }).pipe(Effect.provide(testLayer));
 });

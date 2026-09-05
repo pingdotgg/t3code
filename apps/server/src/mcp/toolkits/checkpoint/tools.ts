@@ -4,6 +4,8 @@ import {
   CheckpointMcpFailure,
   CheckpointMcpListInput,
   CheckpointMcpListResult,
+  CheckpointMcpRestoreInput,
+  CheckpointMcpRestoreResult,
 } from "@t3tools/contracts";
 import { Tool, Toolkit } from "effect/unstable/ai";
 
@@ -29,7 +31,7 @@ export const CheckpointListTool = Tool.make("t3_checkpoint_list", {
 
 export const CheckpointDiffTool = Tool.make("t3_checkpoint_diff", {
   description:
-    "Read a bounded patch between two durable checkpoints in one thread checkpoint scope. Use t3_checkpoint_list first to select stable checkpointId and scopeId values. The thread and both checkpoint identities are validated before an empty diff is returned; arbitrary filesystem paths or Git refs are not accepted. Pagination cursors count UTF-16 code units.",
+    "Read a bounded patch between two durable checkpoints in one thread checkpoint scope. Use t3_checkpoint_list first to select stable checkpointId and scopeId values. The thread and both checkpoint identities are validated before an empty diff is returned; arbitrary filesystem paths or Git refs are not accepted. Pagination cursors count UTF-16 code units, and a page can exceed its requested limit by one code unit to avoid splitting a surrogate pair.",
   parameters: CheckpointMcpDiffInput,
   success: CheckpointMcpDiffResult,
   failure: CheckpointMcpFailure,
@@ -42,4 +44,23 @@ export const CheckpointDiffTool = Tool.make("t3_checkpoint_diff", {
   .annotate(Tool.Idempotent, true)
   .annotate(Tool.OpenWorld, false);
 
-export const CheckpointToolkit = Toolkit.make(CheckpointListTool, CheckpointDiffTool);
+export const CheckpointRestoreTool = Tool.make("t3_checkpoint_restore", {
+  description:
+    "Request restoration of an exact durable checkpoint through the serialized V2 checkpoint.rollback workflow. This discards current tracked, untracked and staged workspace changes covered by Git restore, so discardChanges must be true. The thread must be idle with no queued work, the provider must support conversation rollback, and the guarded workspace/index state must remain unchanged before the locked restore. Reuse the exact clientRequestId to read the original accepted command/effect status without repeating it. REQUESTED means accepted but pending/running or temporarily unobservable; PARTIAL means filesystem/provider state may have changed but the complete outcome was not recorded.",
+  parameters: CheckpointMcpRestoreInput,
+  success: CheckpointMcpRestoreResult,
+  failure: CheckpointMcpFailure,
+  failureMode: "return",
+  dependencies,
+})
+  .annotate(Tool.Title, "Restore a thread checkpoint")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, true)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, true);
+
+export const CheckpointToolkit = Toolkit.make(
+  CheckpointListTool,
+  CheckpointDiffTool,
+  CheckpointRestoreTool,
+);

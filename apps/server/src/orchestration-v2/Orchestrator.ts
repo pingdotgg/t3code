@@ -1,5 +1,7 @@
 import {
   type ChatAttachment,
+  checkpointRollbackAppRunOrdinal,
+  CheckpointId,
   CommandId,
   MessageId,
   type ModelSelection,
@@ -44,7 +46,11 @@ import { CommandPolicyV2 } from "./CommandPolicy.ts";
 import { CommandReceiptStoreV2 } from "./CommandReceiptStore.ts";
 import { ContextHandoffServiceV2 } from "./ContextHandoffService.ts";
 import { EventSinkV2 } from "./EventSink.ts";
-import type { OrchestrationEffectRequestV2, PendingOrchestrationEffectV2 } from "./EffectOutbox.ts";
+import {
+  EffectOutboxV2,
+  type OrchestrationEffectRequestV2,
+  type PendingOrchestrationEffectV2,
+} from "./EffectOutbox.ts";
 import { IdAllocatorV2 } from "./IdAllocator.ts";
 import {
   ThreadCommandExecutor,
@@ -148,6 +154,31 @@ export class OrchestratorCommandIdConflictError extends Schema.TaggedErrorClass<
   }
 }
 
+export class OrchestratorCheckpointRollbackNotIdleError extends Schema.TaggedErrorClass<OrchestratorCheckpointRollbackNotIdleError>()(
+  "OrchestratorCheckpointRollbackNotIdleError",
+  {
+    commandId: CommandId,
+    threadId: ThreadId,
+  },
+) {
+  override get message(): string {
+    return `Checkpoint rollback ${this.commandId} requires idle thread ${this.threadId} with no queued runs.`;
+  }
+}
+
+export class OrchestratorCheckpointRollbackTargetUnsupportedError extends Schema.TaggedErrorClass<OrchestratorCheckpointRollbackTargetUnsupportedError>()(
+  "OrchestratorCheckpointRollbackTargetUnsupportedError",
+  {
+    commandId: CommandId,
+    threadId: ThreadId,
+    checkpointId: CheckpointId,
+  },
+) {
+  override get message(): string {
+    return `Checkpoint ${this.checkpointId} does not identify a proven provider-history target for thread ${this.threadId}.`;
+  }
+}
+
 /**
  * A command receipt only proves that this exact command already ran for the
  * thread it was recorded against. Replaying it for a command aimed at another
@@ -168,6 +199,8 @@ export const OrchestratorV2Error = Schema.Union([
   OrchestratorProviderAdapterError,
   OrchestratorCommandPreviouslyRejectedError,
   OrchestratorCommandIdConflictError,
+  OrchestratorCheckpointRollbackNotIdleError,
+  OrchestratorCheckpointRollbackTargetUnsupportedError,
 ]);
 export type OrchestratorV2Error = typeof OrchestratorV2Error.Type;
 
@@ -215,6 +248,8 @@ export interface OrchestratorV2Shape {
   readonly getThreadEventSequence: (
     threadId: ThreadId,
   ) => Effect.Effect<number, OrchestratorV2Error>;
+  readonly getCommandReceipt: CommandReceiptStoreV2["Service"]["getByCommandId"];
+  readonly listCommandEffects: EffectOutboxV2["Service"]["listByCommandId"];
   readonly streamStoredEvents: Stream.Stream<OrchestrationV2StoredEvent, OrchestratorV2Error>;
   readonly streamStoredEventsFrom: (input?: {
     readonly threadId?: ThreadId;
@@ -543,6 +578,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const contextHandoffService = yield* ContextHandoffServiceV2;
   const eventSink = yield* EventSinkV2;
   const commandReceipts = yield* CommandReceiptStoreV2;
+  const effectOutbox = yield* EffectOutboxV2;
   const idAllocator = yield* IdAllocatorV2;
   const projectionStore = yield* ProjectionStoreV2;
   const providerAdapters = yield* ProviderAdapterRegistryV2;
@@ -6143,6 +6179,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   ) =>
     Effect.gen(function* () {
       const projection = yield* loadProjectionForCommand(command);
+      if (
+        command.expectedIdle === true &&
+        projection.runs.some((run) =>
+          ["preparing", "queued", "starting", "running", "waiting"].includes(run.status),
+        )
+      ) {
+        return yield* new OrchestratorCheckpointRollbackNotIdleError({
+          commandId: command.commandId,
+          threadId: command.threadId,
+        });
+      }
       const providerThread = projection.providerThreads.find(
         (candidate) => candidate.id === projection.thread.activeProviderThreadId,
       );
@@ -6209,7 +6256,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           cause: `Checkpoint ${command.checkpointId} belongs to scope ${targetScope.id}, not ${command.scopeId}.`,
         });
       }
-      const targetOrdinal = targetCheckpoint.appRunOrdinal ?? 0;
+      const targetOrdinal = checkpointRollbackAppRunOrdinal(targetCheckpoint, targetScope);
+      if (targetOrdinal === null) {
+        return yield* new OrchestratorCheckpointRollbackTargetUnsupportedError({
+          commandId: command.commandId,
+          threadId: command.threadId,
+          checkpointId: targetCheckpoint.id,
+        });
+      }
       if (targetOrdinal > 0) {
         const targetRun = projection.runs.find((run) => run.ordinal === targetOrdinal);
         const targetProviderTurn =
@@ -6256,6 +6310,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             providerThreadId: providerThread.id,
             checkpointId: targetCheckpoint.id,
             scopeId: targetScope.id,
+            ...(command.expectedIdle === undefined ? {} : { expectedIdle: command.expectedIdle }),
+            ...(command.expectedWorkspaceFingerprint === undefined
+              ? {}
+              : { expectedWorkspaceFingerprint: command.expectedWorkspaceFingerprint }),
           },
         } satisfies PendingOrchestrationEffectV2,
       ]);
@@ -7366,6 +7424,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       eventSink
         .latestSequence({ threadId })
         .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause }))),
+    getCommandReceipt: commandReceipts.getByCommandId,
+    listCommandEffects: effectOutbox.listByCommandId,
     streamStoredEvents: eventSink.stream().pipe(
       Stream.mapError(
         (cause) =>
@@ -7411,6 +7471,7 @@ export const layer: Layer.Layer<
   | CommandReceiptStoreV2
   | ContextHandoffServiceV2
   | EventSinkV2
+  | EffectOutboxV2
   | IdAllocatorV2
   | ProviderAdapterRegistryV2
   | ProviderSessionManagerV2
@@ -7489,6 +7550,8 @@ export const layerUnavailable: Layer.Layer<OrchestratorV2> = Layer.succeed(
           cause: "Orchestration V2 live runtime is not configured.",
         }),
       ),
+    getCommandReceipt: () => Effect.succeed(Option.none()),
+    listCommandEffects: () => Effect.succeed([]),
     streamStoredEvents: Stream.fail(
       new OrchestratorDomainEventStreamError({
         cause: "Orchestration V2 live runtime is not configured.",

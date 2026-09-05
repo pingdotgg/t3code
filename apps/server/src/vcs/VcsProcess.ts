@@ -31,6 +31,7 @@ export interface VcsProcessInput {
   readonly maxOutputBytes?: number;
   readonly outputMode?: ProcessRunner.ProcessRunInput["outputMode"];
   readonly appendTruncationMarker?: boolean;
+  readonly stdoutDigest?: "sha256";
 }
 
 export interface VcsProcessOutput {
@@ -42,6 +43,7 @@ export interface VcsProcessOutput {
   /** Present on real process output; optional so narrow test doubles remain lightweight. */
   readonly stdoutInvalidUtf8?: boolean;
   readonly stderrInvalidUtf8?: boolean;
+  readonly stdoutDigest?: string;
 }
 
 export class VcsProcess extends Context.Service<
@@ -129,6 +131,7 @@ export const make = Effect.gen(function* () {
         outputMode: input.outputMode ?? "truncate",
         truncatedMarker: input.appendTruncationMarker ? OUTPUT_TRUNCATED_MARKER : "",
         timeoutBehavior: "error",
+        ...(input.stdoutDigest === undefined ? {} : { stdoutDigest: input.stdoutDigest }),
       })
       .pipe(
         Effect.mapError(
@@ -184,6 +187,7 @@ export const make = Effect.gen(function* () {
       stderrTruncated: result.stderrTruncated,
       stdoutInvalidUtf8: result.stdoutInvalidUtf8 ?? false,
       stderrInvalidUtf8: result.stderrInvalidUtf8 ?? false,
+      ...(result.stdoutDigest === undefined ? {} : { stdoutDigest: result.stdoutDigest }),
     } satisfies VcsProcessOutput;
   });
 

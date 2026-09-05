@@ -2292,6 +2292,9 @@ export const OrchestrationV2Command = Schema.Union([
     threadId: ThreadId,
     scopeId: CheckpointScopeId,
     checkpointId: CheckpointId,
+    /** Optional MCP admission constraints. Older clients omit both fields. */
+    expectedIdle: Schema.optional(Schema.Literal(true)),
+    expectedWorkspaceFingerprint: Schema.optional(TrimmedNonEmptyString),
   }),
   Schema.Struct({
     type: Schema.Literal("thread.fork"),

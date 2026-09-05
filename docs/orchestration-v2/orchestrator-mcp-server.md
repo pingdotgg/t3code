@@ -341,6 +341,47 @@ code-unit cursors and report total length, truncation, and the next cursor. A
 page can exceed its requested limit by one code unit to avoid splitting a
 surrogate pair. This makes pagination match MCP JSON string indexing.
 
+### `t3_checkpoint_restore`
+
+Requests the ordinary serialized V2 `checkpoint.rollback` command for one
+exact checkpoint/scope identity. The tool never runs Git restore directly.
+Because the restore discards current tracked and untracked workspace changes,
+the caller must pass `discardChanges: true` and a well-formed, exact
+`clientRequestId`.
+
+Admission requires an idle thread with no queued run, a ready checkpoint ref,
+the active provider thread/session, and provider conversation rollback with a
+returned snapshot. The command carries optional constraints understood by old
+servers as absent: `expectedIdle` is enforced inside the thread's serialized
+decision. The worker acquires that same per-thread admission boundary, re-reads
+idle, archive, provider, checkpoint, and provider-history target state, then
+compares the workspace-and-index fingerprint inside the existing per-workspace
+checkpoint lock. The thread-state comparison starts from this worker re-read,
+not from command acceptance. A run that starts and finishes before the worker
+acquires the boundary does not automatically reject the restore; the worker
+uses the current provider history when it validates and applies the requested
+rollback target. New same-thread commands wait until guarded restore
+finalization releases the admission boundary. An unrelated external process
+can still write while Git is executing; T3 does not claim an OS-wide lock.
+
+The result includes the durable command receipt and current outbox status:
+
+- `REQUESTED`: accepted, but the rollback effect is pending, running, or its
+  current observation is temporarily unavailable;
+- `APPLIED`: filesystem and required provider rollback completed;
+- `FAILED`: a guard rejected the restore before mutation or an unguarded
+  request failed; and
+- `PARTIAL`: filesystem/provider state may have changed, but the complete
+  durable outcome could not be recorded.
+
+Reusing the exact key returns the original command/effect state. A key already
+accepted for another target is rejected. Guarded MCP rollback failures become
+terminal after a retry-unsafe or uncertain phase, so a normal retry cannot
+repeat filesystem or provider side effects. If the process ends while such an
+effect is running, durable outbox recovery records `PARTIAL` instead of
+replaying it. Older unguarded rollback commands retain their existing retry
+behavior.
+
 ## Delegated Task Lifecycle
 
 The MCP server is a command ingress into V2. It does not call provider adapters
@@ -387,6 +428,8 @@ falls back to a terminal-status message when no assistant text exists.
 - Checkpoint list and diff use the same current-project boundary. They never
   accept an environment, workspace path, or raw checkpoint ref from the
   caller.
+- Restore uses the same boundary and never expands privileges, substitutes a
+  different checkpoint, stashes files, or creates a backup workspace.
 - Provider instances must be enabled, installed, available, authenticated, and
   backed by a V2 adapter.
 - A requested model must be advertised by the selected provider when the

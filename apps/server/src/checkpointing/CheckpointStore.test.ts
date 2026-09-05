@@ -71,6 +71,35 @@ function git(
   });
 }
 
+function gitAllowNonZero(cwd: string, args: ReadonlyArray<string>) {
+  return Effect.gen(function* () {
+    const process = yield* VcsProcess.VcsProcess;
+    return yield* process.run({
+      operation: "CheckpointStore.test.gitAllowNonZero",
+      command: "git",
+      cwd,
+      args,
+      timeoutMs: 10_000,
+      allowNonZeroExit: true,
+    });
+  });
+}
+
+function gitWithStdin(cwd: string, args: ReadonlyArray<string>, stdin: string) {
+  return Effect.gen(function* () {
+    const process = yield* VcsProcess.VcsProcess;
+    const result = yield* process.run({
+      operation: "CheckpointStore.test.gitWithStdin",
+      command: "git",
+      cwd,
+      args,
+      stdin,
+      timeoutMs: 10_000,
+    });
+    return result.stdout.trim();
+  });
+}
+
 function initRepoWithCommit(
   cwd: string,
 ): Effect.Effect<
@@ -127,6 +156,221 @@ it.layer(TestLayer)("CheckpointStore.layer", (it) => {
       expect(yield* checkpointStore.isGitRepository(nested)).toBe(true);
     }),
   );
+
+  describe("readWorkspaceFingerprint", () => {
+    it.effect("tracks the exact tracked and untracked tree affected by restore", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        yield* initRepoWithCommit(tmp);
+        const checkpointStore = yield* CheckpointStore.CheckpointStore;
+
+        const initial = yield* checkpointStore.readWorkspaceFingerprint(tmp);
+        yield* writeTextFile(NodePath.join(tmp, "README.md"), "# changed\n");
+        const trackedChange = yield* checkpointStore.readWorkspaceFingerprint(tmp);
+        yield* writeTextFile(NodePath.join(tmp, "new-file.txt"), "new\n");
+        const untrackedChange = yield* checkpointStore.readWorkspaceFingerprint(tmp);
+
+        expect(trackedChange).not.toBe(initial);
+        expect(untrackedChange).not.toBe(trackedChange);
+        expect(yield* git(tmp, ["status", "--short"])).toContain("README.md");
+        expect(yield* git(tmp, ["status", "--short"])).toContain("new-file.txt");
+      }),
+    );
+
+    it.effect("tracks staged-only changes without modifying the user's index", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        yield* initRepoWithCommit(tmp);
+        const checkpointStore = yield* CheckpointStore.CheckpointStore;
+        const readme = NodePath.join(tmp, "README.md");
+
+        const initial = yield* checkpointStore.readWorkspaceFingerprint(tmp);
+        yield* writeTextFile(readme, "# staged\n");
+        yield* git(tmp, ["add", "README.md"]);
+        yield* writeTextFile(readme, "# test\n");
+        const stagedBefore = yield* git(tmp, ["diff", "--cached", "--", "README.md"]);
+        const stagedOnly = yield* checkpointStore.readWorkspaceFingerprint(tmp);
+        const stagedAfter = yield* git(tmp, ["diff", "--cached", "--", "README.md"]);
+
+        expect(stagedOnly).not.toBe(initial);
+        expect(stagedAfter).toBe(stagedBefore);
+        expect(yield* git(tmp, ["diff", "--", "README.md"])).not.toBe("");
+
+        const oddPath = "odd\tname\n.txt";
+        yield* writeTextFile(NodePath.join(tmp, oddPath), "odd staged path\n");
+        yield* git(tmp, ["add", "--", oddPath]);
+        expect(yield* checkpointStore.readWorkspaceFingerprint(tmp)).not.toBe(stagedOnly);
+      }),
+    );
+
+    it.effect("fingerprints an index whose staged listing exceeds the process output cap", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        yield* initRepoWithCommit(tmp);
+        const checkpointStore = yield* CheckpointStore.CheckpointStore;
+        const initial = yield* checkpointStore.readWorkspaceFingerprint(tmp);
+        const fileSystem = yield* FileSystem.FileSystem;
+
+        yield* Effect.forEach(
+          Array.from({ length: 4_000 }, (_, index) => index),
+          (index) =>
+            fileSystem.writeFileString(
+              NodePath.join(tmp, `${String(index).padStart(4, "0")}-${"x".repeat(220)}.txt`),
+              "staged\n",
+            ),
+          { concurrency: 64, discard: true },
+        );
+        yield* git(tmp, ["add", "."]);
+
+        expect(yield* checkpointStore.readWorkspaceFingerprint(tmp)).not.toBe(initial);
+      }),
+    );
+
+    it.effect("ignores unmerged index stages outside a nested restore cwd", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        yield* initRepoWithCommit(tmp);
+        const nested = NodePath.join(tmp, "packages", "nested");
+        const sibling = NodePath.join(tmp, "sibling.txt");
+        const fileSystem = yield* FileSystem.FileSystem;
+        yield* fileSystem.makeDirectory(nested, { recursive: true });
+        yield* writeTextFile(NodePath.join(nested, "file.txt"), "nested\n");
+        yield* writeTextFile(sibling, "base\n");
+        yield* git(tmp, ["add", "."]);
+        yield* git(tmp, ["commit", "-m", "add scoped files"]);
+        const baseBranch = yield* git(tmp, ["branch", "--show-current"]);
+
+        yield* git(tmp, ["checkout", "-b", "conflict-side"]);
+        yield* writeTextFile(sibling, "side\n");
+        yield* git(tmp, ["commit", "-am", "change sibling on side"]);
+        yield* git(tmp, ["checkout", baseBranch]);
+        yield* writeTextFile(sibling, "main\n");
+        yield* git(tmp, ["commit", "-am", "change sibling on main"]);
+
+        const checkpointStore = yield* CheckpointStore.CheckpointStore;
+        const beforeConflict = yield* checkpointStore.readWorkspaceFingerprint(nested);
+        const merge = yield* gitAllowNonZero(tmp, ["merge", "conflict-side"]);
+        expect(merge.exitCode).not.toBe(0);
+        expect(yield* git(tmp, ["ls-files", "--unmerged", "--", "sibling.txt"])).not.toBe("");
+        expect(yield* checkpointStore.readWorkspaceFingerprint(nested)).toBe(beforeConflict);
+      }),
+    );
+
+    it.effect("changes when an in-scope conflict stage changes", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        yield* initRepoWithCommit(tmp);
+        const nested = NodePath.join(tmp, "packages", "nested");
+        const nestedFile = NodePath.join(nested, "file.txt");
+        const replacement = NodePath.join(tmp, "replacement-stage.txt");
+        const fileSystem = yield* FileSystem.FileSystem;
+        yield* fileSystem.makeDirectory(nested, { recursive: true });
+        yield* writeTextFile(nestedFile, "base\n");
+        yield* git(tmp, ["add", "."]);
+        yield* git(tmp, ["commit", "-m", "add nested conflict file"]);
+        const baseBranch = yield* git(tmp, ["branch", "--show-current"]);
+
+        yield* git(tmp, ["checkout", "-b", "nested-conflict-side"]);
+        yield* writeTextFile(nestedFile, "side\n");
+        yield* git(tmp, ["commit", "-am", "change nested file on side"]);
+        yield* git(tmp, ["checkout", baseBranch]);
+        yield* writeTextFile(nestedFile, "main\n");
+        yield* git(tmp, ["commit", "-am", "change nested file on main"]);
+        expect((yield* gitAllowNonZero(tmp, ["merge", "nested-conflict-side"])).exitCode).not.toBe(
+          0,
+        );
+
+        const checkpointStore = yield* CheckpointStore.CheckpointStore;
+        const beforeStageChange = yield* checkpointStore.readWorkspaceFingerprint(nested);
+        const stages = (yield* git(tmp, ["ls-files", "--stage", "--", "packages/nested/file.txt"]))
+          .split("\n")
+          .filter((line) => line.length > 0);
+        expect(stages).toHaveLength(3);
+        expect(stages.map((line) => line.split(/\s+/, 3)[2])).toEqual(["1", "2", "3"]);
+
+        yield* writeTextFile(replacement, "replacement stage two\n");
+        const replacementOid = yield* git(tmp, ["hash-object", "-w", "--", replacement]);
+        yield* gitWithStdin(
+          tmp,
+          ["update-index", "--index-info"],
+          `100644 ${replacementOid} 2\tpackages/nested/file.txt\n`,
+        );
+
+        expect(yield* checkpointStore.readWorkspaceFingerprint(nested)).not.toBe(beforeStageChange);
+      }),
+    );
+
+    it.effect("limits staged-state fingerprints to a nested restore cwd", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        yield* initRepoWithCommit(tmp);
+        const nested = NodePath.join(tmp, "packages", "nested");
+        const sibling = NodePath.join(tmp, "sibling.txt");
+        const nestedFile = NodePath.join(nested, "file.txt");
+        const fileSystem = yield* FileSystem.FileSystem;
+        yield* fileSystem.makeDirectory(nested, { recursive: true });
+        yield* writeTextFile(nestedFile, "nested\n");
+        yield* writeTextFile(sibling, "sibling\n");
+        yield* git(tmp, ["add", "."]);
+        yield* git(tmp, ["commit", "-m", "nested files"]);
+        const checkpointStore = yield* CheckpointStore.CheckpointStore;
+
+        const initial = yield* checkpointStore.readWorkspaceFingerprint(nested);
+        yield* writeTextFile(sibling, "sibling staged\n");
+        yield* git(tmp, ["add", "sibling.txt"]);
+        yield* writeTextFile(sibling, "sibling\n");
+        expect(yield* checkpointStore.readWorkspaceFingerprint(nested)).toBe(initial);
+
+        yield* git(tmp, ["commit", "-m", "change committed sibling"]);
+        expect(yield* checkpointStore.readWorkspaceFingerprint(nested)).toBe(initial);
+
+        yield* writeTextFile(nestedFile, "nested staged\n");
+        yield* git(tmp, ["add", "packages/nested/file.txt"]);
+        yield* writeTextFile(nestedFile, "nested\n");
+        expect(yield* checkpointStore.readWorkspaceFingerprint(nested)).not.toBe(initial);
+      }),
+    );
+
+    it.effect("fingerprints an absent nested worktree subtree", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        yield* initRepoWithCommit(tmp);
+        const nested = NodePath.join(tmp, "packages", "nested");
+        const nestedFile = NodePath.join(nested, "file.txt");
+        const fileSystem = yield* FileSystem.FileSystem;
+        yield* fileSystem.makeDirectory(nested, { recursive: true });
+        yield* writeTextFile(nestedFile, "nested\n");
+        yield* git(tmp, ["add", "."]);
+        yield* git(tmp, ["commit", "-m", "add nested subtree"]);
+        const checkpointStore = yield* CheckpointStore.CheckpointStore;
+
+        const initial = yield* checkpointStore.readWorkspaceFingerprint(nested);
+        yield* fileSystem.remove(nestedFile);
+
+        expect(yield* checkpointStore.readWorkspaceFingerprint(nested)).not.toBe(initial);
+      }),
+    );
+
+    it.effect("fingerprints a nested cwd containing a tab", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        yield* initRepoWithCommit(tmp);
+        const nested = NodePath.join(tmp, "packages", "nested\tworkspace");
+        const nestedFile = NodePath.join(nested, "file.txt");
+        const fileSystem = yield* FileSystem.FileSystem;
+        yield* fileSystem.makeDirectory(nested, { recursive: true });
+        yield* writeTextFile(nestedFile, "nested\n");
+        yield* git(tmp, ["add", "."]);
+        yield* git(tmp, ["commit", "-m", "add tabbed nested workspace"]);
+        const checkpointStore = yield* CheckpointStore.CheckpointStore;
+
+        const initial = yield* checkpointStore.readWorkspaceFingerprint(nested);
+        yield* writeTextFile(nestedFile, "changed\n");
+
+        expect(yield* checkpointStore.readWorkspaceFingerprint(nested)).not.toBe(initial);
+      }),
+    );
+  });
 
   describe("diffCheckpoints", () => {
     it.effect("returns full oversized checkpoint diffs without truncation", () =>

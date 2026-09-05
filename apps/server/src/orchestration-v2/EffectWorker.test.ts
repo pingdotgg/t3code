@@ -1,5 +1,7 @@
 import { assert, it } from "@effect/vitest";
 import {
+  CheckpointId,
+  CheckpointScopeId,
   CommandId,
   MessageId,
   ProviderSessionId,
@@ -20,7 +22,11 @@ import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as TestClock from "effect/testing/TestClock";
 
-import { CheckpointRollbackServiceV2 } from "./CheckpointRollbackService.ts";
+import {
+  type CheckpointRollbackExecutionError,
+  CheckpointRollbackPartialError,
+  CheckpointRollbackServiceV2,
+} from "./CheckpointRollbackService.ts";
 import { EffectOutboxError, EffectOutboxV2, type OrchestrationEffectV2 } from "./EffectOutbox.ts";
 import {
   executorLayer,
@@ -86,9 +92,37 @@ function restartEffect(
   };
 }
 
+function rollbackEffect(now: DateTime.Utc, guarded: boolean): OrchestrationEffectV2 {
+  const timestamp = DateTime.formatIso(now);
+  return {
+    id: `effect:checkpoint-rollback:${guarded ? "guarded" : "legacy"}`,
+    commandId: CommandId.make(`command:checkpoint-rollback:${guarded ? "guarded" : "legacy"}`),
+    threadId,
+    request: {
+      type: "provider-thread.rollback",
+      providerThreadId,
+      checkpointId: CheckpointId.make("checkpoint:effect-worker-rollback"),
+      scopeId: CheckpointScopeId.make("scope:effect-worker-rollback"),
+      ...(guarded
+        ? { expectedIdle: true as const, expectedWorkspaceFingerprint: "workspace-before" }
+        : {}),
+    },
+    status: "running",
+    attemptCount: 1,
+    availableAt: timestamp,
+    leaseOwner: "test-worker",
+    leaseExpiresAt: timestamp,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    completedAt: null,
+    lastError: null,
+  };
+}
+
 function makeExecutorLayer(input: {
   readonly events: Ref.Ref<ReadonlyArray<string>>;
   readonly failFirstStart?: Ref.Ref<boolean>;
+  readonly rollbackError?: CheckpointRollbackExecutionError;
 }) {
   const record = (event: string) => Ref.update(input.events, (events) => [...events, event]);
   const dependencies = Layer.mergeAll(
@@ -140,7 +174,10 @@ function makeExecutorLayer(input: {
     ),
     Layer.succeed(
       CheckpointRollbackServiceV2,
-      CheckpointRollbackServiceV2.of({ execute: () => Effect.void }),
+      CheckpointRollbackServiceV2.of({
+        execute: () =>
+          input.rollbackError === undefined ? Effect.void : Effect.fail(input.rollbackError),
+      }),
     ),
     Layer.succeed(
       RuntimeRequestServiceV2,
@@ -197,6 +234,213 @@ it("does not retry pure interrupt races where the turn is already gone", () => {
     ),
   );
 });
+
+it.effect("classifies retry-unsafe rollback failures only for guarded MCP requests", () =>
+  Effect.gen(function* () {
+    const now = yield* DateTime.now;
+    const events = yield* Ref.make<ReadonlyArray<string>>([]);
+    const rollbackError = new CheckpointRollbackPartialError({
+      reason: "provider-rollback-failed-after-restore",
+      threadId,
+      providerThreadId,
+      checkpointId: CheckpointId.make("checkpoint:effect-worker-rollback"),
+      cause: "simulated provider failure",
+    });
+    const layer = makeExecutorLayer({ events, rollbackError });
+    const legacy = yield* OrchestrationEffectExecutorV2.pipe(
+      Effect.flatMap((executor) => executor.execute(rollbackEffect(now, false))),
+      Effect.provide(layer),
+      Effect.flip,
+    );
+    const guarded = yield* OrchestrationEffectExecutorV2.pipe(
+      Effect.flatMap((executor) => executor.execute(rollbackEffect(now, true))),
+      Effect.provide(layer),
+      Effect.flip,
+    );
+    const fingerprintOnlyEffect = rollbackEffect(now, false);
+    const fingerprintOnly = yield* OrchestrationEffectExecutorV2.pipe(
+      Effect.flatMap((executor) =>
+        executor.execute({
+          ...fingerprintOnlyEffect,
+          request: {
+            type: "provider-thread.rollback",
+            providerThreadId,
+            checkpointId: CheckpointId.make("checkpoint:effect-worker-rollback"),
+            scopeId: CheckpointScopeId.make("scope:effect-worker-rollback"),
+            expectedWorkspaceFingerprint: "workspace-before",
+          },
+        }),
+      ),
+      Effect.provide(layer),
+      Effect.flip,
+    );
+
+    assert.instanceOf(legacy, OrchestrationEffectExecutionError);
+    assert.instanceOf(guarded, OrchestrationEffectExecutionError);
+    assert.instanceOf(fingerprintOnly, OrchestrationEffectExecutionError);
+    assert.isUndefined(legacy.failureCode);
+    assert.equal(guarded.failureCode, "checkpoint_restore_partial");
+    assert.equal(fingerprintOnly.failureCode, "checkpoint_restore_partial");
+  }),
+);
+
+it.effect("retries legacy rollback failures while terminalizing guarded partial outcomes", () =>
+  Effect.gen(function* () {
+    const now = yield* DateTime.now;
+
+    const runCase = (
+      guarded: boolean,
+      failureCode?: "checkpoint_restore_rejected" | "checkpoint_restore_partial",
+    ) =>
+      Effect.gen(function* () {
+        const effect = rollbackEffect(now, guarded);
+        const retries = yield* Ref.make(0);
+        const failures = yield* Ref.make<ReadonlyArray<string | undefined>>([]);
+        const outboxLayer = Layer.mock(EffectOutboxV2)({
+          claimNext: () => Effect.succeed(Option.some(effect)),
+          get: () => Effect.succeed(Option.some(effect)),
+          awaitCancellation: () => Effect.never,
+          clearCancellation: () => Effect.void,
+          retry: () => Ref.update(retries, (count) => count + 1).pipe(Effect.as(true)),
+          fail: ({ failureCode }) =>
+            Ref.update(failures, (codes) => [...codes, failureCode]).pipe(Effect.as(true)),
+        });
+        const executorLayer = Layer.succeed(
+          OrchestrationEffectExecutorV2,
+          OrchestrationEffectExecutorV2.of({
+            execute: () =>
+              Effect.fail(
+                new OrchestrationEffectExecutionError({
+                  effectId: effect.id,
+                  effectType: effect.request.type,
+                  ...(failureCode === undefined ? {} : { failureCode }),
+                  cause: "simulated rollback failure",
+                }),
+              ),
+          }),
+        );
+        const workerLayer = effectWorkerLayerWithOptions({ workerId: "test-worker" }).pipe(
+          Layer.provide(Layer.merge(outboxLayer, executorLayer)),
+        );
+
+        assert.isTrue(
+          yield* OrchestrationEffectWorkerV2.pipe(
+            Effect.flatMap((worker) => worker.runOnce),
+            Effect.provide(workerLayer),
+          ),
+        );
+        return { retries: yield* Ref.get(retries), failures: yield* Ref.get(failures) };
+      });
+
+    assert.deepEqual(yield* runCase(false), { retries: 1, failures: [] });
+    assert.deepEqual(yield* runCase(true), { retries: 1, failures: [] });
+    assert.deepEqual(yield* runCase(true, "checkpoint_restore_partial"), {
+      retries: 0,
+      failures: ["checkpoint_restore_partial"],
+    });
+  }),
+);
+
+it.effect("retains guarded partial classification when the first fail settlement fails", () =>
+  Effect.gen(function* () {
+    const now = yield* DateTime.now;
+    const effect = rollbackEffect(now, true);
+    const failCodes = yield* Ref.make<ReadonlyArray<string | undefined>>([]);
+    const retries = yield* Ref.make(0);
+    const outboxLayer = Layer.mock(EffectOutboxV2)({
+      claimNext: () => Effect.succeed(Option.some(effect)),
+      get: () => Effect.succeed(Option.some(effect)),
+      awaitCancellation: () => Effect.never,
+      clearCancellation: () => Effect.void,
+      fail: ({ failureCode }) =>
+        Ref.updateAndGet(failCodes, (codes) => [...codes, failureCode]).pipe(
+          Effect.flatMap((codes) =>
+            codes.length === 1
+              ? Effect.fail(
+                  new EffectOutboxError({
+                    operation: "fail",
+                    effectId: effect.id,
+                    cause: "simulated first fail settlement failure",
+                  }),
+                )
+              : Effect.succeed(true),
+          ),
+        ),
+      retry: () => Ref.update(retries, (count) => count + 1).pipe(Effect.as(true)),
+    });
+    const executorLayer = Layer.succeed(
+      OrchestrationEffectExecutorV2,
+      OrchestrationEffectExecutorV2.of({
+        execute: () =>
+          Effect.fail(
+            new OrchestrationEffectExecutionError({
+              effectId: effect.id,
+              effectType: effect.request.type,
+              failureCode: "checkpoint_restore_partial",
+              cause: "simulated partial restore",
+            }),
+          ),
+      }),
+    );
+    const workerLayer = effectWorkerLayerWithOptions({ workerId: "test-worker" }).pipe(
+      Layer.provide(Layer.merge(outboxLayer, executorLayer)),
+    );
+
+    yield* OrchestrationEffectWorkerV2.pipe(
+      Effect.flatMap((worker) => worker.runOnce),
+      Effect.provide(workerLayer),
+      Effect.exit,
+    );
+
+    assert.deepEqual(yield* Ref.get(failCodes), [
+      "checkpoint_restore_partial",
+      "checkpoint_restore_partial",
+    ]);
+    assert.equal(yield* Ref.get(retries), 0);
+  }),
+);
+
+it.effect("terminalizes an unknown guarded restore defect as partial without replay", () =>
+  Effect.gen(function* () {
+    const now = yield* DateTime.now;
+    const effect = rollbackEffect(now, true);
+    const claims = yield* Ref.make(0);
+    const executions = yield* Ref.make(0);
+    const retries = yield* Ref.make(0);
+    const failCodes = yield* Ref.make<ReadonlyArray<string | undefined>>([]);
+    const outboxLayer = Layer.mock(EffectOutboxV2)({
+      claimNext: () =>
+        Ref.getAndUpdate(claims, (count) => count + 1).pipe(
+          Effect.map((count) => (count === 0 ? Option.some(effect) : Option.none())),
+        ),
+      get: () => Effect.succeed(Option.some(effect)),
+      awaitCancellation: () => Effect.never,
+      clearCancellation: () => Effect.void,
+      fail: ({ failureCode }) =>
+        Ref.update(failCodes, (codes) => [...codes, failureCode]).pipe(Effect.as(true)),
+      retry: () => Ref.update(retries, (count) => count + 1).pipe(Effect.as(true)),
+    });
+    const executorLayer = Layer.succeed(
+      OrchestrationEffectExecutorV2,
+      OrchestrationEffectExecutorV2.of({
+        execute: () =>
+          Ref.update(executions, (count) => count + 1).pipe(
+            Effect.andThen(Effect.die("simulated defect after filesystem mutation")),
+          ),
+      }),
+    );
+    const workerLayer = effectWorkerLayerWithOptions({ workerId: "test-worker" }).pipe(
+      Layer.provide(Layer.merge(outboxLayer, executorLayer)),
+    );
+
+    const worker = yield* OrchestrationEffectWorkerV2.pipe(Effect.provide(workerLayer));
+    assert.isTrue(yield* worker.runOnce);
+    assert.isFalse(yield* worker.runOnce);
+    assert.equal(yield* Ref.get(executions), 1);
+    assert.equal(yield* Ref.get(retries), 0);
+    assert.deepEqual(yield* Ref.get(failCodes), ["checkpoint_restore_partial"]);
+  }),
+);
 
 it.effect("requeues a claim when a pre-execution worker check fails", () =>
   Effect.gen(function* () {

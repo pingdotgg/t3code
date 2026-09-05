@@ -450,6 +450,7 @@ const gitCommand = (
     readonly maxOutputBytes?: number;
     readonly outputMode?: VcsProcess.VcsProcessInput["outputMode"];
     readonly appendTruncationMarker?: boolean;
+    readonly stdoutDigest?: "sha256";
   },
 ) =>
   process.run({
@@ -469,6 +470,7 @@ const gitCommand = (
     ...(options?.appendTruncationMarker !== undefined
       ? { appendTruncationMarker: options.appendTruncationMarker }
       : {}),
+    ...(options?.stdoutDigest === undefined ? {} : { stdoutDigest: options.stdoutDigest }),
   });
 
 export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* () {
@@ -728,7 +730,133 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       return path.isAbsolute(gitCommonDir) ? gitCommonDir : path.resolve(cwd, gitCommonDir);
     });
 
+  const readWorkspaceFingerprint = Effect.fn("GitVcsDriver.checkpoints.readWorkspaceFingerprint")(
+    function* (cwd: string, operation = "GitVcsDriver.checkpoints.readWorkspaceFingerprint") {
+      const gitCommonDir = yield* resolveGitCommonDir(cwd);
+      const tempIndexPath = path.join(
+        gitCommonDir,
+        `t3-checkpoint-index-${NodeCrypto.randomUUID()}`,
+      );
+      const indexEnv: NodeJS.ProcessEnv = { ...process.env, GIT_INDEX_FILE: tempIndexPath };
+      const cleanupTempIndex = fileSystem
+        .remove(tempIndexPath, { force: true })
+        .pipe(Effect.ignore);
+
+      return yield* Effect.gen(function* () {
+        if (yield* hasHeadCommit(cwd)) {
+          yield* execute({ operation, cwd, args: ["read-tree", "HEAD"], env: indexEnv });
+        }
+        yield* execute({ operation, cwd, args: ["add", "-A", "--", "."], env: indexEnv });
+        const result = yield* execute({ operation, cwd, args: ["write-tree"], env: indexEnv });
+        const treeOid = result.stdout.trim();
+        if (treeOid.length === 0) {
+          return yield* new VcsProcessExitError({
+            operation,
+            command: "git write-tree",
+            cwd,
+            exitCode: 0,
+            detail: "git write-tree returned an empty tree oid.",
+          });
+        }
+        const prefixResult = yield* execute({
+          operation,
+          cwd,
+          args: ["rev-parse", "--show-prefix"],
+          maxOutputBytes: 16_384,
+        });
+        if (prefixResult.stdoutTruncated) {
+          return yield* new VcsProcessExitError({
+            operation,
+            command: "git rev-parse --show-prefix",
+            cwd,
+            exitCode: prefixResult.exitCode,
+            detail: "git rev-parse returned a truncated workspace prefix.",
+          });
+        }
+        const prefixWithTerminator = prefixResult.stdout.endsWith("\n")
+          ? prefixResult.stdout.slice(0, -1)
+          : prefixResult.stdout;
+        const workspacePrefix = prefixWithTerminator.endsWith("/")
+          ? prefixWithTerminator.slice(0, -1)
+          : prefixWithTerminator;
+        let workspaceTreeIdentity = treeOid;
+        if (workspacePrefix.length > 0) {
+          const subtreeResult = yield* execute({
+            operation,
+            cwd,
+            args: [
+              "ls-tree",
+              "-z",
+              "--full-tree",
+              treeOid,
+              "--",
+              `:(top,literal)${workspacePrefix}`,
+            ],
+            maxOutputBytes: 16_384,
+          });
+          if (subtreeResult.stdoutTruncated) {
+            return yield* new VcsProcessExitError({
+              operation,
+              command: "git ls-tree",
+              cwd,
+              exitCode: subtreeResult.exitCode,
+              detail: "git ls-tree returned a truncated workspace subtree entry.",
+            });
+          }
+          if (subtreeResult.stdout.length === 0) {
+            workspaceTreeIdentity = "absent";
+          } else {
+            const entries = subtreeResult.stdout.split("\0").filter((entry) => entry.length > 0);
+            const entry = entries[0];
+            const separator = entry?.indexOf("\t") ?? -1;
+            const metadata = separator < 0 ? undefined : entry?.slice(0, separator);
+            const entryPath = separator < 0 ? undefined : entry?.slice(separator + 1);
+            const [, entryType, entryOid] = metadata?.split(" ") ?? [];
+            if (
+              entries.length !== 1 ||
+              entryType !== "tree" ||
+              entryOid === undefined ||
+              entryPath !== workspacePrefix
+            ) {
+              return yield* new VcsProcessExitError({
+                operation,
+                command: "git ls-tree",
+                cwd,
+                exitCode: subtreeResult.exitCode,
+                detail: "git ls-tree returned an invalid workspace subtree entry.",
+              });
+            }
+            workspaceTreeIdentity = entryOid;
+          }
+        }
+        const index = yield* gitCommand(
+          vcsProcess,
+          operation,
+          cwd,
+          ["ls-files", "--stage", "-z", "--", "."],
+          { stdoutDigest: "sha256" },
+        );
+        if (index.stdoutDigest === undefined) {
+          return yield* new VcsProcessExitError({
+            operation,
+            command: "git ls-files --stage",
+            cwd,
+            exitCode: index.exitCode,
+            detail: "git ls-files did not return a staged-state digest.",
+          });
+        }
+        return NodeCrypto.createHash("sha256")
+          .update("worktree\0")
+          .update(workspaceTreeIdentity)
+          .update("\0index\0")
+          .update(index.stdoutDigest)
+          .digest("hex");
+      }).pipe(Effect.ensuring(cleanupTempIndex));
+    },
+  );
+
   const checkpoints: VcsDriver.VcsCheckpointOps = {
+    readWorkspaceFingerprint: (cwd) => readWorkspaceFingerprint(cwd),
     captureCheckpoint: Effect.fn("GitVcsDriver.checkpoints.captureCheckpoint")(function* (input) {
       const operation = "GitVcsDriver.checkpoints.captureCheckpoint";
       const gitCommonDir = yield* resolveGitCommonDir(input.cwd);

@@ -1,3 +1,5 @@
+import * as NodeCrypto from "node:crypto";
+
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, expect, it } from "@effect/vitest";
 import { HostProcessWorkingDirectory } from "@t3tools/shared/hostProcess";
@@ -120,6 +122,25 @@ describe("VcsProcess.run", () => {
       expect(result.stderr).toBe("");
       expect(result.stdoutTruncated).toBe(false);
       expect(result.stderrTruncated).toBe(false);
+    }).pipe(provideLive),
+  );
+
+  it.effect("digests stdout incrementally without applying the capture limit", () =>
+    Effect.gen(function* () {
+      const result = yield* run({
+        operation: "test.stdout-digest",
+        command: "node",
+        args: ["-e", "process.stdout.write(Buffer.alloc(2_000_000, 0xab))"],
+        cwd: process.cwd(),
+        maxOutputBytes: 128,
+        stdoutDigest: "sha256",
+      });
+
+      expect(result.stdout).toBe("");
+      expect(result.stdoutTruncated).toBe(false);
+      expect(result.stdoutDigest).toBe(
+        NodeCrypto.createHash("sha256").update(Buffer.alloc(2_000_000, 0xab)).digest("hex"),
+      );
     }).pipe(provideLive),
   );
 

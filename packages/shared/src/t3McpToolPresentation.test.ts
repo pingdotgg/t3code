@@ -44,6 +44,10 @@ describe("resolveT3McpToolPresentation", () => {
       displayName: "Read a checkpoint diff",
       logo: "t3-code",
     });
+    expect(resolveT3McpToolPresentation("t3-code.t3_checkpoint_restore")).toEqual({
+      displayName: "Restore a thread checkpoint",
+      logo: "t3-code",
+    });
   });
 
   it("pretty prints preview T3 MCP tool names", () => {
