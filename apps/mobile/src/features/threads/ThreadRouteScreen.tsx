@@ -7,7 +7,13 @@ import {
 } from "@react-navigation/native";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import * as Option from "effect/Option";
-import { EnvironmentId, ThreadId, type ProjectScript } from "@t3tools/contracts";
+import {
+  AuthOrchestrationOperateScope,
+  EnvironmentId,
+  ThreadId,
+  type ProjectScript,
+} from "@t3tools/contracts";
+import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 import {
   requestOlderThreadTurns,
   threadHasOlderTurns,
@@ -193,6 +199,10 @@ function ThreadRouteContent(
   const { onReconnectEnvironment } = useRemoteConnections();
   const { selectedThread, selectedThreadProject, selectedEnvironmentConnection } =
     useThreadSelection();
+  const canOperateThread = useEnvironmentScope(
+    selectedThread?.environmentId ?? null,
+    AuthOrchestrationOperateScope,
+  );
   const selectedThreadDetailState = props.selectedThreadDetailState;
   const selectedThreadDetail = Option.getOrNull(selectedThreadDetailState.data);
   // "Load earlier turns" header state for windowed (paginated) thread loads.
@@ -482,6 +492,7 @@ function ThreadRouteContent(
   const handleStopThread = useCallback(() => {
     if (
       !selectedThread ||
+      !readEnvironmentScope(selectedThread.environmentId, AuthOrchestrationOperateScope) ||
       (selectedThread.session?.status !== "running" &&
         selectedThread.session?.status !== "starting")
     ) {
@@ -768,6 +779,7 @@ function ThreadRouteContent(
 
       <View className="flex-1 bg-screen">
         <ThreadDetailScreen
+          canOperateThread={canOperateThread}
           selectedThread={selectedThreadWithDraftSettings ?? selectedThread}
           contentPresentation={contentPresentation}
           screenTone={connectionTone(routeConnectionState)}

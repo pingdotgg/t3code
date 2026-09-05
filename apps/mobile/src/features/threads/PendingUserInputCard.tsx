@@ -25,6 +25,7 @@ import {
 } from "../../lib/threadActivity";
 
 export interface PendingUserInputCardProps {
+  readonly canOperateThread: boolean;
   readonly pendingUserInput: PendingUserInput;
   /**
    * Constant while a request is pending (it reserves keyboard space), so the
@@ -191,6 +192,7 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
           icon="stop.fill"
           variant="danger"
           className="h-9 w-9"
+          disabled={!props.canOperateThread}
           onPress={props.onStopThread}
         />
       ) : null}
@@ -328,15 +330,24 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
       <Pressable
         className={cn(
           "items-center justify-center rounded-2xl px-4 py-3.5",
-          props.answers ? "bg-blue-500" : "bg-adaptive-neutral-200-700-a60",
+          props.answers && props.canOperateThread
+            ? "bg-blue-500"
+            : "bg-adaptive-neutral-200-700-a60",
         )}
         disabled={
-          props.answers === null || props.respondingUserInputId === props.pendingUserInput.requestId
+          !props.canOperateThread ||
+          props.answers === null ||
+          props.respondingUserInputId === props.pendingUserInput.requestId
         }
         onPress={() => void props.onSubmit()}
       >
         <Text className="font-t3-extrabold text-sm text-white">Submit answers</Text>
       </Pressable>
+      {!props.canOperateThread ? (
+        <Text className="font-sans text-xs text-adaptive-neutral-500-400">
+          This connection cannot submit answers.
+        </Text>
+      ) : null}
     </Animated.View>
   ) : null;
   return (

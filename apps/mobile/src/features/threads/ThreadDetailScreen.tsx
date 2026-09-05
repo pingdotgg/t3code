@@ -93,6 +93,7 @@ import type { ThreadContentPresentation } from "./threadContentPresentation";
 import { resolveThreadFeedSubmissionAnchor } from "./thread-feed-live-follow";
 
 export interface ThreadDetailScreenProps {
+  readonly canOperateThread: boolean;
   readonly selectedThread: OrchestrationThreadShell;
   readonly contentPresentation: ThreadContentPresentation;
   readonly screenTone: StatusTone;
@@ -793,6 +794,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                   >
                     {props.activePendingApproval ? (
                       <PendingApprovalCard
+                        canOperateThread={props.canOperateThread}
                         approval={props.activePendingApproval}
                         respondingApprovalId={props.respondingApprovalId}
                         onRespond={props.onRespondToApproval}
@@ -800,6 +802,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                     ) : null}
                     {props.activePendingUserInput ? (
                       <PendingUserInputCard
+                        canOperateThread={props.canOperateThread}
                         pendingUserInput={props.activePendingUserInput}
                         maxHeight={pendingUserInputMaxHeight}
                         collapsed={userInputCollapsed}
@@ -824,6 +827,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                 composer slot, so composer drafts and editor state survive. */}
               <View style={activeUserInputRequestId !== null ? { display: "none" } : undefined}>
                 <ThreadComposer
+                  canOperateThread={props.canOperateThread}
                   editorRef={composerEditorRef}
                   draftMessage={props.draftMessage}
                   draftAttachments={props.draftAttachments}
