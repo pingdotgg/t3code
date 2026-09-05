@@ -4,6 +4,7 @@ import type {
 } from "@t3tools/client-runtime/state/shell";
 import { LegendList } from "@legendapp/list/react-native";
 import {
+  AuthOrchestrationOperateScope,
   type EnvironmentId,
   type EnvironmentMachineKind,
   resolveEnvironmentMachineKind,
@@ -30,6 +31,7 @@ import { ProjectFavicon } from "../../components/ProjectFavicon";
 import { relativeTime } from "../../lib/time";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { useServerConfigs } from "../../state/entities";
+import { useEnvironmentScope } from "../../state/session";
 import { ThreadSwipeable } from "../home/thread-swipe-actions";
 import type { ArchivedThreadGroup, ArchivedThreadSortOrder } from "./archivedThreadList";
 import { SettingsScreenContent } from "../settings/components/SettingsScreen";
@@ -191,39 +193,16 @@ function ArchivedThreadRow(props: {
 }) {
   const { width: windowWidth } = useWindowDimensions();
   const cardColor = useUniwindTheme()["--color-grouped-card"];
+  const canOperateThread = useEnvironmentScope(
+    props.thread.environmentId,
+    AuthOrchestrationOperateScope,
+  );
   const timestamp = relativeTime(props.thread.archivedAt ?? props.thread.updatedAt);
   const subtitle = [props.environmentLabel, props.thread.branch].filter((part): part is string =>
     Boolean(part),
   );
-  return (
-    <ThreadSwipeable
-      resetKey={`${props.thread.environmentId}:${props.thread.id}`}
-      threadKey={`${props.thread.environmentId}:${props.thread.id}`}
-      backgroundColor={cardColor}
-      // Round + clip the swipeable container so the group's corners stay
-      // rounded while rows swipe; the row itself stays square inside.
-      containerStyle={{
-        borderTopLeftRadius: props.isFirst ? 20 : 0,
-        borderTopRightRadius: props.isFirst ? 20 : 0,
-        borderBottomLeftRadius: props.isLast ? 20 : 0,
-        borderBottomRightRadius: props.isLast ? 20 : 0,
-        overflow: "hidden",
-      }}
-      fullSwipeWidth={windowWidth - 32}
-      onDelete={props.onDelete}
-      onSwipeableClose={props.onSwipeableClose}
-      onSwipeableWillOpen={props.onSwipeableWillOpen}
-      primaryAction={{
-        accessibilityLabel: `Unarchive ${props.thread.title}`,
-        icon: "arrow.uturn.backward",
-        label: "Unarchive",
-        onPress: props.onUnarchive,
-      }}
-      simultaneousWith={props.simultaneousSwipeGesture}
-      threadTitle={props.thread.title}
-    >
-      {() => (
-        <View
+  const rowContent = (
+<View
           className={`flex-row items-center gap-3 bg-grouped-card px-4 py-3 ${props.isLast ? "" : "border-b border-separator"}`}
         >
           <View className="h-[34px] w-[34px] items-center justify-center rounded-[11px] bg-subtle">
@@ -265,7 +244,37 @@ function ArchivedThreadRow(props: {
             ) : null}
           </View>
         </View>
-      )}
+  );
+  // Keep the group's rounded corners on both interactive and read-only rows.
+  const containerStyle = {
+    borderTopLeftRadius: props.isFirst ? 20 : 0,
+    borderTopRightRadius: props.isFirst ? 20 : 0,
+    borderBottomLeftRadius: props.isLast ? 20 : 0,
+    borderBottomRightRadius: props.isLast ? 20 : 0,
+    overflow: "hidden" as const,
+  };
+  if (!canOperateThread) return <View style={containerStyle}>{rowContent}</View>;
+
+  return (
+    <ThreadSwipeable
+      resetKey={`${props.thread.environmentId}:${props.thread.id}`}
+      threadKey={`${props.thread.environmentId}:${props.thread.id}`}
+      backgroundColor={cardColor}
+      containerStyle={containerStyle}
+      fullSwipeWidth={windowWidth - 32}
+      onDelete={props.onDelete}
+      onSwipeableClose={props.onSwipeableClose}
+      onSwipeableWillOpen={props.onSwipeableWillOpen}
+      primaryAction={{
+        accessibilityLabel: `Unarchive ${props.thread.title}`,
+        icon: "arrow.uturn.backward",
+        label: "Unarchive",
+        onPress: props.onUnarchive,
+      }}
+      simultaneousWith={props.simultaneousSwipeGesture}
+      threadTitle={props.thread.title}
+    >
+      {() => rowContent}
     </ThreadSwipeable>
   );
 }
