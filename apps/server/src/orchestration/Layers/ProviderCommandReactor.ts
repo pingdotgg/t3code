@@ -718,22 +718,46 @@ const make = Effect.gen(function* () {
           .pipe(Effect.forkDetach)
       : Effect.void;
 
+    // A project folder that was moved or deleted after it was added would
+    // otherwise surface as a provider spawn failure that never names the
+    // path. Only a fresh session on the project root is checked: a running
+    // session keeps its cwd, and worktree threads are handled by
+    // ensureThreadWorktree.
+    const ensureProjectRootExists = Effect.gen(function* () {
+      if (!project || thread.worktreePath) {
+        return;
+      }
+      const exists = yield* fileSystem
+        .exists(project.workspaceRoot)
+        .pipe(Effect.orElseSucceed(() => true));
+      if (!exists) {
+        return yield* new ProviderAdapterRequestError({
+          provider: preferredProvider,
+          method: "thread.turn.start",
+          detail: `This project's folder no longer exists: ${project.workspaceRoot}`,
+        });
+      }
+    });
+
     const startProviderSession = (input?: {
       readonly resumeCursor?: unknown;
       readonly provider?: ProviderDriverKind;
     }) =>
-      providerService
-        .startSession(threadId, {
-          threadId,
-          ...(preferredProvider ? { provider: preferredProvider } : {}),
-          providerInstanceId: desiredInstanceId,
-          ...(effectiveCwd ? { cwd: effectiveCwd } : {}),
-          ...(thread.title ? { title: thread.title } : {}),
-          modelSelection: desiredModelSelection,
-          ...(input?.resumeCursor !== undefined ? { resumeCursor: input.resumeCursor } : {}),
-          runtimeMode: desiredRuntimeMode,
-        })
-        .pipe(Effect.tap(() => refreshWorkspaceSnapshot));
+      ensureProjectRootExists.pipe(
+        Effect.flatMap(() =>
+          providerService.startSession(threadId, {
+            threadId,
+            ...(preferredProvider ? { provider: preferredProvider } : {}),
+            providerInstanceId: desiredInstanceId,
+            ...(effectiveCwd ? { cwd: effectiveCwd } : {}),
+            ...(thread.title ? { title: thread.title } : {}),
+            modelSelection: desiredModelSelection,
+            ...(input?.resumeCursor !== undefined ? { resumeCursor: input.resumeCursor } : {}),
+            runtimeMode: desiredRuntimeMode,
+          }),
+        ),
+        Effect.tap(() => refreshWorkspaceSnapshot),
+      );
 
     const bindSessionToThread = (session: ProviderSession) =>
       Effect.gen(function* () {
