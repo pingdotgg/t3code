@@ -21,6 +21,14 @@ import {
 } from "../rpc/client.ts";
 import { EnvironmentSupervisor } from "../connection/supervisor.ts";
 
+// `catchTags` preserves unmatched errors at runtime; this signature keeps that
+// generic remainder while removing the one known connection-handoff error.
+const waitForEnvironmentConnectionSignal = Effect.catchTags({
+  EnvironmentRpcUnavailableError: () => Effect.never,
+}) as <A, E, R>(
+  effect: Effect.Effect<A, E | EnvironmentRpcUnavailableError, R>,
+) => Effect.Effect<A, E, R>;
+
 interface EnvironmentAtomOptions<Input, A, E, R> {
   readonly label: string;
   readonly execute: (input: Input) => Effect.Effect<A, E, R>;
@@ -541,7 +549,14 @@ export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
         switch (connectionState.phase) {
           case "connected":
             return Option.isSome(session)
-              ? runInEnvironment(target.environmentId, options.execute(target.input))
+              ? runInEnvironment(target.environmentId, options.execute(target.input)).pipe(
+                  // Session teardown and this atom's connection signal are
+                  // delivered independently. If the request observes teardown
+                  // first, keep it pending until the signal selects the
+                  // reconnecting or terminal branch instead of flashing a
+                  // transient unavailable failure.
+                  waitForEnvironmentConnectionSignal,
+                )
               : Effect.never;
           case "connecting":
           case "backoff":
