@@ -521,6 +521,28 @@ describe("DesktopDeepLink", () => {
     });
   });
 
+  it.effect("re-buffers when the subscriber send throws during destruction", () => {
+    const harness = makeHarness();
+    const dying = makeSender(7);
+    const next = makeSender(9);
+
+    return Effect.gen(function* () {
+      yield* configureWith(makeServices(harness));
+      yield* subscribeAs(harness, dying);
+      dying.send.mockImplementation(() => {
+        throw new Error("Object has been destroyed");
+      });
+
+      const openUrl = harness.listeners.get("open-url");
+      assert.isDefined(openUrl);
+      openUrl!({ preventDefault: vi.fn() }, `t3code://app/${ENVIRONMENT_ID}/${THREAD_ID}`);
+      yield* settleDelivery;
+
+      assert.equal(dying.send.mock.calls.length, 1);
+      assert.deepEqual(yield* subscribeAs(harness, next), PAYLOAD);
+    });
+  });
+
   it.effect("delivers a cold-start link from injected process arguments", () => {
     const harness = makeHarness();
     const renderer = makeSender(7);

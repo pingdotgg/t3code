@@ -227,8 +227,12 @@ export const make = Effect.gen(function* () {
           }
           const delivered = yield* Effect.sync(() => {
             if (subscriber.isDestroyed()) return false;
-            subscriber.send(DEEP_LINK_CHANNEL, payload);
-            return true;
+            try {
+              subscriber.send(DEEP_LINK_CHANNEL, payload);
+              return true;
+            } catch {
+              return false;
+            }
           });
           if (!delivered) {
             // The subscriber died between selection and send; keep the link
