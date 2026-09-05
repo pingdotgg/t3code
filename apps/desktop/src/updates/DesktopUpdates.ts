@@ -220,21 +220,21 @@ export function resolveMacAppBundleName(appPath: string): string | null {
   return bundlePath.slice(separatorIndex + 1, -".app".length);
 }
 
-function resolveMacAppDistributionName(bundleName: string): string | null | undefined {
-  if (bundleName === "T3 Code (Alpha)" || bundleName === "T3 Code (Nightly)") {
-    return null;
-  }
-  const match = /^T3 Code \((.+?)(?: (?:Alpha|Nightly))?\)$/u.exec(bundleName);
-  if (!match) return undefined;
-  return match[1];
-}
-
 function isCompatibleMacAppBundleName(actualBundleName: string, expectedBundleName: string) {
   if (actualBundleName === expectedBundleName) return true;
+  if (expectedBundleName === "T3 Code (Alpha)" || expectedBundleName === "T3 Code (Nightly)") {
+    return actualBundleName === "T3 Code (Alpha)" || actualBundleName === "T3 Code (Nightly)";
+  }
 
-  const actualDistribution = resolveMacAppDistributionName(actualBundleName);
-  const expectedDistribution = resolveMacAppDistributionName(expectedBundleName);
-  return expectedDistribution !== undefined && actualDistribution === expectedDistribution;
+  // Runtime identity normalizes legacy downstream names to their stable
+  // product name. Append a stage to that exact name instead of stripping a
+  // trailing word that may belong to the distribution itself.
+  const match = /^T3 Code \((.+)\)$/u.exec(expectedBundleName);
+  if (!match) return false;
+  return (
+    actualBundleName === `T3 Code (${match[1]} Alpha)` ||
+    actualBundleName === `T3 Code (${match[1]} Nightly)`
+  );
 }
 
 export type DesktopUpdateConfigureError = never;

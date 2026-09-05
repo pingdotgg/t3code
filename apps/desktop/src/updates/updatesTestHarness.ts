@@ -1,5 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import type { DesktopUpdateState } from "@t3tools/contracts";
+import type { DesktopPackagedAppIdentity } from "@t3tools/shared/desktopBuild";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -35,6 +36,7 @@ export interface UpdatesHarnessOptions {
   readonly updateRepository?: string | null;
   readonly appPath?: string;
   readonly appName?: string;
+  readonly packagedIdentity?: DesktopPackagedAppIdentity;
 }
 
 export function makeHarness(options: UpdatesHarnessOptions = {}) {
@@ -157,6 +159,9 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
     processArch: "x64",
     appVersion: "1.2.3",
     appName: options.appName ?? "T3 Code (Alpha)",
+    ...(options.packagedIdentity === undefined
+      ? {}
+      : { packagedIdentity: options.packagedIdentity }),
     appPath: options.appPath ?? "/repo",
     isPackaged: true,
     resourcesPath: "/missing/resources",

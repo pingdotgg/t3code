@@ -18,6 +18,15 @@ import * as DesktopState from "../app/DesktopState.ts";
 import * as DesktopUpdates from "./DesktopUpdates.ts";
 import { flushCallbacks, makeHarness } from "./updatesTestHarness.ts";
 
+const forkNightlyIdentity = {
+  appId: "com.t3tools.t3code.fork-nightly",
+  packageName: "t3code-fork-nightly",
+  productName: "T3 Code (Fork Nightly)",
+  displayName: "T3 Code (Fork Nightly Nightly)",
+  distributionName: "Fork Nightly",
+  distributionId: "fork-nightly",
+} as const;
+
 describe("DesktopUpdates", () => {
   it("preserves complete causes for update poller and event failures", () => {
     const cause = Cause.combine(
@@ -505,6 +514,54 @@ describe("DesktopUpdates", () => {
     const harness = makeHarness({
       appName: "T3 Code (Nightly)",
       appPath: "/Applications/T3 Code (Alpha).app/Contents/Resources/app.asar",
+    });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        harness.emit("update-downloaded", { version: "1.2.4" });
+        yield* flushCallbacks;
+
+        const result = yield* updates.install;
+
+        assert.isTrue(result.accepted);
+        assert.equal(harness.stopBackendCount(), 1);
+        assert.equal(harness.quitAndInstallCount(), 1);
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
+  it.effect("does not strip a stage word from an explicit distribution name", () => {
+    const harness = makeHarness({
+      appName: "T3 Code (Fork Nightly Nightly)",
+      appPath: "/Applications/T3 Code (Fork Alpha).app/Contents/Resources/app.asar",
+      packagedIdentity: forkNightlyIdentity,
+    });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const desktopState = yield* DesktopState.DesktopState;
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        harness.emit("update-downloaded", { version: "1.2.4" });
+        yield* flushCallbacks;
+
+        const result = yield* updates.install;
+
+        assert.isTrue(result.accepted);
+        assert.isFalse(yield* Ref.get(desktopState.quitting));
+        assert.equal(harness.stopBackendCount(), 0);
+        assert.equal(harness.quitAndInstallCount(), 0);
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
+  it.effect("allows staged bundles for an explicit distribution ending in a stage word", () => {
+    const harness = makeHarness({
+      appName: "T3 Code (Fork Nightly Nightly)",
+      appPath: "/Applications/T3 Code (Fork Nightly Alpha).app/Contents/Resources/app.asar",
+      packagedIdentity: forkNightlyIdentity,
     });
 
     return Effect.scoped(
