@@ -11,6 +11,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 interface ComposerPendingApprovalActionsProps {
   requestId: ApprovalRequestId;
   isResponding: boolean;
+  disabled?: boolean;
   options?: ReadonlyArray<ProviderApprovalOption> | undefined;
   onRespondToApproval: (
     requestId: ApprovalRequestId,
@@ -29,6 +30,7 @@ const DEFAULT_APPROVAL_OPTIONS = [
 export const ComposerPendingApprovalActions = memo(function ComposerPendingApprovalActions({
   requestId,
   isResponding,
+  disabled = false,
   options = DEFAULT_APPROVAL_OPTIONS,
   onRespondToApproval,
 }: ComposerPendingApprovalActionsProps) {
@@ -49,9 +51,13 @@ export const ComposerPendingApprovalActions = memo(function ComposerPendingAppro
                     ? " text-warning"
                     : ""
             }`}
-            disabled={isResponding}
+            disabled={disabled || isResponding}
             aria-description={option.warning}
-            onClick={() => void onRespondToApproval(requestId, option.decision)}
+            onClick={() => {
+              if (!disabled && !isResponding) {
+                void onRespondToApproval(requestId, option.decision);
+              }
+            }}
           >
             {option.warning ? <TriangleAlertIcon className="size-3 shrink-0" /> : null}
             <span className="max-w-40 truncate">{option.label}</span>
