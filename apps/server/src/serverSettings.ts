@@ -21,6 +21,7 @@ import {
   type UsageLimitSourceConfig,
   ProviderDriverKind,
   ProviderInstanceId,
+  resolveProviderInstanceEnabled,
   ServerSettings,
   ServerSettingsError,
   type ServerSettingsPatch,
@@ -321,16 +322,25 @@ function resolveTextGenerationProvider(settings: ServerSettings): ServerSettings
 }
 
 function fallbackTextGenerationProvider(settings: ServerSettings): ServerSettings {
-  const fallbackEntry = Object.entries(settings.providers).find(([, provider]) => provider.enabled);
-  const fallback = fallbackEntry ? ProviderDriverKind.make(fallbackEntry[0]) : undefined;
-  if (!fallback) {
+  const legacyInstances = Object.fromEntries(
+    Object.entries(settings.providers).map(([driver, config]) => [
+      driver,
+      { driver: ProviderDriverKind.make(driver), config },
+    ]),
+  );
+  const fallbackEntry = Object.entries({
+    ...legacyInstances,
+    ...settings.providerInstances,
+  }).find(([, instance]) => resolveProviderInstanceEnabled(instance));
+  if (!fallbackEntry) {
     return settings;
   }
+  const [instanceId, { driver: fallback }] = fallbackEntry;
 
   return {
     ...settings,
     textGenerationModelSelection: {
-      instanceId: ProviderInstanceId.make(fallback),
+      instanceId: ProviderInstanceId.make(instanceId),
       model:
         DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER[fallback] ??
         DEFAULT_MODEL_BY_PROVIDER[fallback] ??
