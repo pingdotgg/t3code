@@ -82,6 +82,26 @@ export function useRetainedValue<T>(key: string | null, value: T | null): T | nu
 export const animatePinnedLayoutChanges: AnimateLayoutChanges = (args) =>
   args.isSorting ? defaultAnimateLayoutChanges(args) : false;
 
+export function sidebarListAnimationDuration(input: {
+  readonly reduceMotion: boolean;
+  readonly pinInFlight: boolean;
+  readonly pinnedDragInFlight: boolean;
+}): number {
+  if (input.reduceMotion || input.pinnedDragInFlight) return 0;
+  return input.pinInFlight ? 550 : 150;
+}
+
+export function resolvePinFlightLandingAction(input: {
+  readonly appearsInPinnedList: boolean;
+  readonly pinPersisted: boolean;
+}): "wait" | "animate" | "finish" {
+  if (input.appearsInPinnedList) return "animate";
+  // Snoozed and settled shelves outrank the pinned list. Once their pin has
+  // persisted, the row stays on its shelf and there is no destination to fly
+  // toward, so the source clone can be cleaned up immediately.
+  return input.pinPersisted ? "finish" : "wait";
+}
+
 type SidebarProject = {
   id: string;
   title: string;

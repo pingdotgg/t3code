@@ -19,11 +19,13 @@ import {
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
   resolveProjectStatusIndicator,
+  resolvePinFlightLandingAction,
   resolveThreadRowClassName,
   resolveSidebarThreadStatus,
   resolveThreadStatusPill,
   resolveWorkingStartedAt,
   searchSidebarThreadsByTitle,
+  sidebarListAnimationDuration,
   formatWorkingDurationLabel,
   shouldClearThreadSelectionOnMouseDown,
   shouldRecedeSidebarThread,
@@ -78,6 +80,57 @@ describe("animatePinnedLayoutChanges", () => {
 
   it("keeps layout movement while the user is sorting", () => {
     expect(animatePinnedLayoutChanges({ ...baseArgs, isSorting: true })).toBe(true);
+  });
+});
+
+describe("sidebarListAnimationDuration", () => {
+  it("suppresses the list FLIP while a pinned drag commits", () => {
+    expect(
+      sidebarListAnimationDuration({
+        reduceMotion: false,
+        pinInFlight: false,
+        pinnedDragInFlight: true,
+      }),
+    ).toBe(0);
+  });
+
+  it("preserves the longer pin-flight motion", () => {
+    expect(
+      sidebarListAnimationDuration({
+        reduceMotion: false,
+        pinInFlight: true,
+        pinnedDragInFlight: false,
+      }),
+    ).toBe(550);
+  });
+});
+
+describe("resolvePinFlightLandingAction", () => {
+  it("waits while the pin command has not reached the thread shell", () => {
+    expect(
+      resolvePinFlightLandingAction({
+        appearsInPinnedList: false,
+        pinPersisted: false,
+      }),
+    ).toBe("wait");
+  });
+
+  it("animates a pin that moves into the pinned list", () => {
+    expect(
+      resolvePinFlightLandingAction({
+        appearsInPinnedList: true,
+        pinPersisted: true,
+      }),
+    ).toBe("animate");
+  });
+
+  it("finishes a persisted pin when snooze or settlement keeps the row on its shelf", () => {
+    expect(
+      resolvePinFlightLandingAction({
+        appearsInPinnedList: false,
+        pinPersisted: true,
+      }),
+    ).toBe("finish");
   });
 });
 

@@ -26,6 +26,9 @@ Pin a thread from its menu to keep it above your active work. Drag pinned thread
 to reorder them on web and desktop, or use **Move up** and **Move down** on mobile.
 The order syncs across devices.
 
+On web and desktop, pinning from the sidebar menu gives the thread a small dip and curved lift
+into its new position. If you prefer reduced motion, the thread moves into place immediately.
+
 Pinning does not prevent automatic settlement. Settling a thread removes its pin.
 
 ## Settle finished work
