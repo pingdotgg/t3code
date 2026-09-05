@@ -61,7 +61,7 @@ export type UsageResolution = typeof UsageResolution.Type;
  * Why a bucket's cost is what it is.
  *
  * - `providerReported` - the transcript carried an explicit cost figure.
- * - `modelPriced` - we matched the model against the LiteLLM rate table.
+ * - `modelPriced` - we used a custom price override or the LiteLLM rate table.
  * - `unpriced` - tokens are known, rates are not. Counted in totals, excluded
  *   from cost.
  */
@@ -207,6 +207,12 @@ export const UsageSummaryInput = Schema.Struct({
   sinceTime: Schema.optional(TrimmedNonEmptyString),
   /** Exclusive UTC instant for an hourly rolling window. */
   untilTime: Schema.optional(TrimmedNonEmptyString),
+  /**
+   * Opaque identity of the source snapshots visible when the user explicitly
+   * requested a refresh. A new value bypasses the short-lived source cache
+   * once; repeated reads with the same value may reuse the updated snapshot.
+   */
+  refreshToken: Schema.optional(TrimmedNonEmptyString),
 });
 export type UsageSummaryInput = typeof UsageSummaryInput.Type;
 

@@ -7,6 +7,6 @@ export const ANDROID_PLAY_STORE_URL =
   "https://play.google.com/store/apps/details?id=com.t3tools.t3code";
 
 export const MARKETING_STATS = {
-  githubStars: "14k+",
-  users: "100,000",
+  githubStars: "21k+",
+  users: "200,000",
 } as const;

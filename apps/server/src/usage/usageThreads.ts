@@ -81,6 +81,7 @@ export interface ThreadUsageOptions {
   readonly sinceTimeMs?: number;
   readonly untilTimeMs?: number;
   readonly rates: RateTable;
+  readonly priceOverrides?: RateTable;
   /** Same stable project resolver the summary uses. */
   readonly resolveProject?: (cwd: string) => ProjectAttribution | null;
 }
@@ -164,11 +165,17 @@ export class ThreadUsageAccumulator {
       record.model,
       record.totals,
       record.reportedCostUsd,
+      this.#options.priceOverrides,
     );
     group.totals = addTotals(group.totals, record.totals);
     group.costUsd += priced.costUsd;
     if (priced.costSource === "modelPriced") {
-      const components = usageComponentCosts(this.#options.rates, record.model, record.totals);
+      const components = usageComponentCosts(
+        this.#options.rates,
+        record.model,
+        record.totals,
+        this.#options.priceOverrides,
+      );
       const current = group.daily.get(day);
       group.daily.set(day, {
         cacheWriteUsd: (current?.cacheWriteUsd ?? 0) + components.cacheWriteUsd,

@@ -95,6 +95,38 @@ describe("ThreadUsageAccumulator", () => {
     expect(day?.freshUsd).toBeCloseTo(100 * 1e-5 + 50 * 5e-5, 12);
   });
 
+  it("uses custom prices for thread totals and component costs", () => {
+    const customRates: RateTable = new Map([
+      [
+        "claude-fable-5",
+        {
+          inputCostPerToken: 2e-5,
+          outputCostPerToken: 1e-4,
+          cacheReadCostPerToken: 2e-6,
+          cacheCreationCostPerToken: 2.5e-5,
+        },
+      ],
+    ]);
+    const accumulator = new ThreadUsageAccumulator({
+      timeZone: "UTC",
+      sinceDay: "2026-08-01",
+      untilDay: "2026-08-31",
+      rates,
+      priceOverrides: customRates,
+    });
+    accumulator.add(record({ reportedCostUsd: 1.25 }), {
+      sessionKey: "claude:session-a",
+      agentId: null,
+    });
+
+    const group = accumulator.finish()[0];
+    const day = group?.daily.get("2026-08-07");
+    expect(group?.costUsd).toBeCloseTo(100 * 2e-5 + 1000 * 2e-6 + 10 * 2.5e-5 + 50 * 1e-4, 12);
+    expect(day?.cacheWriteUsd).toBeCloseTo(10 * 2.5e-5, 12);
+    expect(day?.cacheReadUsd).toBeCloseTo(1000 * 2e-6, 12);
+    expect(day?.freshUsd).toBeCloseTo(100 * 2e-5 + 50 * 1e-4, 12);
+  });
+
   it("does not invent a component split for provider-reported costs", () => {
     const context = { sessionKey: "claude:session-a", agentId: null };
     const groups = accumulate([[record({ reportedCostUsd: 1.25 }), context]]);

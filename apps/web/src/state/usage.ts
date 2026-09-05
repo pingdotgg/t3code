@@ -18,16 +18,20 @@ import {
   type UsageThreadBreakdownInput,
   type UsageThreadRow,
 } from "@t3tools/contracts";
+import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 
 import {
+  makeUsageRefreshToken,
   mergeUsage,
   projectFilterForEnvironment,
+  retainUsageStatuses,
   type EnvironmentProviderContribution,
   type EnvironmentUsage,
   type MergedUsage,
+  type SettledUsageStatuses,
 } from "@t3tools/shared/usageMerge";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentPresentations } from "./presentation";
@@ -99,7 +103,8 @@ export function useUsage(
   /** Refresh the deferred thread query only while its table is mounted. */
   refreshThreads = false,
 ): UsageView {
-  const windowKey = useMemo(
+  const [refreshToken, setRefreshToken] = useState<string>();
+  const rangeKey = useMemo(
     () =>
       JSON.stringify({
         sinceDay: input.sinceDay,
@@ -118,39 +123,85 @@ export function useUsage(
       input.untilTime,
     ],
   );
+  const windowKey = useMemo(
+    () =>
+      JSON.stringify({
+        sinceDay: input.sinceDay,
+        untilDay: input.untilDay,
+        timeZone: input.timeZone,
+        resolution: input.resolution,
+        sinceTime: input.sinceTime,
+        untilTime: input.untilTime,
+        refreshToken,
+      }),
+    [
+      input.sinceDay,
+      input.untilDay,
+      input.timeZone,
+      input.resolution,
+      input.sinceTime,
+      input.untilTime,
+      refreshToken,
+    ],
+  );
   const atom = usageByWindowAtom(windowKey);
-  const environments = useAtomValue(atom);
+  const currentEnvironments = useAtomValue(atom);
+  const settledStatuses = useRef<SettledUsageStatuses<EnvironmentUsageStatus> | null>(null);
+  const retained = retainUsageStatuses(rangeKey, currentEnvironments, settledStatuses.current);
+  settledStatuses.current = retained.settled;
+  const environments = retained.visible;
 
-  const merged = useMemo(() => {
-    const answered: EnvironmentUsage[] = environments.flatMap((environment) =>
-      environment.summary === null
-        ? []
-        : [
-            {
-              environmentId: environment.environmentId,
-              label: environment.label,
-              summary: environment.summary,
-            },
-          ],
-    );
-    return mergeUsage(
-      answered,
-      USAGE_CONTRACT_VERSION,
-      projectFilter === undefined ? undefined : { projectFilter },
-    );
-  }, [environments, projectFilter]);
+  const answered = useMemo<readonly EnvironmentUsage[]>(
+    () =>
+      environments.flatMap((environment) =>
+        environment.summary === null
+          ? []
+          : [
+              {
+                environmentId: environment.environmentId,
+                label: environment.label,
+                summary: environment.summary,
+              },
+            ],
+      ),
+    [environments],
+  );
 
-  // Refresh the source queries, not just their derived atoms. When the thread
-  // table is mounted, refresh its provider-owned query at the same time so the
-  // two views cannot show different scans.
+  const merged = useMemo(
+    () =>
+      mergeUsage(
+        answered,
+        USAGE_CONTRACT_VERSION,
+        projectFilter === undefined ? undefined : { projectFilter },
+      ),
+    [answered, projectFilter],
+  );
+
+  // Refresh model prices before starting the source queries. When the thread
+  // table is mounted, refresh its provider-owned query at the same time as the
+  // summary so both views recount the same transcript state.
   const refresh = useCallback(() => {
-    const input = JSON.parse(windowKey) as UsageSummaryInput;
-    for (const environment of environments) {
-      appAtomRegistry.refresh(
-        serverEnvironment.usageSummary({ environmentId: environment.environmentId, input }),
-      );
-    }
-    if (refreshThreads) {
+    const nextToken = makeUsageRefreshToken(answered);
+    const currentInput = JSON.parse(windowKey) as UsageSummaryInput;
+    const rateRefreshes = environments.map(({ environmentId }) =>
+      runAtomCommand(
+        appAtomRegistry,
+        serverEnvironment.refreshUsageRates,
+        { environmentId, input: {} },
+        { reportFailure: false },
+      ),
+    );
+    void Promise.allSettled(rateRefreshes).then(() => {
+      if (nextToken !== undefined && nextToken !== refreshToken) {
+        setRefreshToken(nextToken);
+      } else {
+        for (const { environmentId } of environments) {
+          appAtomRegistry.refresh(
+            serverEnvironment.usageSummary({ environmentId, input: currentInput }),
+          );
+        }
+      }
+      if (!refreshThreads) return;
       for (const contribution of filterProviderContributionsForProject(
         projectFilter,
         merged.providerContributions,
@@ -160,7 +211,7 @@ export function useUsage(
           serverEnvironment.usageThreadBreakdown({
             environmentId: contribution.environmentId,
             input: makeThreadBreakdownInput(
-              input,
+              currentInput,
               projectFilter,
               contribution.providers,
               contribution.environmentId,
@@ -168,8 +219,16 @@ export function useUsage(
           }),
         );
       }
-    }
-  }, [environments, merged.providerContributions, projectFilter, refreshThreads, windowKey]);
+    });
+  }, [
+    answered,
+    environments,
+    merged.providerContributions,
+    projectFilter,
+    refreshThreads,
+    refreshToken,
+    windowKey,
+  ]);
 
   const relevantEnvironments = filterUsageEnvironmentsForProject(environments, projectFilter);
   const answeredCount = relevantEnvironments.filter(
