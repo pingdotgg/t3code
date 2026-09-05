@@ -61,7 +61,6 @@ import {
 import {
   composerFloatingLayerProps,
   isInsideCollapsedComposerControls,
-  isInsideComposerFloatingLayer,
   isInsideRestingComposerControlScope,
 } from "./composerEventScope";
 import {
@@ -166,6 +165,7 @@ import { ProviderModelPicker } from "./ProviderModelPicker";
 import { type ComposerCommandItem, ComposerCommandMenu } from "./ComposerCommandMenu";
 import { ComposerPendingApprovalActions } from "./ComposerPendingApprovalActions";
 import { CompactComposerControlsMenu } from "./CompactComposerControlsMenu";
+import { ComposerDictationButton } from "./ComposerDictationButton";
 import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
 import { ComposerPendingApprovalPanel } from "./ComposerPendingApprovalPanel";
 import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
@@ -821,6 +821,8 @@ import {
 } from "@t3tools/client-runtime/providerSkills";
 import { searchProviderSkills } from "../../providerSkillSearch";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
+import { useClientSettings } from "../../hooks/useSettings";
+import { useComposerDictation, type DictationPhase } from "../../hooks/useComposerDictation";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { serverEnvironment } from "../../state/server";
 import type { ReviewCommentContext } from "../../reviewCommentContext";
@@ -1063,6 +1065,11 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
   hasSendableContent: boolean;
   preserveComposerFocusOnPointerDown?: boolean;
   showSendWhileRunning?: boolean;
+  dictation: {
+    phase: DictationPhase;
+    disabled: boolean;
+    onToggle: () => void;
+  } | null;
   onPreviousPendingQuestion: () => void;
   onInterrupt: () => void;
   onImplementPlanInNewThread: () => void;
@@ -1079,6 +1086,13 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
           onCompact={props.onCompactContext}
           compactDisabled={props.compactDisabled}
           compactDisabledReason={props.compactDisabledReason}
+        />
+      ) : null}
+      {props.dictation ? (
+        <ComposerDictationButton
+          phase={props.dictation.phase}
+          disabled={props.dictation.disabled}
+          onToggle={props.dictation.onToggle}
         />
       ) : null}
       <ComposerPrimaryActions
@@ -4098,6 +4112,28 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     setIsTasksDrawerOpen(false);
   }, [activeThreadId]);
 
+  // ------------------------------------------------------------------
+  // Dictation (beta): microphone button next to send. Client-only —
+  // settings live in ClientSettings, transcription goes straight from the
+  // browser to the provider. Toggleable via the `composer.dictate`
+  // keybinding (default mod+shift+d) and via the mic button.
+  // Declared before the keybinding handler below so the effect closure
+  // can read the enabled flag and live phase. Toggle and phase go through
+  // refs so the handler doesn't re-subscribe on every dictation change.
+  // ------------------------------------------------------------------
+  const dictationEnabled = useClientSettings((settings) => settings.dictationEnabled);
+  const dictation = useComposerDictation({
+    onTranscript: (text) => insertComposerTextAtEnd(text, { ensureLeadingBoundary: true }),
+    onError: (message) => {
+      toastManager.add({ type: "error", title: "Dictation failed", description: message });
+    },
+    targetKey: composerDraftTargetKeyRef.current,
+  });
+  const dictationToggleRef = useRef(dictation.toggle);
+  dictationToggleRef.current = dictation.toggle;
+  const dictationPhaseRef = useRef(dictation.phase);
+  dictationPhaseRef.current = dictation.phase;
+
   // Close the stash menu whenever the trigger-driven command menu opens so
   // the two popovers never stack in the same layer, and when the user
   // resumes typing (the menu is a transient picker, not a panel).
@@ -4119,6 +4155,37 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           modelPickerOpen: isComposerModelPickerOpen,
         },
       });
+      if (command === "composer.dictate") {
+        // Claim the shortcut even when dictation can't run so it never
+        // falls through to the browser or another handler. Repeats are
+        // ignored: holding the keys would otherwise toggle twice and cut
+        // the recording short.
+        event.preventDefault();
+        event.stopPropagation();
+        if (event.repeat) return;
+        // An in-flight session is always stoppable, even if the setting
+        // flipped or a pending question landed mid-recording; the guards
+        // below only gate *starting* a new one.
+        if (dictationPhaseRef.current !== "idle") {
+          dictationToggleRef.current();
+          return;
+        }
+        if (
+          !dictationEnabled ||
+          isCommandPaletteOpen() ||
+          isComposerApprovalState ||
+          pendingUserInputs.length > 0 ||
+          projectSelectionRequired ||
+          activePendingProgress !== null ||
+          isConnecting ||
+          noProviderAvailable ||
+          phase === "running"
+        ) {
+          return;
+        }
+        dictationToggleRef.current();
+        return;
+      }
       if (command !== "composer.stash") return;
       // Always claim the shortcut so the browser save dialog never opens,
       // even when the composer is in a state that can't stash.
@@ -4140,8 +4207,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     return () => window.removeEventListener("keydown", handler, true);
   }, [
     activePendingProgress,
+    dictationEnabled,
     isComposerApprovalState,
     isComposerModelPickerOpen,
+    isConnecting,
+    noProviderAvailable,
+    phase,
     keybindings,
     pendingUserInputs.length,
     projectSelectionRequired,
@@ -5633,6 +5704,29 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     hasSendableContent={composerSendState.hasSendableContent}
                     preserveComposerFocusOnPointerDown={isMobileViewport || isComposerResting}
                     showSendWhileRunning={isMobileViewport}
+                    dictation={
+                      dictation.phase !== "idle" ||
+                      (dictationEnabled &&
+                        pendingPrimaryAction === null &&
+                        !(pendingUserInputs.length === 0 && showPlanFollowUpPrompt))
+                        ? {
+                            phase: dictation.phase,
+                            // Recording can always be stopped: disabling the
+                            // control mid-recording would strand the
+                            // MediaRecorder with no way to finish it. The
+                            // control also stays mounted while busy even if
+                            // the setting flips or a pending question lands,
+                            // so an in-flight session is never unstoppable.
+                            disabled:
+                              dictation.phase !== "recording" &&
+                              (isConnecting ||
+                                noProviderAvailable ||
+                                projectSelectionRequired ||
+                                phase === "running"),
+                            onToggle: dictation.toggle,
+                          }
+                        : null
+                    }
                     onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
                     onInterrupt={handleInterruptPrimaryAction}
                     onImplementPlanInNewThread={handleImplementPlanInNewThreadPrimaryAction}
