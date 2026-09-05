@@ -19,6 +19,7 @@ type ChildProcessCommand = {
   readonly args: ReadonlyArray<string>;
   readonly options: {
     readonly shell?: boolean | string;
+    readonly cleanupOnExit?: boolean;
   };
 };
 
@@ -80,6 +81,26 @@ const runWith =
     );
 
 describe("runProcess", () => {
+  for (const platform of ["win32", "linux", "darwin"] as const) {
+    it.effect(`only applies Windows probe cleanup settings on Windows (${platform})`, () =>
+      Effect.gen(function* () {
+        const spawner = makeSpawner((command) => {
+          expect(command.options.cleanupOnExit).toBe(platform === "win32" ? false : undefined);
+          return Effect.succeed(makeHandle({ code: 1 }));
+        });
+        const result = yield* runWith(spawner)({
+          command: "git",
+          args: ["rev-parse", "--show-toplevel"],
+          windowsCleanupOnExit: false,
+        });
+        expect(result.code).toBe(1);
+      }).pipe(
+        Effect.provideService(HostProcessPlatform, platform),
+        Effect.provideService(SpawnExecutableResolution, () => "C:\\git.exe"),
+      ),
+    );
+  }
+
   it.effect("collects stdout through an injected ChildProcessSpawner", () =>
     Effect.gen(function* () {
       const spawner = makeSpawner((command) =>

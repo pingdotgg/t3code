@@ -11,6 +11,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import {
   CommandAvailability,
   CommandResolutionCache,
+  withCommandDirectoryCache,
   type CommandAvailabilityChecker,
   isCommandAvailable,
   listLoginShellCandidates,
@@ -374,6 +375,13 @@ effectIt.layer(NodeServices.layer)("resolveCommandPath", (it) => {
             env: { PATH: tempDir, PATHEXT: ".COM;.EXE;.BAT;.CMD" },
           }).pipe(Effect.provideService(HostProcessPlatform, "win32")),
         ).toBe(executable);
+        if (HostProcessPlatform.defaultValue() === "win32") {
+          expect(
+            yield* resolveSpawnCommand("provider-tool", [], {
+              env: { PATH: tempDir, PATHEXT: ".COM;.EXE;.BAT;.CMD" },
+            }),
+          ).toEqual({ command: executable, args: [], shell: false });
+        }
       }).pipe(
         Effect.ensuring(
           fileSystem.remove(tempDir, { recursive: true, force: true }).pipe(Effect.orDie),
@@ -382,7 +390,7 @@ effectIt.layer(NodeServices.layer)("resolveCommandPath", (it) => {
     }),
   );
 
-  it.effect.each(["PermissionDenied", "Busy", "Unknown", "NotFound", "BadResource"] as const)(
+  it.effect.each(["PermissionDenied", "Busy", "Unknown"] as const)(
     "falls back to direct executable probes when listing fails with %s",
     (reason) =>
       Effect.gen(function* () {
@@ -442,6 +450,60 @@ effectIt.layer(NodeServices.layer)("resolveCommandPath", (it) => {
     }),
   );
 
+  it.effect.each(["NotFound", "BadResource"] as const)(
+    "skips direct probes for a directory reported as %s",
+    (reason) =>
+      Effect.gen(function* () {
+        const stat = vi.fn(() => Effect.succeed({ type: "File" } as FileSystem.File.Info));
+        const result = yield* resolveCommandPath("tool", {
+          env: { PATH: "C:\\missing", PATHEXT: ".EXE" },
+        }).pipe(
+          Effect.provideService(HostProcessPlatform, "win32"),
+          Effect.provideService(CommandResolutionCache, new Map()),
+          Effect.provide(
+            FileSystem.layerNoop({
+              readDirectory: () =>
+                Effect.fail(
+                  PlatformError.systemError({
+                    _tag: reason,
+                    module: "FileSystem",
+                    method: "readDirectory",
+                  }),
+                ),
+              stat,
+            }),
+          ),
+          Effect.result,
+        );
+        expect(result._tag).toBe("Failure");
+        expect(stat).not.toHaveBeenCalled();
+      }),
+  );
+
+  it.effect("reuses listings across commands only within a discovery pass", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const cwd = yield* fs.makeTempDirectoryScoped();
+      yield* fs.writeFileString(path.join(cwd, "first.eXe"), "MZ");
+      const readDirectory = vi.fn((directory: string) => fs.readDirectory(directory));
+      const discover = Effect.forEach(["first", "second"], (command) =>
+        resolveCommandPath(command, { env: { PATH: cwd, PATHEXT: ".EXE" } }).pipe(Effect.result),
+      ).pipe(withCommandDirectoryCache);
+      const run = discover.pipe(
+        Effect.provideService(HostProcessPlatform, "win32"),
+        Effect.provideService(FileSystem.FileSystem, { ...fs, readDirectory }),
+      );
+      const first = yield* run.pipe(Effect.provideService(CommandResolutionCache, new Map()));
+      expect(first.map((result) => result._tag)).toEqual(["Success", "Failure"]);
+      expect(readDirectory).toHaveBeenCalledTimes(1);
+      yield* fs.writeFileString(path.join(cwd, "second.EXE"), "MZ");
+      const second = yield* run.pipe(Effect.provideService(CommandResolutionCache, new Map()));
+      expect(second.map((result) => result._tag)).toEqual(["Success", "Success"]);
+      expect(readDirectory).toHaveBeenCalledTimes(2);
+    }),
+  );
+
   // Records every path the scan stats, without ever reporting a match, so the
   // walk runs to exhaustion and the probe set can be inspected. Assertions
   // below count probes rather than naming paths: `Path` is the host's, so the
@@ -454,6 +516,14 @@ effectIt.layer(NodeServices.layer)("resolveCommandPath", (it) => {
         Effect.provideService(CommandResolutionCache, new Map()),
         Effect.provide(
           FileSystem.layerNoop({
+            readDirectory: () =>
+              Effect.fail(
+                PlatformError.systemError({
+                  _tag: "PermissionDenied",
+                  module: "FileSystem",
+                  method: "readDirectory",
+                }),
+              ),
             stat: (filePath) =>
               Effect.sync(() => {
                 probed.push(filePath);

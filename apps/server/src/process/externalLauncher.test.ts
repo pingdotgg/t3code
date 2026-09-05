@@ -11,6 +11,7 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
@@ -835,11 +836,17 @@ it.effect("discovers editors through the service API", () =>
 
 it.effect("memoizes editor discovery and refreshes after the cache window", () => {
   let statCalls = 0;
+  let directoryCalls = 0;
   const fileInfo = { type: "File" } as FileSystem.File.Info;
   const launcherLayer = ExternalLauncher.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
         FileSystem.layerNoop({
+          readDirectory: () =>
+            Effect.sync(() => {
+              directoryCalls += 1;
+              return ["code.eXe", "cursor.EXE"];
+            }),
           stat: () =>
             Effect.sync(() => {
               statCalls += 1;
@@ -860,6 +867,7 @@ it.effect("memoizes editor discovery and refreshes after the cache window", () =
 
     const first = yield* launcher.resolveAvailableEditors();
     assert.equal(first.includes("vscode"), true);
+    assert.equal(directoryCalls, 1);
     const statCallsAfterFirstScan = statCalls;
     assert.isAbove(statCallsAfterFirstScan, 0);
 
@@ -869,11 +877,13 @@ it.effect("memoizes editor discovery and refreshes after the cache window", () =
     const second = yield* launcher.resolveAvailableEditors();
     assert.deepEqual([...second], [...first]);
     assert.equal(statCalls, statCallsAfterFirstScan);
+    assert.equal(directoryCalls, 1);
 
     // Past the discovery cache window the next call rescans.
     yield* TestClock.adjust("30 seconds");
     yield* launcher.resolveAvailableEditors();
     assert.isAbove(statCalls, statCallsAfterFirstScan);
+    assert.equal(directoryCalls, 2);
   }).pipe(
     Effect.provide(
       Layer.mergeAll(
@@ -905,6 +915,14 @@ it.effect("rescans after an interrupted discovery instead of caching the interru
     Layer.provide(
       Layer.mergeAll(
         FileSystem.layerNoop({
+          readDirectory: () =>
+            Effect.fail(
+              PlatformError.systemError({
+                _tag: "PermissionDenied",
+                module: "FileSystem",
+                method: "readDirectory",
+              }),
+            ),
           // The first scan parks inside `stat` so the interrupt lands while
           // discovery is in flight, which is what a client disconnecting
           // mid-connect does to the shared effect.

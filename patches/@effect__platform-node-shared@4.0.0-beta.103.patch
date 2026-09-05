@@ -1,0 +1,44 @@
+diff --git a/dist/NodeChildProcessSpawner.js b/dist/NodeChildProcessSpawner.js
+index 29b02311c2101b01e5ad991f2e9375e699f2340c..0338c275281b6f0345bfdd35ad47ab535ff8dcee 100644
+--- a/dist/NodeChildProcessSpawner.js
++++ b/dist/NodeChildProcessSpawner.js
+@@ -349,7 +349,7 @@ const make = /*#__PURE__*/Effect.gen(function* () {
+             if (exited) {
+               // Process already exited, check if children need cleanup
+               const [code] = yield* Deferred.await(exitSignal);
+-              if (code !== 0 && Predicate.isNotNull(code)) {
++              if (cmd.options.cleanupOnExit !== false && code !== 0 && Predicate.isNotNull(code)) {
+                 // Non-zero exit code ,attempt to clean up process group
+                 return yield* Effect.ignore(killWithTimeout(killProcessGroup));
+               }
+@@ -363,7 +363,7 @@ const make = /*#__PURE__*/Effect.gen(function* () {
+           }));
+           const pid = ProcessId(childProcess.pid);
+           childProcess.on("exit", code => {
+-            if (code !== 0 && Predicate.isNotNull(code)) {
++            if (cmd.options.cleanupOnExit !== false && code !== 0 && Predicate.isNotNull(code)) {
+               killProcessGroupOnExit(childProcess, cmd.options.killSignal ?? "SIGTERM");
+             }
+           });
+diff --git a/src/NodeChildProcessSpawner.ts b/src/NodeChildProcessSpawner.ts
+index bf6f007c4a29597fad5eb1367dd145fde2688851..5cc2de0d01bfdf505aad95bc3c7b94e828d28143 100644
+--- a/src/NodeChildProcessSpawner.ts
++++ b/src/NodeChildProcessSpawner.ts
+@@ -484,7 +484,7 @@ const make = Effect.gen(function*() {
+             if (exited) {
+               // Process already exited, check if children need cleanup
+               const [code] = yield* Deferred.await(exitSignal)
+-              if (code !== 0 && Predicate.isNotNull(code)) {
++              if (cmd.options.cleanupOnExit !== false && code !== 0 && Predicate.isNotNull(code)) {
+                 // Non-zero exit code ,attempt to clean up process group
+                 return yield* Effect.ignore(killWithTimeout(killProcessGroup))
+               }
+@@ -507,7 +507,7 @@ const make = Effect.gen(function*() {
+ 
+         const pid = ProcessId(childProcess.pid!)
+         childProcess.on("exit", (code) => {
+-          if (code !== 0 && Predicate.isNotNull(code)) {
++          if (cmd.options.cleanupOnExit !== false && code !== 0 && Predicate.isNotNull(code)) {
+             killProcessGroupOnExit(childProcess, cmd.options.killSignal ?? "SIGTERM")
+           }
+         })

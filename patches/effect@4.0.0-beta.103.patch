@@ -1,5 +1,5 @@
 diff --git a/dist/unstable/ai/McpServer.js b/dist/unstable/ai/McpServer.js
-index 755e41c..dc431aa 100644
+index 755e41c143ace01604487266c91b6ca331e35e71..dc431aa521784d6bce7ef02e17fbaead40587548 100644
 --- a/dist/unstable/ai/McpServer.js
 +++ b/dist/unstable/ai/McpServer.js
 @@ -262,6 +262,26 @@ const runWithProtocolState = /*#__PURE__*/Effect.fnUntraced(function* (options,
@@ -38,8 +38,25 @@ index 755e41c..dc431aa 100644
    return Layer.merge(layerWithProtocolState(options), routes).pipe(Layer.provide(layerMcpProtocolHttp(options)), Layer.provide(protocolState), Layer.provide(RpcSerialization.layerJsonRpc()));
  };
  const layerMcpProtocolHttp = options => Layer.effect(RpcServer.Protocol)(Effect.gen(function* () {
+diff --git a/dist/unstable/process/ChildProcess.d.ts b/dist/unstable/process/ChildProcess.d.ts
+index 348a3496e8ddfc096d7ec7fe36824c6dcd498285..abc2f372008c7409691b52e377fea67655d322bb 100644
+--- a/dist/unstable/process/ChildProcess.d.ts
++++ b/dist/unstable/process/ChildProcess.d.ts
+@@ -263,6 +263,12 @@ export type AdditionalFdConfig = {
+  * @since 4.0.0
+  */
+ export interface CommandOptions extends KillOptions {
++  /**
++   * Clean up descendants after a nonzero exit. Defaults to true.
++   * Set false only for leaf probes. Running processes are still killed on scope close.
++   */
++  readonly cleanupOnExit?: boolean | undefined
++
+     /**
+      * The current working directory of the child process.
+      */
 diff --git a/dist/unstable/rpc/RpcClient.d.ts b/dist/unstable/rpc/RpcClient.d.ts
-index aba2779..581d267 100644
+index aba2779fb0703c06e476bd3c30a1156ea4b35dbb..581d267eb13d3c34fae2f98bc523f188f921a9be 100644
 --- a/dist/unstable/rpc/RpcClient.d.ts
 +++ b/dist/unstable/rpc/RpcClient.d.ts
 @@ -2,6 +2,7 @@ import * as Cause from "../../Cause.ts";
@@ -92,7 +109,7 @@ index aba2779..581d267 100644
  /**
   * Represents optional client protocol hooks that run when a transport connects
 diff --git a/dist/unstable/rpc/RpcClient.js b/dist/unstable/rpc/RpcClient.js
-index b536d0a..12ffac0 100644
+index b536d0a720c13678ccfc2c55c612ee6b61fbedaa..2b0cbb3873cab351134c66c90c57f1045ae7fa7d 100644
 --- a/dist/unstable/rpc/RpcClient.js
 +++ b/dist/unstable/rpc/RpcClient.js
 @@ -47,6 +47,7 @@ export const makeNoSerialization = /*#__PURE__*/Effect.fnUntraced(function* (gro
@@ -293,22 +310,20 @@ index b536d0a..12ffac0 100644
      latch.closeUnsafe();
    };
 -  const onPong = () => {
--    recievedPong = true;
--  };
 +  const onPong = Effect.sync(() => {
-+    recievedPong = true;
+     recievedPong = true;
+-  };
 +    missedPongs = 0;
 +  }).pipe(Effect.andThen(hooks?.onPong ?? Effect.void));
    yield* Effect.suspend(() => {
 -    if (!recievedPong) return latch.open;
--    recievedPong = false;
--    return writePing;
 +    if (!recievedPong) {
 +      missedPongs += 1;
 +      if (missedPongs >= 3) return latch.open;
 +      return (hooks?.onPing ?? Effect.void).pipe(Effect.andThen(writePing));
 +    }
-+    recievedPong = false;
+     recievedPong = false;
+-    return writePing;
 +    missedPongs = 0;
 +    return (hooks?.onPing ?? Effect.void).pipe(Effect.andThen(writePing));
    }).pipe(Effect.delay("5 seconds"), Effect.ignore, Effect.forever, Effect.interruptible, Effect.forkScoped);
@@ -326,3 +341,20 @@ index b536d0a..12ffac0 100644
  /**
   * Represents optional client protocol hooks that run when a transport connects
   * and disconnects.
+diff --git a/src/unstable/process/ChildProcess.ts b/src/unstable/process/ChildProcess.ts
+index 16bbb4ab376f82c6e0605c13e9dcd90d89f43355..0ffe0622fce90075dac893f55fd08ff0549de3df 100644
+--- a/src/unstable/process/ChildProcess.ts
++++ b/src/unstable/process/ChildProcess.ts
+@@ -372,6 +372,12 @@ export type AdditionalFdConfig =
+  * @since 4.0.0
+  */
+ export interface CommandOptions extends KillOptions {
++  /**
++   * Clean up descendants after a nonzero exit. Defaults to true.
++   * Set false only for leaf probes. Running processes are still killed on scope close.
++   */
++  readonly cleanupOnExit?: boolean | undefined
++
+   /**
+    * The current working directory of the child process.
+    */
