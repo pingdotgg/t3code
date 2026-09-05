@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./composerRecall": {
+      "types": "./src/composerRecall.ts",
+      "import": "./src/composerRecall.ts"
+    },
     "./themePalettes": {
       "types": "./src/themePalettes.ts",
       "import": "./src/themePalettes.ts"

@@ -10,6 +10,7 @@ import {
   type OrchestrationThreadActivity,
 } from "@t3tools/contracts";
 import { compareDateTimeStrings } from "@t3tools/shared/dateTime";
+import { validComposerRecall } from "@t3tools/shared/composerRecall";
 import * as DateTime from "effect/DateTime";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
@@ -956,6 +957,14 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           messageId: command.message.messageId,
           role: "user",
           text: command.message.text,
+          ...(command.message.composerRecall !== undefined
+            ? {
+                composerRecall: validComposerRecall(
+                  command.message.text,
+                  command.message.composerRecall,
+                ),
+              }
+            : {}),
           attachments: command.message.attachments,
           turnId: null,
           streaming: false,

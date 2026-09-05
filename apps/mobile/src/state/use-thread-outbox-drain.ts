@@ -1,3 +1,4 @@
+import { recallComposerText } from "@t3tools/shared/composerRecall";
 import { useAtomValue } from "@effect/atom-react";
 import type {
   EnvironmentProject,
@@ -280,7 +281,7 @@ export async function recoverEditedCreationAfterDelivery(
     // from deleting the attachment files. allowOverflow mirrors the
     // send-failure restore; the send path refuses over-cap drafts, so the
     // state stays recoverable.
-    await mergeComposerDraftContent(draftKey, { text: kept.text, attachments: [] });
+    await mergeComposerDraftContent(draftKey, { text: recallComposerText(kept), attachments: [] });
     if (appAtomRegistry.get(editingQueuedMessageIdsAtom)[kept.messageId]) {
       return true;
     }
@@ -370,7 +371,7 @@ export async function restoreRejectedQueuedMessage(
     let mergedDraft: ComposerDraft;
     try {
       await mergeComposerDraftContent(draftKey, {
-        text: queuedMessage.text,
+        text: recallComposerText(queuedMessage),
         attachments: queuedMessage.attachments,
       });
     } finally {
@@ -759,6 +760,10 @@ export function useThreadOutboxDrain(): void {
             messageId: queuedMessage.messageId,
             role: "user",
             text: queuedMessage.text,
+            ...(currentConfig.environment.capabilities.composerRecall === true &&
+            queuedMessage.composerRecall !== undefined
+              ? { composerRecall: queuedMessage.composerRecall }
+              : {}),
             attachments: prepared.attachments,
           },
           modelSelection: sendSettings.modelSelection,
@@ -880,6 +885,10 @@ export function useThreadOutboxDrain(): void {
           messageId: queuedMessage.messageId,
           createdAt: queuedMessage.createdAt,
           text: queuedMessage.text.trim(),
+          ...(currentConfig.environment.capabilities.composerRecall === true &&
+          queuedMessage.composerRecall !== undefined
+            ? { composerRecall: queuedMessage.composerRecall }
+            : {}),
           uploadedAttachments: prepared.attachments,
           modelSelection: sendSettings.modelSelection,
           runtimeMode: sendSettings.runtimeMode,

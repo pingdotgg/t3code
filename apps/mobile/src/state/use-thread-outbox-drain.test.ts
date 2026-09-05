@@ -1,3 +1,4 @@
+import { createComposerRecall } from "@t3tools/shared/composerRecall";
 import {
   CommandId,
   EnvironmentId,
@@ -582,6 +583,23 @@ describe("thread outbox delivered creation recovery", () => {
 });
 
 describe("thread outbox recovery rollback", () => {
+  it("restores authored recall whitespace without losing a concurrent draft", async () => {
+    const raw = "  Ultrathink:\nKeep this example\n";
+    const message = {
+      ...queuedMessage({ messageId: "recall-restore", text: raw.trim() }),
+      composerRecall: createComposerRecall(raw),
+    };
+    const draftKey = `${message.environmentId}:${message.threadId}`;
+    appAtomRegistry.set(composerDrafts.composerDraftsAtom, {
+      [draftKey]: { text: "typed while queued", attachments: [] },
+    });
+    await harness.manager.enqueue(message);
+    await expect(restoreRejectedQueuedMessage(message, "rejected")).resolves.toBe("restored");
+    expect(composerDrafts.getComposerDraftSnapshot(draftKey).text).toBe(
+      `typed while queued\n\n${raw}`,
+    );
+    expect(remainingMessages()).toEqual([]);
+  });
   it("restores a rejected new task into its durable project draft", async () => {
     const message: QueuedThreadMessage = {
       ...queuedMessage({ messageId: "message-creation-restore", text: "new task text" }),

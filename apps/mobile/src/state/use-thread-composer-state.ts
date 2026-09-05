@@ -56,6 +56,7 @@ import { setPendingConnectionError } from "../state/use-remote-environment-regis
 import { useSelectedThreadDetail } from "../state/use-thread-detail";
 import { useThreadSelection } from "../state/use-thread-selection";
 import { enqueueThreadOutboxMessage } from "./thread-outbox";
+import { createComposerRecall } from "@t3tools/shared/composerRecall";
 import { dispatchingQueuedMessageIdAtom, useThreadOutboxMessages } from "./use-thread-outbox";
 import { threadEnvironment } from "./threads";
 import { useAtomCommand } from "./use-atom-command";
@@ -358,6 +359,7 @@ export function useThreadComposerState() {
       commandId: CommandId.make(metadata.commandId),
       text,
       attachments,
+      composerRecall: createComposerRecall(draft.text),
       modelSelection,
       runtimeMode: draft.runtimeMode ?? thread.runtimeMode,
       interactionMode: resolveProviderInteractionMode(
@@ -379,7 +381,7 @@ export function useThreadComposerState() {
         // append: the merge path slots existing attachments first and truncates
         // at the send limit, which would silently drop this message's images if
         // the user attached new ones while the write was in flight.
-        void mergeComposerDraftContent(threadKey, { text, attachments: [] });
+        void mergeComposerDraftContent(threadKey, { text: draft.text, attachments: [] });
         appendComposerDraftAttachments(threadKey, attachments, { allowOverflow: true });
         setPendingConnectionError(
           error instanceof Error ? error.message : "Failed to save the queued message.",

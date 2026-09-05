@@ -1,7 +1,5 @@
-import { extractTrailingElementContexts } from "../../lib/elementContext";
-import { extractTrailingPreviewAnnotation } from "../../lib/previewAnnotation";
-import { extractTrailingTerminalContexts } from "../../lib/terminalContext";
-import { PLAN_IMPLEMENTATION_PROMPT_PREFIX } from "../../proposedPlan";
+import type { ComposerRecall } from "@t3tools/contracts";
+import { recallComposerText } from "@t3tools/shared/composerRecall";
 
 /**
  * Terminal-style prompt recall for the composer. ArrowUp on an empty
@@ -12,9 +10,6 @@ import { PLAN_IMPLEMENTATION_PROMPT_PREFIX } from "../../proposedPlan";
  * messages on every keypress, so there is no store to persist or sync.
  */
 
-const CLAUDE_ULTRATHINK_PREFIX = "Ultrathink:\n";
-const REVIEW_COMMENT_BLOCK_PATTERN = /<review_comment\b[^>]*>[\s\S]*?<\/review_comment>/g;
-
 /** Text sent in place of an empty prompt when a message is attachments only. */
 export const ATTACHMENT_ONLY_BOOTSTRAP_PROMPT =
   "[User attached one or more files without additional text. Respond using the conversation context and the attached files.]";
@@ -23,6 +18,7 @@ export interface ComposerPromptHistoryMessage {
   readonly id: string;
   readonly role: string;
   readonly text: string;
+  readonly composerRecall?: ComposerRecall | undefined;
 }
 
 export interface ComposerPromptHistoryEntry {
@@ -62,103 +58,6 @@ export interface ComposerPromptHistoryStep {
 }
 
 /**
- * Drop only the review comments appended at send time, which sit at the
- * end. Cuts the original string at the start of the trailing run of blocks
- * so any review comment block the user typed earlier stays byte-for-byte.
- */
-function stripTrailingReviewComments(prompt: string): string {
-  let cut = prompt.length;
-  for (const match of [...prompt.matchAll(REVIEW_COMMENT_BLOCK_PATTERN)].toReversed()) {
-    const blockEnd = match.index + match[0].length;
-    if (prompt.slice(blockEnd, cut).trim().length > 0) break;
-    cut = match.index;
-  }
-  return cut === prompt.length ? prompt : prompt.slice(0, cut).trimEnd();
-}
-
-/**
- * Inline terminal chips are sent as `@terminal-1:12-13` labels in the text
- * with their content in the trailing block. Once the block is stripped the
- * label points at nothing, so remove it too. Each block entry removes one
- * label (the first match) and the single space beside it. Nothing else in
- * the prompt is touched, so indented code and typed labels survive. Block
- * headers look like `Terminal 1 lines 12-13`.
- */
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function stripInlineTerminalLabels(prompt: string, headers: ReadonlyArray<string>): string {
-  let result = prompt;
-  for (const header of headers) {
-    const match = /^(.+?) lines? (\d+(?:-\d+)?)$/.exec(header);
-    if (!match) continue;
-    const label = `@${match[1]!.trim().toLowerCase().replace(/\s+/g, "-")}:${match[2]}`;
-    // Whole label only: `@terminal-1:4` must not match inside `@terminal-1:40`
-    // or `@terminal-1:4-12`.
-    const labelPattern = new RegExp(`${escapeRegExp(label)}(?![\\d-])`);
-    const index = result.search(labelPattern);
-    if (index < 0) continue;
-    let end = index + label.length;
-    let start = index;
-    if (result[end] === " ") end += 1;
-    else if (result[start - 1] === " ") start -= 1;
-    result = result.slice(0, start) + result.slice(end);
-  }
-  return result;
-}
-
-/**
- * Reduce a sent message to the text the user typed. Send-time appends
- * (terminal and element context blocks, preview annotations, review
- * comments, the Claude ultrathink prefix) are stripped so a recalled prompt
- * never carries stale context from another turn.
- */
-export function recallableComposerPrompt(messageText: string): string {
-  let prompt = messageText.trim();
-  if (prompt.startsWith(CLAUDE_ULTRATHINK_PREFIX)) {
-    prompt = prompt.slice(CLAUDE_ULTRATHINK_PREFIX.length);
-  }
-
-  while (prompt.length > 0) {
-    const withoutReviewComments = stripTrailingReviewComments(prompt);
-    if (withoutReviewComments !== prompt) {
-      prompt = withoutReviewComments;
-      continue;
-    }
-    const previewAnnotation = extractTrailingPreviewAnnotation(prompt);
-    if (previewAnnotation.annotation) {
-      prompt = previewAnnotation.promptText;
-      continue;
-    }
-    const elementContexts = extractTrailingElementContexts(prompt);
-    if (elementContexts.contextCount > 0) {
-      prompt = elementContexts.promptText;
-      continue;
-    }
-    const terminalContexts = extractTrailingTerminalContexts(prompt);
-    if (terminalContexts.contextCount > 0) {
-      prompt = stripInlineTerminalLabels(
-        terminalContexts.promptText,
-        terminalContexts.contexts.map((context) => context.header),
-      );
-      continue;
-    }
-    break;
-  }
-
-  // App-composed sends are not text the user typed, so they are not history.
-  const trimmed = prompt.trim();
-  if (
-    trimmed === ATTACHMENT_ONLY_BOOTSTRAP_PROMPT ||
-    trimmed.startsWith(PLAN_IMPLEMENTATION_PROMPT_PREFIX)
-  ) {
-    return "";
-  }
-  return trimmed;
-}
-
-/**
  * Oldest first. Consecutive identical prompts collapse into the newest one,
  * matching shell `HISTCONTROL=ignoredups`. Image-only sends have no text and
  * are skipped.
@@ -169,8 +68,8 @@ export function buildComposerPromptHistoryEntries(
   const entries: ComposerPromptHistoryEntry[] = [];
   for (const message of messages) {
     if (message.role !== "user") continue;
-    const prompt = recallableComposerPrompt(message.text);
-    if (prompt.length === 0) continue;
+    const prompt = recallComposerText(message);
+    if (prompt.trim().length === 0) continue;
     const previous = entries[entries.length - 1];
     if (previous && previous.prompt === prompt) {
       entries[entries.length - 1] = { id: message.id, prompt };

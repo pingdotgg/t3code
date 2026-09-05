@@ -6,6 +6,7 @@ import {
 import type { EnvironmentShellStatus } from "@t3tools/client-runtime/state/shell";
 import {
   CommandId,
+  ComposerRecall,
   EnvironmentId,
   IsoDateTime,
   MessageId,
@@ -50,6 +51,7 @@ export const QueuedThreadMessageSchema = Schema.Struct({
   messageId: MessageId,
   commandId: CommandId,
   text: Schema.String,
+  composerRecall: Schema.optional(ComposerRecall),
   attachments: Schema.Array(DraftComposerAttachmentSchema),
   modelSelection: Schema.optional(ModelSelection),
   runtimeMode: Schema.optional(RuntimeMode),
@@ -79,6 +81,7 @@ export interface QueuedThreadMessage {
   readonly messageId: MessageId;
   readonly commandId: CommandId;
   readonly text: string;
+  readonly composerRecall?: ComposerRecall;
   readonly attachments: ReadonlyArray<DraftComposerAttachment>;
   readonly modelSelection?: ModelSelectionType;
   readonly runtimeMode?: RuntimeModeType;

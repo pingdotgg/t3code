@@ -41,6 +41,10 @@ const decodeProjectCreatedPayload = Schema.decodeUnknownEffect(ProjectCreatedPay
 const decodeProjectMetaUpdatedPayload = Schema.decodeUnknownEffect(ProjectMetaUpdatedPayload);
 const decodeThreadTurnStartCommand = Schema.decodeUnknownEffect(ThreadTurnStartCommand);
 const decodeClientOrchestrationCommand = Schema.decodeUnknownEffect(ClientOrchestrationCommand);
+const encodeUnknownJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
+const decodeClientOrchestrationCommandJson = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(ClientOrchestrationCommand),
+);
 const decodeOrchestrationMessage = Schema.decodeUnknownEffect(OrchestrationMessage);
 const decodeThreadMessageSentPayload = Schema.decodeUnknownEffect(ThreadMessageSentPayload);
 const decodeThreadTurnStartRequestedPayload = Schema.decodeUnknownEffect(
@@ -226,6 +230,55 @@ it.effect("rejects command fields that become empty after trim", () =>
       }),
     );
     assert.strictEqual(result._tag, "Failure");
+  }),
+);
+
+it.effect("preserves optional composer provenance across client and internal command codecs", () =>
+  Effect.gen(function* () {
+    for (const composerRecall of [
+      undefined,
+      { ranges: [] },
+      { ranges: [[0, 5]], leadingWhitespace: " \n" },
+    ] as const) {
+      const command = {
+        type: "thread.turn.start",
+        commandId: "recall-command",
+        threadId: "recall-thread",
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        message: {
+          messageId: "recall-message",
+          role: "user",
+          text: "hello",
+          attachments: [],
+          ...(composerRecall === undefined ? {} : { composerRecall }),
+        },
+        createdAt: "2026-09-05T00:00:00Z",
+      };
+      const json = yield* encodeUnknownJson(command);
+      const client = yield* decodeClientOrchestrationCommandJson(json);
+      assert.strictEqual(client.type, "thread.turn.start");
+      if (client.type !== "thread.turn.start") return;
+      const persisted = yield* decodeThreadTurnStartCommand(client);
+      assert.strictEqual(persisted.message.text, "hello");
+      assert.deepEqual(persisted.message.composerRecall, composerRecall);
+    }
+    const invalid = yield* Effect.exit(
+      decodeThreadTurnStartCommand({
+        type: "thread.turn.start",
+        commandId: "invalid",
+        threadId: "recall-thread",
+        message: {
+          messageId: "invalid",
+          role: "user",
+          text: "hello",
+          attachments: [],
+          composerRecall: { ranges: [[-1, 5]] },
+        },
+        createdAt: "2026-09-05T00:00:00Z",
+      }),
+    );
+    assert.strictEqual(invalid._tag, "Failure");
   }),
 );
 

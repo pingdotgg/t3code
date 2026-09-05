@@ -1,16 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { appendElementContextsToPrompt } from "../../lib/elementContext";
 import {
-  appendTerminalContextsToPrompt,
-  materializeInlineTerminalContextPrompt,
-} from "../../lib/terminalContext";
-import { appendReviewCommentsToPrompt, buildFileReviewComment } from "../../reviewCommentContext";
-import { buildPlanImplementationPrompt } from "../../proposedPlan";
-import {
-  ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
   buildComposerPromptHistoryEntries,
-  recallableComposerPrompt,
   stepComposerPromptHistory,
   type ComposerPromptHistoryPosition,
 } from "./composerPromptHistory";
@@ -29,97 +20,6 @@ function backward(position: ComposerPromptHistoryPosition | null, currentPrompt:
 function forward(position: ComposerPromptHistoryPosition | null, currentPrompt: string) {
   return stepComposerPromptHistory({ direction: "forward", entries, position, currentPrompt });
 }
-
-describe("recallableComposerPrompt", () => {
-  it("strips send-time context blocks and the ultrathink prefix", () => {
-    const withTerminal = appendTerminalContextsToPrompt("Investigate this", [
-      {
-        terminalId: "default",
-        terminalLabel: "Terminal 1",
-        lineStart: 12,
-        lineEnd: 13,
-        text: "git status\nOn branch main",
-      },
-    ]);
-    const withElement = appendElementContextsToPrompt(withTerminal, [
-      {
-        pageUrl: "https://example.com",
-        pageTitle: "Example",
-        tagName: "button",
-        selector: "button.submit",
-        htmlPreview: "<button>Save</button>",
-        componentName: null,
-        source: null,
-        styles: "",
-      },
-    ]);
-    expect(recallableComposerPrompt(`Ultrathink:\n${withElement}`)).toBe("Investigate this");
-  });
-
-  it("removes inline terminal labels along with their trailing block", () => {
-    const context = {
-      terminalId: "default",
-      terminalLabel: "Terminal 1",
-      lineStart: 12,
-      lineEnd: 13,
-      text: "git status",
-    };
-    const typed = materializeInlineTerminalContextPrompt("Look at \uFFFC please", [context]);
-    expect(typed).toBe("Look at @terminal-1:12-13 please");
-    const sent = appendTerminalContextsToPrompt(typed, [context]);
-    expect(recallableComposerPrompt(sent)).toBe("Look at please");
-  });
-
-  it("removes one label per chip and leaves other whitespace alone", () => {
-    const context = {
-      terminalId: "default",
-      terminalLabel: "Terminal 1",
-      lineStart: 4,
-      lineEnd: 4,
-      text: "ls",
-    };
-    const typed = "@terminal-1:4 typed twice: @terminal-1:4\n    indented  code";
-    const sent = appendTerminalContextsToPrompt(typed, [context]);
-    expect(recallableComposerPrompt(sent)).toBe("typed twice: @terminal-1:4\n    indented  code");
-  });
-
-  it("does not strip a typed label that only starts with the chip label", () => {
-    const context = {
-      terminalId: "default",
-      terminalLabel: "Terminal 1",
-      lineStart: 4,
-      lineEnd: 4,
-      text: "ls",
-    };
-    const typed = "see @terminal-1:40 and @terminal-1:4-12 then @terminal-1:4";
-    const sent = appendTerminalContextsToPrompt(typed, [context]);
-    expect(recallableComposerPrompt(sent)).toBe("see @terminal-1:40 and @terminal-1:4-12 then");
-  });
-
-  it("strips only the review comments appended at the end", () => {
-    const comment = buildFileReviewComment({
-      id: "comment-1",
-      filePath: "src/app.ts",
-      startLine: 2,
-      endLine: 3,
-      text: "Keep this configurable.",
-      contents: "one\ntwo\nthree",
-    });
-    const sent = appendReviewCommentsToPrompt("Please update this.", [comment]);
-    expect(recallableComposerPrompt(sent)).toBe("Please update this.");
-    const midPrompt = appendReviewCommentsToPrompt("Before", [comment]) + "\n\nAfter";
-    expect(recallableComposerPrompt(midPrompt)).toBe(midPrompt);
-    // A typed block earlier in the prompt survives when the trailing one goes.
-    const both = appendReviewCommentsToPrompt(midPrompt, [comment]);
-    expect(recallableComposerPrompt(both)).toBe(midPrompt);
-  });
-
-  it("returns an empty string for app-composed sends", () => {
-    expect(recallableComposerPrompt("   ")).toBe("");
-    expect(recallableComposerPrompt(ATTACHMENT_ONLY_BOOTSTRAP_PROMPT)).toBe("");
-    expect(recallableComposerPrompt(buildPlanImplementationPrompt("# Plan\n1. do it"))).toBe("");
-  });
-});
 
 describe("buildComposerPromptHistoryEntries", () => {
   it("keeps user messages with text, oldest first", () => {

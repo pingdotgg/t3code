@@ -1,3 +1,4 @@
+import { ComposerRecall } from "@t3tools/contracts";
 import {
   AgentSessionImportSource,
   ApprovalRequestId,
@@ -103,6 +104,7 @@ const ProjectionThreadMessageDbRowSchema = ProjectionThreadMessage.mapFields(
   Struct.assign({
     isStreaming: Schema.Number,
     attachments: Schema.NullOr(Schema.fromJsonString(Schema.Array(ChatAttachment))),
+    composerRecall: Schema.NullOr(Schema.fromJsonString(ComposerRecall)),
   }),
 );
 const ProjectionThreadProposedPlanDbRowSchema = ProjectionThreadProposedPlan;
@@ -605,6 +607,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           role,
           text,
           attachments_json AS "attachments",
+          composer_recall_json AS "composerRecall",
           is_streaming AS "isStreaming",
           created_at AS "createdAt",
           updated_at AS "updatedAt"
@@ -1129,6 +1132,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           role,
           text,
           attachments_json AS "attachments",
+          composer_recall_json AS "composerRecall",
           is_streaming AS "isStreaming",
           created_at AS "createdAt",
           updated_at AS "updatedAt"
@@ -1486,6 +1490,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           role,
           text,
           attachments_json AS "attachments",
+          composer_recall_json AS "composerRecall",
           is_streaming AS "isStreaming",
           created_at AS "createdAt",
           updated_at AS "updatedAt"
@@ -1884,6 +1889,7 @@ pending_approval_requests AS (
                   id: row.messageId,
                   role: row.role,
                   text: row.text,
+                  ...(row.composerRecall !== null ? { composerRecall: row.composerRecall } : {}),
                   ...(row.attachments !== null ? { attachments: row.attachments } : {}),
                   turnId: row.turnId,
                   streaming: row.isStreaming === 1,
@@ -3119,6 +3125,7 @@ pending_approval_requests AS (
             id: row.messageId,
             role: row.role,
             text: row.text,
+            ...(row.composerRecall !== null ? { composerRecall: row.composerRecall } : {}),
             turnId: row.turnId,
             streaming: row.isStreaming === 1,
             createdAt: row.createdAt,
