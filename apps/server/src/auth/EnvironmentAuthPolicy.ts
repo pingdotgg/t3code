@@ -17,8 +17,7 @@ export class EnvironmentAuthPolicy extends Context.Service<
 export const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
   const serverEnvironment = yield* ServerEnvironment.ServerEnvironmentIdentity;
-  const isRemoteReachable =
-    config.tailscaleServeEnabled || isRemoteReachableHost(config.host);
+  const isRemoteReachable = config.tailscaleServeEnabled || isRemoteReachableHost(config.host);
 
   const policy =
     config.mode === "desktop"

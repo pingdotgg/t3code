@@ -83,24 +83,27 @@ it.layer(NodeServices.layer)("EnvironmentAuthPolicy.layer", (it) => {
     ),
   );
 
-  it.effect("uses loopback-browser policy for loopback web hosts", () =>
-    Effect.gen(function* () {
-      const policy = yield* EnvironmentAuthPolicy.EnvironmentAuthPolicy;
-      const descriptor = yield* policy.getDescriptor();
+  for (const host of ["127.0.0.1", "::1"]) {
+    it.effect(`uses loopback-browser policy for web host ${host} without Serve`, () =>
+      Effect.gen(function* () {
+        const policy = yield* EnvironmentAuthPolicy.EnvironmentAuthPolicy;
+        const descriptor = yield* policy.getDescriptor();
 
-      expect(descriptor.policy).toBe("loopback-browser");
-      expect(descriptor.bootstrapMethods).toEqual(["one-time-token"]);
-      expect(descriptor.sessionCookieName).toMatch(/^t3_session_3773_[a-f0-9]{12}$/);
-    }).pipe(
-      Effect.provide(
-        makeEnvironmentAuthPolicyLayer({
-          mode: "web",
-          host: "127.0.0.1",
-          port: 3773,
-        }),
+        expect(descriptor.policy).toBe("loopback-browser");
+        expect(descriptor.bootstrapMethods).toEqual(["one-time-token"]);
+        expect(descriptor.sessionCookieName).toMatch(/^t3_session_3773_[a-f0-9]{12}$/);
+      }).pipe(
+        Effect.provide(
+          makeEnvironmentAuthPolicyLayer({
+            mode: "web",
+            host,
+            port: 3773,
+            tailscaleServeEnabled: false,
+          }),
+        ),
       ),
-    ),
-  );
+    );
+  }
 
   it.effect("uses remote-reachable policy for wildcard web hosts", () =>
     Effect.gen(function* () {
@@ -139,9 +142,8 @@ it.layer(NodeServices.layer)("EnvironmentAuthPolicy.layer", (it) => {
     ),
   );
 
-  it.effect(
-    "uses remote-reachable policy for loopback web hosts when tailscale-serve is enabled",
-    () =>
+  for (const host of ["127.0.0.1", "::1"]) {
+    it.effect(`uses remote-reachable policy for web host ${host} with Serve enabled`, () =>
       Effect.gen(function* () {
         const policy = yield* EnvironmentAuthPolicy.EnvironmentAuthPolicy;
         const descriptor = yield* policy.getDescriptor();
@@ -152,12 +154,59 @@ it.layer(NodeServices.layer)("EnvironmentAuthPolicy.layer", (it) => {
         Effect.provide(
           makeEnvironmentAuthPolicyLayer({
             mode: "web",
-            host: "127.0.0.1",
+            host,
             tailscaleServeEnabled: true,
           }),
         ),
       ),
-  );
+    );
+  }
+
+  for (const mode of ["web", "desktop"] as const) {
+    it.effect(`preserves ${mode} session descriptors when Serve is enabled and disabled`, () =>
+      Effect.gen(function* () {
+        const config = yield* ServerConfig.ServerConfig;
+        const descriptorForServe = (tailscaleServeEnabled: boolean) =>
+          EnvironmentAuthPolicy.make.pipe(
+            Effect.provideService(ServerConfig.ServerConfig, {
+              ...config,
+              mode,
+              host: "127.0.0.1",
+              port: 3773,
+              tailscaleServeEnabled,
+            }),
+            Effect.flatMap((policy) => policy.getDescriptor()),
+          );
+        const disabled = yield* descriptorForServe(false);
+        const enabled = yield* descriptorForServe(true);
+        const disabledAgain = yield* descriptorForServe(false);
+
+        expect(enabled).toEqual({
+          ...disabled,
+          policy: "remote-reachable",
+          bootstrapMethods:
+            mode === "desktop" ? ["desktop-bootstrap", "one-time-token"] : ["one-time-token"],
+        });
+        expect(enabled.sessionMethods).toEqual([
+          "browser-session-cookie",
+          "bearer-access-token",
+          "dpop-access-token",
+        ]);
+        expect(disabledAgain).toEqual(disabled);
+        expect(disabled.policy).toBe(
+          mode === "desktop" ? "desktop-managed-local" : "loopback-browser",
+        );
+      }).pipe(
+        Effect.provide(
+          ServerEnvironment.identityLayer.pipe(
+            Layer.provideMerge(
+              ServerConfig.layerTest(process.cwd(), { prefix: "t3-auth-serve-policy-" }),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 
   it.effect("uses remote-reachable policy for non-loopback web hosts", () =>
     Effect.gen(function* () {
