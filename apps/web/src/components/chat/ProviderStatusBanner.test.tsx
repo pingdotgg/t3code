@@ -28,6 +28,42 @@ function warningProvider(): ServerProvider {
 }
 
 describe("ProviderStatusBanner", () => {
+  it("waits for an Antigravity auth result before showing a sign-in warning", () => {
+    const status: ServerProvider = {
+      ...warningProvider(),
+      instanceId: ProviderInstanceId.make("google_work"),
+      driver: ProviderDriverKind.make("antigravity"),
+      auth: { status: "unknown" },
+      message: "Antigravity is installed. Google account access is not checked yet.",
+    };
+
+    expect(shouldShowProviderStatusBanner(status, null)).toBe(false);
+    expect(
+      shouldShowProviderStatusBanner(
+        {
+          ...status,
+          auth: { status: "unauthenticated" },
+          message: "Sign in with Google to use Antigravity.",
+        },
+        null,
+      ),
+    ).toBe(true);
+  });
+
+  it("shows Antigravity installation and startup failures before auth is checked", () => {
+    const status: ServerProvider = {
+      ...warningProvider(),
+      driver: ProviderDriverKind.make("antigravity"),
+      auth: { status: "unknown" },
+    };
+
+    expect(shouldShowProviderStatusBanner({ ...status, installed: false }, null)).toBe(true);
+    expect(shouldShowProviderStatusBanner({ ...status, status: "error" }, null)).toBe(true);
+    expect(
+      shouldShowProviderStatusBanner({ ...status, driver: ProviderDriverKind.make("codex") }, null),
+    ).toBe(true);
+  });
+
   it("stays hidden after its current warning is dismissed", () => {
     const status = warningProvider();
 
