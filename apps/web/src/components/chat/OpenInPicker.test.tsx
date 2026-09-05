@@ -87,7 +87,7 @@ vi.mock("../ui/menu", () => ({
     render: ReactElement<{ disabled?: boolean }>;
     children: ReactNode;
     disabled?: boolean;
-  }) => cloneElement(render, { disabled }, children),
+  }) => cloneElement(render, disabled === undefined ? {} : { disabled }, children),
   MenuPopup: "section",
   MenuItem: "button",
   MenuShortcut: "span",
