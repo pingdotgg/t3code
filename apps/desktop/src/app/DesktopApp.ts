@@ -32,7 +32,6 @@ import * as DesktopUpdates from "../updates/DesktopUpdates.ts";
 import * as DesktopWslBackend from "../wsl/DesktopWslBackend.ts";
 
 const DEFAULT_DESKTOP_BACKEND_PORT = 3773;
-const MAX_TCP_PORT = 65_535;
 const DESKTOP_BACKEND_PORT_PROBE_HOSTS = ["127.0.0.1", "0.0.0.0", "::"] as const;
 
 const makeDesktopRunId = Crypto.Crypto.pipe(
@@ -40,16 +39,19 @@ const makeDesktopRunId = Crypto.Crypto.pipe(
   Effect.map((value) => value.replaceAll("-", "").slice(0, 12)),
 );
 
-export class DesktopBackendPortUnavailableError extends Schema.TaggedErrorClass<DesktopBackendPortUnavailableError>()(
-  "DesktopBackendPortUnavailableError",
+export class DesktopBackendPortInUseError extends Schema.TaggedErrorClass<DesktopBackendPortInUseError>()(
+  "DesktopBackendPortInUseError",
   {
-    startPort: Schema.Int,
-    maxPort: Schema.Int,
+    port: Schema.Int,
     hosts: Schema.Array(Schema.String),
   },
 ) {
   override get message(): string {
-    return `No desktop backend port is available on hosts ${this.hosts.join(", ")} between ${this.startPort} and ${this.maxPort}.`;
+    return [
+      `Desktop backend port ${this.port} is already in use on ${this.hosts.join(", ")}.`,
+      "T3 Code will not start another backend on a fallback port while using the same data directory.",
+      "Connect to the running T3 Code server, stop it cleanly, or use a different T3CODE_HOME.",
+    ].join("\n");
   }
 }
 
@@ -68,40 +70,31 @@ const { logInfo: logBootstrapInfo, logWarning: logBootstrapWarning } =
 const { logInfo: logStartupInfo, logError: logStartupError } =
   DesktopObservability.makeComponentLogger("desktop-startup");
 
-const resolveDesktopBackendPort = Effect.fn("resolveDesktopBackendPort")(function* (
+export const resolveDesktopBackendPort = Effect.fn("resolveDesktopBackendPort")(function* (
   configuredPort: Option.Option<number>,
 ) {
   if (Option.isSome(configuredPort)) {
     return {
       port: configuredPort.value,
-      selectedByScan: false,
     } as const;
   }
 
   const net = yield* NetService.NetService;
-  for (let port = DEFAULT_DESKTOP_BACKEND_PORT; port <= MAX_TCP_PORT; port += 1) {
-    let availableOnEveryHost = true;
-
-    for (const host of DESKTOP_BACKEND_PORT_PROBE_HOSTS) {
-      if (!(yield* net.canListenOnHost(port, host))) {
-        availableOnEveryHost = false;
-        break;
-      }
-    }
-
-    if (availableOnEveryHost) {
-      return {
-        port,
-        selectedByScan: true,
-      } as const;
+  const unavailableHosts: string[] = [];
+  for (const host of DESKTOP_BACKEND_PORT_PROBE_HOSTS) {
+    if (!(yield* net.canListenOnHost(DEFAULT_DESKTOP_BACKEND_PORT, host))) {
+      unavailableHosts.push(host);
     }
   }
-
-  return yield* new DesktopBackendPortUnavailableError({
-    startPort: DEFAULT_DESKTOP_BACKEND_PORT,
-    maxPort: MAX_TCP_PORT,
-    hosts: DESKTOP_BACKEND_PORT_PROBE_HOSTS,
-  });
+  if (unavailableHosts.length > 0) {
+    return yield* new DesktopBackendPortInUseError({
+      port: DEFAULT_DESKTOP_BACKEND_PORT,
+      hosts: unavailableHosts,
+    });
+  }
+  return {
+    port: DEFAULT_DESKTOP_BACKEND_PORT,
+  } as const;
 });
 
 const handleFatalStartupError = Effect.fn("desktop.startup.handleFatalStartupError")(function* (
@@ -160,12 +153,11 @@ const bootstrap = Effect.gen(function* () {
   const backendPortSelection = yield* resolveDesktopBackendPort(environment.configuredBackendPort);
   const backendPort = backendPortSelection.port;
   yield* logBootstrapInfo(
-    backendPortSelection.selectedByScan
-      ? "selected backend port via sequential scan"
-      : "using configured backend port",
+    Option.isSome(environment.configuredBackendPort)
+      ? "using configured backend port"
+      : "using default backend port",
     {
       port: backendPort,
-      ...(backendPortSelection.selectedByScan ? { startPort: DEFAULT_DESKTOP_BACKEND_PORT } : {}),
     },
   );
 
