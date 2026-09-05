@@ -95,6 +95,7 @@ function childProjection(
     readonly kind?: OrchestrationV2RuntimeRequest["kind"];
     readonly status?: OrchestrationV2RuntimeRequest["status"];
     readonly resumable?: boolean;
+    readonly messageResponse?: boolean;
     readonly runtimeMode?: "approval-required" | "auto-accept-edits" | "auto" | "full-access";
     readonly interactionMode?: "plan" | "default";
   } = {},
@@ -125,9 +126,11 @@ function childProjection(
         kind: input.kind ?? "user_input",
         status,
         responseCapability:
-          input.resumable === false
-            ? { type: "not_resumable", reason: "The provider session ended." }
-            : { type: "live", providerSessionId },
+          input.messageResponse === true
+            ? { type: "message" }
+            : input.resumable === false
+              ? { type: "not_resumable", reason: "The provider session ended." }
+              : { type: "live", providerSessionId },
         createdAt: now,
         resolvedAt: status === "pending" ? null : now,
       },
@@ -741,6 +744,25 @@ describe("PendingRequestMcpService", () => {
           assert.equal(unavailable.code, "request_not_resumable");
         }).pipe(
           Effect.provide(serviceLayer({ getChild: () => childProjection({ resumable: false }) })),
+        ),
+      ),
+      Effect.andThen(
+        Effect.gen(function* () {
+          const service = yield* PendingRequestMcpService.PendingRequestMcpService;
+          const messageOnly = yield* service
+            .respond(scope, {
+              childThreadId,
+              requestId,
+              answers: { editor: "Vim" },
+              clientRequestId: "message-only-provider-response",
+            })
+            .pipe(Effect.flip);
+          assert.equal(messageOnly.code, "request_not_resumable");
+          assert.match(messageOnly.message, /new thread message/);
+        }).pipe(
+          Effect.provide(
+            serviceLayer({ getChild: () => childProjection({ messageResponse: true }) }),
+          ),
         ),
       ),
     ),

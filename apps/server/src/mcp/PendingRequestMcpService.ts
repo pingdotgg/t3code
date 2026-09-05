@@ -528,7 +528,12 @@ export const make = Effect.gen(function* () {
           );
         }
         if (request.responseCapability.type !== "live") {
-          return yield* failure("request_not_resumable", request.responseCapability.reason);
+          return yield* failure(
+            "request_not_resumable",
+            request.responseCapability.type === "not_resumable"
+              ? request.responseCapability.reason
+              : "This request can only be answered by sending a new thread message.",
+          );
         }
         const payloadStatus = questionPayloadStatus(item.questions);
         if (payloadStatus === "too_large") {
