@@ -1183,6 +1183,15 @@ describe("applyThreadDetailEvent", () => {
           },
           {
             id: MessageId.make("msg-3"),
+            role: "user",
+            text: "Second",
+            turnId: null,
+            streaming: false,
+            createdAt: "2026-04-01T02:30:00.000Z",
+            updatedAt: "2026-04-01T02:30:00.000Z",
+          },
+          {
+            id: MessageId.make("msg-4"),
             role: "assistant",
             text: "Response 2",
             turnId: TurnId.make("turn-2"),
@@ -1207,7 +1216,7 @@ describe("applyThreadDetailEvent", () => {
             checkpointRef: CheckpointRef.make("ref-2"),
             status: "ready",
             files: [],
-            assistantMessageId: MessageId.make("msg-3"),
+            assistantMessageId: MessageId.make("msg-4"),
             completedAt: "2026-04-01T03:00:00.000Z",
           },
         ],
@@ -1231,9 +1240,190 @@ describe("applyThreadDetailEvent", () => {
         // turn-2 checkpoint is filtered out (turnCount 2 > revert target 1)
         expect(result.thread.checkpoints).toHaveLength(1);
         expect(result.thread.checkpoints[0]?.turnId).toBe("turn-1");
-        // msg-3 (turn-2) is filtered, msg-1 (no turn) and msg-2 (turn-1) remain
+        // The second turnless user prompt and its turn-2 response are filtered.
         expect(result.thread.messages).toHaveLength(2);
+        expect(result.thread.messages.map((message) => message.id)).toEqual(["msg-1", "msg-2"]);
         expect(result.thread.latestTurn?.turnId).toBe("turn-1");
+      }
+    });
+
+    it("uses retained turns from the loaded pagination window", () => {
+      const loadedTurns = [90, 91, 92].map((turnCount) => ({
+        turnCount,
+        turnId: TurnId.make(`turn-${turnCount}`),
+      }));
+      const messages: OrchestrationThread["messages"] = loadedTurns.flatMap(
+        ({ turnCount }, index) => [
+          {
+            id: MessageId.make(`user-${turnCount}`),
+            role: "user" as const,
+            text: `Prompt ${turnCount}`,
+            turnId: null,
+            streaming: false,
+            createdAt: `2026-04-01T00:00:0${index * 2}.000Z`,
+            updatedAt: `2026-04-01T00:00:0${index * 2}.000Z`,
+          },
+          {
+            id: MessageId.make(`assistant-${turnCount}`),
+            role: "assistant" as const,
+            text: `Response ${turnCount}`,
+            turnId: null,
+            streaming: false,
+            createdAt: `2026-04-01T00:00:0${index * 2 + 1}.000Z`,
+            updatedAt: `2026-04-01T00:00:0${index * 2 + 1}.000Z`,
+          },
+        ],
+      );
+      const threadWithWindow: OrchestrationThread = {
+        ...baseThread,
+        messages,
+        checkpoints: loadedTurns.map(({ turnCount, turnId }, index) => ({
+          turnId,
+          checkpointTurnCount: turnCount,
+          checkpointRef: CheckpointRef.make(`ref-${turnCount}`),
+          status: "ready",
+          files: [],
+          assistantMessageId: MessageId.make(`assistant-${turnCount}`),
+          completedAt: `2026-04-01T00:01:0${index}.000Z`,
+        })),
+      };
+
+      const result = applyThreadDetailEvent(threadWithWindow, {
+        ...baseEventFields,
+        sequence: 15,
+        occurredAt: "2026-04-01T04:00:00.000Z",
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.reverted",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          turnCount: 91,
+        },
+      });
+
+      expect(result.kind).toBe("updated");
+      if (result.kind === "updated") {
+        expect(result.thread.messages.map((message) => message.id)).toEqual([
+          "user-90",
+          "assistant-90",
+          "user-91",
+          "assistant-91",
+        ]);
+      }
+    });
+
+    it.each([0, 1])(
+      "drops turnless prompts when no checkpoint survives a revert to %i",
+      (turnCount) => {
+        const messages: OrchestrationThread["messages"] = ["system", "user"].map((role) => ({
+          id: MessageId.make(role),
+          role: role as "system" | "user",
+          text: role,
+          turnId: null,
+          streaming: false,
+          createdAt: "2026-04-01T01:00:00.000Z",
+          updatedAt: "2026-04-01T01:00:00.000Z",
+        }));
+        const result = applyThreadDetailEvent(
+          {
+            ...baseThread,
+            messages,
+            checkpoints: [
+              {
+                turnId: TurnId.make("turn-2"),
+                checkpointTurnCount: 2,
+                checkpointRef: CheckpointRef.make("ref-2"),
+                status: "ready",
+                files: [],
+                assistantMessageId: null,
+                completedAt: "2026-04-01T01:01:00.000Z",
+              },
+            ],
+          },
+          {
+            ...baseEventFields,
+            sequence: 17,
+            occurredAt: "2026-04-01T02:00:00.000Z",
+            aggregateKind: "thread",
+            aggregateId: ThreadId.make("thread-1"),
+            type: "thread.reverted",
+            payload: { threadId: ThreadId.make("thread-1"), turnCount },
+          },
+        );
+        expect(result.kind).toBe("updated");
+        if (result.kind === "updated") {
+          expect(result.thread.messages.map((message) => message.id)).toEqual(["system"]);
+        }
+      },
+    );
+
+    it("retains every message before the latest retained checkpoint", () => {
+      const message = (
+        id: string,
+        role: "user" | "assistant",
+        createdAt: string,
+      ): OrchestrationThread["messages"][number] => ({
+        id: MessageId.make(id),
+        role,
+        text: id,
+        turnId: null,
+        streaming: false,
+        createdAt,
+        updatedAt: createdAt,
+      });
+      const threadWithSteering: OrchestrationThread = {
+        ...baseThread,
+        messages: [
+          message("user-1", "user", "2026-04-01T01:00:00.000Z"),
+          message("assistant-commentary-1", "assistant", "2026-04-01T01:01:00.000Z"),
+          message("user-steering-1", "user", "2026-04-01T01:02:00.000Z"),
+          message("assistant-final-1", "assistant", "2026-04-01T01:03:00.000Z"),
+          message("user-2", "user", "2026-04-01T02:00:00.000Z"),
+          message("assistant-final-2", "assistant", "2026-04-01T02:01:00.000Z"),
+        ],
+        checkpoints: [
+          {
+            turnId: TurnId.make("turn-1"),
+            checkpointTurnCount: 1,
+            checkpointRef: CheckpointRef.make("ref-1"),
+            status: "ready",
+            files: [],
+            assistantMessageId: null,
+            completedAt: "2026-04-01T01:04:00.000Z",
+          },
+          {
+            turnId: TurnId.make("turn-2"),
+            checkpointTurnCount: 2,
+            checkpointRef: CheckpointRef.make("ref-2"),
+            status: "ready",
+            files: [],
+            assistantMessageId: null,
+            completedAt: "2026-04-01T02:02:00.000Z",
+          },
+        ],
+      };
+
+      const result = applyThreadDetailEvent(threadWithSteering, {
+        ...baseEventFields,
+        sequence: 16,
+        occurredAt: "2026-04-01T03:00:00.000Z",
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.reverted",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          turnCount: 1,
+        },
+      });
+
+      expect(result.kind).toBe("updated");
+      if (result.kind === "updated") {
+        expect(result.thread.messages.map((entry) => entry.id)).toEqual([
+          "user-1",
+          "assistant-commentary-1",
+          "user-steering-1",
+          "assistant-final-1",
+        ]);
       }
     });
   });
