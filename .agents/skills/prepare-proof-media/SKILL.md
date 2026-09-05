@@ -1,6 +1,6 @@
 ---
 name: prepare-proof-media
-description: Prepare T3 Code PRs for review, revise PR descriptions, or produce visual proof with screenshots, GIFs, and videos. Covers claim verification, comparable evidence, contextual cropping, and publication checks; media-only requests stay limited to media.
+description: Prepare or update T3 Code PRs, keep their descriptions current as commits change, or produce visual proof with screenshots, GIFs, and videos. Covers claim verification, comparable evidence, contextual cropping, and publication checks; media-only requests stay limited to media.
 ---
 
 # Prepare a PR for human review
@@ -106,7 +106,9 @@ Skip this step when there is no visual claim and repository rules require no med
 
 Follow the current PR template. Lead with the user's problem and resulting
 behavior, then explain the cause and approach only as far as they help review.
-Rewrite the title and body around the final implementation when scope changes.
+Describe the complete contribution: what is being added or changed, who uses
+it, and the resulting behavior. Put supporting tools and implementation details
+after that explanation. For an existing PR, apply the update loop in step 6.
 Remove abandoned approaches, conversation history, repeated summaries, and
 empty template sections where the repository permits. A small fix usually
 needs a short explanation and focused verification, not a report.
@@ -169,3 +171,27 @@ bot verdict, or valid media receipt establishes none of those on its own.
 
 **Complete when:** the delivered draft or published PR satisfies the checklist,
 and its reported status names any remaining required proof or publication step.
+
+## 6. Keep the description current as commits change
+
+When updating or babysitting a PR, repeat this loop whenever its head changes,
+including new commits, review fixes, rebases, and force-pushes:
+
+1. Read the current base, head, complete base-to-head diff, and published title
+   and body. Review the whole contribution, not just the latest commit.
+2. Check the explanation, scope, verification commands/results/counts, media,
+   evidence revisions, limitations, and checkboxes against that head, including
+   claims in bot-added summaries. Rewrite
+   stale claims and remove superseded details in place; keep the description
+   an explanation of the current PR rather than a running commit log.
+3. Repeat affected verification from steps 2 and 3, then update the title and
+   body before reporting the revision ready. If the description is still
+   accurate, leave its wording intact and record the checked head in working notes.
+4. Read back the published description and head after updating. If another
+   commit arrived during the check, repeat the loop for the new head. While
+   babysitting, inspect new reviewer comments and checks against that revision.
+
+**Complete when:** the published description has been checked against the
+current head, every material change is represented accurately, and any remaining
+verification or publication gap is explicit. A green check or resolved review
+thread does not replace this description check.
