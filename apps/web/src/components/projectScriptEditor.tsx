@@ -233,7 +233,8 @@ export function ProjectScriptEditorDialog({
     if (!request || pendingSubmissionRef.current !== null) return;
     const changesKeybinding =
       (keybinding.trim() || null) !== (request.initial.keybinding?.trim() || null);
-    if (changesKeybinding && !readEnvironmentScope(environmentId, AuthSettingsWriteScope)) {
+    const canChangeKeybinding = readEnvironmentScope(environmentId, AuthSettingsWriteScope);
+    if (changesKeybinding && !canChangeKeybinding) {
       setValidationError("This connection cannot change keyboard shortcuts.");
       return;
     }
@@ -268,7 +269,7 @@ export function ProjectScriptEditorDialog({
         icon,
         runOnWorktreeCreate,
         waitForSetup: runOnWorktreeCreate && waitForSetup,
-        ...(request.scriptId === null || changesKeybinding
+        ...((request.scriptId === null && canChangeKeybinding) || changesKeybinding
           ? { keybinding: keybindingRule?.key ?? null }
           : {}),
         previewUrl: trimmedPreviewUrl.length > 0 ? trimmedPreviewUrl : null,
