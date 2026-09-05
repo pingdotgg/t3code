@@ -875,7 +875,7 @@ export const RelayHealthResponse = Schema.Struct({
 });
 export type RelayHealthResponse = typeof RelayHealthResponse.Type;
 
-export const RelayHealthGroup = HttpApiGroup.make("health")
+const RelayHealthGroup = HttpApiGroup.make("health")
   .add(
     HttpApiEndpoint.get("health", "/health", {
       success: RelayHealthResponse,
@@ -884,7 +884,7 @@ export const RelayHealthGroup = HttpApiGroup.make("health")
   )
   .annotate(OpenApi.Description, "Service health and readiness.");
 
-export const RelayMetadataGroup = HttpApiGroup.make("metadata")
+const RelayMetadataGroup = HttpApiGroup.make("metadata")
   .add(
     HttpApiEndpoint.get("authorizationServer", "/.well-known/oauth-authorization-server", {
       success: RelayAuthorizationServerMetadata,
@@ -946,7 +946,7 @@ export const RelayUnregisterDeviceEndpoint = HttpApiEndpoint.delete(
   },
 ).annotate(OpenApi.Summary, "Unregister a mobile device");
 
-export const RelayMobileGroup = HttpApiGroup.make("mobile")
+const RelayMobileGroup = HttpApiGroup.make("mobile")
   .add(
     RelayRegisterDeviceEndpoint,
     RelayRegisterLiveActivityEndpoint,
@@ -956,7 +956,7 @@ export const RelayMobileGroup = HttpApiGroup.make("mobile")
   .annotate(OpenApi.Description, "Mobile push-notification and Live Activity registration.")
   .middleware(RelayDpopClientAuth);
 
-export const RelayClientGroup = HttpApiGroup.make("client")
+const RelayClientGroup = HttpApiGroup.make("client")
   .add(
     HttpApiEndpoint.get("listEnvironments", "/v1/environments", {
       headers: RelayBearerRequestHeaders,
@@ -1025,7 +1025,7 @@ export const RelayExchangeDpopAccessTokenEndpoint = HttpApiEndpoint.post(
     "Bootstrap endpoint. Send the DPoP proof JWT in the dpop header and the Clerk token in subject_token. The returned access token is bound to the proof key.",
   );
 
-export const RelayTokenGroup = HttpApiGroup.make("token")
+const RelayTokenGroup = HttpApiGroup.make("token")
   .add(RelayExchangeDpopAccessTokenEndpoint)
   .annotate(OpenApi.Description, "OAuth token exchange for DPoP-bound client access.");
 
@@ -1056,12 +1056,12 @@ export const RelayGetEnvironmentStatusEndpoint = HttpApiEndpoint.post(
   },
 ).annotate(OpenApi.Summary, "Check environment status");
 
-export const RelayDpopClientGroup = HttpApiGroup.make("dpopClient")
+const RelayDpopClientGroup = HttpApiGroup.make("dpopClient")
   .add(RelayConnectEnvironmentEndpoint, RelayGetEnvironmentStatusEndpoint)
   .annotate(OpenApi.Description, "DPoP-authenticated client access to linked environments.")
   .middleware(RelayDpopClientAuth);
 
-export const RelayServerGroup = HttpApiGroup.make("server")
+const RelayServerGroup = HttpApiGroup.make("server")
   .add(
     HttpApiEndpoint.post(
       "publishAgentActivity",
