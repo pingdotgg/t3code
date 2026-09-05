@@ -63,6 +63,18 @@ index e9f62f5..af82a46 100644
 diff --git a/dist/renderers/FileRenderer.js b/dist/renderers/FileRenderer.js
 --- a/dist/renderers/FileRenderer.js
 +++ b/dist/renderers/FileRenderer.js
+@@ -107,10 +107,10 @@
+ 			result: massiveFile ? void 0 : cache?.result,
+ 			renderRange: void 0
+ 		};
++		this.computedLang = file.lang ?? getFiletypeFromFileName(file.name);
+ 		if (this.workerManager?.isWorkingPool() === true) {
+ 			if (this.renderCache.result == null && !massiveFile) this.workerManager.highlightFileAST(this, file);
+ 		} else if (this.highlighter == null) {
+-			this.computedLang = file.lang ?? getFiletypeFromFileName(file.name);
+ 			this.initializeHighlighter();
+ 		}
+ 	}
 @@ -163,6 +163,8 @@
  		if (this.renderCache == null) return;
  		const { file, result } = this.renderCache;
@@ -72,6 +84,22 @@ diff --git a/dist/renderers/FileRenderer.js b/dist/renderers/FileRenderer.js
  		const lineCache = this.lineCache != null && isLineCacheForFile(this.lineCache, file) ? this.lineCache : void 0;
  		for (const [line, tokens] of dirtyLines) {
  			if (lineCache != null && line < lineCache.lines.length) {
+@@ -268,6 +270,7 @@
+ 		const forcePlainText = !hasContent || isFilePlainText(file) || isFileMassive(lines.length, this.getTokenizeMaxLength());
+ 		const newContent = !areFilesEqual(file, this.renderCache.file);
+ 		const newRenderRange = !areRenderRangesEqual(this.renderCache.renderRange, renderRange);
++		this.computedLang = file.lang ?? getFiletypeFromFileName(file.name);
+ 		if (this.workerManager?.isWorkingPool() === true) {
+ 			if (forcePlainText || this.renderCache.result == null || !this.renderCache.highlighted && (newContent || newRenderRange)) {
+ 				this.renderCache.file = file;
+@@ -278,7 +281,6 @@
+ 			}
+ 			if (!forcePlainText && hasContent && (!this.renderCache.highlighted || forceHighlight)) this.workerManager.highlightFileAST(this, file);
+ 		} else {
+-			this.computedLang = file.lang ?? getFiletypeFromFileName(file.name);
+ 			const hasThemes = this.highlighter != null && areThemesAttached(options.theme);
+ 			const hasLangs = this.highlighter != null && areLanguagesAttached(this.computedLang);
+ 			const canHighlight = !forcePlainText && hasLangs;
 diff --git a/package.json b/package.json
 index ff61c90..1e170e5 100644
 --- a/package.json
