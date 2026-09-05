@@ -322,15 +322,14 @@ function resolveTextGenerationProvider(settings: ServerSettings): ServerSettings
 }
 
 function fallbackTextGenerationProvider(settings: ServerSettings): ServerSettings {
-  const legacyInstances = Object.fromEntries(
-    Object.entries(settings.providers).map(
-      ([driver, config]) => [driver, { driver: ProviderDriverKind.make(driver), config }] as const,
-    ),
+  const providerInstances: Record<string, ProviderInstanceConfig> = {};
+  for (const [driver, config] of Object.entries(settings.providers)) {
+    providerInstances[driver] = { driver: ProviderDriverKind.make(driver), config };
+  }
+  Object.assign(providerInstances, settings.providerInstances);
+  const fallbackEntry = Object.entries(providerInstances).find(([, instance]) =>
+    resolveProviderInstanceEnabled(instance),
   );
-  const fallbackEntry = Object.entries({
-    ...legacyInstances,
-    ...settings.providerInstances,
-  }).find(([, instance]) => resolveProviderInstanceEnabled(instance));
   if (!fallbackEntry) {
     return settings;
   }
