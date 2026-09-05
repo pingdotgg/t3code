@@ -13,6 +13,7 @@ export interface ComposerBannerStackItem {
   readonly id: string;
   readonly variant: ComposerBannerVariant;
   readonly priority?: "urgent" | "activity" | "notice";
+  readonly alwaysVisible?: boolean;
   readonly icon: ReactNode;
   readonly title: ReactNode;
   readonly description?: ReactNode;
@@ -24,7 +25,7 @@ export interface ComposerBannerStackItem {
 
 export type ComposerBannerStackContent = Pick<
   ComposerBannerStackItem,
-  "id" | "variant" | "priority"
+  "id" | "variant" | "priority" | "alwaysVisible"
 > & { readonly content: ReactNode };
 
 type ComposerBannerStackEntry = ComposerBannerStackItem | ComposerBannerStackContent;
@@ -57,6 +58,13 @@ export function ComposerBannerStack({ className, items }: ComposerBannerStackPro
     requestedExitingItemId !== null && items.some((item) => item.id === requestedExitingItemId)
       ? requestedExitingItemId
       : null;
+  // Activity stays attached. Persistent actions remain above it without changing notice priority.
+  const orderedItems = items.toSorted((a, b) => bannerPriority(a) - bannerPriority(b));
+  const frontItem = orderedItems[0];
+  const remainingItems = orderedItems.slice(1);
+  const visibleItems = remainingItems.filter((item) => item.alwaysVisible);
+  const stackedItems = remainingItems.filter((item) => !item.alwaysVisible);
+  const hasStack = stackedItems.length > 0;
 
   useEffect(() => {
     return () => {
@@ -67,8 +75,8 @@ export function ComposerBannerStack({ className, items }: ComposerBannerStackPro
   }, []);
 
   useEffect(() => {
-    if (items.length < 2) setStackExpanded(false);
-  }, [items.length]);
+    if (!hasStack) setStackExpanded(false);
+  }, [hasStack]);
 
   useLayoutEffect(() => {
     if (stackExpanded && pendingFocusRef.current === "notice") {
@@ -83,18 +91,9 @@ export function ComposerBannerStack({ className, items }: ComposerBannerStackPro
     }
   }, [stackExpanded]);
 
-  if (items.length === 0) {
-    return null;
-  }
-
-  // Activity stays attached. Urgency and severity only order the notices behind it.
-  const orderedItems = items.toSorted((a, b) => bannerPriority(a) - bannerPriority(b));
-  const frontItem = orderedItems[0];
   if (!frontItem) {
     return null;
   }
-  const stackedItems = orderedItems.slice(1);
-  const hasStack = stackedItems.length > 0;
   const showCollapsedStackCap = hasStack && exitingItemId !== frontItem.id;
   const firstStackedItem = stackedItems[0];
 
@@ -144,6 +143,28 @@ export function ComposerBannerStack({ className, items }: ComposerBannerStackPro
             onDismissRequest={() => requestDismiss(frontItem)}
           />
         </div>
+        {visibleItems.length > 0 ? (
+          <div className="space-y-2 pb-2">
+            {visibleItems.map((item) => (
+              <div
+                key={item.id}
+                className={cn(
+                  "transition-[translate,opacity] duration-220 ease-in",
+                  exitingItemId === item.id
+                    ? "pointer-events-none translate-y-28 opacity-0"
+                    : "opacity-100",
+                )}
+              >
+                <ComposerBannerStackAlert
+                  item={item}
+                  attached={false}
+                  exiting={exitingItemId === item.id}
+                  onDismissRequest={() => requestDismiss(item)}
+                />
+              </div>
+            ))}
+          </div>
+        ) : null}
         {hasStack ? (
           <div
             ref={noticesRef}
