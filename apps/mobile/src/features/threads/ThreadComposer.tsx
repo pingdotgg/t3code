@@ -363,8 +363,8 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     voiceInput.elapsedSeconds,
   );
   const isVoiceInputPresented = voicePresentation.statusLabel !== null;
-  // An open draft stays visible; only a collapsed composer becomes a voice strip.
-  const isExpanded = isFocused || settingsSheetPresentation.isActive;
+  // Keep live speech visible even when dictation starts with the keyboard closed.
+  const isExpanded = isFocused || settingsSheetPresentation.isActive || voiceInput.isBusy;
   const showsCompactDictation = isVoiceInputPresented && !isExpanded;
   const isToolbarVisible = isExpanded || isVoiceInputPresented;
   const uploadStates = useAtomValue(composerAttachmentUploadsAtom);
