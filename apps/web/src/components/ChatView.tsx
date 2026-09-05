@@ -3960,7 +3960,10 @@ export default function ChatView(props: ChatViewProps) {
     };
     if (diffAction !== "open" || newlyCompletedTurnId === null) return;
 
-    useDiffPanelStore.getState().selectTurn(activeThreadRef, newlyCompletedTurnId);
+    const diffSelection = useDiffPanelStore.getState().byThreadKey[activeThreadKey];
+    if (diffSelection?.kind !== "turn" || !diffSelection.baselineTurnId) {
+      useDiffPanelStore.getState().selectTurn(activeThreadRef, newlyCompletedTurnId);
+    }
     useRightPanelStore.getState().open(activeThreadRef, "diff");
     onDiffPanelOpen?.();
   }, [
