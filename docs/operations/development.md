@@ -71,10 +71,12 @@ Windows investigation while that suite is not a required gate.
 
 ### Unused code
 
-`vp run knip:check` runs the unused-file and dependency check enforced by CI.
+`vp run knip:check` checks unused files and dependencies across the repo, then
+unused exports and types in `packages/tailscale`. CI enforces both checks.
 Use `vp run knip --workspace apps/web` to audit one workspace, including exports,
 or `vp run knip:production --workspace apps/web` to find code kept alive only by tests.
-The full export audit still has findings and is not a CI gate. Review callers before
+The full export audit still has findings and is not a repo-wide CI gate. Extend the
+export check's workspace selectors as more workspaces become clean. Review callers before
 deleting code; production mode can also report development scripts and test fixtures.
 Runtime-discovered entrypoints and dependency exceptions belong in [knip.jsonc](../../knip.jsonc).
 
