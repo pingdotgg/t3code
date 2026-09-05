@@ -10,6 +10,7 @@ import android.graphics.Typeface
 import android.text.Editable
 import android.text.InputType
 import android.text.Spanned
+import android.text.TextUtils
 import android.text.TextWatcher
 import android.text.style.ReplacementSpan
 import android.view.Gravity
@@ -196,6 +197,8 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
     } else {
       Gravity.TOP or Gravity.START
     }
+    editor.maxLines = if (centered) 1 else Int.MAX_VALUE
+    editor.ellipsize = if (centered) TextUtils.TruncateAt.END else null
   }
 
   fun setContentInsetVertical(contentInsetVertical: Int) {
