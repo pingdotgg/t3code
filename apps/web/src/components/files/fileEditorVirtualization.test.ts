@@ -136,6 +136,8 @@ describe("wrapped editor document changes", () => {
     const previousLastLine = document.lineCount;
     const before = instance.getLinePosition(previousLastLine);
     expect(before).toEqual({ top: 120328, height: 60 });
+    const viewport = { top: before!.top - 100, bottom: before!.top + 80 };
+    expect(instance.getAdvancedStickySpecs(viewport)).toEqual({ topOffset: 118240, height: 2156 });
 
     append();
 
@@ -143,6 +145,7 @@ describe("wrapped editor document changes", () => {
     expect(instance.getLinePosition(previousLastLine)).toEqual({ top: before!.top, height: 20 });
     expect(instance.getLinePosition(document.lineCount)).toEqual({ top: 120348, height: 20 });
     expect(instance.getVirtualizedHeight()).toBe(120376);
+    expect(instance.getAdvancedStickySpecs(viewport)).toEqual({ topOffset: 118240, height: 2136 });
   });
 
   it("invalidates changed and shifted rows after an insertion in the middle", async () => {
