@@ -390,6 +390,222 @@ describe("OpenCodeAdapterV2", () => {
       }).pipe(Effect.provide(idAllocatorLayer), Effect.scoped),
   );
 
+  it.effect("accounts unique step-finish usage on its root or child turn", () =>
+    Effect.gen(function* () {
+      const nativeEvents = asyncEventStream();
+      const nativeSessionId = "native-opencode-usage-root";
+      const childSessionId = "native-opencode-usage-child";
+      let admissionMessageId = "";
+      const harness = yield* makeOpenCodeRuntimeHarness("usage", nativeSessionId, {
+        event: {
+          subscribe: async (_input: unknown, options: { signal?: AbortSignal }) => {
+            options.signal?.addEventListener("abort", () => nativeEvents.close(), { once: true });
+            return { stream: nativeEvents.stream };
+          },
+        },
+        session: {
+          create: async () => ({
+            data: { id: nativeSessionId, time: { created: 1, updated: 1 } },
+          }),
+          promptAsync: async (input: { messageID: string }) => {
+            admissionMessageId = input.messageID;
+            return { data: true };
+          },
+          get: async (input: { sessionID: string }) => ({
+            data: {
+              id: input.sessionID,
+              ...(input.sessionID === childSessionId ? { parentID: nativeSessionId } : {}),
+              time: { created: 1, updated: 1 },
+              permission: [],
+            },
+          }),
+          update: async () => ({ data: true }),
+        },
+      });
+      yield* harness.startTurn();
+      const received = yield* harness.runtime.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+
+      yield* Effect.promise(() =>
+        nativeEvents.push({
+          type: "message.updated",
+          properties: {
+            sessionID: nativeSessionId,
+            info: {
+              id: admissionMessageId,
+              sessionID: nativeSessionId,
+              role: "user",
+              time: { created: 1 },
+            },
+          },
+        }),
+      );
+      yield* Effect.promise(() =>
+        nativeEvents.push({
+          type: "message.part.updated",
+          properties: {
+            sessionID: nativeSessionId,
+            part: {
+              id: "root-task",
+              sessionID: nativeSessionId,
+              messageID: "root-assistant",
+              type: "tool",
+              callID: "root-task-call",
+              tool: "task",
+              state: {
+                status: "running",
+                input: { prompt: "Inspect usage" },
+                title: "Inspect usage",
+                time: { start: 1 },
+                metadata: { sessionId: childSessionId },
+              },
+            },
+          },
+        }),
+      );
+      yield* Effect.promise(() =>
+        nativeEvents.push({
+          type: "message.updated",
+          properties: {
+            sessionID: childSessionId,
+            info: {
+              id: "child-user",
+              sessionID: childSessionId,
+              role: "user",
+              time: { created: 2 },
+            },
+          },
+        }),
+      );
+
+      const rootStep = {
+        id: "root-step-1",
+        sessionID: nativeSessionId,
+        messageID: "root-assistant",
+        type: "step-finish",
+        reason: "tool-calls",
+        cost: 0.01,
+        tokens: {
+          input: 10,
+          output: 3,
+          reasoning: 2,
+          cache: { read: 5, write: 1 },
+        },
+      } as const;
+      for (const part of [
+        rootStep,
+        rootStep,
+        {
+          ...rootStep,
+          id: "root-step-2",
+          tokens: {
+            input: 20,
+            output: 4,
+            reasoning: 1,
+            cache: { read: 7, write: 2 },
+          },
+        },
+      ]) {
+        yield* Effect.promise(() =>
+          nativeEvents.push({
+            type: "message.part.updated",
+            properties: { sessionID: nativeSessionId, part },
+          }),
+        );
+      }
+      yield* Effect.promise(() =>
+        nativeEvents.push({
+          type: "message.updated",
+          properties: {
+            sessionID: nativeSessionId,
+            info: {
+              id: "root-assistant",
+              sessionID: nativeSessionId,
+              role: "assistant",
+              time: { created: 1, completed: 3 },
+              tokens: {
+                input: 9_000,
+                output: 9_000,
+                reasoning: 9_000,
+                cache: { read: 9_000, write: 9_000 },
+              },
+            },
+          },
+        }),
+      );
+      yield* Effect.promise(() =>
+        nativeEvents.push({
+          type: "message.part.updated",
+          properties: {
+            sessionID: childSessionId,
+            part: {
+              id: "child-step-1",
+              sessionID: childSessionId,
+              messageID: "child-assistant",
+              type: "step-finish",
+              reason: "stop",
+              cost: 0.02,
+              tokens: {
+                input: 100,
+                output: 30,
+                reasoning: 20,
+                cache: { read: 50, write: 10 },
+              },
+            },
+          },
+        }),
+      );
+      yield* Effect.promise(() =>
+        nativeEvents.push({
+          type: "session.idle",
+          properties: { sessionID: childSessionId },
+        }),
+      );
+      yield* Effect.promise(() =>
+        nativeEvents.push({
+          type: "session.idle",
+          properties: { sessionID: nativeSessionId },
+        }),
+      );
+
+      const events = yield* Fiber.join(received);
+      const completedTurns = events.flatMap((event) =>
+        event.type === "provider_turn.updated" && event.providerTurn.status === "completed"
+          ? [event.providerTurn]
+          : [],
+      );
+      const root = completedTurns.find(
+        (turn) => turn.providerThreadId === harness.providerThread.id,
+      );
+      const child = completedTurns.find(
+        (turn) => turn.providerThreadId !== harness.providerThread.id,
+      );
+      assert.deepEqual(root?.turnTokenUsage, {
+        usageStatus: "complete",
+        usageScope: "main_agent",
+        inputTokens: 45,
+        cachedInputTokens: 12,
+        cacheCreationTokens: 3,
+        outputTokens: 10,
+        reasoningTokens: 3,
+        hasSubagents: true,
+      });
+      assert.deepEqual(child?.turnTokenUsage, {
+        usageStatus: "complete",
+        usageScope: "main_agent",
+        inputTokens: 160,
+        cachedInputTokens: 50,
+        cacheCreationTokens: 10,
+        outputTokens: 50,
+        reasoningTokens: 20,
+        hasSubagents: false,
+      });
+    }).pipe(Effect.provide(idAllocatorLayer), Effect.scoped),
+  );
+
   it.effect("compacts with the native summarize API and emits a completed compaction", () =>
     Effect.gen(function* () {
       const nativeEvents = asyncEventStream();
