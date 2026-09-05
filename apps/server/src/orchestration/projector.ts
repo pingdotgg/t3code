@@ -333,6 +333,7 @@ export function projectEvent(
             settledOverride: null,
             settledAt: null,
             unsettledAt: null,
+            viewedAt: payload.createdAt,
             snoozedUntil: null,
             snoozedAt: null,
             deletedAt: null,
@@ -500,6 +501,7 @@ export function projectEvent(
             ...(payload.linkedPullRequest !== undefined
               ? { linkedPullRequest: payload.linkedPullRequest }
               : {}),
+            ...(payload.viewedAt !== undefined ? { viewedAt: payload.viewedAt } : {}),
             updatedAt: payload.updatedAt,
           }),
         })),

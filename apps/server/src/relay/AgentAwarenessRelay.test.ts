@@ -201,6 +201,29 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
         },
       } as unknown as OrchestrationEvent),
     ).toBe(false);
+    expect(
+      AgentAwarenessRelay.shouldPublishAgentAwarenessEvent({
+        ...base,
+        type: "thread.meta-updated",
+        payload: {
+          threadId: "thread-1" as ThreadId,
+          viewedAt: now,
+          updatedAt: now,
+        },
+      } as unknown as OrchestrationEvent),
+    ).toBe(false);
+    expect(
+      AgentAwarenessRelay.shouldPublishAgentAwarenessEvent({
+        ...base,
+        type: "thread.meta-updated",
+        payload: {
+          threadId: "thread-1" as ThreadId,
+          title: "Renamed thread",
+          viewedAt: now,
+          updatedAt: now,
+        },
+      } as unknown as OrchestrationEvent),
+    ).toBe(true);
   });
 
   it("deduplicates awareness state updates whose only change is their event timestamp", () => {

@@ -119,5 +119,29 @@ it.effect("projects settled lifecycle events", () =>
     );
     expect(woke.threads[0]?.settledOverride).toBeNull();
     expect(woke.threads[0]?.unsettledAt).toBe(wakeAt);
+
+    const viewedAt = "2026-01-01T00:00:01.000Z";
+    const viewed = yield* projectEvent(
+      woke,
+      makeEvent({
+        sequence: 7,
+        type: "thread.meta-updated",
+        payload: { threadId: ThreadId.make("thread-1"), viewedAt, updatedAt: now },
+      }),
+    );
+    expect(viewed.threads[0]?.viewedAt).toBe(viewedAt);
+    expect(viewed.threads[0]?.updatedAt).toBe(now);
+
+    const markedUnreadAt = "2025-12-31T23:59:59.999Z";
+    const markedUnread = yield* projectEvent(
+      viewed,
+      makeEvent({
+        sequence: 8,
+        type: "thread.meta-updated",
+        payload: { threadId: ThreadId.make("thread-1"), viewedAt: markedUnreadAt, updatedAt: now },
+      }),
+    );
+    expect(markedUnread.threads[0]?.viewedAt).toBe(markedUnreadAt);
+    expect(markedUnread.threads[0]?.updatedAt).toBe(now);
   }),
 );

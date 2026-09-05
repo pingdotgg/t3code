@@ -58,6 +58,7 @@ export function mergeEnvironmentThread(
     archivedAt: shell.archivedAt,
     settledOverride: shell.settledOverride,
     settledAt: shell.settledAt,
+    viewedAt: shell.viewedAt,
     snoozedUntil: shell.snoozedUntil,
     snoozedAt: shell.snoozedAt,
     pinnedAt: shell.pinnedAt,

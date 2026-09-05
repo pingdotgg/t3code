@@ -51,4 +51,17 @@ describe("ExecutionEnvironmentDescriptor", () => {
       }).capabilities.fileAttachments,
     ).toEqual({ maxUploadBytes: 50 * 1024 * 1024 });
   });
+
+  it("treats a missing thread view-state capability as unsupported", () => {
+    expect(decodeDescriptor(descriptor).capabilities.threadViewState).toBeUndefined();
+  });
+
+  it("preserves an advertised thread view-state capability", () => {
+    expect(
+      decodeDescriptor({
+        ...descriptor,
+        capabilities: { ...descriptor.capabilities, threadViewState: true },
+      }).capabilities.threadViewState,
+    ).toBe(true);
+  });
 });

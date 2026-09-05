@@ -208,6 +208,7 @@ describe("environment entity projections", () => {
       title: "Cached thread",
       branch: "stale-branch",
       worktreePath: "/repo/stale-worktree",
+      viewedAt: "2026-06-01T00:00:00.000Z",
       deletedAt: null,
       messages,
       proposedPlans: [],
@@ -220,6 +221,7 @@ describe("environment entity projections", () => {
       title: "Current thread",
       branch: "current-branch",
       worktreePath: "/repo/current-worktree",
+      viewedAt: "2026-06-01T00:05:00.000Z",
     };
 
     const merged = mergeEnvironmentThread(detail, shell);
@@ -228,6 +230,7 @@ describe("environment entity projections", () => {
       title: "Current thread",
       branch: "current-branch",
       worktreePath: "/repo/current-worktree",
+      viewedAt: "2026-06-01T00:05:00.000Z",
     });
     expect(merged?.messages).toBe(messages);
   });
