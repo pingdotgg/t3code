@@ -113,6 +113,14 @@ describe("LocalApi", () => {
     await expect(createLocalApi().dialogs.confirm("Delete this thread?")).resolves.toBe(false);
   });
 
+  it("rejects opening System Settings when the desktop bridge is unavailable", async () => {
+    const { createLocalApi } = await import("./localApi");
+
+    await expect(createLocalApi().shell.openSystemSettings("full-disk-access")).rejects.toThrow(
+      "Unable to open System Settings.",
+    );
+  });
+
   it("delegates host capabilities and persistence to the desktop bridge", async () => {
     const showContextMenu = vi.fn().mockResolvedValue("delete");
     const pickFolder = vi.fn().mockResolvedValue("/tmp/project");

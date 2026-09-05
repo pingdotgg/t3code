@@ -55,6 +55,8 @@ import {
   MenuSeparator,
   MenuTrigger,
 } from "../ui/menu";
+import { readLocalApi } from "~/localApi";
+
 import { toastManager } from "../ui/toast";
 import {
   AlertDialog,
@@ -1168,6 +1170,19 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
             runWizardImport(importSession.source, importSession.environmentId, input)
           }
           onRefreshSource={() => refreshImportSource(importSession.source.id)}
+          onOpenFullDiskAccessSettings={() => {
+            // Rejects outside the desktop shell (and on shells that predate the
+            // method), so the one toast covers every way the link can fail.
+            void readLocalApi()
+              ?.shell.openSystemSettings("full-disk-access")
+              .catch(() => {
+                toastManager.add({
+                  type: "error",
+                  title: "Could not open System Settings",
+                  description: "Open Privacy & Security → Full Disk Access manually.",
+                });
+              });
+          }}
           onClose={() => setImportSession(null)}
         />
       ) : null}

@@ -27,6 +27,7 @@ import * as BrowserSession from "../BrowserSession.ts";
 import { ChromiumCookieReadError, readChromiumCookies } from "./ChromiumCookies.ts";
 import type { CookieReadResult } from "./CookieDatabase.ts";
 import { FirefoxCookieReadError, readFirefoxCookies } from "./FirefoxCookies.ts";
+import { readSafariCookies, safariAccessDenied, SafariCookieReadError } from "./SafariCookies.ts";
 import {
   BROWSER_IMPORT_SOURCES,
   resolveCookieDatabase,
@@ -92,6 +93,15 @@ const unavailableReason = Effect.fn("BrowserImport.unavailableReason")(function*
   if (!definition.platforms.includes(context.platform)) return "unsupportedPlatform";
   if (!(yield* isSourceInstalled(definition, context))) return "notInstalled";
   if (yield* isSourceRunning(definition, context)) return "browserRunning";
+  // Safari's jar is found by `stat`, which TCC permits without Full Disk
+  // Access — so a Safari that lists as ready may still refuse the read. Probe
+  // the grant here, so the wizard can open on the permission step and a
+  // post-grant recheck can tell granted from still-denied, rather than only
+  // discovering it by attempting the import.
+  if (definition.engine === "safari") {
+    const jar = yield* resolveCookieDatabase(definition, context, ".");
+    if (jar !== undefined && (yield* safariAccessDenied(jar))) return "needsFullDiskAccess";
+  }
   return undefined;
 });
 
@@ -254,25 +264,29 @@ export const make = Effect.gen(function* BrowserImportMake() {
     const userDataDirectory = definition.userDataDirectory(pathContext);
     const read: Effect.Effect<
       CookieReadResult,
-      ChromiumCookieReadError | FirefoxCookieReadError,
+      ChromiumCookieReadError | FirefoxCookieReadError | SafariCookieReadError,
       FileSystem.FileSystem | Path.Path | Scope.Scope | ChildProcessSpawner.ChildProcessSpawner
     > =
-      definition.engine === "firefox"
-        ? readFirefoxCookies(databasePath).pipe(
+      definition.engine === "safari"
+        ? readSafariCookies(databasePath).pipe(
             Effect.map((cookies) => ({ cookies, undecryptable: 0, undecryptableHosts: [] })),
           )
-        : readChromiumCookies({
-            cookieDatabasePath: databasePath,
-            keychainService: definition.keychainService,
-            keychainAccount: definition.keychainAccount,
-            linuxSecretApplication: definition.linuxSecretApplication,
-            ...(platform === "win32" && userDataDirectory !== undefined
-              ? {
-                  windowsLocalStatePath: pathContext.path.join(userDataDirectory, "Local State"),
-                }
-              : {}),
-            platform,
-          });
+        : definition.engine === "firefox"
+          ? readFirefoxCookies(databasePath).pipe(
+              Effect.map((cookies) => ({ cookies, undecryptable: 0, undecryptableHosts: [] })),
+            )
+          : readChromiumCookies({
+              cookieDatabasePath: databasePath,
+              keychainService: definition.keychainService,
+              keychainAccount: definition.keychainAccount,
+              linuxSecretApplication: definition.linuxSecretApplication,
+              ...(platform === "win32" && userDataDirectory !== undefined
+                ? {
+                    windowsLocalStatePath: pathContext.path.join(userDataDirectory, "Local State"),
+                  }
+                : {}),
+              platform,
+            });
 
     const result = yield* read.pipe(
       Effect.scoped,
@@ -288,6 +302,12 @@ export const make = Effect.gen(function* BrowserImportMake() {
         FirefoxCookieReadError: (cause) =>
           Effect.fail(
             new BrowserImportFailedError({ sourceId: definition.id, reason: "readFailed", cause }),
+          ),
+        // Safari's reasons are already user-facing: a TCC refusal is the Full
+        // Disk Access prompt, anything else is a read failure.
+        SafariCookieReadError: (cause) =>
+          Effect.fail(
+            new BrowserImportFailedError({ sourceId: definition.id, reason: cause.reason, cause }),
           ),
       }),
     );

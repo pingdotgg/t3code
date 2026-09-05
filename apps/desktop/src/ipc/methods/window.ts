@@ -9,6 +9,7 @@ import {
   PickFolderOptionsSchema,
   PRIMARY_LOCAL_ENVIRONMENT_ID,
   REMOTE_CAPABLE_EDITOR_IDS,
+  SystemSettingsPaneSchema,
   type DesktopEnvironmentBootstrap,
   type PickedThemeFile,
 } from "@t3tools/contracts";
@@ -295,6 +296,16 @@ export const openExternal = DesktopIpc.makeIpcMethod({
   handler: Effect.fn("desktop.ipc.window.openExternal")(function* (url) {
     const shell = yield* ElectronShell.ElectronShell;
     return yield* shell.openExternal(url);
+  }),
+});
+
+export const openSystemSettings = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.OPEN_SYSTEM_SETTINGS_CHANNEL,
+  payload: SystemSettingsPaneSchema,
+  result: Schema.Boolean,
+  handler: Effect.fn("desktop.ipc.window.openSystemSettings")(function* (pane) {
+    const shell = yield* ElectronShell.ElectronShell;
+    return yield* shell.openSystemSettings(pane);
   }),
 });
 

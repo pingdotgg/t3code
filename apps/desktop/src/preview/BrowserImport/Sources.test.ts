@@ -1093,3 +1093,106 @@ describe("listSourceProfiles hardening", () => {
     ),
   );
 });
+
+describe("Safari profiles", () => {
+  const safari = BROWSER_IMPORT_SOURCES.find((source) => source.id === "safari")!;
+  const workUuid = "C561D071-67AD-4537-866F-54F65FB8E8DD";
+  const otherUuid = "2875EB19-B938-4E38-BE92-5AE97C256BDD";
+
+  const fixture = Effect.fnUntraced(function* () {
+    const context = yield* withSourceHome();
+    const fileSystem = yield* FileSystem.FileSystem;
+    const root = safari.userDataDirectory(context)!;
+    const library = context.path.dirname(root);
+    yield* fileSystem.makeDirectory(root, { recursive: true });
+    yield* fileSystem.writeFileString(context.path.join(root, "Cookies.binarycookies"), "default");
+    const store = (uuid: string) =>
+      context.path.join(library, "WebKit", "WebsiteDataStore", uuid.toLowerCase(), "Cookies");
+    for (const uuid of [workUuid, otherUuid]) {
+      yield* fileSystem.makeDirectory(store(uuid), { recursive: true });
+      yield* fileSystem.writeFileString(
+        context.path.join(store(uuid), "Cookies.binarycookies"),
+        uuid,
+      );
+    }
+    yield* fileSystem.makeDirectory(context.path.join(library, "Safari"), { recursive: true });
+    const metadata = context.path.join(library, "Safari", "SafariTabs.db");
+    return { context, root, store, metadata };
+  });
+
+  it.effect("discovers named profiles and resolves only the selected profile's cookies", () =>
+    run(
+      Effect.gen(function* () {
+        const { context, root, store, metadata } = yield* fixture();
+        yield* Effect.sync(() => {
+          const database = new NodeSqlite.DatabaseSync(metadata);
+          try {
+            database.exec(`CREATE TABLE bookmarks (
+            title TEXT, external_uuid TEXT, parent INTEGER DEFAULT 0,
+            type INTEGER DEFAULT 1, subtype INTEGER DEFAULT 2,
+            deleted INTEGER DEFAULT 0, order_index INTEGER DEFAULT 0
+          )`);
+            const insert = database.prepare(
+              "INSERT INTO bookmarks (title, external_uuid, deleted) VALUES (?, ?, ?)",
+            );
+            insert.run("", "DefaultProfile", 0);
+            insert.run("Ping", workUuid, 0);
+            insert.run("Deleted", otherUuid, 1);
+            insert.run("Unsafe", "../../outside", 0);
+            database.exec(
+              "INSERT INTO bookmarks (title, external_uuid, subtype) VALUES ('Tab group', 'group', 1)",
+            );
+          } finally {
+            database.close();
+          }
+        });
+        const profiles = yield* listSourceProfiles(safari, context);
+        assert.deepEqual(profiles, [
+          { directory: ".", name: "Personal" },
+          { directory: store(workUuid), name: "Ping" },
+        ]);
+        assert.strictEqual(
+          yield* resolveCookieDatabase(safari, context, "."),
+          context.path.join(root, "Cookies.binarycookies"),
+        );
+        const selected = yield* resolveCookieDatabase(safari, context, profiles[1]!.directory);
+        assert.strictEqual(selected, context.path.join(store(workUuid), "Cookies.binarycookies"));
+        const fileSystem = yield* FileSystem.FileSystem;
+        assert.strictEqual(yield* fileSystem.readFileString(selected!), workUuid);
+        yield* fileSystem.remove(selected!);
+        assert.isUndefined(yield* resolveCookieDatabase(safari, context, profiles[1]!.directory));
+        assert.deepEqual(yield* listSourceProfiles(safari, context), profiles);
+      }),
+    ),
+  );
+
+  for (const metadataState of ["missing", "corrupt"] as const) {
+    it.effect(`recovers separate cookie stores when metadata is ${metadataState}`, () =>
+      run(
+        Effect.gen(function* () {
+          const { context, store, metadata } = yield* fixture();
+          const fileSystem = yield* FileSystem.FileSystem;
+          if (metadataState === "corrupt") yield* fileSystem.writeFileString(metadata, "invalid");
+          yield* fileSystem.remove(context.path.join(store(otherUuid), "Cookies.binarycookies"));
+          assert.deepEqual(yield* listSourceProfiles(safari, context), [
+            { directory: ".", name: "Safari" },
+            { directory: store(workUuid), name: workUuid.toLowerCase() },
+          ]);
+          assert.isTrue(yield* isSourceInstalled(safari, context));
+        }),
+      ),
+    );
+  }
+
+  it.effect("keeps Safari without profiles available", () =>
+    run(
+      Effect.gen(function* () {
+        const context = yield* withSourceHome();
+        assert.deepEqual(yield* listSourceProfiles(safari, context), [
+          { directory: ".", name: "Safari" },
+        ]);
+        assert.isFalse(yield* isSourceInstalled(safari, context));
+      }),
+    ),
+  );
+});
