@@ -22,6 +22,7 @@ import { EnvironmentRegistry } from "../connection/registry.ts";
 import { connectionProjectionPhase } from "../connection/model.ts";
 import { EnvironmentSupervisor } from "../connection/supervisor.ts";
 import * as ConnectionWakeups from "../connection/wakeups.ts";
+import { wasSubscribeThreadNotFound } from "../errors/orchestration.ts";
 import { EnvironmentCacheStore } from "../platform/persistence.ts";
 import { subscribeDynamic } from "../rpc/client.ts";
 import { ThreadSnapshotLoader, type ThreadSnapshotWindow } from "./threadSnapshotHttp.ts";
@@ -760,6 +761,14 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
         onExpectedFailure: setStreamError,
         retryExpectedFailureAfter: "250 millis",
         resubscribe: foregroundResubscriptions,
+        terminalFailure: {
+          matches: wasSubscribeThreadNotFound,
+          handle: (cause) =>
+            Effect.logWarning("Subscribed thread is gone; stopping.", {
+              threadId,
+              cause: Cause.pretty(cause),
+            }).pipe(Effect.andThen(setDeleted())),
+        },
       },
     ).pipe(Stream.runForEach(applyItem)),
   );
