@@ -3,11 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import type { UsageSummaryInput } from "@t3tools/contracts";
 
-import {
-  isUsagePullRefreshPending,
-  refreshRebasedUsageWindow,
-  usagePullRefreshTargets,
-} from "./usagePullRefresh";
+import { refreshRebasedUsageWindow, usagePullRefreshTargets } from "./usagePullRefresh";
 
 const status = (environmentId: string, summary: unknown | null, isPending: boolean) => ({
   environmentId: environmentId as EnvironmentId,
@@ -16,24 +12,13 @@ const status = (environmentId: string, summary: unknown | null, isPending: boole
 });
 
 describe("usage pull refresh", () => {
-  it("follows previously answered environments across a rebased 24-hour window", () => {
+  it("shows pull state for answered environments without waiting on initial reads", () => {
     const targets = usagePullRefreshTargets([
       status("answered", { readAt: "before" }, false),
       status("unreachable", null, true),
     ]);
 
-    expect(
-      isUsagePullRefreshPending(
-        [status("answered", null, true), status("unreachable", null, true)],
-        targets,
-      ),
-    ).toBe(true);
-    expect(
-      isUsagePullRefreshPending(
-        [status("answered", { readAt: "after" }, false), status("unreachable", null, true)],
-        targets,
-      ),
-    ).toBe(false);
+    expect([...targets]).toEqual(["answered"]);
   });
 
   it("tracks failed retries without waiting on already-pending environments", () => {
@@ -46,11 +31,15 @@ describe("usage pull refresh", () => {
     expect(usagePullRefreshTargets([status("already-pending", null, true)]).size).toBe(0);
   });
 
-  it("commits a rebased window only after its explicit refresh starts", async () => {
+  it("commits a rebased window only after its refreshed snapshot publishes", async () => {
     const events: string[] = [];
     let releaseRates!: () => void;
     const rates = new Promise<void>((resolve) => {
       releaseRates = resolve;
+    });
+    let releasePublication!: () => void;
+    const publication = new Promise<void>((resolve) => {
+      releasePublication = resolve;
     });
     const input = { sinceDay: "2026-09-04" } as UsageSummaryInput;
     const operation = refreshRebasedUsageWindow(
@@ -59,6 +48,8 @@ describe("usage pull refresh", () => {
         events.push("rates-started");
         await rates;
         events.push("rescan-started");
+        await publication;
+        events.push("rescan-published");
       },
       () => events.push("window-committed"),
       () => true,
@@ -66,8 +57,17 @@ describe("usage pull refresh", () => {
 
     expect(events).toEqual(["rates-started"]);
     releaseRates();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(events).toEqual(["rates-started", "rescan-started"]);
+    releasePublication();
     await operation;
-    expect(events).toEqual(["rates-started", "rescan-started", "window-committed"]);
+    expect(events).toEqual([
+      "rates-started",
+      "rescan-started",
+      "rescan-published",
+      "window-committed",
+    ]);
   });
 
   it("does not restore a rebased window after a newer selection", async () => {
@@ -97,5 +97,22 @@ describe("usage pull refresh", () => {
     await operation;
 
     expect(selected).toBe(newer);
+  });
+
+  it("does not commit a rebased window when refresh fails", async () => {
+    const failure = new Error("transcript scan failed");
+    let committed = false;
+
+    await expect(
+      refreshRebasedUsageWindow(
+        { sinceDay: "2026-09-04" } as UsageSummaryInput,
+        async () => Promise.reject(failure),
+        () => {
+          committed = true;
+        },
+        () => true,
+      ),
+    ).rejects.toBe(failure);
+    expect(committed).toBe(false);
   });
 });

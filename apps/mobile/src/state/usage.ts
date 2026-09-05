@@ -16,7 +16,11 @@ import {
   type UsageSummary,
   type UsageSummaryInput,
 } from "@t3tools/contracts";
-import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
+import {
+  executeAtomQuery,
+  runAtomCommand,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 import {
   makeUsageRefreshToken,
   mergeUsage,
@@ -27,8 +31,9 @@ import {
 } from "@t3tools/shared/usageMerge";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef } from "react";
 
+import { uuidv4 } from "../lib/uuid";
 import { appAtomRegistry } from "./atom-registry";
 import { environmentPresentations } from "./presentation";
 import { serverEnvironment } from "./server";
@@ -83,7 +88,6 @@ export interface UsageView {
 }
 
 export function useUsage(input: UsageSummaryInput): UsageView {
-  const [refreshToken, setRefreshToken] = useState<string>();
   const rangeKey = useMemo(
     () =>
       JSON.stringify({
@@ -103,27 +107,7 @@ export function useUsage(input: UsageSummaryInput): UsageView {
       input.untilTime,
     ],
   );
-  const windowKey = useMemo(
-    () =>
-      JSON.stringify({
-        sinceDay: input.sinceDay,
-        untilDay: input.untilDay,
-        timeZone: input.timeZone,
-        resolution: input.resolution,
-        sinceTime: input.sinceTime,
-        untilTime: input.untilTime,
-        refreshToken,
-      }),
-    [
-      input.sinceDay,
-      input.untilDay,
-      input.timeZone,
-      input.resolution,
-      input.sinceTime,
-      input.untilTime,
-      refreshToken,
-    ],
-  );
+  const windowKey = rangeKey;
   const atom = usageByWindowAtom(windowKey);
   const currentEnvironments = useAtomValue(atom);
   const settledStatuses = useRef<SettledUsageStatuses<EnvironmentUsageStatus> | null>(null);
@@ -156,12 +140,12 @@ export function useUsage(input: UsageSummaryInput): UsageView {
   // not the refetch succeeds: an offline environment still recounts tokens.
   const refresh = useCallback(
     (requestedInput?: UsageSummaryInput) => {
-      const nextToken = makeUsageRefreshToken(answered);
-      const currentInput =
-        requestedInput === undefined
-          ? (JSON.parse(windowKey) as UsageSummaryInput)
-          : { ...requestedInput, refreshToken };
-      const rateRefreshes = environments.map(({ environmentId }) =>
+      const currentInput = requestedInput ?? (JSON.parse(windowKey) as UsageSummaryInput);
+      const refreshEnvironments = environments.filter(
+        (environment) => environment.summary !== null || !environment.isPending,
+      );
+      const refreshToken = JSON.stringify([makeUsageRefreshToken(answered) ?? "unknown", uuidv4()]);
+      const rateRefreshes = refreshEnvironments.map(({ environmentId }) =>
         runAtomCommand(
           appAtomRegistry,
           serverEnvironment.refreshUsageRates,
@@ -169,19 +153,41 @@ export function useUsage(input: UsageSummaryInput): UsageView {
           { reportFailure: false },
         ),
       );
-      return Promise.allSettled(rateRefreshes).then(() => {
-        if (nextToken !== undefined && nextToken !== refreshToken) {
-          setRefreshToken(nextToken);
-          return;
-        }
-        for (const { environmentId } of environments) {
-          appAtomRegistry.refresh(
-            serverEnvironment.usageSummary({ environmentId, input: currentInput }),
-          );
-        }
+      return Promise.allSettled(rateRefreshes).then(async () => {
+        const refreshes = await Promise.allSettled(
+          refreshEnvironments.map(async ({ environmentId }) => {
+            const refreshed = await executeAtomQuery(
+              appAtomRegistry,
+              serverEnvironment.usageSummary({
+                environmentId,
+                input: { ...currentInput, refreshToken },
+              }),
+              { reportFailure: false, refresh: true },
+            );
+            if (refreshed._tag === "Failure") throw squashAtomCommandFailure(refreshed);
+            const baseAtom = serverEnvironment.usageSummary({
+              environmentId,
+              input: currentInput,
+            });
+            if (appAtomRegistry.get(baseAtom).waiting) {
+              await executeAtomQuery(appAtomRegistry, baseAtom, {
+                reportFailure: false,
+              });
+            }
+            const published = await executeAtomQuery(appAtomRegistry, baseAtom, {
+              reportFailure: false,
+              refresh: true,
+            });
+            if (published._tag === "Failure") throw squashAtomCommandFailure(published);
+          }),
+        );
+        const failed = refreshes.find(
+          (result): result is PromiseRejectedResult => result.status === "rejected",
+        );
+        if (failed !== undefined) throw failed.reason;
       });
     },
-    [answered, environments, refreshToken, windowKey],
+    [answered, environments, windowKey],
   );
 
   const merged = useMemo(() => mergeUsage(answered, USAGE_CONTRACT_VERSION), [answered]);
