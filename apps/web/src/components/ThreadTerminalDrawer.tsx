@@ -516,7 +516,10 @@ export function TerminalViewport({
       // never started, so only "exited" triggers the message — as with xterm.)
       synchronizedStatusRef.current = "closed";
       synchronizeTerminalStatus(terminal, latestSession.status);
-      if (autoFocus && visibleRef.current) window.requestAnimationFrame(() => terminal.focus());
+      // Startup may finish after the user has returned to the composer.
+      if (visibleRef.current && mount.contains(document.activeElement)) {
+        terminal.focus();
+      }
 
       const dismissSelectionAction = (supersede = false) => {
         const ownsMenu =
@@ -870,10 +873,10 @@ export function TerminalViewport({
 
     return () => {
       cancelled = true;
+      const hadFocus = mount.contains(document.activeElement);
       teardown?.();
+      if (hadFocus && mount.isConnected) mount.focus({ preventScroll: true });
     };
-    // autoFocus is intentionally omitted;
-    // it is only read at mount time and must not trigger terminal teardown/recreation.
   }, [cwd, environmentId, runtimeEnvKey, terminalId, threadId, worktreePath]);
 
   useEffect(() => {
@@ -904,24 +907,14 @@ export function TerminalViewport({
       writeSystemMessage(terminal, current.error);
     }
 
-    if (previous.version === 0 && autoFocus && visibleRef.current) {
-      window.requestAnimationFrame(() => {
-        terminal.focus();
-      });
-    }
     previousSessionRef.current = current;
-  }, [autoFocus, terminalOutput, terminalError, terminalStatus, terminalVersion]);
+  }, [terminalOutput, terminalError, terminalStatus, terminalVersion]);
 
   useEffect(() => {
     if (!autoFocus || !visible) return;
-    const terminal = terminalRef.current;
-    if (!terminal) return;
-    const frame = window.requestAnimationFrame(() => {
-      terminal.focus();
-    });
-    return () => {
-      window.cancelAnimationFrame(frame);
-    };
+    // Claim focus when requested, then hand it to the terminal once ready only
+    // if the user has not focused something else in the meantime.
+    (terminalRef.current ?? containerRef.current)?.focus();
   }, [autoFocus, focusRequestId, visible]);
 
   useEffect(() => {
@@ -944,6 +937,7 @@ export function TerminalViewport({
   return (
     <div
       ref={containerRef}
+      tabIndex={-1}
       className="relative h-full w-full overflow-hidden bg-[var(--terminal-background)]"
     />
   );
