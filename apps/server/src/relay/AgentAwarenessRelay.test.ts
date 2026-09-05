@@ -121,6 +121,8 @@ const makeTestRelay = Effect.fnUntraced(function* (
   const currentShell = yield* Ref.make<OrchestrationV2ThreadShell | null>(shell());
   const shellReads: ThreadId[] = [];
   const threads = ThreadManagementService.of({
+    withProjectCreationAdmission: (_input, effect) => effect(Option.none()),
+    withProjectMutationLock: (_projectId, effect) => effect,
     getThreadShell: (threadId) =>
       Effect.sync(() => shellReads.push(threadId)).pipe(Effect.andThen(Ref.get(currentShell))),
     getShellSnapshot: unused,
@@ -180,6 +182,7 @@ const makeTestRelay = Effect.fnUntraced(function* (
       bootstrap: unused,
       update: unused,
       delete: unused,
+      deleteDetailed: unused,
       getByWorkspaceRoot: unused,
       snapshot: unused(),
       getById: () =>

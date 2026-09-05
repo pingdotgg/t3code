@@ -90,6 +90,8 @@ it.layer(TestLayer)("ProjectService", (it) => {
         title: "Project",
         workspaceRoot: "/work/project/",
         defaultModelSelection: modelSelection,
+        defaultThreadEnvMode: "worktree",
+        faviconPath: "/work/project/custom-icon.svg",
         scripts: [
           {
             id: "setup",
@@ -102,15 +104,16 @@ it.layer(TestLayer)("ProjectService", (it) => {
       });
       assert.equal(created.workspaceRoot, "/work/project");
       assert.isNull(created.repositoryIdentity);
-      assert.isNull(created.faviconPath);
+      assert.equal(created.defaultThreadEnvMode, "worktree");
+      assert.equal(created.faviconPath, "/work/project/custom-icon.svg");
 
       const hydratedCreated = yield* waitForProject(
         service,
         projectId,
-        (project) => project.repositoryIdentity !== null && project.faviconPath !== null,
+        (project) => project.repositoryIdentity !== null,
       );
       assert.equal(hydratedCreated?.repositoryIdentity?.canonicalKey, "github.com/t3tools/project");
-      assert.equal(hydratedCreated?.faviconPath, "/work/project/favicon.svg");
+      assert.equal(hydratedCreated?.faviconPath, "/work/project/custom-icon.svg");
 
       const updated = yield* service.update({
         commandId: CommandId.make("command:project:update"),
@@ -147,7 +150,7 @@ it.layer(TestLayer)("ProjectService", (it) => {
       });
       assert.isFalse(reset.autoPull);
       assert.isNull(reset.projectIcon);
-      assert.equal(reset.faviconPath, hydratedCreated.faviconPath);
+      assert.equal(reset.faviconPath, "/work/project/favicon.svg");
       assert.isNull(reset.defaultThreadEnvMode);
       assert.deepEqual(
         (yield* service.snapshot).projects.map((project) => project.id),
@@ -162,6 +165,18 @@ it.layer(TestLayer)("ProjectService", (it) => {
       assert.isTrue(Option.isNone(yield* service.getById(projectId)));
       assert.isTrue(Option.isSome(yield* service.getById(projectId, { includeDeleted: true })));
       assert.deepEqual((yield* service.snapshot).projects, []);
+
+      const replayedCreate = yield* service.create({
+        commandId: CommandId.make("command:project:create"),
+        projectId,
+        title: "Project",
+        workspaceRoot: "/work/project/",
+        defaultModelSelection: modelSelection,
+        defaultThreadEnvMode: "worktree",
+        faviconPath: "/work/project/custom-icon.svg",
+      });
+      assert.equal(replayedCreate.deletedAt, deleted.deletedAt);
+      assert.equal(replayedCreate.title, "Renamed");
 
       const sql = yield* SqlClient.SqlClient;
       const changes = yield* sql<{ readonly event_type: string }>`

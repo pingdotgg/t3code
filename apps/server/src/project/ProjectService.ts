@@ -36,6 +36,8 @@ export interface ProjectCreateInput {
   readonly workspaceRoot: string;
   readonly createWorkspaceRootIfMissing?: boolean;
   readonly defaultModelSelection?: ModelSelection | null;
+  readonly defaultThreadEnvMode?: ThreadEnvMode | null;
+  readonly faviconPath?: string | null;
   readonly scripts?: ReadonlyArray<ProjectScript>;
 }
 
@@ -58,6 +60,11 @@ export interface ProjectDeleteInput {
   readonly commandId: CommandId;
   readonly projectId: ProjectId;
   readonly force?: boolean;
+}
+
+export interface ProjectDeleteResult {
+  readonly project: Project;
+  readonly deletedThreadCount: number;
 }
 
 export class ProjectNotFoundError extends Schema.TaggedErrorClass<ProjectNotFoundError>()(
@@ -130,6 +137,9 @@ export class ProjectService extends Context.Service<
     >;
     readonly update: (input: ProjectUpdateInput) => Effect.Effect<Project, ProjectServiceError>;
     readonly delete: (input: ProjectDeleteInput) => Effect.Effect<Project, ProjectServiceError>;
+    readonly deleteDetailed: (
+      input: ProjectDeleteInput,
+    ) => Effect.Effect<ProjectDeleteResult, ProjectServiceError>;
     readonly getById: (
       projectId: ProjectId,
       options?: { readonly includeDeleted?: boolean },
@@ -314,6 +324,8 @@ export const make = Effect.gen(function* () {
           title: input.title,
           workspaceRoot,
           defaultModelSelection: input.defaultModelSelection ?? null,
+          defaultThreadEnvMode: input.defaultThreadEnvMode ?? null,
+          faviconPath: input.faviconPath ?? null,
           scripts: [...(input.scripts ?? [])],
           createdAt: now,
         },
@@ -387,103 +399,120 @@ export const make = Effect.gen(function* () {
     },
   );
 
-  const deleteProject: ProjectService["Service"]["delete"] = Effect.fn("ProjectService.delete")(
-    function* (input) {
-      const { projectId } = input;
-      const existing = yield* projects
-        .getById({ projectId })
-        .pipe(
-          Effect.mapError(
-            (cause) => new ProjectOperationError({ operation: "read-project", projectId, cause }),
-          ),
-        );
-      if (Option.isNone(existing) || existing.value.deletedAt !== null) {
-        return yield* new ProjectNotFoundError({ projectId });
-      }
-
-      const snapshot = yield* threadProjections
-        .getShellSnapshot()
-        .pipe(
-          Effect.mapError(
-            (cause) => new ProjectOperationError({ operation: "list-threads", projectId, cause }),
-          ),
-        );
-      const projectThreads = [...snapshot.threads, ...snapshot.archivedThreads].filter(
-        (thread) => thread.projectId === projectId,
-      );
-      if (projectThreads.length > 0 && input.force !== true) {
-        return yield* new ProjectNotEmptyError({ projectId });
-      }
-
-      // Delete children durably before the project. Stable command IDs let a retry
-      // finish a partially completed cascade without repeating cleanup effects.
-      yield* Effect.forEach(
-        projectThreads,
-        (thread) =>
-          threadCommands
-            .withLock(
-              thread.id,
-              Effect.gen(function* () {
-                yield* legacyImporter.ensureTranscript(thread.id);
-                const projection = yield* threadProjections.getThreadProjection(thread.id);
-                if (
-                  projection.thread.deletedAt !== null ||
-                  projection.thread.projectId !== projectId
-                ) {
-                  return;
-                }
-                const command = {
-                  type: "thread.delete" as const,
-                  commandId: CommandId.make(`${input.commandId}:delete-thread:${thread.id}`),
-                  threadId: thread.id,
-                };
-                const now = yield* DateTime.now;
-                const plan = yield* planThreadDeletion({ command, projection, now, idAllocator });
-                const committed = yield* threadEvents.commitCommand({
-                  commandId: command.commandId,
-                  commandType: command.type,
-                  threadId: command.threadId,
-                  acceptedAt: now,
-                  events: plan.events,
-                  effects: plan.effects,
-                });
-                if (
-                  committed.receipt.threadId !== command.threadId ||
-                  committed.receipt.commandType !== command.type
-                ) {
-                  return yield* Effect.fail(
-                    "The thread deletion command ID belongs to a different command.",
-                  );
-                }
-                if (committed.receipt.status === "rejected") {
-                  return yield* Effect.fail(
-                    committed.receipt.error ?? "Thread deletion was previously rejected.",
-                  );
-                }
-              }),
-            )
-            .pipe(
-              Effect.mapError(
-                (cause) =>
-                  new ProjectOperationError({ operation: "delete-thread", projectId, cause }),
-              ),
+  const deleteProjectDetailed: ProjectService["Service"]["deleteDetailed"] = Effect.fn(
+    "ProjectService.deleteDetailed",
+  )(function* (input) {
+    return yield* threadCommands.withProjectLock(
+      input.projectId,
+      Effect.gen(function* () {
+        const { projectId } = input;
+        const existing = yield* projects
+          .getById({ projectId })
+          .pipe(
+            Effect.mapError(
+              (cause) => new ProjectOperationError({ operation: "read-project", projectId, cause }),
             ),
-        { concurrency: 1, discard: true },
-      );
-      return yield* dispatch(
-        projectId,
-        {
-          type: "project.delete",
-          commandId: input.commandId,
+          );
+        if (Option.isNone(existing) || existing.value.deletedAt !== null) {
+          return yield* new ProjectNotFoundError({ projectId });
+        }
+
+        const snapshot = yield* threadProjections
+          .getShellSnapshot()
+          .pipe(
+            Effect.mapError(
+              (cause) => new ProjectOperationError({ operation: "list-threads", projectId, cause }),
+            ),
+          );
+        const projectThreads = [...snapshot.threads, ...snapshot.archivedThreads]
+          .filter((thread) => thread.projectId === projectId)
+          .toSorted((left, right) => left.id.localeCompare(right.id));
+        if (projectThreads.length > 0 && input.force !== true) {
+          return yield* new ProjectNotEmptyError({ projectId });
+        }
+
+        // Delete children durably before the project. Stable command IDs let a retry
+        // finish a partially completed cascade without repeating cleanup effects.
+        const deletedThreadCounts = yield* Effect.forEach(
+          projectThreads,
+          (thread) =>
+            threadCommands
+              .withLock(
+                thread.id,
+                Effect.gen(function* () {
+                  yield* legacyImporter.ensureTranscript(thread.id);
+                  const projection = yield* threadProjections.getThreadProjection(thread.id);
+                  if (
+                    projection.thread.deletedAt !== null ||
+                    projection.thread.projectId !== projectId
+                  ) {
+                    return 0;
+                  }
+                  const command = {
+                    type: "thread.delete" as const,
+                    commandId: CommandId.make(`${input.commandId}:delete-thread:${thread.id}`),
+                    threadId: thread.id,
+                  };
+                  const now = yield* DateTime.now;
+                  const plan = yield* planThreadDeletion({ command, projection, now, idAllocator });
+                  const committed = yield* threadEvents.commitCommand({
+                    commandId: command.commandId,
+                    commandType: command.type,
+                    threadId: command.threadId,
+                    acceptedAt: now,
+                    events: plan.events,
+                    effects: plan.effects,
+                  });
+                  if (
+                    committed.receipt.threadId !== command.threadId ||
+                    committed.receipt.commandType !== command.type
+                  ) {
+                    return yield* Effect.fail(
+                      "The thread deletion command ID belongs to a different command.",
+                    );
+                  }
+                  if (committed.receipt.status === "rejected") {
+                    return yield* Effect.fail(
+                      committed.receipt.error ?? "Thread deletion was previously rejected.",
+                    );
+                  }
+                  return committed.committed
+                    ? committed.storedEvents.filter(
+                        (stored) => stored.event.type === "thread.deleted",
+                      ).length
+                    : 0;
+                }),
+              )
+              .pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new ProjectOperationError({ operation: "delete-thread", projectId, cause }),
+                ),
+              ),
+          { concurrency: 1 },
+        );
+        const project = yield* dispatch(
           projectId,
-          ...(input.force === undefined ? {} : { force: input.force }),
-        },
-        invalidateEnrichment(existing.value.workspaceRoot).pipe(
-          Effect.andThen(readCommitted(projectId)),
-        ),
-      );
-    },
-  );
+          {
+            type: "project.delete",
+            commandId: input.commandId,
+            projectId,
+            ...(input.force === undefined ? {} : { force: input.force }),
+          },
+          invalidateEnrichment(existing.value.workspaceRoot).pipe(
+            Effect.andThen(readCommitted(projectId)),
+          ),
+        );
+        return {
+          project,
+          deletedThreadCount: deletedThreadCounts.reduce((total, count) => total + count, 0),
+        };
+      }),
+    );
+  });
+
+  const deleteProject: ProjectService["Service"]["delete"] = (input) =>
+    deleteProjectDetailed(input).pipe(Effect.map((result) => result.project));
 
   const snapshot = Effect.gen(function* () {
     const rows = (yield* readRows()).filter((row) => row.deletedAt === null);
@@ -499,6 +528,7 @@ export const make = Effect.gen(function* () {
     bootstrap,
     update,
     delete: deleteProject,
+    deleteDetailed: deleteProjectDetailed,
     getById,
     getByWorkspaceRoot,
     snapshot,

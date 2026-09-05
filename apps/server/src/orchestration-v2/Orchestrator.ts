@@ -41,7 +41,7 @@ import * as Stream from "effect/Stream";
 
 import { CheckpointServiceV2 } from "./CheckpointService.ts";
 import { CommandPolicyV2 } from "./CommandPolicy.ts";
-import { CommandReceiptStoreV2 } from "./CommandReceiptStore.ts";
+import { CommandReceiptStoreReadError, CommandReceiptStoreV2 } from "./CommandReceiptStore.ts";
 import { ContextHandoffServiceV2 } from "./ContextHandoffService.ts";
 import { EventSinkV2 } from "./EventSink.ts";
 import type { OrchestrationEffectRequestV2, PendingOrchestrationEffectV2 } from "./EffectOutbox.ts";
@@ -181,6 +181,7 @@ export interface OrchestratorV2Shape {
   readonly dispatch: (
     command: OrchestrationV2Command,
   ) => Effect.Effect<OrchestratorV2DispatchResult, OrchestratorV2Error>;
+  readonly getCommandReceipt: CommandReceiptStoreV2["Service"]["getByCommandId"];
   readonly getThreadProjection: (
     threadId: ThreadId,
   ) => Effect.Effect<OrchestrationV2ThreadProjection, OrchestratorV2Error>;
@@ -2031,6 +2032,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             }),
         ),
       );
+    if (sourceProjection.thread.deletedAt !== null) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: `Fork source thread ${command.sourceThreadId} is deleted.`,
+      });
+    }
 
     const sourceRun = runForSourcePoint(sourceProjection, command.sourcePoint);
 
@@ -4546,6 +4554,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               }),
           ),
         );
+      if (parentProjection.thread.deletedAt !== null) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Delegated task parent thread ${command.parentThreadId} is deleted.`,
+        });
+      }
       const parentRun = parentProjection.runs.find(
         (candidate) => candidate.id === command.parentRunId,
       );
@@ -7332,6 +7347,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   return OrchestratorV2.of({
     resumeQueuedRuns,
     dispatch: dispatchWithReceipt,
+    getCommandReceipt: commandReceipts.getByCommandId,
     getThreadProjection: (threadId) =>
       projectionStore
         .getThreadProjection(threadId)
@@ -7437,6 +7453,13 @@ export const layerUnavailable: Layer.Layer<OrchestratorV2> = Layer.succeed(
         new OrchestratorDispatchError({
           commandId: command.commandId,
           commandType: command.type,
+          cause: "Orchestration V2 live runtime is not configured.",
+        }),
+      ),
+    getCommandReceipt: (commandId) =>
+      Effect.fail(
+        new CommandReceiptStoreReadError({
+          commandId,
           cause: "Orchestration V2 live runtime is not configured.",
         }),
       ),

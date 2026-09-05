@@ -26,7 +26,13 @@ import {
   RuntimeMode,
 } from "./providerPolicy.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
-import { ProjectScript, ProjectIconOverride } from "./project.ts";
+import {
+  Project,
+  ProjectFaviconPath,
+  ProjectIconOverride,
+  ProjectScript,
+  ProjectScriptIcon,
+} from "./project.ts";
 export { ProjectIconColor, ProjectIconOverride } from "./project.ts";
 import { RepositoryIdentity, ThreadEnvMode } from "./environment.ts";
 import { OrchestrationProjectShell } from "./orchestrationProject.ts";
@@ -61,11 +67,7 @@ export {
 export const CorrelationId = CommandId;
 export type CorrelationId = typeof CorrelationId.Type;
 
-export const ProjectFaviconPath = TrimmedNonEmptyString.check(
-  Schema.isMaxLength(1024),
-  Schema.isPattern(/\.(?:avif|gif|ico|jpe?g|png|svg|webp)$/i),
-);
-export type ProjectFaviconPath = typeof ProjectFaviconPath.Type;
+export { ProjectFaviconPath } from "./project.ts";
 
 export const OrchestrationProject = Schema.Struct({
   id: ProjectId,
@@ -446,6 +448,8 @@ export const ProjectCreateCommand = Schema.Struct({
   // Retained for older clients that sent an automatic create-time seed. The
   // server ignores it; explicit project defaults use project.meta.update.
   defaultModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
+  defaultThreadEnvMode: Schema.optional(Schema.NullOr(ThreadEnvMode)),
+  faviconPath: Schema.optional(Schema.NullOr(ProjectFaviconPath)),
   scripts: Schema.optional(Schema.Array(ProjectScript)),
   createdAt: IsoDateTime,
 });

@@ -35,6 +35,11 @@ import {
   LegacyV1ThreadImporter,
   type LegacyV1ThreadImportError,
 } from "./LegacyV1ThreadImporter.ts";
+import type { CommandReceiptV2 } from "./CommandReceiptStore.ts";
+import {
+  ThreadCommandExecutor,
+  layer as threadCommandExecutorLayer,
+} from "./ThreadCommandExecutor.ts";
 
 export type ThreadManagementSendMode = "auto" | "queue" | "steer" | "restart";
 
@@ -265,6 +270,14 @@ export type ThreadManagementError = typeof ThreadManagementError.Type;
 type ThreadManagementFailure = ThreadManagementError | OrchestratorV2Error;
 
 export interface ThreadManagementServiceShape {
+  readonly withProjectCreationAdmission: <A, E, R>(
+    input: { readonly projectId: ProjectId; readonly commandId: CommandId },
+    effect: (receipt: Option.Option<CommandReceiptV2>) => Effect.Effect<A, E, R>,
+  ) => Effect.Effect<A, E | OrchestratorDispatchError, R>;
+  readonly withProjectMutationLock: <A, E, R>(
+    projectId: ProjectId,
+    effect: Effect.Effect<A, E, R>,
+  ) => Effect.Effect<A, E, R>;
   readonly ensureLegacyTranscript: (
     threadId: ThreadId,
   ) => Effect.Effect<void, LegacyV1ThreadImportError>;
@@ -362,6 +375,24 @@ export function latestSteerableRun(
 const make = Effect.gen(function* () {
   const orchestrator = yield* OrchestratorV2;
   const legacyImporter = yield* LegacyV1ThreadImporter;
+  const threadCommands = yield* ThreadCommandExecutor;
+
+  const withProjectCreationAdmission: ThreadManagementServiceShape["withProjectCreationAdmission"] =
+    (input, effect) =>
+      threadCommands.withProjectLock(
+        input.projectId,
+        orchestrator.getCommandReceipt(input.commandId).pipe(
+          Effect.mapError(
+            (cause) =>
+              new OrchestratorDispatchError({
+                commandId: input.commandId,
+                commandType: "thread.create",
+                cause,
+              }),
+          ),
+          Effect.flatMap(effect),
+        ),
+      );
 
   const ensureLegacyTranscript = Effect.fn(
     "orchestrationV2.threadManagement.ensureLegacyTranscript",
@@ -428,8 +459,24 @@ const make = Effect.gen(function* () {
       Effect.andThen(orchestrator.getThreadSnapshotWindow(threadId, options)),
     );
 
-  const dispatch: ThreadManagementServiceShape["dispatch"] = (command) =>
-    ensureCommandTranscripts(command).pipe(Effect.andThen(orchestrator.dispatch(command)));
+  const dispatch: ThreadManagementServiceShape["dispatch"] = (command) => {
+    const admissionThreadId =
+      command.type === "thread.fork"
+        ? command.sourceThreadId
+        : command.type === "delegated_task.request"
+          ? command.parentThreadId
+          : undefined;
+    const dispatchCommand = orchestrator.dispatch(command);
+    if (admissionThreadId === undefined) {
+      return ensureCommandTranscripts(command).pipe(Effect.andThen(dispatchCommand));
+    }
+    return ensureCommandTranscripts(command).pipe(
+      Effect.andThen(orchestrator.getThreadProjection(admissionThreadId)),
+      Effect.flatMap((projection) =>
+        threadCommands.withProjectLock(projection.thread.projectId, dispatchCommand),
+      ),
+    );
+  };
 
   const getProjectThread: ThreadManagementServiceShape["getProjectThread"] = (input) =>
     getThreadProjection(input.threadId).pipe(
@@ -657,6 +704,8 @@ const make = Effect.gen(function* () {
     });
 
   return ThreadManagementService.of({
+    withProjectCreationAdmission,
+    withProjectMutationLock: threadCommands.withProjectLock,
     ensureLegacyTranscript,
     dispatch,
     getThreadProjection,
@@ -690,10 +739,10 @@ const legacyV1ThreadImporterNoopLayer = Layer.succeed(
 export const layer: Layer.Layer<ThreadManagementService, never, OrchestratorV2> = Layer.effect(
   ThreadManagementService,
   make,
-).pipe(Layer.provide(legacyV1ThreadImporterNoopLayer));
+).pipe(Layer.provide(legacyV1ThreadImporterNoopLayer), Layer.provide(threadCommandExecutorLayer));
 
 export const layerWithLegacyImporter: Layer.Layer<
   ThreadManagementService,
   never,
   LegacyV1ThreadImporter | OrchestratorV2
-> = Layer.effect(ThreadManagementService, make);
+> = Layer.effect(ThreadManagementService, make).pipe(Layer.provide(threadCommandExecutorLayer));

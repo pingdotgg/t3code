@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   ProjectReadFileError,
+  ProjectMutation,
   ProjectSearchContentsError,
   ProjectSearchContentsInput,
   ProjectSearchEntriesError,
@@ -12,6 +13,7 @@ import {
 
 const decodeSearchEntriesInput = Schema.decodeUnknownSync(ProjectSearchEntriesInput);
 const decodeSearchContentsInput = Schema.decodeUnknownSync(ProjectSearchContentsInput);
+const decodeProjectMutation = Schema.decodeUnknownSync(ProjectMutation);
 
 describe("project search inputs", () => {
   it("allows an empty entries query for bounded frecency browsing", () => {
@@ -34,6 +36,31 @@ describe("project search inputs", () => {
       useRegex: false,
     });
     expect(decoded.query).toBe(" foo ");
+  });
+});
+
+describe("project mutations", () => {
+  it("rejects favicon paths the asset endpoint cannot serve", () => {
+    const created = decodeProjectMutation({
+      type: "project.create",
+      commandId: "command-project-create",
+      projectId: "project-1",
+      title: "Project",
+      workspaceRoot: "/work/project",
+      faviconPath: "/work/project/favicon.png",
+    });
+    expect(created).toMatchObject({
+      type: "project.create",
+      faviconPath: "/work/project/favicon.png",
+    });
+    expect(() =>
+      decodeProjectMutation({
+        type: "project.update",
+        commandId: "command-project-update",
+        projectId: "project-1",
+        faviconPath: "/work/project/.env",
+      }),
+    ).toThrow();
   });
 });
 

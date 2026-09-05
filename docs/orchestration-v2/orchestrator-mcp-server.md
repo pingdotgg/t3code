@@ -7,11 +7,12 @@ agent can use this endpoint to:
 
 - create an app-owned sub-agent on any supported provider instance;
 - wait for or poll the sub-agent's durable result;
-- cancel an active delegated task; and
+- cancel an active delegated task;
 - create one or more ordinary top-level T3 threads;
 - list and incrementally read project threads;
-- send or steer follow-up messages; and
-- wait for or interrupt ordinary thread runs.
+- send or steer follow-up messages;
+- wait for or interrupt ordinary thread runs; and
+- list, inspect, create, update, and remove projects in the current environment.
 
 These are T3 orchestration operations, not provider-native sub-agent APIs.
 Delegated tasks always create a T3 child thread and run. The child receives
@@ -140,7 +141,35 @@ selection model-visible without allowing a request that cannot run.
 
 ## Tool Surface
 
-The server exposes eleven orchestration tools.
+The server exposes orchestration, thread, scheduling, and project tools.
+
+### Project tools
+
+`t3_project_list` returns a bounded page of active project summaries from the server environment.
+Its numeric cursor defaults to the first page and the default page size is 25, with a maximum of 100. Summaries include project identity, root, title, model default, and saved, checked-in, global,
+and effective workspace modes. `t3_project_read` returns the full record, including configured
+scripts.
+
+`t3_project_create` accepts one of two typed sources. `existing_directory` registers a directory and
+only creates a missing directory when `createIfMissing` is true. `clone` uses the existing repository
+clone service with either a URL or a configured source-control provider and repository name, then
+registers the cloned directory. It does not publish repositories. If registration fails after a
+clone completes, a retry may reuse the destination only when its exact stored origin matches, its
+checked-out commit matches a locally recorded `origin` remote-tracking ref, and its tracked checkout
+is clean. Recovery does not fetch the remote. Empty, modified, interrupted, and unrelated-history
+repositories are not adopted; register an intentional one with `existing_directory` instead.
+If a stable `clientRequestId` already names a deleted project, create fails with `project_deleted`
+before touching the filesystem. Use a new request ID; deleted project records are never resurrected.
+
+`t3_project_update` changes only supplied fields. Explicit `null` clears model, workspace-mode, and
+icon overrides, while omitted fields remain unchanged. Script updates change configuration but do
+not run scripts.
+
+`t3_project_delete` rejects a project that still owns thread records unless `cascadeThreads` is true.
+The cascade uses normal thread-delete commands before the project-delete command. Project removal
+never deletes workspace files, repositories, or worktrees, and the result reports the number of
+thread records removed by that attempt. A retry after the project is already deleted returns
+`alreadyDeleted: true` with a zero per-attempt count.
 
 ### `orchestrator_capabilities`
 
@@ -386,7 +415,9 @@ orchestration_error
 ## Code Ownership
 
 - Shared schemas: `packages/contracts/src/orchestratorMcp.ts`
+- Project MCP schemas: `packages/contracts/src/projectMcp.ts`
 - MCP service: `apps/server/src/mcp/OrchestratorMcpService.ts`
+- Project MCP service: `apps/server/src/mcp/ProjectMcpService.ts`
 - Tool definitions and handlers:
   `apps/server/src/mcp/toolkits/orchestrator/`
 - HTTP registration and authentication:

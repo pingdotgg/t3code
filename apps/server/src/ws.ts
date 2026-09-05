@@ -90,6 +90,7 @@ import * as EnvironmentTheme from "./environmentTheme.ts";
 import * as Keybindings from "./keybindings.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
 import * as ThreadManagementService from "./orchestration-v2/ThreadManagementService.ts";
+import * as ClientCommandDispatch from "./orchestration-v2/ClientCommandDispatch.ts";
 import { ProviderSessionManagerV2 } from "./orchestration-v2/ProviderSessionManager.ts";
 import * as ThreadLaunchService from "./orchestration-v2/ThreadLaunchService.ts";
 import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
@@ -527,6 +528,7 @@ const makeWsRpcLayer = (
       const currentSessionId = currentSession.sessionId;
       const sql = yield* SqlClient.SqlClient;
       const threadManagement = yield* ThreadManagementService.ThreadManagementService;
+      const dispatchClientCommand = (yield* ClientCommandDispatch.ClientCommandDispatch).dispatch;
       const applicationEvents = yield* OrchestrationEventStore.OrchestrationEventStore;
       const projectionSnapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
       const canReplayPersistedRange = Effect.fnUntraced(function* (
@@ -1278,6 +1280,10 @@ const makeWsRpcLayer = (
               ...(mutation.defaultModelSelection === undefined
                 ? {}
                 : { defaultModelSelection: mutation.defaultModelSelection }),
+              ...(mutation.defaultThreadEnvMode === undefined
+                ? {}
+                : { defaultThreadEnvMode: mutation.defaultThreadEnvMode }),
+              ...(mutation.faviconPath === undefined ? {} : { faviconPath: mutation.faviconPath }),
               ...(mutation.scripts === undefined ? {} : { scripts: mutation.scripts }),
             });
           case "project.update":
@@ -1329,15 +1335,16 @@ const makeWsRpcLayer = (
                 claimed === null || command.type !== "message.dispatch"
                   ? command
                   : { ...command, attachments: claimed.attachments };
+              const provenanceCommand = ThreadManagementService.withCreationProvenance(
+                effectiveCommand,
+                {
+                  createdBy: "user",
+                  creationSource: "creationSource" in command ? command.creationSource : "web",
+                },
+              );
+              const dispatchCommand = dispatchClientCommand(provenanceCommand);
               return yield* startup
-                .enqueueCommand(
-                  threadManagement.dispatch(
-                    ThreadManagementService.withCreationProvenance(effectiveCommand, {
-                      createdBy: "user",
-                      creationSource: "creationSource" in command ? command.creationSource : "web",
-                    }),
-                  ),
-                )
+                .enqueueCommand(dispatchCommand)
                 .pipe(
                   Effect.tapError(() =>
                     claimed === null
