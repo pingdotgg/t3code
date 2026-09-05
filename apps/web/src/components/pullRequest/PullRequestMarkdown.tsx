@@ -49,6 +49,7 @@ export function PullRequestMarkdown({
               threadRef={threadRef ?? undefined}
               environmentId={environmentId}
               extraRemarkPlugins={extraRemarkPlugins}
+              normalizeGitHubImages
             />
           );
         }

@@ -21,12 +21,13 @@ import {
   WrapTextIcon,
   type LucideIcon,
 } from "lucide-react";
-import type {
-  AssetResource,
-  EnvironmentId,
-  ScopedThreadRef,
-  ServerProviderSkill,
-  ThreadLinkedPullRequest,
+import {
+  isGitHubUserAttachmentUrl,
+  type AssetResource,
+  type EnvironmentId,
+  type ScopedThreadRef,
+  type ServerProviderSkill,
+  type ThreadLinkedPullRequest,
 } from "@t3tools/contracts";
 import { faviconUrlForOrigin } from "@t3tools/shared/favicon";
 import {
@@ -202,6 +203,7 @@ interface ChatMarkdownProps {
   imageBaseDir?: string | undefined;
   onImageExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
   extraRemarkPlugins?: NonNullable<ReactMarkdownOptions["remarkPlugins"]>;
+  normalizeGitHubImages?: boolean;
 }
 
 export function canUseMarkdownFileShellActions(
@@ -1365,6 +1367,7 @@ function ChatMarkdownImage(props: {
   /** Null while the URL is being resolved; the last decoded image stays up. */
   readonly src: string | null;
   readonly sourceFailed?: boolean | undefined;
+  readonly onSourceError?: ((src: string) => void) | undefined;
   readonly alt: string;
   readonly copyMarkdown: string | undefined;
   readonly standalone: boolean;
@@ -1394,6 +1397,7 @@ function ChatMarkdownImage(props: {
       setFailedSrc(null);
     },
     onError: () => {
+      props.onSourceError?.(loadingSrc);
       setFailedSrc(loadingSrc);
       setLoadedSrc(null);
     },
@@ -1515,12 +1519,14 @@ function ChatMarkdownVideo(props: {
   );
 }
 
-/** Environment-hosted media loads through an exact-file signed asset URL. */
+/** Media served by an environment loads through a signed asset URL. */
 export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props: {
   readonly environmentId: EnvironmentId;
   readonly resource: Extract<
     AssetResource,
-    { readonly _tag: "attachment" | "workspace-file" | "media-file" }
+    {
+      readonly _tag: "attachment" | "workspace-file" | "media-file" | "github-user-attachment";
+    }
   >;
   readonly kind?: "image" | "video";
   readonly alt: string;
@@ -1531,11 +1537,14 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
   /** Caps the box height in rem while keeping the image's ratio; 30 by default. */
   readonly maxHeightRem?: number | undefined;
   readonly style?: CSSProperties | undefined;
+  readonly imageProps?: ComponentProps<typeof ChatMarkdownImage>["imageProps"];
   readonly workspaceRoot?: string | undefined;
   readonly onImageExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
 }) {
   const assetUrl = useAssetUrlState(props.environmentId, props.resource);
   const refreshAssetUrl = useAssetUrlRefresh(props.environmentId, props.resource);
+  const [failedAssetSrc, setFailedAssetSrc] = useState<string | null>(null);
+  const [failedFallbackSrc, setFailedFallbackSrc] = useState<string | null>(null);
   const resource = props.resource;
   const path =
     resource._tag === "media-file"
@@ -1543,9 +1552,20 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
       : resource._tag === "workspace-file" && props.workspaceRoot
         ? `${props.workspaceRoot.replace(/[\\/]+$/, "")}/${resource.path}`
         : undefined;
-  const reference = path ? mediaFileReference(path, props.workspaceRoot) : undefined;
-  const relativePath = reference?.relativePath;
-  const src = assetUrl._tag === "Success" ? assetUrl.url + (props.srcFragment ?? "") : null;
+  const reference =
+    resource._tag === "github-user-attachment"
+      ? mediaUrlReference(resource.url)
+      : path
+        ? mediaFileReference(path, props.workspaceRoot)
+        : undefined;
+  const relativePath = reference?.kind === "file" ? reference.relativePath : undefined;
+  const assetSrc = assetUrl._tag === "Success" ? assetUrl.url + (props.srcFragment ?? "") : null;
+  const fallbackSrc = resource._tag === "github-user-attachment" ? resource.url : null;
+  const assetSourceFailed =
+    assetUrl._tag === "Failure" || (assetSrc !== null && failedAssetSrc === assetSrc);
+  const usesFallback = assetSourceFailed && fallbackSrc !== null;
+  const src = usesFallback ? fallbackSrc : assetSrc;
+  const fallbackSourceFailed = usesFallback && failedFallbackSrc === fallbackSrc;
   // The server reads the pixel size from the file header, so the slot can be
   // the image's final box instead of a 16:9 guess. An authored size wins; a
   // caller's height cap shrinks the box while keeping the ratio.
@@ -1562,9 +1582,9 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
     kind: props.kind ?? "image",
     name: props.alt || (props.kind ?? "image"),
     src,
-    asset: { environmentId: props.environmentId, resource },
+    ...(usesFallback ? {} : { asset: { environmentId: props.environmentId, resource } }),
     ...(reference ? { reference } : {}),
-    ...(relativePath && resource._tag !== "attachment"
+    ...(relativePath && (resource._tag === "workspace-file" || resource._tag === "media-file")
       ? {
           onOpenFile: () =>
             useRightPanelStore
@@ -1581,7 +1601,7 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
     return (
       <ChatMarkdownVideo
         src={src}
-        sourceFailed={assetUrl._tag === "Failure"}
+        sourceFailed={(assetSourceFailed && !usesFallback) || fallbackSourceFailed}
         alt={props.alt}
         copyMarkdown={props.copyMarkdown}
         style={props.style}
@@ -1596,13 +1616,19 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
     <ChatMarkdownImage
       key={JSON.stringify([props.environmentId, props.resource, props.srcFragment])}
       src={src}
-      sourceFailed={assetUrl._tag === "Failure"}
+      sourceFailed={(assetSourceFailed && !usesFallback) || fallbackSourceFailed}
       alt={props.alt}
       copyMarkdown={props.copyMarkdown}
       standalone={props.standalone ?? true}
       className={CHAT_MARKDOWN_WORKSPACE_IMAGE_CLASS_NAME}
       style={style}
       actionsSource={actionsSource}
+      imageProps={props.imageProps}
+      originalUrl={fallbackSrc ?? undefined}
+      onSourceError={(failedSrc) => {
+        if (usesFallback) setFailedFallbackSrc(failedSrc);
+        else setFailedAssetSrc(failedSrc);
+      }}
       onImageExpand={props.onImageExpand}
     />
   );
@@ -2156,6 +2182,7 @@ function useChatMarkdownState({
   onUseArtifactTemplate,
   imageBaseDir,
   onImageExpand,
+  normalizeGitHubImages,
 }: ChatMarkdownProps) {
   const { resolvedTheme } = useTheme();
   const [localMediaPreview, setLocalMediaPreview] = useState<ExpandedImagePreview | null>(null);
@@ -2573,6 +2600,7 @@ function useChatMarkdownState({
       openExternalLinkInPreview,
       openMarkdownMedia,
       projects,
+      normalizeGitHubImages,
       resolveThreadPullRequest,
       resolvedTheme,
       serverConfig,
@@ -2599,6 +2627,7 @@ function useChatMarkdownState({
       openExternalLinkInPreview,
       openMarkdownMedia,
       projects,
+      normalizeGitHubImages,
       resolveThreadPullRequest,
       resolvedTheme,
       serverConfig,
@@ -2968,7 +2997,9 @@ const CHAT_MARKDOWN_COMPONENTS = {
     );
   },
   img: function MarkdownImage({ node, title, src, alt, ...props }) {
-    const { expandMedia, cwd, imageBaseDir, threadRef } = use(ChatMarkdownRendererContext);
+    const { environmentId, expandMedia, cwd, imageBaseDir, normalizeGitHubImages, threadRef } = use(
+      ChatMarkdownRendererContext,
+    );
     const imageExpand = use(MarkdownLinkContext) ? undefined : expandMedia;
     const localSrc = node?.properties?.dataLocalSrc;
     const markdownTitle = node?.properties?.dataMarkdownTitle;
@@ -2996,6 +3027,25 @@ const CHAT_MARKDOWN_COMPONENTS = {
         src: mediaSrc,
         ...(reference ? { reference } : {}),
       };
+      if (
+        normalizeGitHubImages &&
+        kind === "image" &&
+        environmentId &&
+        isGitHubUserAttachmentUrl(mediaSrc)
+      ) {
+        return (
+          <ChatMarkdownAssetImage
+            environmentId={environmentId}
+            resource={{ _tag: "github-user-attachment", url: mediaSrc }}
+            imageProps={imageProps}
+            standalone={standalone}
+            alt={altText}
+            copyMarkdown={copyMarkdown}
+            style={authoredSizeStyle}
+            onImageExpand={imageExpand}
+          />
+        );
+      }
       if (kind === "video") {
         return (
           <ChatMarkdownVideo
