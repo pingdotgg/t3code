@@ -13,6 +13,8 @@ vp run dev
 Open the one-time pairing URL printed by the dev runner. The bare origin does not authenticate
 a new browser.
 
+Prefer a container? See [Dev container](../internals/devcontainer.md) for VS Code and Codespaces setup.
+
 ## Choosing a dev process
 
 Use `vp run dev` for server and web, or `vp run dev:desktop` for the Electron client.
