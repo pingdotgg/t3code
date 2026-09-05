@@ -65,14 +65,23 @@ export class CodexBackgroundTasks {
     ) {
       return;
     }
+    return this.register(command.id, command.processId, command.command, false);
+  }
+
+  register(
+    taskId: string,
+    processId: string,
+    description: string,
+    monitor = true,
+  ): typeof CodexBackgroundTaskEvent.Type {
     const task = {
-      taskId: command.id,
-      processId: command.processId,
-      description: command.command,
-      monitor: false,
+      taskId,
+      processId,
+      description,
+      monitor,
       remainder: "",
     };
-    this.tasks.set(command.id, task);
+    this.tasks.set(taskId, task);
     return { taskId: task.taskId, description: task.description, status: "running" };
   }
 

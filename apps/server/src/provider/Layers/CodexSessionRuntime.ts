@@ -50,6 +50,7 @@ import { expandHomePath } from "../../pathExpansion.ts";
 import { buildCodexDeveloperInstructions } from "../CodexDeveloperInstructions.ts";
 import * as MonitorSession from "../../mcp/MonitorSession.ts";
 const isCodexRequestError = Schema.is(CodexErrors.CodexAppServerRequestError);
+const isMonitorStoppedError = Schema.is(MonitorSession.MonitorStoppedError);
 const encodeMonitorWake = Schema.encodeSync(
   Schema.fromJsonString(Schema.Struct({ taskId: Schema.String, output: Schema.String })),
 );
@@ -1220,6 +1221,10 @@ export const makeCodexSessionRuntime = (
     const suppressMemoryConsolidationNotification = makeMemoryConsolidationNotificationFilter();
     const closedRef = yield* Ref.make(false);
     const backgroundTasks = new CodexBackgroundTasks();
+    const monitorCommands = new Map<
+      string,
+      { stdout: TextDecoder; stderr: TextDecoder; stopped: boolean }
+    >();
     const turnLock = yield* Semaphore.make(1);
     const wakeSignals = yield* Queue.sliding<void>(1);
     let monitoringAvailable = false;
@@ -1780,6 +1785,7 @@ export const makeCodexSessionRuntime = (
 
     const handleRawNotification = (notification: CodexServerNotification) =>
       Effect.gen(function* () {
+        if (notification.method === "command/exec/outputDelta") return;
         const isMemoryConsolidationNotification =
           suppressMemoryConsolidationNotification(notification);
 
@@ -2238,6 +2244,20 @@ export const makeCodexSessionRuntime = (
       Effect.fail(CodexErrors.CodexAppServerRequestError.methodNotFound(method)),
     );
 
+    yield* client.handleServerNotification("command/exec/outputDelta", (payload) =>
+      Effect.gen(function* () {
+        const decoders = monitorCommands.get(payload.processId);
+        if (!decoders) return;
+        backgroundTasks.output(
+          payload.processId,
+          decoders[payload.stream].decode(Buffer.from(payload.deltaBase64, "base64"), {
+            stream: true,
+          }),
+        );
+        yield* Queue.offer(wakeSignals, undefined);
+      }),
+    );
+
     const registerServerNotification = <M extends CodexRpc.ServerNotificationMethod>(method: M) =>
       client.handleServerNotification(method, (params) =>
         Queue.offer(serverNotifications, makeCodexServerNotification(method, params)).pipe(
@@ -2443,6 +2463,95 @@ export const makeCodexSessionRuntime = (
 
     if (options.mcpProviderSessionId) {
       yield* monitorSessions.register(options.mcpProviderSessionId, {
+        start: (command) =>
+          turnLock
+            .withPermit(
+              Effect.gen(function* () {
+                if (!monitoringAvailable || suppressMonitorWakes || (yield* Ref.get(closedRef)))
+                  return yield* new MonitorSession.MonitorStoppedError({});
+                const monitorId = yield* randomUUIDv4("provider-event");
+                const description = command.join(" ");
+                const task = backgroundTasks.register(monitorId, monitorId, description);
+                monitorCommands.set(monitorId, {
+                  stdout: new TextDecoder(),
+                  stderr: new TextDecoder(),
+                  stopped: false,
+                });
+                yield* emitEvent({
+                  kind: "notification",
+                  threadId: options.threadId,
+                  method: "backgroundTask/changed",
+                  payload: task,
+                });
+                // The native RPC replies at exit, not startup. Capture is registered
+                // first and the tool explicitly reports scheduled rather than running.
+                yield* client
+                  .request("command/exec", {
+                    command,
+                    processId: monitorId,
+                    cwd: options.cwd,
+                    sandboxPolicy: runtimeModeToTurnSandboxPolicy(options.runtimeMode),
+                    streamStdoutStderr: true,
+                    disableTimeout: true,
+                    disableOutputCap: true,
+                  })
+                  .pipe(
+                    Effect.matchEffect({
+                      onFailure: (cause) =>
+                        Effect.logWarning("Codex monitor command failed", { cause }).pipe(
+                          Effect.andThen(
+                            Effect.sync(() => {
+                              backgroundTasks.output(
+                                monitorId,
+                                "Watcher failed to start or execute.\n",
+                              );
+                              return 1;
+                            }),
+                          ),
+                        ),
+                      onSuccess: ({ exitCode }) => Effect.succeed(exitCode),
+                    }),
+                    Effect.flatMap((exitCode) =>
+                      Effect.gen(function* () {
+                        const decoders = monitorCommands.get(monitorId);
+                        if (decoders) {
+                          backgroundTasks.output(
+                            monitorId,
+                            decoders.stdout.decode() + decoders.stderr.decode(),
+                          );
+                        }
+                        const completed = backgroundTasks.completed({
+                          id: monitorId,
+                          command: description,
+                          exitCode: decoders?.stopped ? -1 : exitCode,
+                        });
+                        if (completed)
+                          yield* emitEvent({
+                            kind: "notification",
+                            threadId: options.threadId,
+                            method: "backgroundTask/changed",
+                            payload: completed,
+                          });
+                        yield* Queue.offer(wakeSignals, undefined);
+                      }),
+                    ),
+                    Effect.ensuring(
+                      Effect.sync(() => {
+                        monitorCommands.delete(monitorId);
+                      }),
+                    ),
+                    Effect.forkIn(runtimeScope, { startImmediately: true }),
+                  );
+                return { monitorId, status: "scheduled" as const };
+              }),
+            )
+            .pipe(
+              Effect.mapError((cause) =>
+                isMonitorStoppedError(cause)
+                  ? cause
+                  : new MonitorSession.MonitorStartError({ cause }),
+              ),
+            ),
         subscribe: Effect.fn("CodexSessionRuntime.subscribeMonitor")(function* (processId) {
           if (!monitoringAvailable || suppressMonitorWakes || (yield* Ref.get(closedRef)))
             return yield* new MonitorSession.MonitorStoppedError({});
@@ -2579,6 +2688,24 @@ export const makeCodexSessionRuntime = (
                 suppressMonitorWakes = true;
                 backgroundTasks.cancelWakes();
                 queuedUserTurns.clear();
+                for (const monitor of monitorCommands.values()) monitor.stopped = true;
+                const monitorCleanup = yield* Effect.forEach(
+                  Array.from(monitorCommands.keys()),
+                  (processId) =>
+                    client.request("command/exec/terminate", { processId }).pipe(
+                      Effect.timeoutOrElse({
+                        duration: "10 seconds",
+                        orElse: () =>
+                          Effect.fail(
+                            CodexErrors.CodexAppServerRequestError.internalError(
+                              "Timed out stopping Codex monitor.",
+                            ),
+                          ),
+                      }),
+                      Effect.exit,
+                    ),
+                  { concurrency: "unbounded" },
+                );
                 // Stop-everything: children are full threads with their own turns;
                 // interrupting only the parent leaves the fleet running. Interrupt
                 // each live child turn first, best-effort per child, BOUNDED: the
@@ -2644,6 +2771,7 @@ export const makeCodexSessionRuntime = (
                   });
                 }
                 yield* cleaned;
+                for (const result of monitorCleanup) yield* result;
               }),
             ),
           ),

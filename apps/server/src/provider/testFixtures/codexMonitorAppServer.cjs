@@ -46,6 +46,9 @@ let interrupted = 0;
 let wakeRejected = false;
 let earlyTurnReply;
 const wakes = [];
+const monitorExecutions = [];
+const activeMonitors = new Map();
+let terminatedMonitors = 0;
 const write = (message) => process.stdout.write(`${JSON.stringify(message)}\n`);
 const notify = (method, params) =>
   write({
@@ -98,6 +101,31 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
       if (scenario === "stall-reload") barrier();
       else reply(id, {});
       break;
+    case "command/exec": {
+      monitorExecutions.push(params);
+      if (params.command[0] === "fail") {
+        write({ id, error: { code: -32603, message: "Launch failed" } });
+      } else {
+        activeMonitors.set(params.processId, id);
+        if (params.command[0] !== "quiet")
+          notify("command/exec/outputDelta", {
+            processId: params.processId,
+            stream: "stdout",
+            capReached: false,
+            deltaBase64: Buffer.from("Immediate monitor event\n").toString("base64"),
+          });
+      }
+      barrier();
+      break;
+    }
+    case "command/exec/terminate": {
+      terminatedMonitors++;
+      reply(id, {});
+      const requestId = activeMonitors.get(params.processId);
+      activeMonitors.delete(params.processId);
+      if (requestId !== undefined) reply(requestId, { exitCode: 0, stdout: "", stderr: "" });
+      break;
+    }
     case "turn/start": {
       if (params.input?.[0]?.text === "reject-resume") {
         write({ id, error: { code: -32603, message: "Resume rejected" } });
@@ -194,7 +222,13 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
                   type: "agentMessage",
                   id: "inspection-message",
                   memoryCitation: null,
-                  text: JSON.stringify({ wakes, cleanCount, interrupted }),
+                  text: JSON.stringify({
+                    wakes,
+                    cleanCount,
+                    interrupted,
+                    monitorExecutions,
+                    terminatedMonitors,
+                  }),
                 },
               ],
             },

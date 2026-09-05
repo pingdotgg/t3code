@@ -42,6 +42,11 @@ it.effect("MCP subscription enables wakes and unsubscribe discards queued events
       command: "watch-ci",
     });
     yield* (yield* MonitorSession.MonitorSessions).register(scope.providerSessionId, {
+      start: () =>
+        Effect.sync(() => {
+          tasks.subscribe("42");
+          return { monitorId: "42", status: "scheduled" as const };
+        }),
       subscribe: (id) =>
         Effect.sync(() => {
           expect(tasks.subscribe(id)).toBe(true);
@@ -49,7 +54,10 @@ it.effect("MCP subscription enables wakes and unsubscribe discards queued events
       unsubscribe: (id) => Effect.sync(() => tasks.unsubscribe(id)),
     });
     const call = (name: string) => server.callTool({ name, arguments: { processId: "42" } });
-    expect((yield* call("monitor_subscribe")).isError).toBe(false);
+    expect(
+      (yield* server.callTool({ name: "monitor_start", arguments: { command: ["watch-ci"] } }))
+        .isError,
+    ).toBe(false);
     tasks.output("watch", "first event\n");
     expect(tasks.takeWake()?.output).toContain("first event");
     tasks.output("watch", "queued event\n");
@@ -68,9 +76,14 @@ it.effect("MCP tools reject other sessions, missing capability, and a closed run
   Effect.gen(function* () {
     const server = yield* McpServer.McpServer;
     let subscribed = false;
-    const call = server.callTool({ name: "monitor_subscribe", arguments: { processId: "42" } });
+    const call = server.callTool({ name: "monitor_start", arguments: { command: ["watch-ci"] } });
     yield* Effect.gen(function* () {
       yield* (yield* MonitorSession.MonitorSessions).register(scope.providerSessionId, {
+        start: () =>
+          Effect.sync(() => {
+            subscribed = true;
+            return { monitorId: "42", status: "scheduled" as const };
+          }),
         subscribe: () =>
           Effect.sync(() => {
             subscribed = true;
@@ -108,6 +121,7 @@ it.effect("separately constructed registries isolate the same provider session I
     const first = yield* MonitorSession.make;
     const second = yield* MonitorSession.make;
     yield* first.register("same-session", {
+      start: () => Effect.succeed({ monitorId: "42", status: "scheduled" as const }),
       subscribe: () => Effect.void,
       unsubscribe: () => Effect.void,
     });

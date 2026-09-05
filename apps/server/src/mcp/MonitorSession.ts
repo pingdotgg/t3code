@@ -40,7 +40,17 @@ export class MonitorProcessMissingError extends Schema.TaggedErrorClass<MonitorP
   }
 }
 
+export class MonitorStartError extends Schema.TaggedErrorClass<MonitorStartError>()(
+  "MonitorStartError",
+  { cause: Schema.Defect() },
+) {
+  override get message() {
+    return "Could not schedule the background monitor.";
+  }
+}
+
 export const MonitorError = Schema.Union([
+  MonitorStartError,
   MonitorUnavailableError,
   MonitorCapabilityError,
   MonitorStoppedError,
@@ -48,6 +58,9 @@ export const MonitorError = Schema.Union([
 ]);
 
 export interface MonitorSession {
+  readonly start: (
+    command: ReadonlyArray<string>,
+  ) => Effect.Effect<{ monitorId: string; status: "scheduled" }, typeof MonitorError.Type>;
   readonly subscribe: (processId: string) => Effect.Effect<void, typeof MonitorError.Type>;
   readonly unsubscribe: (processId: string) => Effect.Effect<void, typeof MonitorError.Type>;
 }
@@ -64,9 +77,13 @@ export class MonitorSessions extends Context.Service<
     ) => Effect.Effect<void, never, Scope.Scope>;
     readonly invoke: (
       sessionId: string,
-      operation: keyof MonitorSession,
+      operation: "subscribe" | "unsubscribe",
       processId: string,
     ) => Effect.Effect<{ processId: string; subscribed: boolean }, typeof MonitorError.Type>;
+    readonly start: (
+      sessionId: string,
+      command: ReadonlyArray<string>,
+    ) => Effect.Effect<{ monitorId: string; status: "scheduled" }, typeof MonitorError.Type>;
   }
 >()("t3/mcp/MonitorSession/MonitorSessions") {}
 
@@ -86,7 +103,7 @@ export const make = Effect.sync(() => {
 
   const invoke = Effect.fn("MonitorSession.invoke")(function* (
     sessionId: string,
-    operation: keyof MonitorSession,
+    operation: "subscribe" | "unsubscribe",
     processId: string,
   ) {
     const session = sessions.get(sessionId);
@@ -94,7 +111,15 @@ export const make = Effect.sync(() => {
     yield* session[operation](processId);
     return { processId, subscribed: operation === "subscribe" };
   });
-  return { register, invoke };
+  const start = Effect.fn("MonitorSession.start")(function* (
+    sessionId: string,
+    command: ReadonlyArray<string>,
+  ) {
+    const session = sessions.get(sessionId);
+    if (!session) return yield* new MonitorUnavailableError({ sessionId });
+    return yield* session.start(command);
+  });
+  return { register, invoke, start };
 });
 
 export const layer = Layer.effect(MonitorSessions, make);
