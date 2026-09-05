@@ -131,7 +131,12 @@ const environmentLayer = (id = environmentId) =>
 const serviceLayer = (readSummary: UsageService["Service"]["readSummary"]) =>
   EnvironmentUsageMcp.layer.pipe(
     Layer.provide(environmentLayer()),
-    Layer.provide(Layer.succeed(UsageService, UsageService.of({ readSummary }))),
+    Layer.provide(
+      Layer.succeed(
+        UsageService,
+        UsageService.of({ readSummary, refreshRates: Effect.succeed(summary.pricing) }),
+      ),
+    ),
   );
 
 it.effect(
@@ -264,6 +269,7 @@ it.effect("denies missing capability and environment mismatch before the usage s
       UsageService,
       UsageService.of({
         readSummary: () => Ref.update(calls, (count) => count + 1).pipe(Effect.as(summary)),
+        refreshRates: Effect.succeed(summary.pricing),
       }),
     );
     const makeService = (id: typeof environmentId) =>
