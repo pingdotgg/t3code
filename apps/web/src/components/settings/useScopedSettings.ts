@@ -1,3 +1,5 @@
+import { AuthSettingsWriteScope } from "@t3tools/contracts";
+import { useEnvironmentsWithScope } from "../../state/session";
 import { requiredScopesForServerSettingsPatch, EnvironmentAuthorizationError } from "@t3tools/contracts";
 import { readEnvironmentScope } from "../../state/session";
 import * as Cause from "effect/Cause";
@@ -126,4 +128,10 @@ export function useClearProjectOverrides() {
     },
     [context, run],
   );
+}
+
+export function useScopedSettingsWriteAllowed() {
+  const { connectedEnvironments } = useSettingsScope();
+  const writable = useEnvironmentsWithScope(connectedEnvironments, AuthSettingsWriteScope);
+  return connectedEnvironments.length > 0 && connectedEnvironments.every((target) => writable.has(target.environmentId));
 }
