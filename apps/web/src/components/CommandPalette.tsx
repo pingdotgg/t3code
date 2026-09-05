@@ -28,6 +28,8 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import {
+  AuthOrchestrationOperateScope,
+  AuthSourceControlWriteScope,
   type DesktopWslState,
   type EnvironmentId,
   type EnvironmentMachineKind,
@@ -80,6 +82,7 @@ import { desktopLocalBackendId } from "../connection/desktopLocal";
 import { filesystemEnvironment } from "../state/filesystem";
 import { projectEnvironment } from "../state/projects";
 import { useEnvironmentQuery } from "../state/query";
+import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
 import { sourceControlEnvironment } from "../state/sourceControl";
 import { vcsEnvironment } from "../state/vcs";
 import { useAtomCommand } from "../state/use-atom-command";
@@ -876,6 +879,7 @@ function OpenCommandPaletteDialog(props: {
     [addProjectEnvironmentOptions, environments],
   );
   const browseEnvironmentId = addProjectEnvironmentId ?? defaultAddProjectEnvironmentId;
+  const canCreateProject = useEnvironmentScope(browseEnvironmentId, AuthOrchestrationOperateScope);
   const browseEnvironment =
     environments.find((environment) => environment.environmentId === browseEnvironmentId) ?? null;
   // A desktop-local secondary backend (today: the WSL backend). The picker is
@@ -1902,6 +1906,16 @@ function OpenCommandPaletteDialog(props: {
         return;
       }
 
+      if (!readEnvironmentScope(input.environmentId, AuthOrchestrationOperateScope)) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Cannot add project",
+            description: "This connection cannot add projects.",
+          }),
+        );
+        return;
+      }
       const projectId = newProjectId();
       const createResult = await createProject({
         environmentId: input.environmentId,
@@ -2061,7 +2075,12 @@ function OpenCommandPaletteDialog(props: {
     }
 
     const rawDestination = (destinationPathInput ?? query).trim();
-    if (rawDestination.length === 0 || isRemoteProjectCloning) {
+    if (
+      !readEnvironmentScope(addProjectCloneFlow.environmentId, AuthSourceControlWriteScope) ||
+      !readEnvironmentScope(addProjectCloneFlow.environmentId, AuthOrchestrationOperateScope) ||
+      rawDestination.length === 0 ||
+      isRemoteProjectCloning
+    ) {
       return;
     }
 
@@ -2221,6 +2240,7 @@ function OpenCommandPaletteDialog(props: {
   const canSubmitBrowsePath =
     isBrowsing &&
     !relativePathNeedsActiveProject &&
+    canCreateProject &&
     canCreateProjectInEnvironment(browseEnvironment?.connection.phase);
   const willCreateProjectPath =
     canSubmitBrowsePath &&
@@ -2244,6 +2264,15 @@ function OpenCommandPaletteDialog(props: {
       ? "Continue"
       : "Lookup"
     : null;
+  const canWriteSourceControl = useEnvironmentScope(
+    addProjectCloneFlow?.environmentId ?? null,
+    AuthSourceControlWriteScope,
+  );
+  const canCreateClonedProject = useEnvironmentScope(
+    addProjectCloneFlow?.environmentId ?? null,
+    AuthOrchestrationOperateScope,
+  );
+  const canCloneProject = canWriteSourceControl && canCreateClonedProject;
   const isRemoteProjectPending = isRemoteProjectLookingUp || isRemoteProjectCloning;
   const canSubmitRemoteProjectFlow =
     addProjectCloneFlow?.step === "repository" &&
@@ -2521,9 +2550,10 @@ function OpenCommandPaletteDialog(props: {
               )}
               aria-label={`${submitActionLabel} (${addShortcutLabel})`}
               disabled={
+                !canCreateProject ||
                 !canCreateProjectInEnvironment(browseEnvironment?.connection.phase) ||
                 relativePathNeedsActiveProject ||
-                (isCloneDestinationStep && isRemoteProjectPending)
+                (isCloneDestinationStep && (!canCloneProject || isRemoteProjectPending))
               }
               onMouseDown={(event) => {
                 event.preventDefault();
@@ -2549,7 +2579,9 @@ function OpenCommandPaletteDialog(props: {
           </KbdGroup>
         </TooltipTrigger>
         <TooltipPopup side="top">
-          {submitActionLabel} ({addShortcutLabel})
+          {canCreateProject
+            ? `${submitActionLabel} (${addShortcutLabel})`
+            : "This connection cannot add projects."}
         </TooltipPopup>
       </Tooltip>
     ) : null;

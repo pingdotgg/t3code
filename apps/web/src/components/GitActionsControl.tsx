@@ -1,5 +1,9 @@
 import { useAtomValue } from "@effect/atom-react";
-import { type ScopedThreadRef } from "@t3tools/contracts";
+import {
+  AuthOrchestrationOperateScope,
+  AuthSourceControlWriteScope,
+  type ScopedThreadRef,
+} from "@t3tools/contracts";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -87,7 +91,8 @@ import {
   useVcsInitAction,
   useVcsPullAction,
 } from "~/lib/sourceControlActions";
-import { useThread } from "~/state/entities";
+import { useThread, useThreadShell } from "~/state/entities";
+import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
 import { useEnvironmentQuery } from "~/state/query";
 import { serverEnvironment } from "~/state/server";
 import { sourceControlEnvironment } from "~/state/sourceControl";
@@ -487,14 +492,19 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
   ] as const;
 
   const canSubmitPublishRepository = useMemo(() => {
-    if (!selectedPublishProviderReadiness.ready) return false;
+    if (!publishRepositoryAction.isAllowed || !selectedPublishProviderReadiness.ready) return false;
     if (publishRepositoryAction.isPending) return false;
     const repositoryParts = publishRepository.trim().split("/");
     const owner = repositoryParts[0]?.trim() ?? "";
     const rest = repositoryParts.slice(1);
     const name = rest.join("/").trim();
     return owner.length > 0 && name.length > 0;
-  }, [publishRepository, publishRepositoryAction.isPending, selectedPublishProviderReadiness]);
+  }, [
+    publishRepository,
+    publishRepositoryAction.isAllowed,
+    publishRepositoryAction.isPending,
+    selectedPublishProviderReadiness,
+  ]);
 
   const submitPublishRepository = useCallback(() => {
     if (!canSubmitPublishRepository) {
@@ -991,6 +1001,11 @@ export default function GitActionsControl({
     "thread branch metadata update",
   );
   const activeEnvironmentId = activeThreadRef?.environmentId ?? null;
+  const canWriteSourceControl = useEnvironmentScope(
+    activeEnvironmentId,
+    AuthSourceControlWriteScope,
+  );
+  const canOperateThread = useEnvironmentScope(activeEnvironmentId, AuthOrchestrationOperateScope);
   const serverConfig = useAtomValue(serverEnvironment.configValueAtom(activeEnvironmentId));
   const openInPreferredEditor = useOpenInPreferredEditor(
     activeEnvironmentId,
@@ -1009,9 +1024,13 @@ export default function GitActionsControl({
         ? store.getDraftThreadByRef(activeThreadRef)
         : null,
   );
-  const activeServerThread = useThread(activeThreadRef, {
+  const activeServerThreadShell = useThreadShell(activeThreadRef);
+  const activeServerThreadDetail = useThread(activeThreadRef, {
     waitForShell: activeDraftThread !== null,
   });
+  const activeServerThread = activeServerThreadShell ?? activeServerThreadDetail;
+  const isLocalDraftThread = activeDraftThread !== null && activeServerThread === null;
+  const canChangeThreadBranch = canWriteSourceControl && (isLocalDraftThread || canOperateThread);
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
   const [isCommitDialogOpen, setIsCommitDialogOpen] = useState(false);
   const [dialogCommitMessage, setDialogCommitMessage] = useState("");
@@ -1048,7 +1067,10 @@ export default function GitActionsControl({
       }
 
       if (activeServerThread) {
-        if (activeServerThread.branch === branch) {
+        if (
+          !readEnvironmentScope(activeThreadRef.environmentId, AuthOrchestrationOperateScope) ||
+          activeServerThread.branch === branch
+        ) {
           return;
         }
 
@@ -1170,9 +1192,12 @@ export default function GitActionsControl({
       resolveQuickAction(gitStatusForActions, isGitActionRunning, isDefaultRef, hasPrimaryRemote),
     [gitStatusForActions, hasPrimaryRemote, isDefaultRef, isGitActionRunning],
   );
-  const quickActionDisabledReason = quickAction.disabled
-    ? (quickAction.hint ?? "This action is currently unavailable.")
-    : null;
+  const quickActionDisabledReason =
+    !canWriteSourceControl && quickAction.kind !== "open_pr"
+      ? "This connection cannot change source control."
+      : quickAction.disabled
+        ? (quickAction.hint ?? "This action is currently unavailable.")
+        : null;
   const pendingDefaultBranchActionCopy = pendingDefaultBranchAction
     ? resolveDefaultBranchActionDialogCopy({
         action: pendingDefaultBranchAction.action,
@@ -1269,6 +1294,14 @@ export default function GitActionsControl({
       progressToastId,
       filePaths,
     }: RunGitActionWithToastInput) => {
+      if (
+        activeEnvironmentId === null ||
+        !readEnvironmentScope(activeEnvironmentId, AuthSourceControlWriteScope) ||
+        (featureBranch &&
+          !isLocalDraftThread &&
+          !readEnvironmentScope(activeEnvironmentId, AuthOrchestrationOperateScope))
+      )
+        return;
       const actionStatus = statusOverride ?? gitStatusForActions;
       const actionBranch = actionStatus?.refName ?? null;
       const actionIsDefaultBranch = featureBranch ? false : isDefaultRef;
@@ -1505,7 +1538,7 @@ export default function GitActionsControl({
   };
 
   const checkoutFeatureBranchAndContinuePendingAction = () => {
-    if (!pendingDefaultBranchAction) return;
+    if (!canChangeThreadBranch || !pendingDefaultBranchAction) return;
     const { action, commitMessage, onConfirmed, filePaths } = pendingDefaultBranchAction;
     setPendingDefaultBranchAction(null);
     void runGitActionWithToast({
@@ -1519,7 +1552,7 @@ export default function GitActionsControl({
   };
 
   const runDialogActionOnNewBranch = () => {
-    if (!isCommitDialogOpen) return;
+    if (!canChangeThreadBranch || !isCommitDialogOpen) return;
     const commitMessage = dialogCommitMessage.trim();
 
     setIsCommitDialogOpen(false);
@@ -1662,7 +1695,8 @@ export default function GitActionsControl({
     [gitCwd, openInPreferredEditor, threadToastData],
   );
 
-  const canPublishRepository = isRepo && gitStatusForActions !== null && !hasPrimaryRemote;
+  const canPublishRepository =
+    canWriteSourceControl && isRepo && gitStatusForActions !== null && !hasPrimaryRemote;
 
   if (!gitCwd) return null;
 
@@ -1672,7 +1706,7 @@ export default function GitActionsControl({
         <Button
           variant="outline"
           size="xs"
-          disabled={initAction.isPending}
+          disabled={!canWriteSourceControl || initAction.isPending}
           onClick={() => {
             void (async () => {
               const result = await initAction.run();
@@ -1728,7 +1762,11 @@ export default function GitActionsControl({
               variant="outline"
               size="xs"
               className="ps-[8.5px]"
-              disabled={isGitActionRunning || quickAction.disabled}
+              disabled={
+                (!canWriteSourceControl && quickAction.kind !== "open_pr") ||
+                isGitActionRunning ||
+                quickAction.disabled
+              }
               onClick={runQuickAction}
             >
               <GitQuickActionIcon quickAction={quickAction} SourceControlIcon={SourceControlIcon} />
@@ -1785,7 +1823,7 @@ export default function GitActionsControl({
                 return (
                   <MenuItem
                     key={`${item.id}-${item.label}`}
-                    disabled={item.disabled}
+                    disabled={(!canWriteSourceControl && item.kind !== "open_pr") || item.disabled}
                     onClick={() => {
                       openDialogForMenuItem(item);
                     }}
@@ -1797,7 +1835,7 @@ export default function GitActionsControl({
               })}
               {canPublishRepository ? (
                 <MenuItem
-                  disabled={isGitActionRunning}
+                  disabled={!canWriteSourceControl || isGitActionRunning}
                   onClick={() => {
                     setIsPublishDialogOpen(true);
                   }}
@@ -1921,6 +1959,8 @@ export default function GitActionsControl({
                               <button
                                 type="button"
                                 className="flex min-w-0 flex-1 items-center justify-between gap-3 text-left"
+                                disabled={!canOperateThread}
+                                aria-label={`Open ${file.path} in editor`}
                                 onClick={() => openChangedFileInEditor(file.path)}
                               >
                                 <StartTruncatedPath
@@ -1983,12 +2023,16 @@ export default function GitActionsControl({
             <Button
               variant="outline"
               size="sm"
-              disabled={noneSelected}
+              disabled={!canChangeThreadBranch || noneSelected}
               onClick={runDialogActionOnNewBranch}
             >
               Commit on new refName
             </Button>
-            <Button size="sm" disabled={noneSelected} onClick={runDialogAction}>
+            <Button
+              size="sm"
+              disabled={!canWriteSourceControl || noneSelected}
+              onClick={runDialogAction}
+            >
               Commit
             </Button>
           </DialogFooter>
@@ -2032,6 +2076,7 @@ export default function GitActionsControl({
               variant="outline"
               size="sm"
               onClick={continuePendingDefaultBranchAction}
+              disabled={!canWriteSourceControl}
             >
               {pendingDefaultBranchActionCopy?.continueLabel ?? "Continue"}
             </Button>
@@ -2039,6 +2084,7 @@ export default function GitActionsControl({
               className="min-h-8 w-full max-w-full whitespace-normal py-1.5 leading-snug sm:min-h-7 sm:w-auto"
               size="sm"
               onClick={checkoutFeatureBranchAndContinuePendingAction}
+              disabled={!canChangeThreadBranch}
             >
               Checkout feature branch & continue
             </Button>

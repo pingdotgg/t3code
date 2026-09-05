@@ -1,6 +1,7 @@
 import {
   AuthOrchestrationOperateScope,
   AuthSettingsWriteScope,
+  AuthSourceControlWriteScope,
   type AssistantCitation,
   type ApprovalRequestId,
   type ChatFileAttachment,
@@ -277,6 +278,7 @@ import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../termina
 import { useKnownTerminalSessions, useThreadRunningTerminalIds } from "../state/terminalSessions";
 import { projectEnvironment } from "../state/projects";
 import { useEnvironmentQuery } from "../state/query";
+import { useEnvironmentScope } from "~/state/session";
 import {
   environmentServerConfigsAtom,
   primaryServerAvailableEditorsAtom,
@@ -421,11 +423,7 @@ import { clampFileAttachmentUploadBytes } from "@t3tools/client-runtime/state/at
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { fileAttachmentCapabilityBlockReason } from "./chat/composerAttachmentFiles";
 import { assetEnvironment } from "../state/assets";
-import {
-  readEnvironmentScope,
-  readPreparedConnection,
-  useEnvironmentScope,
-} from "../state/session";
+import { readEnvironmentScope, readPreparedConnection } from "../state/session";
 import { useAtomCommand } from "../state/use-atom-command";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
@@ -1407,6 +1405,7 @@ export default function ChatView(props: ChatViewProps) {
   const updateThreadMetadata = useOrchestrationCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
   });
+  const canWriteSourceControl = useEnvironmentScope(environmentId, AuthSourceControlWriteScope);
   const switchGitRef = useAtomCommand(vcsEnvironment.switchRef, { reportFailure: false });
   const setThreadRuntimeMode = useOrchestrationCommand(threadEnvironment.setRuntimeMode, {
     reportFailure: false,
@@ -1794,7 +1793,7 @@ export default function ChatView(props: ChatViewProps) {
   const [, setThreadErrorBannerDismissTick] = useState(0);
   const runtimeMode = composerRuntimeMode ?? activeThread?.runtimeMode ?? DEFAULT_RUNTIME_MODE;
   const isLocalDraftThread = !isServerThread && localDraftThread !== undefined;
-  const canCheckoutPullRequestIntoThread = isLocalDraftThread;
+  const canCheckoutPullRequestIntoThread = canWriteSourceControl && isLocalDraftThread;
   const activeThreadId = activeThread?.id ?? null;
   const activeThreadEnvironmentId = activeThread?.environmentId ?? null;
   const runningTerminalIds = useThreadRunningTerminalIds({
@@ -5382,6 +5381,7 @@ export default function ChatView(props: ChatViewProps) {
     });
   }, [activeBranchMismatchKey, showBranchMismatchBanner]);
   const handleSwitchCheckoutToThread = useCallback(async () => {
+    if (!canWriteSourceControl) return;
     if (
       !activeProjectCwd ||
       !activeThread ||
@@ -5437,6 +5437,7 @@ export default function ChatView(props: ChatViewProps) {
     setIsRestoringThreadBranch(false);
     scheduleComposerFocus();
   }, [
+    canWriteSourceControl,
     activeProjectCwd,
     activeThread,
     environmentId,
@@ -5695,12 +5696,17 @@ export default function ChatView(props: ChatViewProps) {
     selectedProvider,
   ]);
   const handleRestoreThreadBranch = useCallback(() => {
+    if (!canWriteSourceControl) return;
     if (gitStatusQuery.data?.hasWorkingTreeChanges) {
       setBranchRestoreConfirmOpen(true);
       return;
     }
     void handleSwitchCheckoutToThread();
-  }, [gitStatusQuery.data?.hasWorkingTreeChanges, handleSwitchCheckoutToThread]);
+  }, [
+    canWriteSourceControl,
+    gitStatusQuery.data?.hasWorkingTreeChanges,
+    handleSwitchCheckoutToThread,
+  ]);
   const composerBannerItems = useMemo<ComposerBannerStackItem[]>(() => {
     const backgroundLivenessItems =
       backgroundLivenessBannerItem === null ? [] : [backgroundLivenessBannerItem];
@@ -5748,7 +5754,7 @@ export default function ChatView(props: ChatViewProps) {
           <Button
             size="xs"
             variant="ghost"
-            disabled={isRestoringThreadBranch}
+            disabled={!canWriteSourceControl || isRestoringThreadBranch}
             onClick={handleRestoreThreadBranch}
           >
             {isRestoringThreadBranch ? "Restoring..." : "Restore branch"}
@@ -5765,6 +5771,7 @@ export default function ChatView(props: ChatViewProps) {
   }, [
     activeBranchMismatchKey,
     backgroundLivenessBannerItem,
+    canWriteSourceControl,
     handleRestoreThreadBranch,
     isRestoringThreadBranch,
     localCheckoutBranchMismatch,
@@ -8240,6 +8247,7 @@ export default function ChatView(props: ChatViewProps) {
                   <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
                   <Button
                     variant="default"
+                    disabled={!canWriteSourceControl}
                     onClick={() => {
                       setBranchRestoreConfirmOpen(false);
                       void handleSwitchCheckoutToThread();

@@ -9,7 +9,7 @@ import { useState } from "react";
 
 import { cn } from "~/lib/utils";
 import { pullRequestEnvironment } from "~/state/pullRequests";
-import { useAtomCommand } from "~/state/use-atom-command";
+import { useSourceControlCommand } from "~/state/use-source-control-command";
 
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { toastManager } from "../ui/toast";
@@ -66,7 +66,9 @@ export function PullRequestReactionBar({
     readonly signature: string;
     readonly values: ReadonlyMap<PullRequestReactionContent, boolean>;
   }>({ signature: "", values: EMPTY_PENDING });
-  const setReaction = useAtomCommand(pullRequestEnvironment.setReaction, { reportFailure: false });
+  const setReaction = useSourceControlCommand(pullRequestEnvironment.setReaction, {
+    reportFailure: false,
+  });
 
   const signature = reactionsSignature(reactions);
   const values = pending.signature === signature ? pending.values : EMPTY_PENDING;
