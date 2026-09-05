@@ -1,5 +1,4 @@
 import {
-  AuthFilesystemReadScope,
   AuthOrchestrationOperateScope,
   EnvironmentId,
   ProjectId,
@@ -55,9 +54,7 @@ vi.mock("../state/session", async () => {
   const { useSyncExternalStore } = await import("react");
   const readEnvironmentScope = (id: EnvironmentId | null, scope: AuthEnvironmentScope) =>
     id !== null &&
-    (scope === AuthFilesystemReadScope ||
-      (scope === AuthOrchestrationOperateScope &&
-        (id !== threadRef.environmentId || state.allowed)));
+    (scope !== AuthOrchestrationOperateScope || id !== threadRef.environmentId || state.allowed);
   return {
     readEnvironmentScope,
     useEnvironmentScope: (id: EnvironmentId | null, scope: AuthEnvironmentScope) =>
