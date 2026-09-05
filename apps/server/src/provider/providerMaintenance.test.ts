@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import { expect, it } from "@effect/vitest";
+import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeOS from "node:os";
@@ -436,6 +437,38 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
           lockKey: "nativePackageTool-native",
         },
       });
+    }),
+  );
+
+  // Regression for #9850: an explicit native path outside PATH, with spaces,
+  // must be what actually gets spawned.
+  it.effect.skipIf(windowsHost)("runs an explicit native updater outside PATH", () =>
+    Effect.gen(function* () {
+      const tempDir = yield* makeTempDir("t3-native-update");
+      const nativePath = NodePath.join(
+        tempDir,
+        "with spaces",
+        ".local",
+        "bin",
+        "native-package-tool",
+      );
+      NodeFS.mkdirSync(NodePath.dirname(nativePath), { recursive: true });
+      NodeFS.writeFileSync(nativePath, "#!/bin/sh\nprintf '%s' \"$1\"\n");
+      NodeFS.chmodSync(nativePath, 0o755);
+
+      const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
+        nativePackageToolUpdate,
+        { binaryPath: nativePath, env: { PATH: "" } },
+      ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn));
+
+      expect(capabilities.update?.executable).toBe(nativePath);
+      const result = NodeChildProcess.spawnSync(
+        capabilities.update!.executable,
+        capabilities.update!.args,
+        { env: { PATH: "" }, encoding: "utf8" },
+      );
+      expect(result.status).toBe(0);
+      expect(result.stdout).toBe("update");
     }),
   );
 
