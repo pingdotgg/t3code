@@ -588,6 +588,26 @@ it.layer(
     }),
   );
 
+  it.effect("retains a fresh terminal while it is starting with zero inactive retention", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        maxRetainedInactiveSessions: 0,
+      });
+      const input = openInput({ terminalId: "term-zero-retention" });
+
+      const opened = yield* manager.openFreshWithHandle(input);
+
+      expect(opened.snapshot.status).toBe("running");
+      expect(ptyAdapter.spawnInputs).toHaveLength(1);
+      expect(
+        yield* manager.inspectSession({
+          threadId: input.threadId,
+          terminalId: input.terminalId,
+        }),
+      ).toMatchObject({ status: "running" });
+    }),
+  );
+
   it.effect("restarts only loaded sessions through the existing-only path", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager();
