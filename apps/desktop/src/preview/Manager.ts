@@ -465,22 +465,6 @@ interface ExpectedAgentInput {
   readonly expiresAt: number;
 }
 
-const APP_FORWARDED_SHORTCUTS: ReadonlyArray<{
-  key: string;
-  meta: boolean;
-  shift: boolean;
-  control: boolean;
-}> = Object.freeze([
-  // mod+shift+J → preview.toggle
-  { key: "j", meta: true, shift: true, control: false },
-  // mod+K → command palette
-  { key: "k", meta: true, shift: false, control: false },
-  // mod+, → settings (macOS convention)
-  { key: ",", meta: true, shift: false, control: false },
-  // mod+W → close tab/panel
-  { key: "w", meta: true, shift: false, control: false },
-]);
-
 /**
  * Protocols a preview page may open in a real popup window.
  *
@@ -1535,16 +1519,6 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     }
   });
 
-  const isAppShortcut = (input: Electron.Input): boolean =>
-    input.type === "keyDown" &&
-    APP_FORWARDED_SHORTCUTS.some(
-      (shortcut) =>
-        shortcut.key.toLowerCase() === input.key.toLowerCase() &&
-        shortcut.meta === input.meta &&
-        shortcut.shift === input.shift &&
-        shortcut.control === input.control,
-    );
-
   const computeNavStatus = (wc: Electron.WebContents): PreviewNavStatus => {
     const url = wc.getURL();
     const title = wc.getTitle();
@@ -1819,30 +1793,11 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         }).pipe(Effect.ignore),
       );
     };
-    const forwardShortcut = Effect.fn("PreviewManager.forwardShortcut")(function* (
-      event: Electron.Event,
-      input: Electron.Input,
-    ) {
-      const mainWindow = yield* Ref.get(mainWindowRef);
-      if (!isAppShortcut(input) || Option.isNone(mainWindow) || mainWindow.value.isDestroyed()) {
-        return;
-      }
-      event.preventDefault();
-      mainWindow.value.webContents.sendInputEvent({
-        type: "keyDown",
-        keyCode: input.key,
-        modifiers: [
-          ...(input.meta ? (["meta"] as const) : []),
-          ...(input.shift ? (["shift"] as const) : []),
-          ...(input.control ? (["control"] as const) : []),
-          ...(input.alt ? (["alt"] as const) : []),
-        ],
-      });
-    });
     // A popup opens with Electron's default handler, so the page inside it could
     // otherwise spawn native windows without limit. Nothing in an OAuth flow
     // opens a second popup, so the chain stops at the first one.
     const windowCreated = (window: Electron.BrowserWindow): void => {
+      window.webContents.setIgnoreMenuShortcuts(true);
       window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
     };
     const beforeInput = (event: Electron.Event, input: Electron.Input): void => {
@@ -1855,7 +1810,6 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         );
         return;
       }
-      runFork(forwardShortcut(event, input));
     };
     yield* Scope.addFinalizer(
       scope,
@@ -1878,6 +1832,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     );
     const install = Effect.fn("PreviewManager.installWebContentsListeners")(function* () {
       yield* attempt({ operation: "attachListeners", tabId, webContentsId: wc.id }, () => {
+        // Preview input belongs to the page, including keys injected through CDP.
+        // Never let it invoke the host application's menu accelerators.
+        wc.setIgnoreMenuShortcuts(true);
         wc.on("did-start-navigation", navigationStarted);
         wc.on("did-navigate", syncNavigation);
         wc.on("did-navigate-in-page", syncInPageNavigation);

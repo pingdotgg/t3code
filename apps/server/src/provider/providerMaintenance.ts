@@ -5,6 +5,7 @@ import {
 } from "@t3tools/contracts";
 import { compareSemverVersions } from "@t3tools/shared/semver";
 import { resolveCommandPath } from "@t3tools/shared/shell";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -52,6 +53,7 @@ export interface ProviderMaintenanceCommandAction {
 
 export interface ProviderMaintenanceCapabilityResolutionOptions {
   readonly binaryPath?: string | null;
+  readonly platform?: NodeJS.Platform;
   readonly env?: NodeJS.ProcessEnv;
   readonly resolvedCommandPath?: string | null;
   readonly realCommandPath?: string | null;
@@ -94,18 +96,34 @@ function nonEmptyString(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
 }
 
+function quoteUpdateExecutable(executable: string, platform: NodeJS.Platform): string {
+  const safePath = platform === "win32" ? /^[\w./:\\-]+$/ : /^[\w./:-]+$/;
+  if (safePath.test(executable)) return executable;
+  // Windows terminals default to PowerShell, where a quoted executable needs &.
+  return platform === "win32"
+    ? `& '${executable.replace(/['\u2018\u2019]/g, "$&$&")}'`
+    : `'${executable.replaceAll("'", "'\\''")}'`;
+}
+
 export function makeProviderMaintenanceCapabilities(input: {
   readonly provider: ProviderDriverKind;
   readonly packageName: string | null;
   readonly updateExecutable: string | null;
   readonly updateArgs: ReadonlyArray<string>;
   readonly updateLockKey: string | null;
+  readonly platform?: NodeJS.Platform;
 }): ProviderMaintenanceCapabilities {
   const update =
     input.updateExecutable === null || input.updateLockKey === null
       ? null
       : {
-          command: [input.updateExecutable, ...input.updateArgs].join(" "),
+          command: [
+            quoteUpdateExecutable(
+              input.updateExecutable,
+              input.platform ?? HostProcessPlatform.defaultValue(),
+            ),
+            ...input.updateArgs,
+          ].join(" "),
           executable: input.updateExecutable,
           args: input.updateArgs,
           lockKey: input.updateLockKey,
@@ -209,6 +227,8 @@ function makeHomebrewProviderMaintenanceCapabilities(
 
 function makeNativeProviderMaintenanceCapabilities(
   definition: PackageManagedProviderMaintenanceDefinition,
+  commandPath: string,
+  platform: NodeJS.Platform,
 ): ProviderMaintenanceCapabilities | null {
   if (!definition.nativeUpdate) {
     return null;
@@ -217,9 +237,10 @@ function makeNativeProviderMaintenanceCapabilities(
   return makeProviderMaintenanceCapabilities({
     provider: definition.provider,
     packageName: definition.npmPackageName,
-    updateExecutable: definition.nativeUpdate.executable,
+    updateExecutable: commandPath,
     updateArgs: definition.nativeUpdate.args,
     updateLockKey: definition.nativeUpdate.lockKey,
+    platform,
   });
 }
 
@@ -297,8 +318,11 @@ export function resolvePackageManagedProviderMaintenance(
       commandPaths.some((commandPath) => nativeUpdate.isCommandPath(commandPath))
     ) {
       return (
-        makeNativeProviderMaintenanceCapabilities(definition) ??
-        makeNpmGlobalProviderMaintenanceCapabilities(definition)
+        makeNativeProviderMaintenanceCapabilities(
+          definition,
+          resolvedCommandPath,
+          options?.platform ?? HostProcessPlatform.defaultValue(),
+        ) ?? makeNpmGlobalProviderMaintenanceCapabilities(definition)
       );
     }
     if (commandPaths.some(isVitePlusGlobalCommandPath)) {
@@ -360,8 +384,9 @@ export const resolveProviderMaintenanceCapabilitiesEffect = Effect.fn(
   options?: Omit<ProviderMaintenanceCapabilityResolutionOptions, "realCommandPath">,
 ) {
   const binaryPath = nonEmptyString(options?.binaryPath);
+  const platform = options?.platform ?? (yield* HostProcessPlatform);
   if (!binaryPath) {
-    return resolver.resolve(options);
+    return resolver.resolve({ ...options, platform });
   }
 
   const env = options?.env ?? (yield* readCommandLookupEnv);
@@ -370,7 +395,7 @@ export const resolveProviderMaintenanceCapabilitiesEffect = Effect.fn(
       Effect.catchTag("CommandResolutionError", () => Effect.succeed(null)),
     )) ?? (hasPathSeparator(binaryPath) ? binaryPath : null);
   if (!resolvedCommandPath) {
-    return resolver.resolve(options);
+    return resolver.resolve({ ...options, platform });
   }
 
   const fileSystem = yield* FileSystem.FileSystem;
@@ -379,6 +404,7 @@ export const resolveProviderMaintenanceCapabilitiesEffect = Effect.fn(
     .pipe(Effect.orElseSucceed(() => resolvedCommandPath));
   return resolver.resolve({
     ...options,
+    platform,
     env,
     resolvedCommandPath,
     realCommandPath,

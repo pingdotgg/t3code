@@ -19,8 +19,9 @@ import * as Schema from "effect/Schema";
 import { parse as parseYamlDocument } from "yaml";
 
 const FRONTMATTER_PATTERN = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/;
-const SKILL_MENTION_PATTERN = /(^|\s)\$([a-zA-Z][a-zA-Z0-9:_-]*)(?=\s|$)/g;
-const HAS_SKILL_MENTION_PATTERN = /(^|\s)\$[a-zA-Z][a-zA-Z0-9:_-]*(?=\s|$)/;
+const SKILL_MENTION_PATTERN =
+  /(^|\s)\$(?![0-9][0-9_]*(?:[kKmMbBtT]|[eE][0-9]+)?(?:\s|$))(?=[a-zA-Z0-9:_-]*[a-zA-Z])([a-zA-Z0-9][a-zA-Z0-9:_-]*)(?=\s|$)/g;
+const HAS_SKILL_MENTION_PATTERN = new RegExp(SKILL_MENTION_PATTERN.source);
 const MAX_SKILL_DEPTH = 10;
 const MAX_SKILL_BYTES = FileSystem.Size(1_000_000);
 const MAX_SKILL_SCAN_ENTRIES = 10_000;

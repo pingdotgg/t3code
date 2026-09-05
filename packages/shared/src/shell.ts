@@ -544,7 +544,8 @@ function cacheCommandResolution(
   });
 }
 
-const isExecutableFile = Effect.fn("shell.isExecutableFile")(function* (
+// Trace each command lookup, not every candidate file it probes.
+const isExecutableFile = Effect.fnUntraced(function* (
   filePath: string,
   platform: NodeJS.Platform,
   windowsPathExtensions: ReadonlyArray<string>,
@@ -605,12 +606,15 @@ const resolveCommandPathForPlatform = Effect.fn("shell.resolveCommandPathForPlat
     return cached.resolvedPath;
   }
 
+  // Keep case variants: Windows can make PATH directories case-sensitive.
   const pathEntries: string[] = [];
+  const seenPathEntries = new Set<string>();
   for (const entry of pathValue.split(pathDelimiterForPlatform(platform))) {
     const pathEntry = stripWrappingQuotes(entry.trim());
-    if (pathEntry.length > 0) {
-      pathEntries.push(pathEntry);
-    }
+    if (pathEntry.length === 0 || seenPathEntries.has(pathEntry)) continue;
+
+    seenPathEntries.add(pathEntry);
+    pathEntries.push(pathEntry);
   }
 
   for (const pathEntry of pathEntries) {
