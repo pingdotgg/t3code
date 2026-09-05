@@ -1,84 +1,39 @@
 // oxlint-disable t3code/no-global-process-runtime -- this file owns the disposable native worker.
-// @effect-diagnostics nodeBuiltinImport:off globalProcess:off globalTimers:off - the Companion deliberately
-// isolates Kokoro in a disposable child process so model memory is returned to the OS.
+// @effect-diagnostics nodeBuiltinImport:off globalProcess:off globalTimers:off - the desktop voice worker
+// isolates Pocket in a disposable child process so model memory is returned to the OS.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
-import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeTimers from "node:timers";
 import * as NodeTimersPromises from "node:timers/promises";
 
+import {
+  bundledPocketVoicePaths,
+  pocketResourceError,
+  pocketVoicePaths,
+  pocketWorkerCloseTimeoutMs,
+  pocketWorkerStartupTimeoutMs,
+  type PocketVoicePaths,
+} from "./pocket-config.ts";
 import type {
-  KokoroChunkConsumer,
-  KokoroSynthesisMetrics,
-  KokoroWorker,
-} from "./kokoro-lifecycle.ts";
+  PocketChunkConsumer,
+  PocketSynthesisMetrics,
+  PocketWorker,
+} from "./pocket-lifecycle.ts";
 
-export type KokoroVoicePaths = {
-  readonly resourceRoot: string;
-  readonly modelPath: string;
-  readonly voicesPath: string;
-  readonly tokensPath: string;
-  readonly dataDir: string;
-  readonly lexiconPath: string;
-};
-
-export function kokoroVoicePaths(resourceRoot: string): KokoroVoicePaths {
-  return {
-    resourceRoot,
-    modelPath: NodePath.join(resourceRoot, "model.int8.onnx"),
-    voicesPath: NodePath.join(resourceRoot, "voices.bin"),
-    tokensPath: NodePath.join(resourceRoot, "tokens.txt"),
-    dataDir: NodePath.join(resourceRoot, "espeak-ng-data"),
-    lexiconPath: NodePath.join(resourceRoot, "lexicon-us-en.txt"),
-  };
-}
-
-export function bundledKokoroVoicePaths(inputResourceRoot?: string): KokoroVoicePaths {
-  if (inputResourceRoot !== undefined) return kokoroVoicePaths(inputResourceRoot);
-  const configuredRoot = process.env.JARVIS_KOKORO_ROOT?.trim();
-  if (configuredRoot !== undefined && configuredRoot.length > 0) {
-    return kokoroVoicePaths(configuredRoot);
-  }
-  const resourcesPath = (process as NodeJS.Process & { readonly resourcesPath?: unknown })
-    .resourcesPath;
-  const packagedRoot =
-    typeof resourcesPath === "string"
-      ? NodePath.join(resourcesPath, "jarvis-resources", "kokoro")
-      : undefined;
-  const resourceRoot =
-    packagedRoot !== undefined && NodeFS.existsSync(NodePath.join(packagedRoot, "model.int8.onnx"))
-      ? packagedRoot
-      : NodePath.resolve(import.meta.dirname, "../resources/kokoro");
-  return kokoroVoicePaths(resourceRoot);
-}
-
-export function kokoroResourceError(paths: KokoroVoicePaths): Error | undefined {
-  const resources: ReadonlyArray<readonly [string, string]> = [
-    [paths.modelPath, "Kokoro model"],
-    [paths.voicesPath, "Kokoro voices"],
-    [paths.tokensPath, "Kokoro tokens"],
-    [paths.dataDir, "Kokoro pronunciation data"],
-    [paths.lexiconPath, "Kokoro English lexicon"],
-  ];
-  const missing = resources.find(([path]) => !NodeFS.existsSync(path));
-  return missing === undefined
-    ? undefined
-    : new Error(
-        `Jarvis voice is unavailable because the bundled ${missing[1]} is missing. Reinstall Jarvis.`,
-      );
-}
+export type { PocketVoicePaths };
+export { bundledPocketVoicePaths, pocketResourceError, pocketVoicePaths };
 
 type PendingSynthesis = {
   readonly requestId: string;
-  readonly resolve: (metrics: KokoroSynthesisMetrics) => void;
+  readonly resolve: (metrics: PocketSynthesisMetrics) => void;
   readonly reject: (cause: Error) => void;
   readonly outputDirectory: string;
-  readonly consumeChunk: KokoroChunkConsumer;
+  readonly consumeChunk: PocketChunkConsumer;
   serial: Promise<void>;
-  finished?: KokoroSynthesisMetrics;
+  finished?: PocketSynthesisMetrics;
   failure?: Error;
   settled: boolean;
 };
@@ -158,34 +113,28 @@ function parseWorkerMessage(value: unknown): WorkerMessage | undefined {
   return undefined;
 }
 
-export async function startKokoroWorker(
+export async function startPocketWorker(
   input: {
-    readonly paths?: KokoroVoicePaths;
+    readonly paths?: PocketVoicePaths;
     readonly workerPath?: string;
     readonly spawnWorker?: typeof NodeChildProcess.fork;
     readonly startupTimeoutMs?: number;
     readonly closeTimeoutMs?: number;
-    readonly numThreads?: number;
     readonly signal?: AbortSignal;
   } = {},
-): Promise<KokoroWorker> {
-  const paths = input.paths ?? bundledKokoroVoicePaths();
-  const resourceError = kokoroResourceError(paths);
+): Promise<PocketWorker> {
+  const paths = input.paths ?? bundledPocketVoicePaths();
+  const resourceError = pocketResourceError(paths);
   if (resourceError !== undefined) throw resourceError;
   const spawnWorker = input.spawnWorker ?? NodeChildProcess.fork;
-  const numThreads = input.numThreads ?? 2;
-  if (!Number.isInteger(numThreads) || numThreads < 1 || numThreads > 4) {
-    throw new Error("Kokoro thread count must be an integer between 1 and 4.");
-  }
   const child: NodeChildProcess.ChildProcess = spawnWorker(
-    input.workerPath ?? NodePath.join(import.meta.dirname, "kokoro-worker.cjs"),
+    input.workerPath ?? NodePath.join(import.meta.dirname, "pocket-worker.cjs"),
     [],
     {
       env: {
         ...process.env,
         ELECTRON_RUN_AS_NODE: "1",
-        JARVIS_KOKORO_ROOT: paths.resourceRoot,
-        JARVIS_KOKORO_NUM_THREADS: String(numThreads),
+        JARVIS_POCKET_ROOT: paths.resourceRoot,
       },
       stdio: ["ignore", "ignore", "pipe", "ipc"],
     },
@@ -197,7 +146,7 @@ export async function startKokoroWorker(
   let closed = false;
   const pending = new Map<string, PendingSynthesis>();
   const activeOperations = new Set<Promise<unknown>>();
-  const closeTimeoutMs = input.closeTimeoutMs ?? 2_000;
+  const closeTimeoutMs = input.closeTimeoutMs ?? pocketWorkerCloseTimeoutMs;
   let closePromise: Promise<void> | undefined;
   const closeChild = (): Promise<void> => {
     if (closePromise !== undefined) return closePromise;
@@ -220,8 +169,6 @@ export async function startKokoroWorker(
       child.once("error", finish);
       forceTimeout = NodeTimers.setTimeout(() => {
         child.kill("SIGKILL");
-        // Do not report a closed model merely because SIGKILL was sent. Give
-        // the OS one final bounded window to publish the process close event.
         abandonTimeout = NodeTimers.setTimeout(finish, closeTimeoutMs);
       }, closeTimeoutMs);
       if (child.exitCode !== null || child.signalCode !== null) finish();
@@ -240,7 +187,7 @@ export async function startKokoroWorker(
   };
   const failRequest = (request: PendingSynthesis, cause: unknown) => {
     if (request.failure === undefined) {
-      request.failure = cause instanceof Error ? cause : new Error("Kokoro synthesis failed.");
+      request.failure = cause instanceof Error ? cause : new Error("Pocket synthesis failed.");
     }
     void closeChild();
     void finishRequest(request.requestId, request);
@@ -265,10 +212,14 @@ export async function startKokoroWorker(
       if (cause === undefined) resolveReady();
       else rejectReady(cause);
     };
-    void NodeTimersPromises.setTimeout(input.startupTimeoutMs ?? 30_000, undefined, {
-      signal: timeout.signal,
-    })
-      .then(() => finish(new Error("Kokoro took too long to warm.")))
+    void NodeTimersPromises.setTimeout(
+      input.startupTimeoutMs ?? pocketWorkerStartupTimeoutMs,
+      undefined,
+      {
+        signal: timeout.signal,
+      },
+    )
+      .then(() => finish(new Error("Pocket took too long to warm.")))
       .catch(() => undefined);
     child.once("error", (cause) => finish(cause));
     child.once("close", (code, signal) => {
@@ -276,7 +227,7 @@ export async function startKokoroWorker(
       finish(
         new Error(
           detail ??
-            `Kokoro stopped while warming${signal === null ? ` (exit ${code ?? "unknown"})` : ` (${signal})`}.`,
+            `Pocket stopped while warming${signal === null ? ` (exit ${code ?? "unknown"})` : ` (${signal})`}.`,
         ),
       );
     });
@@ -332,13 +283,13 @@ export async function startKokoroWorker(
   });
   child.once("close", () => {
     closed = true;
-    rejectPending(new Error("Kokoro stopped before speech was ready."));
+    rejectPending(new Error("Pocket stopped before speech was ready."));
   });
 
   return {
     async synthesize(text, consumeChunk, signal) {
       if (closed || child.connected !== true) {
-        return Promise.reject(new Error("Kokoro is not ready."));
+        return Promise.reject(new Error("Pocket is not ready."));
       }
       if (signal?.aborted) {
         return Promise.reject(new DOMException("Jarvis speech was interrupted.", "AbortError"));
@@ -346,11 +297,11 @@ export async function startKokoroWorker(
       const operation = (async () => {
         const requestId = NodeCrypto.randomUUID();
         const outputDirectory = await NodeFSP.mkdtemp(
-          NodePath.join(NodeOS.tmpdir(), "jarvis-kokoro-"),
+          NodePath.join(NodeOS.tmpdir(), "jarvis-pocket-"),
         );
         let removeAbort: () => void = () => undefined;
         try {
-          return await new Promise<KokoroSynthesisMetrics>((resolveSynthesis, rejectSynthesis) => {
+          return await new Promise<PocketSynthesisMetrics>((resolveSynthesis, rejectSynthesis) => {
             const request: PendingSynthesis = {
               requestId,
               resolve: resolveSynthesis,

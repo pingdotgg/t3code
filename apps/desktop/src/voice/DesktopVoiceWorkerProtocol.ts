@@ -175,7 +175,7 @@ function isNativeSpeechTiming(value: unknown): value is NativeSpeechTiming {
   if (typeof value !== "object" || value === null) return false;
   const timing = value as Partial<NativeSpeechTiming>;
   return (
-    timing.engineId === "kokoro-int8" &&
+    (timing.engineId === "pocket-2026-04" || timing.engineId === "kokoro-int8") &&
     (timing.start === "cold" || timing.start === "warm") &&
     isNonNegativeFinite(timing.warmupMs) &&
     (timing.firstPlaybackStartMs === undefined ||

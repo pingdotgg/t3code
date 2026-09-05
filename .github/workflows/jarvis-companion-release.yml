@@ -47,7 +47,7 @@ jobs:
 
       - name: Verify companion
         run: |
-          vp test run apps/companion/src/bubble-state.test.ts apps/companion/src/companion-presentation.test.ts apps/companion/src/companion-webgl.test.ts apps/companion/src/development.test.ts apps/companion/src/host.test.ts apps/companion/src/inline-json.test.ts apps/companion/src/kokoro-lifecycle.test.ts apps/companion/src/kokoro-worker.test.ts apps/companion/src/launch.test.ts apps/companion/src/managed-status.test.ts apps/companion/src/native-speech.test.ts apps/companion/src/recognition-evaluation.test.ts apps/companion/src/report-connection.test.ts apps/companion/src/setup-surface.test.ts apps/companion/src/speech-interrupt.test.ts apps/companion/src/updates.test.ts
+          vp test run apps/companion/src/bubble-state.test.ts apps/companion/src/companion-presentation.test.ts apps/companion/src/companion-webgl.test.ts apps/companion/src/development.test.ts apps/companion/src/host.test.ts apps/companion/src/inline-json.test.ts apps/companion/src/pocket-lifecycle.test.ts apps/companion/src/pocket-worker.test.ts apps/companion/src/launch.test.ts apps/companion/src/managed-status.test.ts apps/companion/src/native-speech.test.ts apps/companion/src/recognition-evaluation.test.ts apps/companion/src/report-connection.test.ts apps/companion/src/setup-surface.test.ts apps/companion/src/speech-interrupt.test.ts apps/companion/src/updates.test.ts
           vp run --filter @jarvis/companion typecheck
 
       - name: Smoke native speech runtimes
@@ -209,7 +209,7 @@ jobs:
 
       - name: Verify companion
         run: |
-          vp test run apps/companion/src/bubble-state.test.ts apps/companion/src/companion-presentation.test.ts apps/companion/src/companion-startup-probe.test.ts apps/companion/src/companion-webgl.test.ts apps/companion/src/development.test.ts apps/companion/src/host.test.ts apps/companion/src/inline-json.test.ts apps/companion/src/kokoro-lifecycle.test.ts apps/companion/src/kokoro-worker.test.ts apps/companion/src/launch.test.ts apps/companion/src/linux-packaging.test.ts apps/companion/src/managed-status.test.ts apps/companion/src/native-speech.test.ts apps/companion/src/recognition-evaluation.test.ts apps/companion/src/report-connection.test.ts apps/companion/src/setup-surface.test.ts apps/companion/src/speech-interrupt.test.ts apps/companion/src/updates.test.ts
+          vp test run apps/companion/src/bubble-state.test.ts apps/companion/src/companion-presentation.test.ts apps/companion/src/companion-startup-probe.test.ts apps/companion/src/companion-webgl.test.ts apps/companion/src/development.test.ts apps/companion/src/host.test.ts apps/companion/src/inline-json.test.ts apps/companion/src/pocket-lifecycle.test.ts apps/companion/src/pocket-worker.test.ts apps/companion/src/launch.test.ts apps/companion/src/linux-packaging.test.ts apps/companion/src/managed-status.test.ts apps/companion/src/native-speech.test.ts apps/companion/src/recognition-evaluation.test.ts apps/companion/src/report-connection.test.ts apps/companion/src/setup-surface.test.ts apps/companion/src/speech-interrupt.test.ts apps/companion/src/updates.test.ts
           vp run --filter @jarvis/companion typecheck
 
       - name: Smoke native speech runtimes

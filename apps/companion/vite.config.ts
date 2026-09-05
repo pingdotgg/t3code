@@ -25,10 +25,7 @@ export default defineConfig({
       outDir: "dist-electron",
       sourcemap: true,
       outExtensions: () => ({ js: ".cjs" }),
-      entry: ["../../packages/jarvis-native-voice/src/kokoro-worker.ts"],
-      deps: {
-        neverBundle: ["sherpa-onnx-node"],
-      },
+      entry: ["../../packages/jarvis-native-voice/src/pocket-worker.ts"],
     },
     {
       format: "cjs",

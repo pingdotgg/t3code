@@ -174,7 +174,7 @@ export function JarvisOnboarding({
     if (capabilities === null) return;
     const generation = voiceHelperGenerationRef.current + 1;
     voiceHelperGenerationRef.current = generation;
-    const attemptKey = `${primaryEnvironmentId}:${capabilities.preset}:${capabilities.parakeet}:${capabilities.kokoro}:${voiceHelperRefreshToken}`;
+    const attemptKey = `${primaryEnvironmentId}:${capabilities.preset}:${capabilities.parakeet}:${capabilities.pocket ?? capabilities.kokoro}:${voiceHelperRefreshToken}`;
     if (voiceHelperSetupAttemptRef.current === attemptKey) return;
     voiceHelperSetupAttemptRef.current = attemptKey;
     let cancelled = false;
@@ -385,7 +385,8 @@ export function JarvisOnboarding({
   const showVoiceHelperStatus =
     executionCapabilities !== null &&
     executionCapabilities.preset === "full" &&
-    (executionCapabilities.parakeet || executionCapabilities.kokoro) &&
+    (executionCapabilities.parakeet ||
+      (executionCapabilities.pocket ?? executionCapabilities.kokoro)) &&
     voiceHelperState !== null;
   const voiceHelperStatusLabel = voiceHelperState
     ? (

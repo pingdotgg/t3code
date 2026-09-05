@@ -60,8 +60,8 @@ const resourceRoot = (): string => {
 };
 
 function configureVoiceResources(root: string): void {
-  if (process.env.JARVIS_KOKORO_ROOT?.trim()) return;
-  process.env.JARVIS_KOKORO_ROOT = NodePath.join(root, "kokoro");
+  if (process.env.JARVIS_POCKET_ROOT?.trim()) return;
+  process.env.JARVIS_POCKET_ROOT = NodePath.join(root, "pocket");
 }
 
 type WorkerCapture =
@@ -113,7 +113,7 @@ const handle = async (command: DesktopVoiceWorkerCommand): Promise<boolean> => {
       case "prepare":
         if (captureAvailable) prepareNativeMicrophone();
         // Recognition is the resident path: keep Parakeet warm so the first
-        // microphone frame never waits on model setup. Kokoro remains lazy and
+        // microphone frame never waits on model setup. Pocket remains lazy and
         // uses its own idle-offload lifecycle when a response actually speaks.
         await prepareParakeetRecognition(paths);
         if (capture === null) setState("ready");

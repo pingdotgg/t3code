@@ -87,7 +87,7 @@ chmod +x Jarvis-<version>-x86_64.AppImage
 
 Full releases are updated manually: replace the AppImage with the newer one and launch it again.
 
-The offline Parakeet and Kokoro models make Linux Full substantially larger than a desktop-only
+The offline Parakeet and Pocket models make Linux Full substantially larger than a desktop-only
 build. They remain local after installation and do not require a browser speech service.
 
 ### Standalone Companion

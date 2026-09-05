@@ -36,7 +36,7 @@ describe("companion speech interruption wiring", () => {
     assert.notInclude(relayPreloadSource, "interrupt-speech");
   });
 
-  it("warms Kokoro only after this device wins the Host speaker claim", () => {
+  it("warms Pocket only after this device wins the Host speaker claim", () => {
     assert.include(relayPreloadSource, "jarvis-companion:prepare-speech");
     const claim = reporterSource.indexOf("const claimReport = () =>");
     const claimResult = reporterSource.indexOf("const claimResult = await claimReport()", claim);
@@ -60,7 +60,7 @@ describe("companion speech interruption wiring", () => {
     );
   });
 
-  it("warms Kokoro without holding Host dispatch behind a fixed delay", () => {
+  it("warms Pocket without holding Host dispatch behind a fixed delay", () => {
     const dispatchStart = mainSource.indexOf("async function dispatchCapturedTranscript");
     const dispatchEnd = mainSource.indexOf("async function startHeldCapture", dispatchStart);
     const dispatch = mainSource.slice(dispatchStart, dispatchEnd);
@@ -76,7 +76,7 @@ describe("companion speech interruption wiring", () => {
     assert.include(dispatch, "speech-prewarm-ready");
   });
 
-  it("starts warming Kokoro while the user is still speaking", () => {
+  it("starts warming Pocket while the user is still speaking", () => {
     const captureStart = mainSource.indexOf("async function startHeldCapture");
     const captureEnd = mainSource.indexOf("function releaseHeldCapture", captureStart);
     const capture = mainSource.slice(captureStart, captureEnd);
@@ -102,7 +102,7 @@ describe("companion speech interruption wiring", () => {
     assert.isAbove(clearPending, commit);
   });
 
-  it("skips a stale acknowledgement when Kokoro is still cold after Host acceptance", () => {
+  it("skips a stale acknowledgement when Pocket is still cold after Host acceptance", () => {
     const dispatchStart = mainSource.indexOf("async function dispatchCapturedTranscript");
     const dispatchEnd = mainSource.indexOf("async function startHeldCapture", dispatchStart);
     const dispatch = mainSource.slice(dispatchStart, dispatchEnd);

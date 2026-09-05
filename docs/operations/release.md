@@ -12,7 +12,7 @@ Node-mode worker, local Parakeet, and the exact shared `node-cpal` `0.1.1` captu
 Full does not embed or launch Companion. `uiohook` supplies true `Ctrl+Shift+J` hold-to-talk;
 Electron `globalShortcut` is an explicit tap-toggle fallback when the native hook is unavailable.
 The product-owned Rust microphone path is not a production release path. Headless artifacts have
-no voice capability. macOS Full packages the same local Parakeet/Kokoro resources but uses the
+no voice capability. macOS Full packages the same local Parakeet/Pocket resources but uses the
 Chromium media-capture adapter; it does not stage `node-cpal`, `uiohook`, or the retired Rust
 microphone package.
 

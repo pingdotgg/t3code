@@ -5,7 +5,7 @@ import type {
   JarvisNodePreset,
   ServerProvider,
 } from "@t3tools/contracts";
-import { SERVER_ENVIRONMENT_LABEL_MAX_LENGTH } from "@t3tools/contracts";
+import { SERVER_ENVIRONMENT_LABEL_MAX_LENGTH, jarvisNodeSpeechOutput } from "@t3tools/contracts";
 
 export const JARVIS_ONBOARDING_STORAGE_KEY = "t3code:jarvis:onboarding:v1";
 
@@ -130,7 +130,7 @@ export function jarvisNodePresetLabel(preset: JarvisNodeCapabilities["preset"]):
 export function jarvisNodeCapabilitySummary(capabilities: JarvisNodeCapabilities): string {
   const labels: string[] = [];
   if (capabilities.ui) labels.push("UI");
-  if (capabilities.parakeet || capabilities.kokoro) labels.push("voice");
+  if (capabilities.parakeet || jarvisNodeSpeechOutput(capabilities)) labels.push("voice");
   if (capabilities.execution) labels.push("execution");
   if (capabilities.projects) labels.push("projects");
   if (capabilities.providers) labels.push("providers");
@@ -144,7 +144,7 @@ export function jarvisOnboardingVoiceBridgeFailureState(input: {
   if (
     !input.bridgePresent ||
     input.capabilities?.preset !== "full" ||
-    (!input.capabilities.parakeet && !input.capabilities.kokoro)
+    (!input.capabilities.parakeet && !jarvisNodeSpeechOutput(input.capabilities))
   ) {
     return null;
   }

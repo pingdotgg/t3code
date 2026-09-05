@@ -101,7 +101,7 @@ describe("desktop voice worker protocol", () => {
       parseDesktopVoiceWorkerMessage({
         type: "speech-timing",
         timing: {
-          engineId: "kokoro-int8",
+          engineId: "pocket-2026-04",
           start: "cold",
           warmupMs: 980,
           firstChunkReadyMs: 1_440,
@@ -120,7 +120,7 @@ describe("desktop voice worker protocol", () => {
     expect(
       parseDesktopVoiceWorkerMessage({
         type: "speech-timing",
-        timing: { engineId: "kokoro-int8", start: "warm", synthesisMs: -1 },
+        timing: { engineId: "pocket-2026-04", start: "warm", synthesisMs: -1 },
       }),
     ).toBeNull();
   });
@@ -143,7 +143,7 @@ describe("desktop voice worker protocol", () => {
     expect(parseDesktopVoiceWorkerMessage({ type: "state", state: "unknown" })).toBe(null);
   });
 
-  it("forwards Kokoro timing records from the voice child", async () => {
+  it("forwards Pocket timing records from the voice child", async () => {
     const stdout = new NodeEvents.EventEmitter();
     const emitted: DesktopVoiceWorkerMessage[] = [];
     const child = Object.assign(new NodeEvents.EventEmitter(), {
@@ -185,7 +185,7 @@ describe("desktop voice worker protocol", () => {
         `${JSON.stringify({
           type: "speech-timing",
           timing: {
-            engineId: "kokoro-int8",
+            engineId: "pocket-2026-04",
             start: "warm",
             warmupMs: 0,
             firstChunkReadyMs: 1_300,
@@ -1032,6 +1032,27 @@ describe("desktop voice worker protocol", () => {
     voice.stop();
     stdout.emit("data", Buffer.from('{"type":"state","state":"ready"}\n'));
     expect(messages).toEqual([]);
+  });
+
+  it("still accepts retired Kokoro timing during upgrades", () => {
+    expect(
+      parseDesktopVoiceWorkerMessage({
+        type: "speech-timing",
+        timing: {
+          engineId: "kokoro-int8",
+          start: "warm",
+          warmupMs: 0,
+          synthesisMs: 100,
+          totalMs: 200,
+          synthesisCpuMs: 150,
+          peakRssBytes: 400_000_000,
+          chunkCount: 2,
+        },
+      }),
+    ).toEqual({
+      type: "speech-timing",
+      timing: expect.objectContaining({ engineId: "kokoro-int8" }),
+    });
   });
 
   it("does not throw while broadcasting to a destroyed renderer", () => {

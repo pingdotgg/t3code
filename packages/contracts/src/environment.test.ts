@@ -52,6 +52,7 @@ describe("ExecutionEnvironmentDescriptor", () => {
       ui: false,
       parakeet: false,
       kokoro: false,
+      pocket: false,
       execution: true,
       projects: true,
       providers: true,

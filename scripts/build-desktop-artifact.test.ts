@@ -1232,7 +1232,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         );
         assert.include(
           result.manifest.map((file) => file.path),
-          "resources/jarvis-resources/kokoro/voices.bin",
+          "resources/jarvis-resources/pocket/models/flow_lm_main_int8.onnx",
         );
       }),
     ),
@@ -1280,7 +1280,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         });
         const extraPath = path.join(
           fixture.packagedAppDir,
-          "resources/jarvis-resources/kokoro/unexpected.bin",
+          "resources/jarvis-resources/pocket/unexpected.bin",
         );
         yield* fs.writeFileString(extraPath, "unexpected");
         const error = yield* validateWindowsPackagedPayload({
@@ -1293,7 +1293,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         assert.instanceOf(error, WindowsPackagedPayloadValidationError);
         assert.equal(error.reason, "unexpected-files");
         assert.deepStrictEqual(error.unexpectedFiles, [
-          "resources/jarvis-resources/kokoro/unexpected.bin",
+          "resources/jarvis-resources/pocket/unexpected.bin",
         ]);
       }),
     ),
@@ -1309,7 +1309,10 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
           includeVoiceResources: true,
         });
         yield* fs.remove(
-          path.join(fixture.packagedAppDir, "resources/jarvis-resources/kokoro/voices.bin"),
+          path.join(
+            fixture.packagedAppDir,
+            "resources/jarvis-resources/pocket/models/flow_lm_main_int8.onnx",
+          ),
         );
         const error = yield* validateWindowsPackagedPayload({
           stageDistDir: fixture.stageDistDir,
@@ -1321,7 +1324,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         assert.instanceOf(error, WindowsPackagedPayloadValidationError);
         assert.equal(error.reason, "voice-resources-missing");
         assert.deepStrictEqual(error.missingFiles, [
-          "resources/jarvis-resources/kokoro/voices.bin",
+          "resources/jarvis-resources/pocket/models/flow_lm_main_int8.onnx",
         ]);
       }),
     ),
@@ -1856,9 +1859,9 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     assert.notInclude(workflow, "companion_root=");
     assert.include(workflow, 'voice_root="$extract_root/squashfs-root/resources/jarvis-resources"');
     assert.include(workflow, '"$voice_root/parakeet"');
-    assert.include(workflow, '"$voice_root/kokoro"');
+    assert.include(workflow, '"$voice_root/pocket"');
     assert.include(workflow, "desktopVoiceWorker.cjs");
-    assert.include(workflow, "kokoro-worker.cjs");
+    assert.include(workflow, "pocket-worker.cjs");
     assert.include(workflow, "THIRD_PARTY_NOTICES.md");
     assert.include(workflow, 'require("./scripts/node_modules/@electron/asar")');
     assert.notInclude(workflow, 'require("@electron/asar")');
@@ -2094,7 +2097,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     assert.equal(JARVIS_VOICE_RESOURCE_DESTINATION_DIR, "jarvis-resources");
     assert.deepStrictEqual(JARVIS_NATIVE_VOICE_WORKER_FILES, [
       "desktopVoiceWorker.cjs",
-      "kokoro-worker.cjs",
+      "pocket-worker.cjs",
     ]);
   });
   it("promotes target fff binaries to direct staged dependencies", () => {

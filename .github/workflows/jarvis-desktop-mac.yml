@@ -188,6 +188,9 @@ jobs:
             echo "T3CODE_APPLE_TEAM_ID=$APPLE_TEAM_ID" >> "$GITHUB_ENV"
           fi
 
+      - name: Build Pocket speech runtime
+        run: node packages/jarvis-native-voice/scripts/build-pocket-runtime.mjs
+
       - name: Prepare shared native voice resources for macOS Desktop
         run: vp run --filter @t3tools/jarvis-native-voice prepare:voice
 
@@ -264,8 +267,15 @@ jobs:
             parakeet/decoder.int8.onnx \
             parakeet/joiner.int8.onnx \
             parakeet/tokens.txt \
-            kokoro/model.int8.onnx \
-            kokoro/voices.bin \
+            pocket/models/flow_lm_main_int8.onnx \
+            pocket/models/flow_lm_flow.onnx \
+            pocket/models/mimi_decoder.onnx \
+            pocket/models/mimi_encoder.onnx \
+            pocket/models/bos_before_voice.f32 \
+            pocket/models/tokenizer.model \
+            pocket/models/bundle.json \
+            pocket/voices/alba-casual-3s.wav \
+            pocket/PROVENANCE.json \
             THIRD_PARTY_NOTICES.md; do
             test -f "$voice_root/$required_voice_file"
           done
@@ -302,10 +312,10 @@ jobs:
           node - "$app/Contents/Resources/app.asar" <<'NODE'
           const { listPackage } = require("./scripts/node_modules/@electron/asar");
           const entries = listPackage(process.argv[2]).map((entry) => entry.replace(/^\/+/, ""));
-          for (const entry of ["apps/desktop/dist-electron/preload.cjs", "apps/desktop/dist-electron/desktopVoiceWorker.cjs", "apps/desktop/dist-electron/kokoro-worker.cjs"]) {
+          for (const entry of ["apps/desktop/dist-electron/preload.cjs", "apps/desktop/dist-electron/desktopVoiceWorker.cjs", "apps/desktop/dist-electron/pocket-worker.cjs"]) {
             if (!entries.includes(entry)) throw new Error(`Missing packaged Full Desktop entry ${entry}`);
           }
-          for (const worker of ["desktopVoiceWorker.cjs", "kokoro-worker.cjs"]) {
+          for (const worker of ["desktopVoiceWorker.cjs", "pocket-worker.cjs"]) {
             if (!entries.includes(`apps/desktop/dist-electron/${worker}`)) throw new Error(`Missing native voice worker ${worker}`);
           }
           if (entries.some((entry) => entry.includes("companion"))) throw new Error("Full Desktop contains Companion files.");

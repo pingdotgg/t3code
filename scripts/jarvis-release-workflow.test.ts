@@ -427,8 +427,8 @@ describe("Jarvis release workflow contracts", () => {
       "parakeet/decoder.int8.onnx",
       "parakeet/joiner.int8.onnx",
       "parakeet/tokens.txt",
-      "kokoro/model.int8.onnx",
-      "kokoro/voices.bin",
+      "pocket/models/flow_lm_main_int8.onnx",
+      "pocket/voices/alba-casual-3s.wav",
       "THIRD_PARTY_NOTICES.md",
     ]) {
       assert.include(mac, entry);

@@ -10,9 +10,10 @@
   },
   "scripts": {
     "prepare:parakeet": "node scripts/ensure-parakeet-resources.mjs",
-    "prepare:kokoro": "node scripts/ensure-kokoro-resources.mjs",
-    "prepare:voice": "pnpm run prepare:parakeet && pnpm run prepare:kokoro",
-    "benchmark:kokoro": "node scripts/benchmark-kokoro.mjs",
+    "prepare:pocket": "node scripts/ensure-pocket-resources.mjs",
+    "prepare:voice": "pnpm run prepare:parakeet && pnpm run prepare:pocket",
+    "build:pocket": "node scripts/build-pocket-runtime.mjs",
+    "benchmark:pocket": "node scripts/benchmark-pocket.mjs",
     "smoke:voice": "node scripts/smoke-speech-runtime.mjs",
     "typecheck": "tsgo --noEmit",
     "test": "vp test run"

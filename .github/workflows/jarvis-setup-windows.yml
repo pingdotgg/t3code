@@ -185,8 +185,10 @@ jobs:
             'apps/desktop/src/app/DesktopLifecycle.test.ts',
             'apps/desktop/src/shell/DesktopJarvisShell.test.ts',
             'apps/desktop/src/voice/DesktopVoiceWorkerProtocol.test.ts',
-            'packages/jarvis-native-voice/src/kokoro-lifecycle.test.ts',
-            'packages/jarvis-native-voice/src/kokoro-worker.test.ts',
+            'packages/jarvis-native-voice/src/pocket-lifecycle.test.ts',
+            'packages/jarvis-native-voice/src/pocket-onset.test.ts',
+            'packages/jarvis-native-voice/src/pocket-config.test.ts',
+            'packages/jarvis-native-voice/src/pocket-worker-client.test.ts',
             'packages/jarvis-native-voice/src/native-speech.test.ts'
           )
           Invoke-Test @(
@@ -198,12 +200,16 @@ jobs:
           )
           Invoke-Test @('apps/server/src/server.test.ts', '--testNamePattern=controller')
 
+      - name: Build Pocket speech runtime
+        shell: pwsh
+        run: node packages/jarvis-native-voice/scripts/build-pocket-runtime.mjs
+
       - name: Prepare shared native voice resources for Windows Desktop
         shell: pwsh
         run: |
           vp run --filter @t3tools/jarvis-native-voice prepare:voice
           $voiceRoot = Resolve-Path "packages/jarvis-native-voice/resources"
-          if (-not (Test-Path "$voiceRoot\parakeet") -or -not (Test-Path "$voiceRoot\kokoro")) { throw 'Shared native voice resource pack is incomplete.' }
+          if (-not (Test-Path "$voiceRoot\parakeet") -or -not (Test-Path "$voiceRoot\pocket")) { throw 'Shared native voice resource pack is incomplete.' }
           "JARVIS_VOICE_RESOURCES=$voiceRoot" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: Build desktop payload directory

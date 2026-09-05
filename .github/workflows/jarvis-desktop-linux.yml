@@ -74,14 +74,19 @@ jobs:
             apps/desktop/src/app/DesktopLifecycle.test.ts \
             apps/desktop/src/shell/DesktopJarvisShell.test.ts \
             apps/desktop/src/voice/DesktopVoiceWorkerProtocol.test.ts \
-            packages/jarvis-native-voice/src/kokoro-lifecycle.test.ts \
-            packages/jarvis-native-voice/src/kokoro-worker.test.ts \
+            packages/jarvis-native-voice/src/pocket-lifecycle.test.ts \
+            packages/jarvis-native-voice/src/pocket-onset.test.ts \
+            packages/jarvis-native-voice/src/pocket-config.test.ts \
+            packages/jarvis-native-voice/src/pocket-worker-client.test.ts \
             packages/jarvis-native-voice/src/native-speech.test.ts \
             scripts/jarvis-linux-startup-gate.test.ts
           vp run --filter @t3tools/desktop typecheck
 
       - name: Install Linux packaging and startup-smoke dependencies
         run: sudo apt-get update && sudo apt-get install -y dbus-x11 gnome-keyring inotify-tools libsecret-1-0 libasound2-dev libx11-dev libxrandr-dev libxtst-dev libxt-dev openbox x11-utils xvfb imagemagick
+
+      - name: Build Pocket speech runtime
+        run: node packages/jarvis-native-voice/scripts/build-pocket-runtime.mjs
 
       - name: Prepare native Linux voice resources
         run: vp run --filter @t3tools/jarvis-native-voice prepare:voice
@@ -162,8 +167,17 @@ jobs:
           voice_root="$extract_root/squashfs-root/resources/jarvis-resources"
           test -d "$voice_root/parakeet"
           test -f "$voice_root/parakeet/encoder.int8.onnx"
-          test -d "$voice_root/kokoro"
-          test -f "$voice_root/kokoro/model.int8.onnx"
+          test -d "$voice_root/pocket"
+          test -d "$voice_root/pocket/models"
+          test -f "$voice_root/pocket/models/flow_lm_main_int8.onnx"
+          test -f "$voice_root/pocket/models/flow_lm_flow.onnx"
+          test -f "$voice_root/pocket/models/mimi_decoder.onnx"
+          test -f "$voice_root/pocket/models/mimi_encoder.onnx"
+          test -f "$voice_root/pocket/models/bos_before_voice.f32"
+          test -f "$voice_root/pocket/voices/alba-casual-3s.wav"
+          test -f "$voice_root/pocket/PROVENANCE.json"
+          test -x "$voice_root/pocket/bin/jarvis-pocket-tts"
+          test -f "$voice_root/pocket/lib/libonnxruntime.so.1"
           test -f "$voice_root/THIRD_PARTY_NOTICES.md"
           test -f "$extract_root/squashfs-root/resources/app.asar"
           node_cpal_root="$extract_root/squashfs-root/resources/app.asar.unpacked/node_modules/node-cpal"
@@ -195,7 +209,7 @@ jobs:
           // instead of assuming a hoisted root node_modules entry.
           const { listPackage } = require("./scripts/node_modules/@electron/asar");
           const entries = listPackage(process.argv[2]).map((entry) => entry.replace(/^\/+/, ""));
-          for (const worker of ["desktopVoiceWorker.cjs", "kokoro-worker.cjs"]) {
+          for (const worker of ["desktopVoiceWorker.cjs", "pocket-worker.cjs"]) {
             if (!entries.includes(`apps/desktop/dist-electron/${worker}`)) {
               throw new Error(`Linux Full AppImage is missing the native voice worker ${worker}.`);
             }

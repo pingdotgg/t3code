@@ -738,7 +738,7 @@ function companionVoiceResourceRoot(): string {
 }
 
 function configureCompanionVoiceResources(): void {
-  process.env.JARVIS_KOKORO_ROOT = NodePath.join(companionVoiceResourceRoot(), "kokoro");
+  process.env.JARVIS_POCKET_ROOT = NodePath.join(companionVoiceResourceRoot(), "pocket");
 }
 
 function parakeetPaths() {
@@ -1288,7 +1288,7 @@ async function dispatchCapturedTranscript(transcript: string, voiceDefault: Comp
   await refreshRecognitionVocabulary();
   const recognizedTranscript = recognitionTranscript(transcript);
   // Coalesce with the warm started at capture time. The queue reservation
-  // below preserves acknowledgement order if Kokoro is still cold, while a
+  // below preserves acknowledgement order if Pocket is still cold, while a
   // broken worker can never hold written task dispatch for its startup timeout.
   const speechWarmStartedAt = Date.now();
   developmentDiagnostic("speech-prewarm-start", { transcriptLength: recognizedTranscript.length });
@@ -1301,7 +1301,7 @@ async function dispatchCapturedTranscript(transcript: string, voiceDefault: Comp
     .catch((cause: unknown) => {
       developmentDiagnostic("speech-prewarm-failed", {
         latencyMs: Date.now() - speechWarmStartedAt,
-        message: cause instanceof Error ? cause.message : "Kokoro could not warm.",
+        message: cause instanceof Error ? cause.message : "Pocket could not warm.",
       });
     });
   showCompanionStatus({
@@ -1353,7 +1353,7 @@ async function startHeldCapture() {
   heldReleaseRequested = false;
   armCaptureTimeout();
   // Voice capture is user intent to dispatch work, so use that speaking time
-  // to hide Kokoro's cold start without keeping the model resident at rest.
+  // to hide Pocket's cold start without keeping the model resident at rest.
   // dispatchCapturedTranscript coalesces with and awaits this same warm attempt.
   void prepareNativeSpeech().catch(() => undefined);
   showVoiceCapture();

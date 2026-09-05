@@ -81,11 +81,12 @@ is the normal one. Approve Jarvis's shortcut if the desktop asks on first use. T
 **Release to send** for hold-to-talk; tap-to-start/tap-to-send is a fallback, not a required second
 press in hold mode. If the desktop cannot provide a physical key-release signal, the tray identifies
 the shortcut as tap-to-start/tap-to-stop instead of pretending a timed hold is available.
-It does not reveal the full command dialog. Parakeet recognition and Kokoro speech run in an
+It does not reveal the full command dialog. Parakeet recognition and Pocket speech run in an
 isolated worker owned by Jarvis, so there is no Companion setup or pairing step on a Full node.
 
-Local Kokoro replies begin playing as soon as the first sentence-sized audio chunk is ready;
-later chunks are synthesized while earlier ones play. The voice and model are unchanged. Kokoro
+Local Pocket replies begin playing as soon as the first audible audio chunk is ready;
+later chunks are synthesized while earlier ones play. The Alba voice and the pinned english_2026-04
+model are unchanged. Pocket
 stays warm for five minutes after speech becomes idle, then releases its model memory. Stopping
 speech or starting microphone capture still interrupts the reply immediately.
 
@@ -190,7 +191,7 @@ Wrapped shell commands are inspected as a set of operations rather than describe
 
 The command surface is temporary: a normal task acknowledgement closes after a few seconds, a completion stays through its spoken briefing and then closes, an error stays long enough to read, and a question or approval prompt stays briefly so you can answer it. Active listening and routing remain visible until they finish.
 
-Companion keeps the included Parakeet TDT/CTC 110M INT8 recognizer resident for quick, fully local transcription. Hold `Ctrl+Shift+J`, speak naturally, and release: the complete 16 kHz utterance is decoded at that explicit boundary, without an arbitrary silence cutoff. If a device policy blocks the hold shortcut, the fallback uses one tap to start and a second tap to send. Spoken confirmations and reports use the bundled quantized Kokoro voice, not the default Windows voice. Starting a valid capture also starts warming Kokoro, overlapping its cold start with the time spent speaking and reviewing the transcript; after review, Companion gives that warm attempt only a short additional grace period before dispatch. It reserves the acknowledgement's speech position before dispatch and commits it only after Host acceptance when Kokoro is currently ready. Rejection releases the reservation, and a voice worker that is still cold or has already offloaded at acceptance skips the now-stale acknowledgement instead of playing it immediately before a fast completion. A slow or broken voice runtime does not prevent the written task from starting. For a multi-device Host report, only the elected speaker warms Kokoro; local prompts warm it only on the Companion handling that voice interaction. Its isolated worker uses adaptive retention: active work keeps it available, and when it is not active it may remain warm for up to 120 seconds before offloading. Companion speaks the bounded briefing supplied by Jarvis Host rather than independently reinterpreting the raw answer; older Hosts retain the local compatibility fallback. The written T3 task retains the full agent response. The short briefing reveals progressively on the Companion while it is spoken. A response-delivery failure remains attached to the pending question or approval so it can be retried, while terminal failures remain explicit alerts.
+Companion keeps the included Parakeet TDT/CTC 110M INT8 recognizer resident for quick, fully local transcription. Hold `Ctrl+Shift+J`, speak naturally, and release: the complete 16 kHz utterance is decoded at that explicit boundary, without an arbitrary silence cutoff. If a device policy blocks the hold shortcut, the fallback uses one tap to start and a second tap to send. Spoken confirmations and reports use the bundled Pocket Alba voice, not the default Windows voice. Starting a valid capture also starts warming Pocket, overlapping its cold start with the time spent speaking and reviewing the transcript; after review, Companion gives that warm attempt only a short additional grace period before dispatch. It reserves the acknowledgement's speech position before dispatch and commits it only after Host acceptance when Pocket is currently ready. Rejection releases the reservation, and a voice worker that is still cold or has already offloaded at acceptance skips the now-stale acknowledgement instead of playing it immediately before a fast completion. A slow or broken voice runtime does not prevent the written task from starting. For a multi-device Host report, only the elected speaker warms Pocket; local prompts warm it only on the Companion handling that voice interaction. Its isolated worker uses adaptive retention: active work keeps it available, and when it is not active it may remain warm for up to 120 seconds before offloading. Companion speaks the bounded briefing supplied by Jarvis Host rather than independently reinterpreting the raw answer; older Hosts retain the local compatibility fallback. The written T3 task retains the full agent response. The short briefing reveals progressively on the Companion while it is spoken. A response-delivery failure remains attached to the pending question or approval so it can be retried, while terminal failures remain explicit alerts.
 
 Choose **Open Jarvis Host** from the tray menu only when you intentionally want the full T3 workspace. Use **Voice defaults…** to change the provider/model choice for future spoken tasks.
 
@@ -200,7 +201,7 @@ The tray menu also shows the installed **Jarvis Companion vX.Y.Z** and contains 
 
 Jarvis Host itself adds no resident AI model. Voice-enabled Full and Companion surfaces keep only
 the compact Parakeet recognizer resident to make push-to-talk responsive. Microphone capture exists
-only while listening, and the heavier Kokoro voice runs in an isolated process with adaptive
+only while listening, and the heavier Pocket voice runs in an isolated process with adaptive
 retention before offloading after up to 120 seconds of inactivity. The report inbox is event-driven
 and the hidden voice orchestration surface is loaded only for a voice session. The control center
 uses one bounded mesh refresh for all devices. Disabling voice reports also removes that

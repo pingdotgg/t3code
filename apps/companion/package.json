@@ -8,7 +8,7 @@
   "main": "dist-electron/main.cjs",
   "scripts": {
     "prepare:parakeet": "pnpm --filter @t3tools/jarvis-native-voice prepare:parakeet",
-    "prepare:kokoro": "pnpm --filter @t3tools/jarvis-native-voice prepare:kokoro",
+    "prepare:pocket": "pnpm --filter @t3tools/jarvis-native-voice prepare:pocket",
     "prepare:voice": "pnpm --filter @t3tools/jarvis-native-voice prepare:voice",
     "smoke:voice": "pnpm --filter @t3tools/jarvis-native-voice smoke:voice",
     "build": "pnpm run prepare:voice && vp pack",
@@ -73,8 +73,8 @@
         "to": "jarvis-resources/parakeet"
       },
       {
-        "from": "../../packages/jarvis-native-voice/resources/kokoro",
-        "to": "jarvis-resources/kokoro"
+        "from": "../../packages/jarvis-native-voice/resources/pocket",
+        "to": "jarvis-resources/pocket"
       },
       {
         "from": "../../packages/jarvis-native-voice/resources/THIRD_PARTY_NOTICES.md",

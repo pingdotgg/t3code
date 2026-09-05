@@ -361,7 +361,7 @@ export function createDesktopJarvisVoice(input: {
             ...process.env,
             ELECTRON_RUN_AS_NODE: "1",
             JARVIS_VOICE_ROOT: input.resourceRoot!,
-            JARVIS_KOKORO_ROOT: NodePath.join(input.resourceRoot!, "kokoro"),
+            JARVIS_POCKET_ROOT: NodePath.join(input.resourceRoot!, "pocket"),
           },
           stdio: ["pipe", "pipe", "pipe", "ipc"],
           serialization: "advanced",
@@ -588,7 +588,7 @@ export const layer = Layer.effect(
       executablePath: environment.executablePath,
       emit: (message) => {
         if (message.type === "speech-timing") {
-          runFork(logVoiceInfo("Kokoro speech timing", message.timing));
+          runFork(logVoiceInfo("Pocket speech timing", message.timing));
         }
         broadcastDesktopJarvisVoiceMessage({
           message,

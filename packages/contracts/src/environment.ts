@@ -45,11 +45,21 @@ export const JarvisNodeCapabilities = Schema.Struct({
   ui: Schema.Boolean,
   parakeet: Schema.Boolean,
   kokoro: Schema.Boolean,
+  /** Pocket TTS speech output. New servers send this; older servers only send kokoro. */
+  pocket: Schema.optionalKey(Schema.Boolean),
   execution: Schema.Boolean,
   projects: Schema.Boolean,
   providers: Schema.Boolean,
 });
 export type JarvisNodeCapabilities = typeof JarvisNodeCapabilities.Type;
+
+/** Speech output is available when either the Pocket flag or the retired Kokoro flag is set. */
+export function jarvisNodeSpeechOutput(capabilities: {
+  readonly pocket?: boolean;
+  readonly kokoro: boolean;
+}): boolean {
+  return capabilities.pocket ?? capabilities.kokoro;
+}
 
 export function jarvisNodeCapabilitiesForPreset(preset: JarvisNodePreset): JarvisNodeCapabilities {
   switch (preset) {
@@ -59,6 +69,7 @@ export function jarvisNodeCapabilitiesForPreset(preset: JarvisNodePreset): Jarvi
         ui: true,
         parakeet: true,
         kokoro: true,
+        pocket: true,
         execution: false,
         projects: false,
         providers: false,
@@ -69,6 +80,7 @@ export function jarvisNodeCapabilitiesForPreset(preset: JarvisNodePreset): Jarvi
         ui: false,
         parakeet: false,
         kokoro: false,
+        pocket: false,
         execution: true,
         projects: true,
         providers: true,
@@ -79,6 +91,7 @@ export function jarvisNodeCapabilitiesForPreset(preset: JarvisNodePreset): Jarvi
         ui: true,
         parakeet: true,
         kokoro: true,
+        pocket: true,
         execution: true,
         projects: true,
         providers: true,

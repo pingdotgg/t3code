@@ -1022,7 +1022,7 @@ export const DESKTOP_EXTRA_RESOURCES = [
 ] as const;
 export const JARVIS_VOICE_RESOURCE_ENTRIES = [
   "parakeet",
-  "kokoro",
+  "pocket",
   "THIRD_PARTY_NOTICES.md",
 ] as const;
 export const JARVIS_VOICE_REQUIRED_FILES = [
@@ -1030,8 +1030,16 @@ export const JARVIS_VOICE_REQUIRED_FILES = [
   "parakeet/decoder.int8.onnx",
   "parakeet/joiner.int8.onnx",
   "parakeet/tokens.txt",
-  "kokoro/model.int8.onnx",
-  "kokoro/voices.bin",
+  "pocket/models/text_conditioner.onnx",
+  "pocket/models/flow_lm_main_int8.onnx",
+  "pocket/models/flow_lm_flow.onnx",
+  "pocket/models/mimi_decoder.onnx",
+  "pocket/models/mimi_encoder.onnx",
+  "pocket/models/bos_before_voice.f32",
+  "pocket/models/tokenizer.model",
+  "pocket/models/bundle.json",
+  "pocket/voices/alba-casual-3s.wav",
+  "pocket/PROVENANCE.json",
   "THIRD_PARTY_NOTICES.md",
 ] as const;
 export const JARVIS_VOICE_RESOURCE_SOURCE_DIR = "packages/jarvis-native-voice/resources";
@@ -1042,7 +1050,7 @@ export const DESKTOP_VOICE_EXTRA_RESOURCE = {
 } as const;
 export const JARVIS_NATIVE_VOICE_WORKER_FILES = [
   "desktopVoiceWorker.cjs",
-  "kokoro-worker.cjs",
+  "pocket-worker.cjs",
 ] as const;
 
 export interface MacPasskeySigningConfiguration {
@@ -2994,9 +3002,9 @@ export const validateWindowsPackagedPayload = Effect.fn(
   const duplicateVoiceModelEntries = [...appAsarEntries].filter(
     (entry) =>
       entry.startsWith("jarvis-resources/parakeet/") ||
-      entry.startsWith("jarvis-resources/kokoro/") ||
+      entry.startsWith("jarvis-resources/pocket/") ||
       entry.includes("/jarvis-resources/parakeet/") ||
-      entry.includes("/jarvis-resources/kokoro/"),
+      entry.includes("/jarvis-resources/pocket/"),
   );
   if (duplicateVoiceModelEntries.length > 0) {
     return yield* new WindowsPackagedPayloadValidationError({

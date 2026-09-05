@@ -1,6 +1,6 @@
 import { assert, describe, it } from "@effect/vitest";
 
-import { createKokoroLifecycle, type KokoroWorker } from "./kokoro-lifecycle.ts";
+import { createPocketLifecycle, type PocketWorker } from "./pocket-lifecycle.ts";
 
 const metrics = {
   chunkCount: 1,
@@ -16,7 +16,7 @@ function harness() {
   let starts = 0;
   let closes = 0;
   let scheduled: (() => void) | undefined;
-  const worker: KokoroWorker = {
+  const worker: PocketWorker = {
     synthesize: async (_text, consumeChunk) => {
       await consumeChunk("/tmp/chunk.wav", 0);
       return metrics;
@@ -25,7 +25,7 @@ function harness() {
       closes += 1;
     },
   };
-  const lifecycle = createKokoroLifecycle({
+  const lifecycle = createPocketLifecycle({
     startWorker: async () => {
       starts += 1;
       return worker;
@@ -46,7 +46,7 @@ function harness() {
   };
 }
 
-describe("Kokoro lifecycle", () => {
+describe("Pocket lifecycle", () => {
   it("coalesces prewarm and keeps the ready worker for immediate synthesis", async () => {
     const test = harness();
     await Promise.all([test.lifecycle.prewarm(), test.lifecycle.prewarm()]);
@@ -97,7 +97,7 @@ describe("Kokoro lifecycle", () => {
     let resolveSynthesis: ((value: typeof metrics) => void) | undefined;
     let starts = 0;
     let closes = 0;
-    const lifecycle = createKokoroLifecycle({
+    const lifecycle = createPocketLifecycle({
       startWorker: async () => {
         starts += 1;
         return {
@@ -129,7 +129,7 @@ describe("Kokoro lifecycle", () => {
   it("does not arm idle eviction while a redundant prewarm observes active synthesis", async () => {
     let finish: ((value: typeof metrics) => void) | undefined;
     let scheduled: (() => void) | undefined;
-    const lifecycle = createKokoroLifecycle({
+    const lifecycle = createPocketLifecycle({
       startWorker: async () => ({
         synthesize: () => new Promise((resolve) => (finish = resolve)),
         close: async () => undefined,
@@ -158,7 +158,7 @@ describe("Kokoro lifecycle", () => {
   it("waits for an interrupted warm process to close before starting another", async () => {
     let starts = 0;
     let finishFirstClose: (() => void) | undefined;
-    const lifecycle = createKokoroLifecycle({
+    const lifecycle = createPocketLifecycle({
       startWorker: async (signal) => {
         starts += 1;
         if (starts === 1) {

@@ -1,6 +1,6 @@
-export type KokoroChunkConsumer = (path: string, index: number) => Promise<void>;
+export type PocketChunkConsumer = (path: string, index: number) => Promise<void>;
 
-export type KokoroSynthesisMetrics = {
+export type PocketSynthesisMetrics = {
   readonly chunkCount: number;
   readonly totalSamples: number;
   readonly sampleRate: number;
@@ -10,41 +10,41 @@ export type KokoroSynthesisMetrics = {
   readonly firstChunkReadyMs?: number;
 };
 
-export type KokoroWorker = {
+export type PocketWorker = {
   readonly synthesize: (
     text: string,
-    consumeChunk: KokoroChunkConsumer,
+    consumeChunk: PocketChunkConsumer,
     signal?: AbortSignal,
-  ) => Promise<KokoroSynthesisMetrics>;
+  ) => Promise<PocketSynthesisMetrics>;
   readonly close: () => Promise<void>;
 };
 
-export type KokoroLifecycleState = "offloaded" | "warming" | "ready" | "synthesizing";
+export type PocketLifecycleState = "offloaded" | "warming" | "ready" | "synthesizing";
 
-export type KokoroLifecycle = {
+export type PocketLifecycle = {
   readonly prewarm: (signal?: AbortSignal) => Promise<void>;
   readonly synthesize: (
     text: string,
-    consumeChunk: KokoroChunkConsumer,
+    consumeChunk: PocketChunkConsumer,
     signal?: AbortSignal,
-  ) => Promise<KokoroSynthesisMetrics & { readonly cold: boolean; readonly warmupMs?: number }>;
+  ) => Promise<PocketSynthesisMetrics & { readonly cold: boolean; readonly warmupMs?: number }>;
   readonly setRetention: (retained: boolean) => void;
   readonly interrupt: () => void;
   readonly dispose: () => Promise<void>;
-  readonly state: () => KokoroLifecycleState;
+  readonly state: () => PocketLifecycleState;
 };
 
-export type KokoroLifecycleScheduler = (delayMs: number, task: () => void) => () => void;
+export type PocketLifecycleScheduler = (delayMs: number, task: () => void) => () => void;
 
-export function createKokoroLifecycle(options: {
-  readonly startWorker: (signal?: AbortSignal) => Promise<KokoroWorker>;
-  readonly schedule: KokoroLifecycleScheduler;
+export function createPocketLifecycle(options: {
+  readonly startWorker: (signal?: AbortSignal) => Promise<PocketWorker>;
+  readonly schedule: PocketLifecycleScheduler;
   readonly idleMs: number;
-}): KokoroLifecycle {
-  let lifecycleState: KokoroLifecycleState = "offloaded";
+}): PocketLifecycle {
+  let lifecycleState: PocketLifecycleState = "offloaded";
   let generation = 0;
-  let worker: KokoroWorker | undefined;
-  let warming: Promise<KokoroWorker> | undefined;
+  let worker: PocketWorker | undefined;
+  let warming: Promise<PocketWorker> | undefined;
   let warmingAbort: AbortController | undefined;
   let closing: Promise<void> | undefined;
   let cancelEviction: (() => void) | undefined;
@@ -166,7 +166,7 @@ export function createKokoroLifecycle(options: {
         throw new DOMException("Jarvis speech was interrupted.", "AbortError");
       }
       const current = worker;
-      if (current === undefined) throw new Error("Kokoro did not finish warming.");
+      if (current === undefined) throw new Error("Pocket did not finish warming.");
       cancelEviction?.();
       cancelEviction = undefined;
       lifecycleState = "synthesizing";
@@ -174,7 +174,7 @@ export function createKokoroLifecycle(options: {
       let removeAbort: () => void = () => undefined;
       let ownReject: ((cause: Error) => void) | undefined;
       try {
-        const result = await new Promise<KokoroSynthesisMetrics>((resolve, reject) => {
+        const result = await new Promise<PocketSynthesisMetrics>((resolve, reject) => {
           ownReject = reject;
           activeReject = reject;
           const onAbort = () => {

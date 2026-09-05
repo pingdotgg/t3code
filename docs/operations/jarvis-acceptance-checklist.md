@@ -158,7 +158,7 @@ key-release behavior, so the following checks are real-device checks.
 
 - [ ] Complete a coding task with a long Markdown response; Companion speaks the outcome and verification, not paths, code blocks, hashes, or a file changelog.
 - [ ] Confirm generic boilerplate such as “Done” or “Completed” is omitted.
-- [ ] Confirm the overlay may show more detail than Kokoro speaks.
+- [ ] Confirm the overlay may show more detail than Pocket speaks.
 - [ ] Trigger a question, approval, failure, and blocker; each report is actionable and names the correct project/task.
 - [ ] Complete a task while checkpoint capture fails. Confirm the checkpoint issue is a non-blocking
       warning and the later successful task result remains the completed result.
@@ -169,9 +169,9 @@ key-release behavior, so the following checks are real-device checks.
 
 ## Performance and safety
 
-- [ ] Idle Companion uses no microphone, active Kokoro worker, continuous animation loop, or
+- [ ] Idle Companion uses no microphone, active Pocket worker, continuous animation loop, or
       polling worker beyond the bounded update check; only the compact Parakeet recognizer remains
-      resident. When Kokoro is not active, adaptive retention allows up to 120 seconds of idle warmth
+      resident. When Pocket is not active, adaptive retention allows up to 120 seconds of idle warmth
       before offload.
 - [ ] Confirm the voice shader/presence animation runs only for active listening, transcription,
       working, or speaking states, stops when idle or hidden, and is disabled with

@@ -1,0 +1,58 @@
+{
+  "runtime": {
+    "repository": "https://github.com/VolgaGerm/PocketTTS.cpp",
+    "commit": "e801e7d6c2692121a39e80ae525cb5265174a495",
+    "license": "MIT",
+    "notes": "Single-file C++ runtime. Built with the production edits in build-pocket-runtime.mjs, not the benchmark-only compatibility patch."
+  },
+  "models": {
+    "repository": "https://huggingface.co/stephvax/pocket-tts-onnx",
+    "commit": "fc68ee7e5a0a29662e218df84b24acb311f7fb6d",
+    "bundle": "onnx/english_2026-04",
+    "license": "CC-BY-4.0",
+    "baseModel": "kyutai/pocket-tts",
+    "files": [
+      "bundle.json",
+      "text_conditioner.onnx",
+      "flow_lm_main_int8.onnx",
+      "flow_lm_flow.onnx",
+      "mimi_decoder.onnx",
+      "mimi_encoder.onnx",
+      "tokenizer.model",
+      "bos_before_voice.npy"
+    ],
+    "precision": "mixed (INT8 language model; FP32 flow network and Mimi decoder)"
+  },
+  "onnxRuntime": {
+    "version": "1.23.2",
+    "source": "https://github.com/microsoft/onnxruntime/releases",
+    "license": "MIT"
+  },
+  "sentencepiece": {
+    "repository": "https://github.com/google/sentencepiece.git",
+    "tag": "v0.2.1",
+    "license": "Apache-2.0"
+  },
+  "voice": {
+    "source": "https://huggingface.co/kyutai/tts-voices",
+    "file": "alba-mackenna/casual.wav",
+    "selection": "first three seconds, resampled to mono 24 kHz",
+    "license": "CC-BY-4.0",
+    "attribution": "Voice acted by Alba MacKenna, released under CC BY 4.0 via Kyutai tts-voices."
+  },
+  "inference": {
+    "temperature": 0.3,
+    "lsdSteps": 1,
+    "threads": 2,
+    "firstChunkFrames": 1,
+    "maxChunkFrames": 3,
+    "maxTokenPerChunk": 50,
+    "sampleRateHz": 24000
+  },
+  "onsetFilter": {
+    "thresholdDbfs": -50,
+    "windowMs": 10,
+    "prerollMs": 40,
+    "maxTrimMs": 2000
+  }
+}

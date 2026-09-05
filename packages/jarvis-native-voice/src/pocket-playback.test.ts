@@ -8,8 +8,8 @@ const fixture = vi.hoisted(() => ({
   synthesize: vi.fn(),
 }));
 vi.mock("node:child_process", () => ({ spawn: fixture.spawn }));
-vi.mock("./kokoro-worker-client.ts", () => ({
-  startKokoroWorker: async () => ({ synthesize: fixture.synthesize, close: async () => {} }),
+vi.mock("./pocket-worker-client.ts", () => ({
+  startPocketWorker: async () => ({ synthesize: fixture.synthesize, close: async () => {} }),
 }));
 
 import {

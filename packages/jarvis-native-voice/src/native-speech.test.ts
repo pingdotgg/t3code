@@ -2,7 +2,7 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as NodePath from "node:path";
 
-import { kokoroResourceError, kokoroVoicePaths } from "./kokoro-worker-client.ts";
+import { pocketResourceError, pocketVoicePaths } from "./pocket-worker-client.ts";
 import {
   nativeSpeechInterruptPolicy,
   createLatestSpeechQueue,
@@ -10,7 +10,7 @@ import {
   isNativeMicrophonePlatform,
   isNativeSpeechPlatform,
   isNativeSpeechReady,
-  kokoroIdleOffloadMs,
+  pocketIdleOffloadMs,
   nativeAudioPlaybackTimeoutMs,
   parakeetModelPaths,
   parakeetResourceError,
@@ -509,33 +509,29 @@ describe("macOS native WAV playback", () => {
   });
 });
 
-describe("Kokoro voice runtime", () => {
+describe("Pocket voice runtime", () => {
   it("uses an idle safety window while active task retention owns residency", () => {
-    assert.equal(kokoroIdleOffloadMs, 300_000);
+    assert.equal(pocketIdleOffloadMs, 300_000);
   });
 
   it("allows ordinary spoken reports to finish instead of killing playback after five seconds", () => {
     assert.isAtLeast(nativeAudioPlaybackTimeoutMs, 120_000);
   });
 
-  it("uses the quantized Kokoro voice bundle", () => {
-    const root = NodePath.join("jarvis", "kokoro");
-    assert.deepEqual(kokoroVoicePaths(root), {
-      resourceRoot: root,
-      modelPath: NodePath.join(root, "model.int8.onnx"),
-      voicesPath: NodePath.join(root, "voices.bin"),
-      tokensPath: NodePath.join(root, "tokens.txt"),
-      dataDir: NodePath.join(root, "espeak-ng-data"),
-      lexiconPath: NodePath.join(root, "lexicon-us-en.txt"),
-    });
+  it("uses the pinned Pocket voice bundle with the Alba reference", () => {
+    const root = NodePath.join("jarvis", "pocket");
+    const paths = pocketVoicePaths(root);
+    assert.equal(paths.resourceRoot, root);
+    assert.equal(paths.voiceFile, NodePath.join(root, "voices", "alba-casual-3s.wav"));
+    assert.equal(paths.bundlePath, NodePath.join(root, "models", "bundle.json"));
   });
 
   it("reports missing bundled voice resources precisely", () => {
-    const error = kokoroResourceError(kokoroVoicePaths("/definitely/missing/kokoro"));
-    assert.include(error?.message ?? "", "Kokoro model");
+    const error = pocketResourceError(pocketVoicePaths("/definitely/missing/pocket"));
+    assert.include(error?.message ?? "", "Pocket text conditioner");
   });
 
-  it("gates native Kokoro synthesis to supported local-speech platforms", () => {
+  it("gates native Pocket synthesis to supported local-speech platforms", () => {
     assert.isTrue(isNativeSpeechPlatform("linux"));
     assert.isTrue(isNativeSpeechPlatform("darwin"));
     assert.isFalse(isNativeSpeechReady("linux"));

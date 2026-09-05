@@ -125,6 +125,7 @@ export function windowsSetupModeCapabilities(mode: WindowsSetupMode) {
     ui: mode !== "headless",
     parakeet: mode !== "headless",
     kokoro: mode !== "headless",
+    pocket: mode !== "headless",
     execution: mode !== "controller",
     projects: mode !== "controller",
     providers: mode !== "controller",

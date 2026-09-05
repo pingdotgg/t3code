@@ -8,8 +8,9 @@ import * as NodePath from "node:path";
 import * as NodeTimers from "node:timers";
 import * as NodeTimersPromises from "node:timers/promises";
 
-import { createKokoroLifecycle } from "./kokoro-lifecycle.ts";
-import { startKokoroWorker } from "./kokoro-worker-client.ts";
+import { createPocketLifecycle } from "./pocket-lifecycle.ts";
+import { startPocketWorker } from "./pocket-worker-client.ts";
+import { pocketIdleOffloadMs } from "./pocket-config.ts";
 import { classifyVoiceCaptureError, createVoiceCaptureError } from "./voice-capture-error.ts";
 
 export {
@@ -203,13 +204,15 @@ export function createLatestSpeechQueue(
   };
 }
 
-// Keep Kokoro warm across the short bursts that make up one task/report. The
+// Keep Pocket warm across the short bursts that make up one task/report. The
 // active-retention hook below releases it as soon as attention returns to idle;
 // this longer safety window only covers a quiet gap between adjacent reports.
-export const kokoroIdleOffloadMs = 5 * 60_000;
+export { pocketIdleOffloadMs };
+/** Retired Kokoro idle window. Kept as an alias so upgrades do not break. */
+export const kokoroIdleOffloadMs = pocketIdleOffloadMs;
 
 export type NativeSpeechTiming = {
-  readonly engineId: "kokoro-int8";
+  readonly engineId: "pocket-2026-04" | "kokoro-int8";
   readonly start: "cold" | "warm";
   readonly warmupMs: number;
   /** Time until the first WAV is handed to the native player, not DAC onset. */
@@ -229,8 +232,8 @@ export function onNativeSpeechTiming(listener: (timing: NativeSpeechTiming) => v
   return () => nativeSpeechTimingListeners.delete(listener);
 }
 
-const kokoroLifecycle = createKokoroLifecycle({
-  startWorker: (signal) => startKokoroWorker(signal === undefined ? {} : { signal }),
+const pocketLifecycle = createPocketLifecycle({
+  startWorker: (signal) => startPocketWorker(signal === undefined ? {} : { signal }),
   schedule: (delayMs, task) => {
     const controller = new AbortController();
     void NodeTimersPromises.setTimeout(delayMs, undefined, { signal: controller.signal })
@@ -238,14 +241,14 @@ const kokoroLifecycle = createKokoroLifecycle({
       .catch(() => undefined);
     return () => controller.abort();
   },
-  idleMs: kokoroIdleOffloadMs,
+  idleMs: pocketIdleOffloadMs,
 });
 
-async function synthesizeAndPlayKokoro(text: string, signal: AbortSignal): Promise<void> {
+async function synthesizeAndPlayPocket(text: string, signal: AbortSignal): Promise<void> {
   if (signal.aborted) return;
   const startedAt = performance.now();
   let firstPlaybackStartMs: number | undefined;
-  const metrics = await kokoroLifecycle.synthesize(
+  const metrics = await pocketLifecycle.synthesize(
     text,
     async (outputPath) => {
       if (signal.aborted) return;
@@ -255,7 +258,7 @@ async function synthesizeAndPlayKokoro(text: string, signal: AbortSignal): Promi
     signal,
   );
   const timing: NativeSpeechTiming = {
-    engineId: "kokoro-int8",
+    engineId: "pocket-2026-04",
     start: metrics.cold ? "cold" : "warm",
     warmupMs: metrics.warmupMs ?? 0,
     ...(firstPlaybackStartMs === undefined ? {} : { firstPlaybackStartMs }),
@@ -277,10 +280,10 @@ async function synthesizeAndPlayKokoro(text: string, signal: AbortSignal): Promi
   }
 }
 
-const kokoroSpeechQueue = createLatestSpeechQueue(synthesizeAndPlayKokoro);
+const pocketSpeechQueue = createLatestSpeechQueue(synthesizeAndPlayPocket);
 
 export function setNativeSpeechRetention(retained: boolean): void {
-  kokoroLifecycle.setRetention(retained);
+  pocketLifecycle.setRetention(retained);
 }
 
 export type ParakeetModelPaths = {
@@ -938,7 +941,7 @@ export function startParakeetPcmCapture(input: ParakeetPcmCaptureInput): Parakee
 
 export function speakNativeSpeech(text: string, platform = process.platform): Promise<void> {
   if (!isNativeSpeechPlatform(platform) || text.trim().length === 0) return Promise.resolve();
-  return kokoroSpeechQueue.enqueue(text);
+  return pocketSpeechQueue.enqueue(text);
 }
 
 /** Reserves acknowledgement order before a local voice task crosses the network. */
@@ -946,35 +949,35 @@ export function reserveNativeSpeech(platform = process.platform): SpeechReservat
   if (!isNativeSpeechPlatform(platform)) {
     return { commit: () => Promise.resolve(), cancel: () => undefined };
   }
-  return kokoroSpeechQueue.reserve();
+  return pocketSpeechQueue.reserve();
 }
 
 /** Whether acknowledgement speech can begin without another worker cold start. */
 export function isNativeSpeechReady(platform = process.platform): boolean {
   if (!isNativeSpeechPlatform(platform)) return false;
-  const state = kokoroLifecycle.state();
+  const state = pocketLifecycle.state();
   return state === "ready" || state === "synthesizing";
 }
 
-/** Warms Kokoro only after this device has won the Host speaker claim. */
+/** Warms Pocket only after this device has won the Host speaker claim. */
 export async function prepareNativeSpeech(platform = process.platform): Promise<void> {
   if (!isNativeSpeechPlatform(platform)) return;
-  await kokoroLifecycle.prewarm();
+  await pocketLifecycle.prewarm();
 }
 
-/** Stops current Kokoro playback, discards queued speech, and releases model memory. */
+/** Stops current Pocket playback, discards queued speech, and releases model memory. */
 export function interruptNativeSpeech(): void {
-  kokoroSpeechQueue.interrupt();
-  kokoroLifecycle.interrupt();
+  pocketSpeechQueue.interrupt();
+  pocketLifecycle.interrupt();
 }
 
 export function isNativeSpeechActive(): boolean {
-  return kokoroSpeechQueue.isActive();
+  return pocketSpeechQueue.isActive();
 }
 
 export async function disposeNativeSpeech(): Promise<void> {
-  kokoroSpeechQueue.interrupt();
-  await kokoroLifecycle.dispose();
+  pocketSpeechQueue.interrupt();
+  await pocketLifecycle.dispose();
 }
 
 const nativeSpeechStderrLimit = 4_096;

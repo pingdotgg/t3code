@@ -64,6 +64,7 @@ export function validateHeadlessEnvironmentDescriptor(descriptor: unknown): void
     ui: false,
     parakeet: false,
     kokoro: false,
+    pocket: false,
     execution: true,
     projects: true,
     providers: true,
