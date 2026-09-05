@@ -707,13 +707,15 @@ describe("orchestrator MCP toolkit", () => {
                               yield* Effect.forEach(
                                 projectThreads,
                                 (thread) =>
-                                  threads.dispatch({
-                                    type: "thread.delete",
-                                    commandId: CommandId.make(
-                                      `${commandId}:delete-thread:${thread.id}`,
-                                    ),
-                                    threadId: thread.id,
-                                  }),
+                                  threads
+                                    .dispatch({
+                                      type: "thread.delete",
+                                      commandId: CommandId.make(
+                                        `${commandId}:delete-thread:${thread.id}`,
+                                      ),
+                                      threadId: thread.id,
+                                    })
+                                    .pipe(Effect.orDie),
                                 { concurrency: 1, discard: true },
                               );
                               const project = yield* Ref.updateAndGet(
@@ -733,7 +735,7 @@ describe("orchestrator MCP toolkit", () => {
                     );
                     yield* Deferred.succeed(deletionLockAttemptSettled, undefined);
                     return yield* Fiber.join(deletion);
-                  }),
+                  }).pipe(Effect.orDie),
                 getById: (requestedProjectId, options) =>
                   requestedProjectId === deletionRaceProjectId
                     ? Ref.get(deletionRaceProjectState).pipe(

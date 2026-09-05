@@ -160,14 +160,20 @@ it.effect("serializes admitted thread creation with project deletion", () =>
       const deletionAttempted = yield* Deferred.make<void>();
       const withProjectLock = executor.withProjectLock;
       let projectLockCalls = 0;
-      const lockSpy = vi.spyOn(executor, "withProjectLock").mockImplementation((key, effect) => {
+      const interceptProjectLock: ThreadCommandExecutor["Service"]["withProjectLock"] = (
+        key,
+        effect,
+      ) => {
         if (key !== projectId || ++projectLockCalls !== 2) {
           return withProjectLock(key, effect);
         }
         return Deferred.succeed(deletionAttempted, undefined).pipe(
           Effect.andThen(withProjectLock(key, effect)),
         );
-      });
+      };
+      const lockSpy = vi
+        .spyOn(executor, "withProjectLock")
+        .mockImplementation(interceptProjectLock);
 
       yield* Effect.gen(function* () {
         const creation = yield* executor
@@ -228,7 +234,7 @@ it.effect("counts only children deleted by the project cascade", () =>
       const allowCascadeLock = yield* Deferred.make<void>();
       const withLock = executor.withLock;
       let threadLockCalls = 0;
-      const lockSpy = vi.spyOn(executor, "withLock").mockImplementation((key, effect) => {
+      const interceptThreadLock: ThreadCommandExecutor["Service"]["withLock"] = (key, effect) => {
         if (key !== threadId || ++threadLockCalls !== 1) {
           return withLock(key, effect);
         }
@@ -236,7 +242,8 @@ it.effect("counts only children deleted by the project cascade", () =>
           Effect.andThen(Deferred.await(allowCascadeLock)),
           Effect.andThen(withLock(key, effect)),
         );
-      });
+      };
+      const lockSpy = vi.spyOn(executor, "withLock").mockImplementation(interceptThreadLock);
 
       yield* Effect.gen(function* () {
         yield* eventSink.write({ events: [nativeThreadCreated(projectId, threadId)] });

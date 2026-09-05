@@ -50,7 +50,6 @@ import {
   settleThread,
   startThreadTurn,
   unsettleThread,
-  updateProject,
   updateThreadMetadata,
 } from "./commands.ts";
 

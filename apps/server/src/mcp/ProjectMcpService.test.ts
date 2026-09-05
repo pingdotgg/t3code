@@ -556,11 +556,15 @@ it.effect("serializes delegated thread admission with cascading project deletion
                         yield* Effect.forEach(
                           projectThreads,
                           (thread) =>
-                            threadManagement.dispatch({
-                              type: "thread.delete",
-                              commandId: CommandId.make(`${commandId}:delete-thread:${thread.id}`),
-                              threadId: thread.id,
-                            }),
+                            threadManagement
+                              .dispatch({
+                                type: "thread.delete",
+                                commandId: CommandId.make(
+                                  `${commandId}:delete-thread:${thread.id}`,
+                                ),
+                                threadId: thread.id,
+                              })
+                              .pipe(Effect.orDie),
                           { concurrency: 1, discard: true },
                         );
                         const project = yield* Ref.updateAndGet(projectState, (current) => ({
@@ -576,7 +580,7 @@ it.effect("serializes delegated thread admission with cascading project deletion
               );
               yield* Deferred.succeed(deleteLockAttempted, undefined);
               return yield* Fiber.join(deletion);
-            }),
+            }).pipe(Effect.orDie),
           getById: () => Ref.get(projectState).pipe(Effect.map(Option.some)),
           getByWorkspaceRoot: () => Effect.die("unused"),
           snapshot: Effect.die("unused"),
