@@ -8,6 +8,7 @@ import * as DateTime from "effect/DateTime";
 import {
   deriveTimelineEntriesFromVisibleTurnItems,
   deriveTimelineEntriesFromVisibleTurnItemsWithState,
+  workEntryDisplayIndicatesToolFailure,
   type WorkLogEntry,
 } from "../../session-logic";
 import { makeStreamingTimelineFixture } from "../../test-fixtures";
@@ -489,6 +490,105 @@ describe("resolveAssistantMessageCopyState", () => {
 });
 
 describe("deriveMessagesTimelineRows", () => {
+  it.each(["running", "completed", "superseded"] as const)(
+    "keeps system notices visible as non-failing warnings through %s work",
+    (state) => {
+      const fixture = makeStreamingTimelineFixture();
+      const message =
+        "Claude changed its safety mode.\nReview the active permission settings before continuing.";
+      const source: OrchestrationV2ProjectedTurnItem = {
+        ...fixture.visibleTurnItems[0]!,
+        sourceItemId: TurnItemId.make("safety-notice"),
+        item: {
+          id: TurnItemId.make("safety-notice"),
+          threadId: fixture.threadId,
+          runId: fixture.runId,
+          nodeId: null,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: 1,
+          startedAt: DateTime.makeUnsafe(fixture.time(1)),
+          completedAt: DateTime.makeUnsafe(fixture.time(1)),
+          updatedAt: DateTime.makeUnsafe(fixture.time(1)),
+          type: "system_notice",
+          message,
+          title: message,
+          status: "completed",
+        },
+      };
+      const [notice] = deriveTimelineEntriesFromVisibleTurnItems({
+        visibleTurnItems: [source],
+        optimisticMessages: [],
+      });
+      if (notice?.kind !== "work") throw new Error("Expected a notice work entry");
+      expect(notice.entry.projectedItem).toBe(source);
+      expect(notice.entry.sourceActivityKind).toBe("runtime.warning");
+      expect(workEntryDisplayLabel(notice.entry, undefined)).toBe(message);
+      expect(workEntryDisplayIndicatesToolFailure(notice.entry)).toBe(false);
+      const rows = deriveMessagesTimelineRows({
+        timelineEntries: [
+          {
+            ...notice,
+            ...(state === "superseded"
+              ? {
+                  attempt: {
+                    id: "old-attempt" as never,
+                    runId: fixture.runId,
+                    status: "superseded" as const,
+                    attemptOrdinal: 0,
+                    rootNodeId: "old-root" as never,
+                  },
+                }
+              : {}),
+          },
+          {
+            id: "nearby-tool",
+            kind: "work",
+            createdAt: notice.createdAt,
+            entry: {
+              id: "nearby-tool",
+              runId: fixture.runId,
+              createdAt: notice.createdAt,
+              label: "Ran command",
+              tone: "tool",
+              toolLifecycleStatus: "completed",
+            },
+          },
+          {
+            id: "terminal-message",
+            kind: "message",
+            createdAt: notice.createdAt,
+            message: {
+              id: MessageId.make("terminal-message"),
+              runId: fixture.runId,
+              role: "assistant",
+              text: "Continuing with the selected settings.",
+              createdAt: notice.createdAt,
+              updatedAt: notice.createdAt,
+              streaming: state === "running",
+            },
+          },
+        ],
+        isWorking: state === "running",
+        activeTurnStartedAt: notice.createdAt,
+        latestRun: {
+          runId: fixture.runId,
+          status: state === "running" ? "running" : "completed",
+          startedAt: notice.createdAt,
+          completedAt: state === "running" ? null : notice.createdAt,
+        },
+        turnDiffSummaryByAssistantMessageId: new Map(),
+        revertTurnCountByUserMessageId: new Map(),
+      });
+      const row = rows.find(
+        (row) => row.kind === "work" && row.groupedEntries.includes(notice.entry),
+      );
+      expect(row).toMatchObject({ kind: "work", groupedEntries: [notice.entry] });
+    },
+  );
+
   it("keeps context compaction visible outside folded work", () => {
     const rows = deriveMessagesTimelineRows({
       timelineEntries: [
@@ -846,11 +946,10 @@ describe("deriveMessagesTimelineRows", () => {
       })),
     ];
 
-    const rows = deriveMessagesTimelineRows({
-      timelineEntries,
+    const input = {
       latestRun: {
         runId,
-        status: "failed",
+        status: "failed" as const,
         startedAt: "2026-01-01T00:00:00Z",
         completedAt: "2026-01-01T00:00:10Z",
       },
@@ -858,7 +957,8 @@ describe("deriveMessagesTimelineRows", () => {
       activeTurnStartedAt: null,
       turnDiffSummaryByAssistantMessageId: new Map(),
       revertTurnCountByUserMessageId: new Map(),
-    });
+    };
+    const rows = deriveMessagesTimelineRows({ ...input, timelineEntries });
 
     expect(rows.map((row) => row.id)).toEqual([
       "turn-fold:turn-1",
@@ -881,6 +981,11 @@ describe("deriveMessagesTimelineRows", () => {
       showAssistantMeta: false,
       showAssistantCopyButton: false,
     });
+    expect(
+      deriveMessagesTimelineRows({ ...input, timelineEntries: timelineEntries.slice(0, 3) }).map(
+        (row) => row.id,
+      ),
+    ).toEqual(["turn-fold:turn-1", "assistant-final-entry"]);
   });
 
   it("folds all assistant messages before the terminal message", () => {

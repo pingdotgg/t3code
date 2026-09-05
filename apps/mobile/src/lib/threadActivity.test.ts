@@ -214,6 +214,31 @@ describe("buildThreadFeed", () => {
     ).toBe(false);
   });
 
+  it("keeps provider notices visible outside completed work folds without failure styling", () => {
+    const message = "Safeguards flagged this message. Switched to Opus 4.8.";
+    const item = {
+      ...base("item-system-notice", "2026-06-20T00:00:02.000Z", 1),
+      type: "system_notice" as const,
+      message,
+    };
+    const feed = buildThreadFeed([projected(item, 0)]);
+    const presented = deriveThreadFeedPresentation(feed, null, new Set());
+    const activities = presented.flatMap((entry) =>
+      entry.type === "activity-group" ? entry.activities : [],
+    );
+    expect(activities).toHaveLength(1);
+    expect(activities[0]).toMatchObject({
+      summary: message,
+      detail: message,
+      prominent: true,
+      toolLike: false,
+      status: null,
+      icon: "warning",
+      workEntry: { tone: "info", itemType: "system_notice" },
+    });
+    expect(presented.some((entry) => entry.type === "run-fold")).toBe(false);
+  });
+
   it("presents provider retries as visible work-log activity", () => {
     const retryBase = {
       ...base("item-provider-retry", "2026-06-20T00:00:02.000Z", 1),

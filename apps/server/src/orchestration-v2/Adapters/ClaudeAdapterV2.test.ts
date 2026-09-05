@@ -1821,6 +1821,65 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     });
   const makeWakeHarness = makeWakeHarnessWithOptions();
 
+  it.effect("surfaces a Claude safety model fallback without failing the turn", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      const now = yield* DateTime.now;
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now,
+          attemptId: RunAttemptId.make("claude-safety-fallback-attempt"),
+          text: "Continue the audit",
+          attachments: [],
+        }),
+      );
+      const notice = "Safeguards flagged this message. Switched to Opus 4.8.";
+      const uuid = "00000000-0000-4000-8000-000000000301";
+      yield* Queue.offer(
+        harness.sdkMessages,
+        claudeSdkFrame({
+          type: "system",
+          subtype: "model_refusal_fallback",
+          trigger: "refusal",
+          direction: "retry",
+          original_model: "claude-fable-5",
+          fallback_model: "claude-opus-4-8",
+          request_id: "request-safety-fallback",
+          api_refusal_category: "cyber",
+          api_refusal_explanation: null,
+          content: notice,
+          session_id: WAKE_NATIVE_SESSION,
+          uuid,
+        }),
+      );
+      yield* Queue.offer(
+        harness.sdkMessages,
+        makeResultFrame({
+          uuid: "00000000-0000-4000-8000-000000000302",
+          result: "Audit complete.",
+        }),
+      );
+      yield* Queue.take(harness.terminalReceipts);
+      const notices = harness.events.flatMap((event) =>
+        event.type === "turn_item.updated" && event.turnItem.type === "system_notice"
+          ? [event.turnItem]
+          : [],
+      );
+      assert.lengthOf(notices, 1);
+      assert.equal(notices[0]?.message, notice);
+      assert.equal(notices[0]?.status, "completed");
+      assert.equal(notices[0]?.nativeItemRef?.nativeId, uuid);
+      assert.equal(harness.terminalEvents()[0]?.status, "completed");
+      assert.isFalse(
+        harness.events.some(
+          (event) => event.type === "turn_item.updated" && event.turnItem.type === "error",
+        ),
+      );
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, idAllocatorLayer))),
+  );
+
   it.effect(
     "runs native compaction and keeps its context watermark separate from billed usage",
     () =>
