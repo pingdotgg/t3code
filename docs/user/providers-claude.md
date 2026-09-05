@@ -37,6 +37,26 @@ state. Claude does not have Codex's shared-home and shadow-home arrangement.
 For presets that differ only in API keys or endpoints, use the instance's
 **Environment variables**. Variable assignments do not belong in **Launch arguments**.
 
+## Claude says it is not authenticated
+
+If Claude Code is logged out or its session expired, the provider shows **Not authenticated** in
+Settings and sending a message fails right away with a login hint, instead of ending in an empty
+reply.
+
+Log in from a terminal:
+
+```bash
+claude auth login
+```
+
+If the provider has a `CLAUDE_CONFIG_DIR path` set, log in to that same directory:
+
+```bash
+CLAUDE_CONFIG_DIR=~/.claude_personal_home claude auth login
+```
+
+Then send your message again.
+
 ## Compact long conversations
 
 Set **Auto-compact after** in the Claude provider settings to an integer between

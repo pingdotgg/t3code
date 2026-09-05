@@ -2071,6 +2071,119 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect.each([
+    {
+      name: "success without a terminal reason",
+      result: { subtype: "success", is_error: true, errors: [] },
+      expectedState: "failed",
+      expectsLoginHint: true,
+    },
+    {
+      name: "success with an API-error terminal reason",
+      result: { subtype: "success", is_error: true, terminal_reason: "api_error", errors: [] },
+      expectedState: "failed",
+      expectsLoginHint: true,
+    },
+    {
+      name: "interrupted",
+      result: {
+        subtype: "error_during_execution",
+        is_error: true,
+        terminal_reason: "aborted_tools",
+        errors: [],
+      },
+      expectedState: "interrupted",
+      expectsLoginHint: false,
+    },
+    {
+      name: "cancelled",
+      result: { subtype: "error_during_execution", is_error: true, errors: ["cancelled"] },
+      expectedState: "cancelled",
+      expectsLoginHint: false,
+    },
+    {
+      name: "successful non-error",
+      result: { subtype: "success", is_error: false, errors: [] },
+      expectedState: "completed",
+      expectsLoginHint: false,
+    },
+  ])(
+    "handles authentication_failed followed by a $name result",
+    ({ result, expectedState, expectsLoginHint }) => {
+      const harness = makeHarness();
+      return Effect.gen(function* () {
+        const adapter = yield* ClaudeAdapter;
+
+        const runtimeEventsFiber = yield* adapter.streamEvents.pipe(
+          Stream.takeUntil((event) => event.type === "turn.completed"),
+          Stream.runCollect,
+          Effect.forkChild,
+        );
+
+        const session = yield* adapter.startSession({
+          threadId: THREAD_ID,
+          provider: ProviderDriverKind.make("claudeAgent"),
+          runtimeMode: "full-access",
+        });
+
+        const turn = yield* adapter.sendTurn({
+          threadId: session.threadId,
+          input: "hello",
+          attachments: [],
+        });
+
+        // Signed-out CLIs emit this assistant error before the result. Some
+        // versions also classify that result with terminal_reason: api_error.
+        harness.query.emit({
+          type: "assistant",
+          session_id: "sdk-session-auth",
+          uuid: "assistant-auth",
+          parent_tool_use_id: null,
+          error: "authentication_failed",
+          is_api_error_message: true,
+          message: {
+            id: "assistant-message-auth",
+            model: "<synthetic>",
+            content: [{ type: "text", text: "Not logged in · Please run /login" }],
+          },
+        } as unknown as SDKMessage);
+
+        harness.query.emit({
+          type: "result",
+          ...result,
+          session_id: "sdk-session-auth",
+          uuid: "result-auth",
+        } as unknown as SDKMessage);
+
+        const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+
+        const runtimeError = runtimeEvents.find((event) => event.type === "runtime.error");
+        if (expectsLoginHint) {
+          assert(runtimeError?.type === "runtime.error");
+          assert.match(runtimeError.payload.message, /claude auth login/);
+          assert.match(runtimeError.payload.message, /Not logged in/);
+        } else {
+          assert.equal(runtimeError, undefined);
+        }
+
+        const turnCompleted = runtimeEvents[runtimeEvents.length - 1];
+        assert.equal(turnCompleted?.type, "turn.completed");
+        if (turnCompleted?.type === "turn.completed") {
+          assert.equal(String(turnCompleted.turnId), String(turn.turnId));
+          assert.equal(turnCompleted.payload.state, expectedState);
+          if (expectsLoginHint) {
+            assert.match(turnCompleted.payload.errorMessage ?? "", /claude auth login/);
+          } else {
+            assert.notMatch(turnCompleted.payload.errorMessage ?? "", /claude auth login/);
+          }
+        }
+      }).pipe(
+        Effect.provideService(Random.Random, makeDeterministicRandomService()),
+        Effect.provide(harness.layer),
+      );
+    },
+  );
+
   it.effect("treats aborted_tools results as interrupted and hides ede_diagnostic errors", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {

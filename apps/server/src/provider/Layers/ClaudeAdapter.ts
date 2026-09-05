@@ -99,6 +99,7 @@ import {
   resolveClaudeModelSlug,
   scopeClaudeModelCatalog,
 } from "../ClaudeModelCatalog.ts";
+import { CLAUDE_UNAUTHENTICATED_MESSAGE } from "./ClaudeProvider.ts";
 import {
   ProviderAdapterProcessError,
   ProviderAdapterRequestError,
@@ -159,6 +160,12 @@ interface ClaudeTurnState {
   compactedSinceLatestAssistantUsage: boolean;
   hasSubagents: boolean;
   nextSyntheticAssistantBlockIndex: number;
+  /**
+   * Login hint captured from a synthetic `authentication_failed` assistant
+   * message. The CLI still ends such turns with a subtype "success" result,
+   * so the result handler uses this to fail the turn instead.
+   */
+  authFailureMessage: string | undefined;
 }
 
 interface AssistantTextBlockState {
@@ -3184,6 +3191,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         compactedSinceLatestAssistantUsage: false,
         hasSubagents: false,
         nextSyntheticAssistantBlockIndex: -1,
+        authFailureMessage: undefined,
       };
       context.session = {
         ...context.session,
@@ -3242,6 +3250,12 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     }
 
     if (context.turnState) {
+      if (message.error === "authentication_failed") {
+        const detail = extractAssistantTextBlocks(message).join("\n").trim();
+        context.turnState.authFailureMessage = detail
+          ? `${detail}. ${CLAUDE_UNAUTHENTICATED_MESSAGE}`
+          : CLAUDE_UNAUTHENTICATED_MESSAGE;
+      }
       context.turnState.items.push(message.message);
       if (
         normalizeClaudeActiveTokenUsage(
@@ -3268,8 +3282,13 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       return;
     }
 
-    const status = turnStatusFromResult(message);
-    const errorMessage = resultUserFacingError(message);
+    const authFailureMessage = context.turnState?.authFailureMessage;
+    let status = turnStatusFromResult(message);
+    let errorMessage = resultUserFacingError(message);
+    if (authFailureMessage && message.is_error && (status === "completed" || status === "failed")) {
+      status = "failed";
+      errorMessage = authFailureMessage;
+    }
 
     if (status === "failed") {
       yield* emitRuntimeError(context, errorMessage ?? "Claude turn failed.");
@@ -4937,6 +4956,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         compactedSinceLatestAssistantUsage: false,
         hasSubagents: false,
         nextSyntheticAssistantBlockIndex: -1,
+        authFailureMessage: undefined,
       };
 
       const updatedAt = yield* nowIso;
