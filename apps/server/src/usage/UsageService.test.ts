@@ -12,6 +12,7 @@ import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 import { ProjectId, ThreadId, UsageDay, type UsageSummaryInput } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as Duration from "effect/Duration";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -25,6 +26,7 @@ import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 
 import * as ServerConfig from "../config.ts";
+import { PersistenceSqlError } from "../persistence/Errors.ts";
 import { ProjectionProjectRepositoryLive } from "../persistence/Layers/ProjectionProjects.ts";
 import { ProjectionThreadRepositoryLive } from "../persistence/Layers/ProjectionThreads.ts";
 import { ProjectionProjectRepository } from "../persistence/Services/ProjectionProjects.ts";
@@ -321,6 +323,63 @@ describe("UsageService", () => {
       }).pipe(
         Effect.provide(
           serviceLayers({ prefix: "usage-service-target-prefilter-test", home, settings }),
+        ),
+      );
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("filters a targeted thread from the summary's cached source snapshot", () =>
+    Effect.gen(function* () {
+      const { settings, home } = yield* setup;
+      const sessionsDir = NodePath.join(home, "codex", "sessions", "2026", "08", "01");
+      yield* Effect.promise(() => NodeFSP.mkdir(sessionsDir, { recursive: true }));
+      const targetPath = NodePath.join(sessionsDir, "rollout-opaque-target.jsonl");
+      const unrelatedPath = NodePath.join(sessionsDir, "rollout-opaque-unrelated.jsonl");
+      yield* Effect.promise(() =>
+        Promise.all([
+          NodeFSP.writeFile(targetPath, codexRollout("target-session", "/work/target", 7)),
+          NodeFSP.writeFile(unrelatedPath, codexRollout("unrelated-session", "/work/other", 999)),
+        ]),
+      );
+
+      yield* Effect.gen(function* () {
+        const runtimeRepository = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
+        yield* runtimeRepository.upsert({
+          threadId: ThreadId.make("target-thread"),
+          providerName: "codex",
+          providerInstanceId: null,
+          adapterKey: "codex",
+          runtimeMode: "full-access",
+          status: "running",
+          lastSeenAt: "2026-08-01T10:00:00.000Z",
+          resumeCursor: { threadId: "target-session" },
+          runtimePayload: null,
+        });
+        const service = yield* UsageService.make;
+        const summary = yield* service.readSummary(WINDOW);
+        yield* Effect.promise(() =>
+          Promise.all([
+            NodeFSP.appendFile(
+              targetPath,
+              `\n${codexRollout("target-session", "/work/target", 70)}`,
+            ),
+            NodeFSP.appendFile(
+              unrelatedPath,
+              `\n${codexRollout("unrelated-session", "/work/other", 9_999)}`,
+            ),
+          ]),
+        );
+        const breakdown = yield* service.readThreadBreakdown({
+          ...WINDOW,
+          threadId: ThreadId.make("target-thread"),
+        });
+
+        assert.strictEqual(breakdown.rows.length, 1);
+        assert.strictEqual(breakdown.rows[0]?.totals.outputTokens, 7);
+        assert.strictEqual(breakdown.readAt, summary.readAt);
+      }).pipe(
+        Effect.provide(
+          serviceLayers({ prefix: "usage-service-target-cached-snapshot-test", home, settings }),
         ),
       );
     }).pipe(Effect.scoped),
@@ -740,7 +799,9 @@ describe("UsageService", () => {
       yield* Effect.promise(() =>
         NodeFSP.writeFile(transcript, claudeLine(1, 5, "claude-fable-5", "/work/app")),
       );
-      const repositoryFailure = Effect.die(new Error("project repository unavailable"));
+      const repositoryFailure = Effect.fail(
+        new PersistenceSqlError({ operation: "ProjectionProjectRepository.listAll:test" }),
+      );
       const projectRepository: ProjectionProjectRepository["Service"] = {
         upsert: () => repositoryFailure,
         getById: () => repositoryFailure,
@@ -760,6 +821,37 @@ describe("UsageService", () => {
 
       const summary = yield* service.readSummary(WINDOW);
       assert.strictEqual(summary.buckets[0]?.projectAttribution, "unknown");
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("does not hide a project repository defect as unknown attribution", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
+      const defect = new Error("project repository defect");
+      const repositoryDefect = Effect.die(defect);
+      const projectRepository: ProjectionProjectRepository["Service"] = {
+        upsert: () => repositoryDefect,
+        getById: () => repositoryDefect,
+        listAll: () => repositoryDefect,
+        deleteById: () => repositoryDefect,
+      };
+      const exit = yield* Effect.gen(function* () {
+        const service = yield* UsageService.make;
+        return yield* Effect.exit(service.readSummary(WINDOW));
+      }).pipe(
+        Effect.provide(
+          serviceLayers({
+            prefix: "usage-service-project-defect-test",
+            home,
+            settings,
+            projectRepository,
+          }),
+        ),
+      );
+
+      assert.isTrue(Exit.isFailure(exit));
+      if (Exit.isFailure(exit)) assert.strictEqual(Cause.squash(exit.cause), defect);
     }).pipe(Effect.scoped),
   );
 
@@ -929,22 +1021,42 @@ describe("UsageService", () => {
         home,
         settings,
       });
-      const service = yield* UsageService.make.pipe(Effect.provide(layers));
-      const complete = yield* service.refreshSummary(WINDOW);
-      assert.strictEqual(totalOutputTokens(complete), 5);
+      const complete = yield* Effect.gen(function* () {
+        const service = yield* UsageService.make;
+        const complete = yield* service.refreshSummary(WINDOW);
+        assert.strictEqual(totalOutputTokens(complete), 5);
 
-      // A symlink with a directory target is listed as a transcript entry, but
-      // opening it as a stream fails persistently. Publishing the valid sibling
-      // would make an incomplete corpus look complete.
-      yield* Effect.promise(() =>
-        NodeFSP.symlink(NodePath.dirname(transcript), `${transcript}.bad.jsonl`),
-      );
+        // A symlink with a directory target is listed as a transcript entry, but
+        // opening it as a stream fails persistently. Publishing the valid sibling
+        // would make an incomplete corpus look complete.
+        yield* Effect.promise(() =>
+          NodeFSP.symlink(NodePath.dirname(transcript), `${transcript}.bad.jsonl`),
+        );
 
-      const failed = yield* service.refreshSummary(WINDOW).pipe(Effect.exit);
-      assert.isTrue(Exit.isFailure(failed));
-      const retained = yield* service.readSummary(WINDOW);
-      assert.strictEqual(totalOutputTokens(retained), 5);
-      assert.strictEqual(retained.coverage?.generatedAt, complete.coverage?.generatedAt);
+        const failed = yield* service.refreshSummary(WINDOW).pipe(Effect.exit);
+        assert.isTrue(Exit.isFailure(failed));
+        const retained = yield* service.readSummary(WINDOW);
+        assert.strictEqual(totalOutputTokens(retained), 5);
+        assert.strictEqual(retained.coverage?.generatedAt, complete.coverage?.generatedAt);
+
+        // The failed refresh leaves an incomplete parsed source candidate in
+        // memory. Thread rows must reject it and retry the issue-aware path,
+        // which still sees the unreadable matching file.
+        const threadRead = yield* service.readThreadBreakdown(WINDOW).pipe(Effect.exit);
+        assert.isTrue(Exit.isFailure(threadRead));
+        if (Exit.isFailure(threadRead)) {
+          const error = threadRead.cause.reasons[0];
+          assert.isTrue(error !== undefined && error._tag === "Fail");
+          if (error !== undefined && error._tag === "Fail") {
+            assert.strictEqual(error.error.reason, "scanFailed");
+            assert.strictEqual(
+              error.error.detail,
+              "Thread usage could not read every matching transcript file.",
+            );
+          }
+        }
+        return complete;
+      }).pipe(Effect.provide(layers));
 
       const restartedService = yield* UsageService.make.pipe(Effect.provide(layers));
       const restarted = yield* restartedService.readSummary(WINDOW);
