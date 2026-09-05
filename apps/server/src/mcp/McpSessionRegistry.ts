@@ -143,6 +143,7 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
       return {
         config: {
           environmentId,
+          capabilities: Array.from(scope.capabilities),
           threadId: scope.threadId,
           providerSessionId,
           providerInstanceId: scope.providerInstanceId,

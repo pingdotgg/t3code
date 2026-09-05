@@ -161,3 +161,19 @@ it.effect("does not keep credentials of other threads alive", () =>
     expect(yield* registry.resolve(token)).toBeUndefined();
   }),
 );
+
+it.effect("preserves the explicitly granted toolkit capabilities", () =>
+  Effect.gen(function* () {
+    const registry = yield* makeRegistry(() => 1_000);
+    const issued = yield* registry.issue({
+      threadId: ThreadId.make("monitor-only"),
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      capabilities: new Set(["monitor"]),
+    });
+    const resolved = yield* registry.resolve(
+      issued.config.authorizationHeader.replace(/^Bearer\s+/, ""),
+    );
+    expect(Array.from(resolved!.capabilities)).toEqual(["pull-requests", "monitor"]);
+    expect(Array.from(issued.config.capabilities)).toEqual(["pull-requests", "monitor"]);
+  }),
+);
