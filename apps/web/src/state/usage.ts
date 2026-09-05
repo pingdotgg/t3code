@@ -200,8 +200,9 @@ export function useUsage(
     );
     void Promise.allSettled(rateRefreshes).then(() => {
       const selectedIds = selectedEnvironments.map(({ environmentId }) => environmentId);
+      const attemptId = randomUUID();
       setRefreshTokens((current) =>
-        withUsageRefreshAttempt(current, selectedIds, answered, randomUUID()),
+        withUsageRefreshAttempt(current, selectedIds, answered, attemptId),
       );
     });
   }, [answered, selectedEnvironments]);
