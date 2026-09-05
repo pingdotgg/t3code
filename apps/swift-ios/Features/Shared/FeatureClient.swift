@@ -209,11 +209,13 @@ public protocol FeatureClient: AnyObject {
 
     func sourceControlStatus(threadID: String) async throws -> FeatureSourceControlStatus
     func sourceControlStatusEvents(threadID: String) -> AsyncStream<FeatureSourceControlStatus>
+    /// Completes at the mutation boundary. Callers refresh status separately so a refresh
+    /// failure cannot make an already-completed non-idempotent action retryable.
     func performSourceControlAction(
         threadID: String,
         action: FeatureSourceControlAction,
         message: String?
-    ) async throws -> FeatureSourceControlStatus
+    ) async throws
 
     func terminalSnapshot(threadID: String, terminalID: String) async throws -> FeatureTerminalSnapshot
     func terminalHostOS(threadID: String) -> String?
@@ -613,7 +615,7 @@ public extension FeatureClient {
         threadID: String,
         action: FeatureSourceControlAction,
         message: String?
-    ) async throws -> FeatureSourceControlStatus {
+    ) async throws {
         throw FeatureCapabilityUnavailable("Source control actions")
     }
 
