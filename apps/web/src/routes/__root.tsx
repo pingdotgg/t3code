@@ -98,6 +98,9 @@ function RootRouteView() {
   const pathname = useLocation({ select: (location) => location.pathname });
   const { authGateState } = Route.useRouteContext();
   const primaryEnvironmentAuthenticated = authGateState.status === "authenticated";
+  useUnvisitedCompletionsUnread(
+    primaryEnvironmentAuthenticated || authGateState.status === "hosted-static",
+  );
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
@@ -150,7 +153,6 @@ function RootRouteView() {
         <ConfirmDialogHost />
         <SlowRpcRequestToastCoordinator />
         <HostedStaticEnvironmentBootstrap />
-        <UnvisitedCompletionsObserver />
         {primaryEnvironmentAuthenticated ? <EventRouter /> : null}
         {primaryEnvironmentAuthenticated ? <PlanAgentSelectionHeal /> : null}
         {primaryEnvironmentAuthenticated ? <ProviderUpdateLaunchNotification /> : null}
@@ -266,11 +268,6 @@ function HostedStaticEnvironmentBootstrap() {
     setActiveEnvironmentId(firstSavedEnvironment.environmentId);
   }, [activeEnvironmentId, environments]);
 
-  return null;
-}
-
-function UnvisitedCompletionsObserver() {
-  useUnvisitedCompletionsUnread();
   return null;
 }
 

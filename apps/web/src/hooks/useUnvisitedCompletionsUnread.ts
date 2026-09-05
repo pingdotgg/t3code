@@ -73,15 +73,14 @@ export function subscribeToUnvisitedCompletions(input: {
   };
 }
 
-export function useUnvisitedCompletionsUnread(): void {
+export function useUnvisitedCompletionsUnread(enabled: boolean): void {
   const registry = useContext(RegistryContext);
-  useEffect(
-    () =>
-      subscribeToUnvisitedCompletions({
-        registry,
-        catalogAtom: environmentCatalog.catalogValueAtom,
-        shellAtom: environmentShell.stateValueAtom,
-      }),
-    [registry],
-  );
+  useEffect(() => {
+    if (!enabled) return;
+    return subscribeToUnvisitedCompletions({
+      registry,
+      catalogAtom: environmentCatalog.catalogValueAtom,
+      shellAtom: environmentShell.stateValueAtom,
+    });
+  }, [enabled, registry]);
 }

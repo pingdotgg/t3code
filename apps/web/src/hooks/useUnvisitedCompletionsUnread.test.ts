@@ -35,11 +35,52 @@ import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { Atom, AtomRegistry } from "effect/unstable/reactivity";
-import { afterEach, beforeEach } from "vite-plus/test";
+import { RegistryContext } from "@effect/atom-react";
+import {
+  createMemoryHistory,
+  createRootRoute,
+  createRoute,
+  createRouter,
+  Outlet,
+  RouterProvider,
+  useLocation,
+} from "@tanstack/react-router";
+import { act, createElement, Fragment, useEffect, useState } from "react";
+import { create, type ReactTestRenderer } from "react-test-renderer";
+import { afterEach, beforeEach, vi } from "vite-plus/test";
 
 import { hasUnseenCompletion, resolveThreadStatusPill } from "../components/Sidebar.logic";
 import { parsePersistedState, useUiStateStore } from "../uiStateStore";
-import { subscribeToUnvisitedCompletions } from "./useUnvisitedCompletionsUnread";
+import {
+  subscribeToUnvisitedCompletions,
+  useUnvisitedCompletionsUnread,
+} from "./useUnvisitedCompletionsUnread";
+
+// Only the network-fed atom values are supplied by the fixture. React effects,
+// router navigation, Registry subscriptions, and persisted UI state are real.
+const hookAtoms = vi.hoisted(() => ({
+  catalog: null as Atom.Atom<EnvironmentCatalogState> | null,
+  shell: null as ((id: EnvironmentId) => Atom.Atom<EnvironmentShellState>) | null,
+}));
+// Node otherwise selects TanStack's SSR export, which intentionally never
+// subscribes React components to navigation. Exercise its client lifecycle.
+vi.mock("@tanstack/router-core/isServer", () => ({ isServer: false }));
+vi.mock("../connection/catalog", () => ({
+  environmentCatalog: {
+    get catalogValueAtom() {
+      if (hookAtoms.catalog === null) throw new Error("Hook fixture not initialized");
+      return hookAtoms.catalog;
+    },
+  },
+}));
+vi.mock("../state/shell", () => ({
+  environmentShell: {
+    stateValueAtom(id: EnvironmentId) {
+      if (hookAtoms.shell === null) throw new Error("Hook fixture not initialized");
+      return hookAtoms.shell(id);
+    },
+  },
+}));
 
 const LOCAL = EnvironmentId.make("local");
 const REMOTE = EnvironmentId.make("remote");
@@ -114,8 +155,14 @@ afterEach(() => {
 
 function harness() {
   const registry = AtomRegistry.make();
-  const catalog = Atom.make<EnvironmentCatalogState>({ isReady: false, entries: new Map() });
-  const shells = Atom.family((_id: EnvironmentId) => Atom.make(shell("empty")));
+  // The network runtime owns these values independently of the observer's lifetime.
+  const catalog = Atom.make<EnvironmentCatalogState>({
+    isReady: false,
+    entries: new Map(),
+  }).pipe(Atom.keepAlive);
+  const shells = Atom.family((_id: EnvironmentId) =>
+    Atom.make(shell("empty")).pipe(Atom.keepAlive),
+  );
   let stop = subscribeToUnvisitedCompletions({ registry, catalogAtom: catalog, shellAtom: shells });
   cleanups.push(() => {
     stop();
@@ -167,7 +214,160 @@ function unread(value = thread(), environmentId = LOCAL) {
   });
 }
 
+async function mountHookRouter(
+  client: ReturnType<typeof harness>,
+  initialEnabled = true,
+  layout: "shell-only" | "persistent" = "persistent",
+) {
+  client.stop();
+  hookAtoms.catalog = client.catalog;
+  hookAtoms.shell = client.shells;
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  const browserEvents = new EventTarget();
+  const documentEvents = new EventTarget();
+  vi.stubGlobal(
+    "window",
+    Object.assign(browserEvents, {
+      origin: "https://fixture.example.test",
+      document: documentEvents,
+    }),
+  );
+  vi.stubGlobal("self", browserEvents);
+  vi.stubGlobal("document", documentEvents);
+  vi.stubGlobal("history", { scrollRestoration: "manual" });
+  vi.stubGlobal("addEventListener", browserEvents.addEventListener.bind(browserEvents));
+  vi.stubGlobal("scrollTo", () => undefined);
+  let changeEnabled: (enabled: boolean) => void = () => {
+    throw new Error("Root not mounted");
+  };
+  const lifetime = { mounts: 0, unmounts: 0 };
+  function Observer({ enabled }: { enabled: boolean }) {
+    useUnvisitedCompletionsUnread(enabled);
+    return null;
+  }
+  function ShellOnlyLayout({ enabled, pathname }: { enabled: boolean; pathname: string }) {
+    return pathname === "/connect"
+      ? createElement(Outlet)
+      : createElement(Fragment, null, createElement(Observer, { enabled }), createElement(Outlet));
+  }
+  function PersistentLayout({ enabled }: { enabled: boolean }) {
+    useUnvisitedCompletionsUnread(enabled);
+    return createElement(Outlet);
+  }
+  function Root() {
+    const [enabled, setEnabled] = useState(initialEnabled);
+    const pathname = useLocation({ select: (location) => location.pathname });
+    useEffect(() => {
+      changeEnabled = setEnabled;
+      lifetime.mounts += 1;
+      return () => {
+        lifetime.unmounts += 1;
+      };
+    }, []);
+    return layout === "shell-only"
+      ? createElement(ShellOnlyLayout, { enabled, pathname })
+      : createElement(PersistentLayout, { enabled });
+  }
+  const root = createRootRoute({ component: Root });
+  const shellRoute = createRoute({ getParentRoute: () => root, path: "/", component: () => null });
+  const connectRoute = createRoute({
+    getParentRoute: () => root,
+    path: "/connect",
+    component: () => null,
+  });
+  const router = createRouter({
+    routeTree: root.addChildren([shellRoute, connectRoute]),
+    history: createMemoryHistory({ initialEntries: ["/"] }),
+    isServer: false,
+  });
+  await router.load();
+  let renderer: ReactTestRenderer;
+  await act(() => {
+    renderer = create(
+      createElement(
+        RegistryContext.Provider,
+        { value: client.registry },
+        createElement(RouterProvider, { router }),
+      ),
+    );
+  });
+  return {
+    router,
+    lifetime,
+    enable: (enabled: boolean) => act(() => changeEnabled(enabled)),
+    close: async () => {
+      await act(() => renderer.unmount());
+      vi.unstubAllGlobals();
+    },
+  };
+}
+
 describe("unvisited completion observation", () => {
+  it("retains the live hook baseline across shell-connect-shell navigation", async () => {
+    const client = harness();
+    const mounted = await mountHookRouter(client);
+    try {
+      await act(() => {
+        client.connect([LOCAL]);
+        client.emit("live", snapshot([thread(null, "running")]));
+      });
+      await act(() => mounted.router.navigate({ to: "/connect" }));
+      expect(mounted.router.state.location.pathname).toBe("/connect");
+      await act(() => client.emit("live", snapshot([thread()])));
+      await act(() => mounted.router.navigate({ to: "/" }));
+      expect(mounted.lifetime).toEqual({ mounts: 1, unmounts: 0 });
+      expect(unread()).toBe(true);
+    } finally {
+      await mounted.close();
+    }
+  });
+
+  it("demonstrates the old shell-only subtree losing completions on connect", async () => {
+    const client = harness();
+    const mounted = await mountHookRouter(client, true, "shell-only");
+    try {
+      await act(() => {
+        client.connect([LOCAL]);
+        client.emit("live", snapshot([thread(null, "running")]));
+      });
+      await act(() => mounted.router.navigate({ to: "/connect" }));
+      await act(() => client.emit("live", snapshot([thread()])));
+      await act(() => mounted.router.navigate({ to: "/" }));
+      expect(mounted.lifetime).toEqual({ mounts: 1, unmounts: 0 });
+      expect(unread()).toBe(false);
+      expect(useUiStateStore.getState().threadLastVisitedAtById).toEqual({});
+    } finally {
+      await mounted.close();
+    }
+  });
+
+  it("disables hook subscriptions and re-enables with a fresh historical baseline", async () => {
+    const client = harness();
+    const mounted = await mountHookRouter(client, false, "persistent");
+    try {
+      await act(() => {
+        client.connect([LOCAL]);
+        client.emit("live");
+        client.emit("live", snapshot([thread()]));
+      });
+      expect(unread()).toBe(false);
+      expect(useUiStateStore.getState().threadLastVisitedAtById).toEqual({});
+      await mounted.enable(true);
+      expect(unread()).toBe(false);
+      await act(() => client.emit("live", snapshot([thread(LATER_COMPLETION)])));
+      expect(unread(thread(LATER_COMPLETION))).toBe(true);
+      const visits = useUiStateStore.getState().threadLastVisitedAtById;
+      await mounted.enable(false);
+      const newThread = { ...thread(), id: ThreadId.make("while-disabled") };
+      await act(() => client.emit("live", snapshot([thread(LATER_COMPLETION), newThread])));
+      expect(useUiStateStore.getState().threadLastVisitedAtById).toBe(visits);
+      await mounted.enable(true);
+      expect(useUiStateStore.getState().threadLastVisitedAtById).toBe(visits);
+    } finally {
+      await mounted.close();
+    }
+  });
+
   it.effect.each([true, false])(
     "observes the actual shell runtime with completion-marker support=%s",
     (supportsCompletionMarker) =>
