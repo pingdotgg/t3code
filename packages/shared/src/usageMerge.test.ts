@@ -226,6 +226,23 @@ describe("mergeUsage", () => {
     expect(merged.staleEnvironments).toEqual([]);
   });
 
+  it("normalizes model names during decoding before grouping usage", () => {
+    const decoded = decodeSummary(
+      summary(
+        [
+          bucket({ provider: "codex", model: " gpt-5 " }),
+          bucket({ provider: "codex", model: "gpt-5" }),
+        ],
+        [{ provider: "codex", hostId: "mac", homePath: "/a" }],
+      ),
+    );
+
+    expect(decoded.buckets.map((entry) => entry.model)).toEqual(["gpt-5", "gpt-5"]);
+    const merged = mergeUsage([environment("env-a", decoded)], USAGE_CONTRACT_VERSION);
+    expect(merged.models).toHaveLength(1);
+    expect(merged.models[0]).toMatchObject({ model: "gpt-5", costUsd: 20, totalTokens: 2320 });
+  });
+
   it("keeps all supported providers when encoding a response", () => {
     const current = summary(
       [bucket(), bucket({ provider: "grok" })],
