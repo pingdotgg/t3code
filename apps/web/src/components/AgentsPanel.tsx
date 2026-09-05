@@ -23,12 +23,14 @@ import {
 } from "@t3tools/client-runtime/state/subagentRuntime";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { Bot, Braces, Check, ChevronDown, ChevronRight, X } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { cn } from "~/lib/utils";
 import { orchestrationEnvironment } from "~/state/orchestration";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { Button } from "~/components/ui/button";
+
+const agentsScrollTopByThreadKey = new Map<string, number>();
 
 /**
  * In-flight states all present as Working (one steady state, per the
@@ -524,13 +526,45 @@ function WorkflowSection({
 
 export function AgentsPanel({
   model,
+  threadKey,
   environmentId = null,
   threadId = null,
 }: {
   model: AgentPanelModel;
+  threadKey: string | null;
   environmentId?: EnvironmentId | null;
   threadId?: ThreadId | null;
 }) {
+  const viewportRef = useRef<HTMLDivElement>(null);
+
+  useLayoutEffect(() => {
+    const viewport = viewportRef.current;
+    if (!model.hasAgents || threadKey === null || viewport === null) {
+      return;
+    }
+
+    const restoredScrollTop = agentsScrollTopByThreadKey.get(threadKey) ?? 0;
+    viewport.scrollTop = restoredScrollTop;
+
+    const captureScrollTop = () => {
+      const maxScrollTop = Math.max(0, viewport.scrollHeight - viewport.clientHeight);
+      const savedScrollTop = agentsScrollTopByThreadKey.get(threadKey);
+      if (
+        savedScrollTop !== undefined &&
+        savedScrollTop > maxScrollTop &&
+        viewport.scrollTop >= maxScrollTop - 1
+      ) {
+        return;
+      }
+      agentsScrollTopByThreadKey.set(threadKey, viewport.scrollTop);
+    };
+    viewport.addEventListener("scroll", captureScrollTop, { passive: true });
+    return () => {
+      captureScrollTop();
+      viewport.removeEventListener("scroll", captureScrollTop);
+    };
+  }, [model.hasAgents, threadKey]);
+
   if (!model.hasAgents) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-2 p-6 text-center">
@@ -546,7 +580,7 @@ export function AgentsPanel({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <ScrollArea className="min-h-0 flex-1">
+      <ScrollArea className="min-h-0 flex-1" viewportRef={viewportRef}>
         <div className="flex flex-col gap-2 p-2">
           {model.workflows.map((group) => (
             <WorkflowSection
