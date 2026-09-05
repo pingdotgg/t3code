@@ -3,12 +3,44 @@ import { act, useLayoutEffect } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { useUsage, type EnvironmentUsageStatus, type UsageView } from "./usage";
+import {
+  useUsage,
+  withUsageRefreshAttempt,
+  type EnvironmentUsageStatus,
+  type UsageView,
+} from "./usage";
 
-const testState = vi.hoisted(() => ({ environments: [] as EnvironmentUsageStatus[] }));
+function deferred() {
+  let resolve = () => {};
+  let reject = (_reason?: unknown) => {};
+  const promise = new Promise<void>((resolvePromise, rejectPromise) => {
+    resolve = () => resolvePromise();
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
+const testState = vi.hoisted(() => ({
+  environments: [] as EnvironmentUsageStatus[],
+  windowLabel: "",
+  runAtomCommand: vi.fn(),
+  executeAtomQuery: vi.fn(),
+  refreshAtom: vi.fn(),
+}));
+vi.mock("@t3tools/client-runtime/state/runtime", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@t3tools/client-runtime/state/runtime")>()),
+  runAtomCommand: testState.runAtomCommand,
+  executeAtomQuery: testState.executeAtomQuery,
+}));
+vi.mock("../rpc/atomRegistry", () => ({
+  appAtomRegistry: { refresh: testState.refreshAtom },
+}));
 vi.mock("@effect/atom-react", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@effect/atom-react")>()),
-  useAtomValue: () => testState.environments,
+  useAtomValue: (atom: { readonly label?: readonly [string, string] }) => {
+    testState.windowLabel = atom.label?.[0] ?? "";
+    return testState.environments;
+  },
 }));
 
 const input = {
@@ -75,8 +107,14 @@ function environment(id: string, cost: number | null, hostId = id): EnvironmentU
 let renderer: ReactTestRenderer | undefined;
 let latest: UsageView;
 
-function Probe({ selected }: { selected: ReadonlySet<EnvironmentId> | null }) {
-  const usage = useUsage(input, selected);
+function Probe({
+  selected,
+  refreshThreads = false,
+}: {
+  selected: ReadonlySet<EnvironmentId> | null;
+  refreshThreads?: boolean;
+}) {
+  const usage = useUsage(input, selected, undefined, refreshThreads);
   useLayoutEffect(() => {
     latest = usage;
   }, [usage]);
@@ -90,6 +128,9 @@ async function select(...ids: string[]) {
 }
 
 beforeEach(async () => {
+  testState.runAtomCommand.mockReset();
+  testState.executeAtomQuery.mockReset().mockResolvedValue({ _tag: "Success", value: undefined });
+  testState.refreshAtom.mockReset();
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   testState.environments = [environment("a", 10), environment("b", 20), environment("slow", null)];
   await act(() => {
@@ -162,5 +203,66 @@ describe("usage environment selection", () => {
     expect(latest.merged.costUsd).toBe(10);
     expect(latest.isPending).toBe(false);
     expect(latest.isPartial).toBe(false);
+  });
+});
+
+describe("usage refresh attempts", () => {
+  it("gives failed selected environments a fresh token without invalidating unselected ones", () => {
+    const selected = [EnvironmentId.make("a"), EnvironmentId.make("b")];
+    const initial = { a: "old-a", b: "old-b", untouched: "keep" };
+
+    const first = withUsageRefreshAttempt(initial, selected, [], "attempt-1");
+    const second = withUsageRefreshAttempt(first, selected, [], "attempt-2");
+
+    expect(first.a).toBe(first.b);
+    expect(first.a).not.toBe("old-a");
+    expect(second.a).not.toBe(first.a);
+    expect(second.untouched).toBe("keep");
+  });
+});
+
+describe("independent environment refresh", () => {
+  it("rescans a healthy environment without waiting for another rate request", async () => {
+    const fast = deferred();
+    const slow = deferred();
+    testState.runAtomCommand.mockImplementation(
+      (_registry, _command, { environmentId }: { environmentId: EnvironmentId }) =>
+        environmentId === "a" ? fast.promise : slow.promise,
+    );
+    await select("a", "b");
+    await act(() => latest.refresh());
+    expect(testState.runAtomCommand).toHaveBeenCalledTimes(2);
+    await act(() => fast.resolve());
+    const fastTokens = JSON.parse(
+      testState.windowLabel.slice("web-usage:window:".length),
+    ).refreshTokens;
+    expect(fastTokens.a).toEqual(expect.any(String));
+    expect(fastTokens.b).toBeUndefined();
+    await act(() => slow.reject(new Error("Rates unavailable")));
+    const finalTokens = JSON.parse(
+      testState.windowLabel.slice("web-usage:window:".length),
+    ).refreshTokens;
+    expect(finalTokens.a).toBe(fastTokens.a);
+    expect(finalTokens.b).toBe(fastTokens.a);
+  });
+
+  it("waits for an environment summary before refreshing its thread rows", async () => {
+    const rates = deferred();
+    const summary = deferred();
+    testState.runAtomCommand.mockReturnValue(rates.promise);
+    testState.executeAtomQuery.mockReturnValue(summary.promise);
+    await act(() => {
+      renderer?.update(
+        <Probe selected={new Set([EnvironmentId.make("a")])} refreshThreads={true} />,
+      );
+    });
+    await act(() => latest.refresh());
+
+    await act(() => rates.resolve());
+    expect(testState.executeAtomQuery).toHaveBeenCalledOnce();
+    expect(testState.refreshAtom).not.toHaveBeenCalled();
+
+    await act(() => summary.resolve());
+    expect(testState.refreshAtom).toHaveBeenCalledOnce();
   });
 });

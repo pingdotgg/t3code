@@ -7,28 +7,41 @@ import * as NodePath from "node:path";
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
-import { UsageDay, type UsageSummaryInput } from "@t3tools/contracts";
+import { ThreadId, UsageDay, type UsageSummaryInput } from "@t3tools/contracts";
 import * as Duration from "effect/Duration";
+import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
-import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Scheduler from "effect/Scheduler";
+import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 
 import * as ServerConfig from "../config.ts";
+import { ProjectionProjectRepositoryLive } from "../persistence/Layers/ProjectionProjects.ts";
+import { ProjectionThreadRepositoryLive } from "../persistence/Layers/ProjectionThreads.ts";
+import { ProjectionProjectRepository } from "../persistence/Services/ProjectionProjects.ts";
+import { PersistenceSqlError } from "../persistence/Errors.ts";
+import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import * as ProviderSessionRuntime from "../persistence/ProviderSessionRuntime.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as UsageService from "./UsageService.ts";
 
-function claudeLine(id: number, outputTokens: number, model = "claude-fable-5"): string {
+function claudeLine(
+  id: number,
+  outputTokens: number,
+  model = "claude-fable-5",
+  cwd?: string,
+): string {
   return `${JSON.stringify({
     type: "assistant",
     timestamp: "2026-08-01T10:00:00Z",
     requestId: `req_${id}`,
     sessionId: "session-1",
+    ...(cwd === undefined ? {} : { cwd }),
     message: {
       id: `msg_${id}`,
       model,
@@ -37,10 +50,41 @@ function claudeLine(id: number, outputTokens: number, model = "claude-fable-5"):
   })}\n`;
 }
 
+function codexRollout(sessionId: string, cwd: string, outputTokens: number): string {
+  return [
+    {
+      type: "session_meta",
+      timestamp: "2026-08-01T10:00:00Z",
+      payload: { type: "session_meta", id: sessionId, cwd },
+    },
+    {
+      type: "turn_context",
+      timestamp: "2026-08-01T10:00:01Z",
+      payload: { type: "turn_context", model: "gpt-5.2-codex" },
+    },
+    {
+      type: "event_msg",
+      timestamp: "2026-08-01T10:00:05Z",
+      payload: {
+        type: "token_count",
+        info: { last_token_usage: { input_tokens: 100, output_tokens: outputTokens } },
+      },
+    },
+  ]
+    .map((line) => JSON.stringify(line))
+    .join("\n");
+}
+
 const WINDOW: UsageSummaryInput = {
   timeZone: "UTC",
   sinceDay: UsageDay.make("2026-07-31"),
   untilDay: UsageDay.make("2026-08-02"),
+};
+
+const NARROW_WINDOW: UsageSummaryInput = {
+  ...WINDOW,
+  sinceDay: UsageDay.make("2026-08-01"),
+  untilDay: UsageDay.make("2026-08-01"),
 };
 
 const setup = Effect.gen(function* () {
@@ -71,6 +115,8 @@ const serviceLayers = (input: {
   readonly onRatesFetch?: () => void;
   /** Defaults to an unparsable document so every scan retries the fetch. */
   readonly ratesDocument?: unknown;
+  readonly projectRepository?: ProjectionProjectRepository["Service"];
+  readonly runtimeRepository?: ProviderSessionRuntime.ProviderSessionRuntimeRepository["Service"];
 }) =>
   ServerConfig.layerTest(process.cwd(), { prefix: input.prefix }).pipe(
     Layer.provideMerge(NodeServices.layer),
@@ -91,6 +137,21 @@ const serviceLayers = (input: {
     Layer.provideMerge(
       Layer.succeed(HostProcessEnvironment, { GROK_HOME: NodePath.join(input.home, "grok") }),
     ),
+    Layer.provideMerge(
+      Layer.mergeAll(
+        input.projectRepository === undefined
+          ? ProjectionProjectRepositoryLive.pipe(Layer.provideMerge(SqlitePersistenceMemory))
+          : Layer.succeed(ProjectionProjectRepository, input.projectRepository),
+        ProjectionThreadRepositoryLive.pipe(Layer.provideMerge(SqlitePersistenceMemory)),
+        input.runtimeRepository === undefined
+          ? ProviderSessionRuntime.layer.pipe(Layer.provideMerge(SqlitePersistenceMemory))
+          : Layer.succeed(
+              ProviderSessionRuntime.ProviderSessionRuntimeRepository,
+              input.runtimeRepository,
+            ),
+        SqlitePersistenceMemory,
+      ),
+    ),
   );
 
 function totalOutputTokens(summary: { buckets: readonly { totals: { outputTokens: number } }[] }) {
@@ -98,6 +159,142 @@ function totalOutputTokens(summary: { buckets: readonly { totals: { outputTokens
 }
 
 describe("UsageService", () => {
+  for (const refreshToken of [undefined, "turn-refresh"]) {
+    it.live(
+      `does not parse unrelated Codex token content for a targeted thread read (${refreshToken ?? "initial"})`,
+      () =>
+        Effect.gen(function* () {
+          const { settings, home } = yield* setup;
+          const sessionsDir = NodePath.join(home, "codex", "sessions", "2026", "08", "01");
+          yield* Effect.promise(() => NodeFSP.mkdir(sessionsDir, { recursive: true }));
+          const targetPath = NodePath.join(
+            sessionsDir,
+            "rollout-2026-08-01T10-00-00-target-session.jsonl",
+          );
+          const unrelatedPath = NodePath.join(
+            sessionsDir,
+            "rollout-2026-08-01T10-00-00-unrelated-session.jsonl",
+          );
+          yield* Effect.promise(() =>
+            Promise.all([
+              NodeFSP.writeFile(targetPath, codexRollout("target-session", "/work/target", 7)),
+              NodeFSP.writeFile(
+                unrelatedPath,
+                codexRollout("unrelated-session", "/work/other", 999),
+              ),
+            ]),
+          );
+
+          yield* Effect.gen(function* () {
+            const config = yield* ServerConfig.ServerConfig;
+            const runtimeRepository =
+              yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
+            yield* runtimeRepository.upsert({
+              threadId: ThreadId.make("target-thread"),
+              providerName: "codex",
+              providerInstanceId: null,
+              adapterKey: "codex",
+              runtimeMode: "full-access",
+              status: "running",
+              lastSeenAt: "2026-08-01T10:00:00.000Z",
+              resumeCursor: { threadId: "target-session" },
+              runtimePayload: null,
+            });
+            const service = yield* UsageService.make;
+            const breakdown = yield* service.readThreadBreakdown({
+              ...WINDOW,
+              threadId: ThreadId.make("target-thread"),
+              ...(refreshToken === undefined ? {} : { refreshToken }),
+            });
+            assert.strictEqual(breakdown.rows.length, 1);
+            assert.strictEqual(breakdown.rows[0]?.totals.outputTokens, 7);
+
+            const persisted = (yield* Schema.decodeUnknownEffect(
+              Schema.fromJsonString(Schema.Unknown),
+            )(
+              yield* Effect.promise(() =>
+                NodeFSP.readFile(NodePath.join(config.stateDir, "usage-scan-cache.json"), "utf8"),
+              ),
+            )) as { files: Record<string, unknown>; identities: Record<string, unknown> };
+            assert.deepStrictEqual(Object.keys(persisted.files), [targetPath]);
+            assert.deepStrictEqual(
+              Object.keys(persisted.identities).sort(),
+              [targetPath, unrelatedPath].sort(),
+            );
+          }).pipe(
+            Effect.provide(
+              serviceLayers({ prefix: "usage-service-target-prefilter-test", home, settings }),
+            ),
+          );
+        }).pipe(Effect.scoped),
+    );
+  }
+
+  it.live("filters a targeted thread from the summary's cached source snapshot", () =>
+    Effect.gen(function* () {
+      const { settings, home } = yield* setup;
+      const sessionsDir = NodePath.join(home, "codex", "sessions", "2026", "08", "01");
+      yield* Effect.promise(() => NodeFSP.mkdir(sessionsDir, { recursive: true }));
+      const targetPath = NodePath.join(sessionsDir, "rollout-opaque-target.jsonl");
+      const unrelatedPath = NodePath.join(sessionsDir, "rollout-opaque-unrelated.jsonl");
+      yield* Effect.promise(() =>
+        Promise.all([
+          NodeFSP.writeFile(targetPath, codexRollout("target-session", "/work/target", 7)),
+          NodeFSP.writeFile(unrelatedPath, codexRollout("unrelated-session", "/work/other", 999)),
+        ]),
+      );
+
+      yield* Effect.gen(function* () {
+        const runtimeRepository = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
+        yield* runtimeRepository.upsert({
+          threadId: ThreadId.make("target-thread"),
+          providerName: "codex",
+          providerInstanceId: null,
+          adapterKey: "codex",
+          runtimeMode: "full-access",
+          status: "running",
+          lastSeenAt: "2026-08-01T10:00:00.000Z",
+          resumeCursor: { threadId: "target-session" },
+          runtimePayload: null,
+        });
+        const service = yield* UsageService.make;
+        const summary = yield* service.readSummary(WINDOW);
+        yield* Effect.promise(() =>
+          Promise.all([
+            NodeFSP.appendFile(
+              targetPath,
+              `\n${codexRollout("target-session", "/work/target", 70)}`,
+            ),
+            NodeFSP.appendFile(
+              unrelatedPath,
+              `\n${codexRollout("unrelated-session", "/work/other", 9_999)}`,
+            ),
+          ]),
+        );
+        const breakdown = yield* service.readThreadBreakdown({
+          ...WINDOW,
+          threadId: ThreadId.make("target-thread"),
+        });
+
+        assert.strictEqual(breakdown.rows.length, 1);
+        assert.strictEqual(breakdown.rows[0]?.totals.outputTokens, 7);
+        assert.strictEqual(breakdown.readAt, summary.readAt);
+
+        const refreshed = yield* service.readThreadBreakdown({
+          ...WINDOW,
+          threadId: ThreadId.make("target-thread"),
+          refreshToken: "completed-turn",
+        });
+        assert.strictEqual(refreshed.rows.length, 1);
+        assert.strictEqual(refreshed.rows[0]?.totals.outputTokens, 77);
+      }).pipe(
+        Effect.provide(
+          serviceLayers({ prefix: "usage-service-target-cached-snapshot-test", home, settings }),
+        ),
+      );
+    }).pipe(Effect.scoped),
+  );
+
   it.live("reprices unchanged transcripts when custom prices are added, edited, or removed", () =>
     Effect.gen(function* () {
       const { transcript, settings, home } = yield* setup;
@@ -150,12 +347,124 @@ describe("UsageService", () => {
         Effect.provide(serviceLayers({ prefix: "usage-service-grow-test", home, settings })),
       );
 
-      const first = yield* service.readSummary(WINDOW);
+      const first = yield* service.readSummary(NARROW_WINDOW);
       assert.strictEqual(totalOutputTokens(first), 5);
 
       yield* Effect.promise(() => NodeFSP.appendFile(transcript, claudeLine(2, 7)));
+      // Expanding beyond the cached coverage requires a source update. The
+      // grown transcript resumes at its cached byte position.
       const second = yield* service.readSummary(WINDOW);
       assert.strictEqual(totalOutputTokens(second), 12);
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("replaces a cached progressive snapshot when a transcript grows", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
+
+      const service = yield* UsageService.make.pipe(
+        Effect.provide(serviceLayers({ prefix: "usage-service-progressive-test", home, settings })),
+      );
+
+      const first = yield* service.readSummary(WINDOW);
+      assert.strictEqual(totalOutputTokens(first), 5);
+
+      yield* Effect.promise(() => NodeFSP.appendFile(transcript, claudeLine(1, 12)));
+      const second = yield* service.readSummary({ ...WINDOW, refreshToken: "progressive-final" });
+      assert.strictEqual(totalOutputTokens(second), 12);
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("keeps project attribution unknown when the project repository cannot be read", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      yield* Effect.promise(() =>
+        NodeFSP.writeFile(transcript, claudeLine(1, 5, "claude-fable-5", "/work/app")),
+      );
+      const repositoryFailure = Effect.fail(
+        new PersistenceSqlError({ operation: "ProjectionProjectRepository.listAll:test" }),
+      );
+      const projectRepository: ProjectionProjectRepository["Service"] = {
+        upsert: () => repositoryFailure,
+        getById: () => repositoryFailure,
+        listAll: () => repositoryFailure,
+        deleteById: () => repositoryFailure,
+      };
+      const service = yield* UsageService.make.pipe(
+        Effect.provide(
+          serviceLayers({
+            prefix: "usage-service-project-failure-test",
+            home,
+            settings,
+            projectRepository,
+          }),
+        ),
+      );
+
+      const summary = yield* service.readSummary(WINDOW);
+      assert.strictEqual(summary.buckets[0]?.projectAttribution, "unknown");
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("does not hide a project repository defect as unknown attribution", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
+      const defect = new Error("project repository defect");
+      const repositoryDefect = Effect.die(defect);
+      const projectRepository: ProjectionProjectRepository["Service"] = {
+        upsert: () => repositoryDefect,
+        getById: () => repositoryDefect,
+        listAll: () => repositoryDefect,
+        deleteById: () => repositoryDefect,
+      };
+
+      const exit = yield* Effect.gen(function* () {
+        const service = yield* UsageService.make;
+        return yield* Effect.exit(service.readSummary(WINDOW));
+      }).pipe(
+        Effect.provide(
+          serviceLayers({
+            prefix: "usage-service-project-defect-test",
+            home,
+            settings,
+            projectRepository,
+          }),
+        ),
+      );
+
+      assert.isTrue(Exit.isFailure(exit));
+      if (Exit.isFailure(exit)) assert.strictEqual(Cause.squash(exit.cause), defect);
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("returns a usage read error when provider runtime state cannot be read", () =>
+    Effect.gen(function* () {
+      const { settings, home } = yield* setup;
+      const repositoryFailure = Effect.die(new Error("runtime repository unavailable"));
+      const runtimeRepository: ProviderSessionRuntime.ProviderSessionRuntimeRepository["Service"] =
+        {
+          upsert: () => repositoryFailure,
+          recordImportedTranscript: () => repositoryFailure,
+          getByThreadId: () => repositoryFailure,
+          list: () => repositoryFailure,
+          deleteByThreadId: () => repositoryFailure,
+        };
+      const service = yield* UsageService.make.pipe(
+        Effect.provide(
+          serviceLayers({
+            prefix: "usage-service-runtime-failure-test",
+            home,
+            settings,
+            runtimeRepository,
+          }),
+        ),
+      );
+
+      const error = yield* service.readThreadBreakdown(WINDOW).pipe(Effect.flip);
+      assert.strictEqual(error.reason, "scanFailed");
+      assert.strictEqual(error.detail, "Provider runtime state could not be read");
     }).pipe(Effect.scoped),
   );
 
@@ -166,31 +475,14 @@ describe("UsageService", () => {
 
       yield* Effect.gen(function* () {
         const settingsService = yield* ServerSettings.ServerSettingsService;
-        const fileSystem = yield* FileSystem.FileSystem;
         const firstScanStarted = yield* Deferred.make<void>();
-        const secondScanStarted = yield* Deferred.make<void>();
         const releaseRates = yield* Deferred.make<void>();
-        let homeProbes = 0;
         const service = yield* UsageService.make.pipe(
-          Effect.provideService(FileSystem.FileSystem, {
-            ...fileSystem,
-            exists: (path) =>
-              fileSystem.exists(path).pipe(
-                Effect.tap(() => {
-                  if (path !== NodePath.join(home, "claude", ".claude", "projects"))
-                    return Effect.void;
-                  homeProbes += 1;
-                  return Deferred.succeed(
-                    homeProbes === 1 ? firstScanStarted : secondScanStarted,
-                    undefined,
-                  );
-                }),
-              ),
-          }),
           Effect.provideService(
             HttpClient.HttpClient,
             HttpClient.make((request) =>
-              Deferred.await(releaseRates).pipe(
+              Deferred.succeed(firstScanStarted, undefined).pipe(
+                Effect.andThen(Deferred.await(releaseRates)),
                 Effect.as(HttpClientResponse.fromWeb(request, Response.json({}))),
               ),
             ),
@@ -205,7 +497,7 @@ describe("UsageService", () => {
           },
         });
         const second = yield* service.readSummary(WINDOW).pipe(Effect.forkChild);
-        yield* Deferred.await(secondScanStarted);
+        yield* Effect.yieldNow;
         yield* Deferred.succeed(releaseRates, undefined);
 
         const original = yield* Fiber.join(first);
@@ -244,8 +536,121 @@ describe("UsageService", () => {
       assert.deepStrictEqual(first, second);
       assert.strictEqual(ratesFetches, 1);
 
-      // A later request is fresh work again, not a stale cached answer.
+      // A later request within the freshness window reuses the source snapshot.
       yield* service.readSummary(WINDOW);
+      assert.strictEqual(ratesFetches, 1);
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("reuses a recent scan when only the date range changes", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
+
+      let ratesFetches = 0;
+      const service = yield* UsageService.make.pipe(
+        Effect.provide(
+          serviceLayers({
+            prefix: "usage-service-window-cache-test",
+            home,
+            settings,
+            onRatesFetch: () => {
+              ratesFetches += 1;
+            },
+          }),
+        ),
+      );
+
+      yield* service.readSummary(WINDOW);
+      const narrower = yield* service.readSummary(NARROW_WINDOW);
+
+      assert.strictEqual(totalOutputTokens(narrower), 5);
+      assert.strictEqual(ratesFetches, 1);
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("folds thread rows from the same source snapshot as the summary", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
+
+      yield* Effect.gen(function* () {
+        const service = yield* UsageService.make;
+        const summary = yield* service.readSummary(WINDOW);
+        yield* Effect.promise(() => NodeFSP.appendFile(transcript, claudeLine(2, 7)));
+        const breakdown = yield* service.readThreadBreakdown(WINDOW);
+
+        assert.strictEqual(totalOutputTokens(summary), 5);
+        assert.strictEqual(
+          breakdown.rows.reduce((total, row) => total + row.totals.outputTokens, 0),
+          5,
+        );
+        assert.strictEqual(breakdown.readAt, summary.readAt);
+      }).pipe(
+        Effect.provide(
+          serviceLayers({ prefix: "usage-service-thread-source-cache-test", home, settings }),
+        ),
+      );
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("refreshes thread rows when the caller changes the refresh token", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
+
+      yield* Effect.gen(function* () {
+        const service = yield* UsageService.make;
+        yield* service.readSummary(WINDOW);
+        yield* Effect.promise(() => NodeFSP.appendFile(transcript, claudeLine(2, 7)));
+
+        const breakdown = yield* service.readThreadBreakdown({
+          ...WINDOW,
+          refreshToken: "thread-refresh-1",
+        });
+
+        assert.strictEqual(
+          breakdown.rows.reduce((total, row) => total + row.totals.outputTokens, 0),
+          12,
+        );
+      }).pipe(
+        Effect.provide(
+          serviceLayers({ prefix: "usage-service-thread-refresh-test", home, settings }),
+        ),
+      );
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("updates fresh source data for a new manual refresh token", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
+
+      let ratesFetches = 0;
+      const service = yield* UsageService.make.pipe(
+        Effect.provide(
+          serviceLayers({
+            prefix: "usage-service-manual-refresh-test",
+            home,
+            settings,
+            onRatesFetch: () => {
+              ratesFetches += 1;
+            },
+          }),
+        ),
+      );
+
+      const first = yield* service.readSummary(WINDOW);
+      assert.strictEqual(totalOutputTokens(first), 5);
+
+      yield* Effect.promise(() => NodeFSP.appendFile(transcript, claudeLine(2, 7)));
+      const refreshedInput = { ...WINDOW, refreshToken: "manual-refresh-1" };
+      const refreshed = yield* service.readSummary(refreshedInput);
+
+      assert.strictEqual(totalOutputTokens(refreshed), 12);
+      assert.strictEqual(ratesFetches, 2);
+
+      yield* service.readSummary(refreshedInput);
       assert.strictEqual(ratesFetches, 2);
     }).pipe(Effect.scoped),
   );
@@ -373,4 +778,183 @@ describe("UsageService", () => {
       );
     }).pipe(Effect.scoped),
   );
+
+  it.live("rejects exact thread windows longer than 24 hours", () =>
+    Effect.gen(function* () {
+      const { settings, home } = yield* setup;
+      const service = yield* UsageService.make.pipe(
+        Effect.provide(
+          serviceLayers({ prefix: "usage-service-thread-window-test", home, settings }),
+        ),
+      );
+      const reason = yield* service
+        .readThreadBreakdown({
+          timeZone: "UTC",
+          sinceDay: UsageDay.make("2026-08-01"),
+          untilDay: UsageDay.make("2026-08-02"),
+          sinceTime: "2026-08-01T00:00:00.000Z",
+          untilTime: "2026-08-02T01:00:00.000Z",
+        })
+        .pipe(
+          Effect.match({
+            onFailure: (error) => error.reason,
+            onSuccess: () => "success" as const,
+          }),
+        );
+
+      assert.strictEqual(reason, "invalidWindow");
+    }).pipe(Effect.scoped),
+  );
+});
+
+describe("isValidUsageDay", () => {
+  it("rejects impossible start and end dates instead of normalising them", () => {
+    assert.isTrue(UsageService.isValidUsageDay("2026-02-28"));
+    assert.isFalse(UsageService.isValidUsageDay("2026-02-29"));
+    assert.isFalse(UsageService.isValidUsageDay("2026-13-01"));
+  });
+});
+
+describe("shortSessionLabel", () => {
+  it("never exposes a file-derived path", () => {
+    assert.strictEqual(
+      UsageService.shortSessionLabel("claude:file:session-dir:updates"),
+      "Untitled session",
+    );
+  });
+});
+
+describe("runtimeUsageSessionKey", () => {
+  it("maps every provider with usage transcripts to its persisted session cursor", () => {
+    assert.strictEqual(
+      UsageService.runtimeUsageSessionKey("claudeAgent", { resume: "claude-session" }),
+      "claude:claude-session",
+    );
+    assert.strictEqual(
+      UsageService.runtimeUsageSessionKey("codex", { threadId: "codex-session" }),
+      "codex:codex-session",
+    );
+    assert.strictEqual(
+      UsageService.runtimeUsageSessionKey("grok", { schemaVersion: 1, sessionId: "grok-session" }),
+      "grok:grok-session",
+    );
+  });
+
+  it("includes provider sessions replaced by later model switches", () => {
+    assert.deepEqual(
+      UsageService.runtimeUsageSessionKeys(
+        "codex",
+        { threadId: "current-session" },
+        {
+          _t3PreviousResumeCursors: [
+            { providerName: "codex", resumeCursor: { threadId: "previous-session" } },
+          ],
+        },
+      ),
+      ["codex:current-session", "codex:previous-session"],
+    );
+  });
+
+  it("ignores providers and cursors without a usage transcript session", () => {
+    assert.isNull(UsageService.runtimeUsageSessionKey("opencode", { sessionId: "session" }));
+    assert.isNull(UsageService.runtimeUsageSessionKey("grok", { sessionId: "" }));
+    assert.isNull(UsageService.runtimeUsageSessionKey("grok", null));
+  });
+});
+
+describe("transcriptFileMayMatchThread", () => {
+  const target: UsageService.ThreadTranscriptTarget = {
+    sessionIds: new Map([
+      ["claude", new Set(["claude-session"])],
+      ["codex", new Set(["codex-session"])],
+      ["grok", new Set(["grok-session"])],
+    ]),
+    worktrees: new Set(["/work/app/.wt/thread-1"]),
+  };
+
+  const matches = (
+    provider: "claude" | "codex" | "grok",
+    filePath: string,
+    root: string,
+    options?: {
+      readonly cached?: { readonly size: number; readonly mtimeMs: number };
+      readonly identity?: { readonly sessionId: string; readonly cwd: string };
+    },
+  ) =>
+    UsageService.transcriptFileMayMatchThread({
+      path: NodePath,
+      provider,
+      filePath,
+      root,
+      target,
+      ...(options?.cached === undefined
+        ? {}
+        : { cached: { ...options.cached, records: [], tailRecords: [] } }),
+      ...(options?.identity === undefined ? {} : { identity: options.identity }),
+    });
+
+  it("selects provider files from current and historic session ids", () => {
+    assert.isTrue(matches("claude", "/claude/project/claude-session.jsonl", "/claude"));
+    assert.isTrue(
+      matches("claude", "/claude/project/claude-session/subagents/agent-a.jsonl", "/claude"),
+    );
+    assert.isTrue(
+      matches("codex", "/codex/2026/09/rollout-2026-09-05T12-00-00-codex-session.jsonl", "/codex"),
+    );
+    assert.isTrue(matches("grok", "/grok/cwd/grok-session/updates.jsonl", "/grok"));
+    assert.isFalse(matches("claude", "/claude/project/other-session.jsonl", "/claude"));
+  });
+
+  it("selects Claude and Grok files by their encoded dedicated worktree", () => {
+    assert.isTrue(
+      matches("claude", "/claude/-work-app--wt-thread-1/legacy-session.jsonl", "/claude"),
+    );
+    assert.isTrue(
+      matches("grok", "/grok/%2Fwork%2Fapp%2F.wt%2Fthread-1/legacy-session/updates.jsonl", "/grok"),
+    );
+  });
+
+  it("matches encoded Claude worktrees case-insensitively only for Windows paths", () => {
+    const windowsTarget: UsageService.ThreadTranscriptTarget = {
+      sessionIds: new Map(),
+      worktrees: new Set(["C:/Users/Alex/App/.wt/Thread-1"]),
+    };
+    const matchesTarget = (filePath: string, target: UsageService.ThreadTranscriptTarget) =>
+      UsageService.transcriptFileMayMatchThread({
+        path: NodePath,
+        provider: "claude",
+        filePath,
+        root: "/claude",
+        target,
+      });
+
+    assert.isTrue(
+      matchesTarget("/claude/C--Users-Alex-App--wt-Thread-1/legacy-session.jsonl", windowsTarget),
+    );
+    assert.isTrue(
+      matchesTarget("/claude/c--users-alex-app--wt-thread-1/legacy-session.jsonl", windowsTarget),
+    );
+    assert.isTrue(
+      matchesTarget("/claude/C--Users-Alex-App--wt-Thread-1/legacy-session.jsonl", {
+        ...windowsTarget,
+        worktrees: new Set(["c:/users/alex/app/.wt/thread-1"]),
+      }),
+    );
+    assert.isFalse(matchesTarget("/claude/-Work-App--wt-thread-1/legacy-session.jsonl", target));
+  });
+
+  it("selects Codex rollouts from their bounded session metadata", () => {
+    const path = "/codex/2026/09/rollout-2026-09-05T12-00-00-other-session.jsonl";
+    assert.isFalse(matches("codex", path, "/codex"));
+    assert.isTrue(
+      matches("codex", path, "/codex", {
+        identity: { sessionId: "other-session", cwd: "/work/app/.wt/thread-1" },
+      }),
+    );
+    assert.isFalse(
+      matches("codex", path, "/codex", {
+        identity: { sessionId: "other-session", cwd: "/work/app/.wt/thread-2" },
+      }),
+    );
+  });
 });

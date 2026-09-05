@@ -219,7 +219,14 @@ import {
   ProviderConsumeResetCreditInput,
   ProviderConsumeResetCreditResult,
 } from "./providerUsageLimits.ts";
-import { UsagePricing, UsageReadError, UsageSummary, UsageSummaryInput } from "./usage.ts";
+import {
+  UsagePricing,
+  UsageReadError,
+  UsageSummary,
+  UsageSummaryInput,
+  UsageThreadBreakdown,
+  UsageThreadBreakdownInput,
+} from "./usage.ts";
 import { ServerSettings, ServerSettingsError, ServerSettingsPatch } from "./settings.ts";
 import {
   SourceControlCloneRepositoryInput,
@@ -331,6 +338,7 @@ export const WS_METHODS = {
   serverReportHostPowerState: "server.reportHostPowerState",
   serverGetBackgroundPolicy: "server.getBackgroundPolicy",
   serverGetUsageSummary: "server.getUsageSummary",
+  serverGetUsageThreadBreakdown: "server.getUsageThreadBreakdown",
   serverRefreshUsageRates: "server.refreshUsageRates",
 
   // Cloud environment methods
@@ -570,6 +578,15 @@ export const WsServerGetUsageSummaryRpc = Rpc.make(WS_METHODS.serverGetUsageSumm
   success: UsageSummary,
   error: Schema.Union([EnvironmentAuthorizationError, UsageReadError]),
 });
+
+export const WsServerGetUsageThreadBreakdownRpc = Rpc.make(
+  WS_METHODS.serverGetUsageThreadBreakdown,
+  {
+    payload: UsageThreadBreakdownInput,
+    success: UsageThreadBreakdown,
+    error: Schema.Union([EnvironmentAuthorizationError, UsageReadError]),
+  },
+);
 
 /**
  * Refetches the model rate table ahead of its daily TTL, so a model released
@@ -1231,6 +1248,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetResourceTelemetryHistoryRpc,
   WsServerRetryResourceTelemetryRpc,
   WsServerGetUsageSummaryRpc,
+  WsServerGetUsageThreadBreakdownRpc,
   WsServerRefreshUsageRatesRpc,
   WsServerSignalProcessRpc,
   WsServerReportClientActivityRpc,
