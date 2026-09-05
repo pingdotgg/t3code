@@ -80,8 +80,11 @@ minutes. Cancel removes the current dictation and restores your previous draft.
 Leaving the screen or an audio interruption stops capture and keeps words already
 shown in the draft.
 
-Transcription runs on your device without saving an audio recording. Only the
-message text is sent when you submit.
+Live transcription runs on your device without saving an audio recording. If live
+dictation cannot start, T3 Code temporarily records audio for on-device
+transcription, then deletes the recording. In that fallback, words appear after
+you finish instead of while you speak. Only the message text is sent when you
+submit.
 
 ## Commands and skills
 

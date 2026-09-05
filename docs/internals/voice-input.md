@@ -18,9 +18,11 @@ React renders; unrelated text or ownership changes invalidate the session.
 
 React Native iOS uses `DictationTranscriber` with progressive long dictation for
 frequent word updates and corrections. Preparation resolves and downloads that
-engine's language assets before microphone capture begins.
+engine's language assets before microphone capture begins. If live capture is
+unavailable or startup rejects before producing text, the controller falls back to
+the record-then-transcribe path. That path writes a temporary recording,
+transcribes it on the device, and deletes the recording during cleanup.
 
 Cancellation invalidates results immediately, but resources stay owned until
 native work settles. Preparation and finalization must finish or cancel before
-another composer can acquire the audio session. The file-based transcription
-contract remains available for clients without streaming capture.
+another composer can acquire the audio session.
