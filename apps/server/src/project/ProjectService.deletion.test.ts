@@ -450,20 +450,29 @@ it.effect("retries a rejected child deletion with a fresh command ID", () =>
   }).pipe(Effect.provide(databaseLayer)),
 );
 
-it.effect("rejects a parent command receipt with the wrong type before deleting children", () =>
+it.effect("rejects a recovered legacy create receipt before deleting children", () =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
-    const projectId = ProjectId.make("project:wrong-parent-receipt");
-    const threadId = ThreadId.make("thread:wrong-parent-receipt");
-    const commandId = CommandId.make("command:wrong-parent-receipt");
-    yield* seedProject(projectId);
+    const projectId = ProjectId.make("project:legacy-create-receipt");
+    const threadId = ThreadId.make("thread:legacy-create-receipt");
+    const commandId = CommandId.make("command:legacy-create-receipt");
 
     yield* Effect.gen(function* () {
       const eventSink = yield* EventSinkV2;
       const projections = yield* ProjectionStoreV2;
       const service = yield* ProjectService.make;
+      yield* service.create({
+        commandId,
+        projectId,
+        title: "Legacy create receipt",
+        workspaceRoot: "/work/legacy-create-receipt",
+      });
+      yield* sql`
+        UPDATE orchestration_command_receipts
+        SET command_type = 'legacy'
+        WHERE command_id = ${commandId}
+      `;
       yield* eventSink.write({ events: [nativeThreadCreated(projectId, threadId)] });
-      yield* service.update({ commandId, projectId, title: "Updated title" });
 
       const failure = yield* service
         .delete({ commandId, projectId, force: true })
@@ -476,7 +485,7 @@ it.effect("rejects a parent command receipt with the wrong type before deleting 
       assert.equal(failure.projectId, projectId);
       assert.equal(failure.receiptAggregateKind, "project");
       assert.equal(failure.receiptAggregateId, projectId);
-      assert.equal(failure.receiptCommandType, "project.meta.update");
+      assert.equal(failure.receiptCommandType, "project.create");
       assert.isTrue(Option.isSome(yield* service.getById(projectId)));
       assert.isNull((yield* projections.getThreadProjection(threadId)).thread.deletedAt);
       const deletionEvents = yield* sql`
@@ -546,8 +555,9 @@ it.effect("rejects a parent receipt committed after the deletion preflight", () 
   }).pipe(Effect.provide(databaseLayer)),
 );
 
-it.effect("replays an accepted deletion before checking project existence", () =>
+it.effect("replays an accepted legacy deletion before checking project existence", () =>
   Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
     const projectId = ProjectId.make("project:accepted-delete-replay");
     const commandId = CommandId.make("command:accepted-delete-replay");
     yield* seedProject(projectId);
@@ -558,6 +568,11 @@ it.effect("replays an accepted deletion before checking project existence", () =
       const deleted = yield* service.delete(input);
       assert.isNotNull(deleted.deletedAt);
       assert.isTrue(Option.isNone(yield* service.getById(projectId)));
+      yield* sql`
+        UPDATE orchestration_command_receipts
+        SET command_type = 'legacy'
+        WHERE command_id = ${commandId}
+      `;
       assert.deepEqual(yield* service.delete(input), deleted);
     }).pipe(Effect.provide(servicesLayer));
   }).pipe(Effect.provide(databaseLayer)),
