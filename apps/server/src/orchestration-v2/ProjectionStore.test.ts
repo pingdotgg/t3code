@@ -28,6 +28,7 @@ import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import {
   isTurnItemAtOrBeforeRun,
+  layerMemory as projectionStoreMemoryLayer,
   ProjectionStoreV2,
   ProjectionStoreThreadNotFoundError,
   layer as projectionStoreLayer,
@@ -50,6 +51,190 @@ const modelSelection = {
 const driver = ProviderDriverKind.make("codex");
 const providerInstanceId = modelSelection.instanceId;
 const encodeUnknownJsonString = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+
+const addRolledBackRecoveryCandidate = Effect.fn("addRolledBackRecoveryCandidate")(function* (
+  suffix: string,
+) {
+  const projectionStore = yield* ProjectionStoreV2;
+  const now = yield* DateTime.now;
+  const threadId = ThreadId.make(`thread:${suffix}:rolled-back`);
+  const runId = RunId.make(`run:${suffix}:rolled-back`);
+  const rootNodeId = NodeId.make(`node:${suffix}:rolled-back`);
+  const run = {
+    id: runId,
+    threadId,
+    ordinal: 1,
+    providerInstanceId,
+    modelSelection,
+    providerThreadId: null,
+    userMessageId: MessageId.make(`message:${suffix}:rolled-back`),
+    rootNodeId,
+    activeAttemptId: null,
+    status: "running" as const,
+    requestedAt: now,
+    startedAt: now,
+    completedAt: null,
+    checkpointId: null,
+    contextHandoffId: null,
+  };
+
+  yield* projectionStore.apply({
+    id: EventId.make(`event:${suffix}:thread-created`),
+    type: "thread.created",
+    threadId,
+    occurredAt: now,
+    payload: {
+      createdBy: "user",
+      creationSource: "web",
+      id: threadId,
+      projectId: ProjectId.make(`project:${suffix}`),
+      title: "Rolled-back recovery candidate",
+      providerInstanceId,
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      activeProviderThreadId: null,
+      lineage: {
+        parentThreadId: null,
+        relationshipToParent: null,
+        rootThreadId: threadId,
+      },
+      forkedFrom: null,
+      createdAt: now,
+      updatedAt: now,
+      archivedAt: null,
+      settledOverride: null,
+      settledAt: null,
+      lastVisitedAt: null,
+      deletedAt: null,
+    },
+  });
+  yield* projectionStore.apply({
+    id: EventId.make(`event:${suffix}:run-created`),
+    type: "run.created",
+    threadId,
+    runId,
+    nodeId: rootNodeId,
+    driver,
+    providerInstanceId,
+    occurredAt: now,
+    payload: run,
+  });
+  yield* projectionStore.apply({
+    id: EventId.make(`event:${suffix}:item-running`),
+    type: "turn-item.updated",
+    threadId,
+    runId,
+    nodeId: rootNodeId,
+    driver,
+    occurredAt: now,
+    payload: {
+      id: TurnItemId.make(`item:${suffix}:rolled-back`),
+      threadId,
+      runId,
+      nodeId: rootNodeId,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: 1,
+      status: "running",
+      title: "abandoned command",
+      startedAt: now,
+      completedAt: null,
+      updatedAt: now,
+      type: "command_execution",
+      input: "sleep 60",
+    },
+  });
+  yield* projectionStore.apply({
+    id: EventId.make(`event:${suffix}:run-rolled-back`),
+    type: "run.updated",
+    threadId,
+    runId,
+    nodeId: rootNodeId,
+    driver,
+    occurredAt: now,
+    payload: { ...run, status: "rolled_back", completedAt: now },
+  });
+
+  return threadId;
+});
+
+const addOrphanedRecoveryCandidate = Effect.fn("addOrphanedRecoveryCandidate")(function* (
+  suffix: string,
+) {
+  const projectionStore = yield* ProjectionStoreV2;
+  const now = yield* DateTime.now;
+  const threadId = ThreadId.make(`thread:${suffix}:orphaned`);
+  const runId = RunId.make(`run:${suffix}:missing`);
+  const rootNodeId = NodeId.make(`node:${suffix}:orphaned`);
+
+  yield* projectionStore.apply({
+    id: EventId.make(`event:${suffix}:thread-created`),
+    type: "thread.created",
+    threadId,
+    occurredAt: now,
+    payload: {
+      createdBy: "user",
+      creationSource: "web",
+      id: threadId,
+      projectId: ProjectId.make(`project:${suffix}`),
+      title: "Orphaned recovery candidate",
+      providerInstanceId,
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      activeProviderThreadId: null,
+      lineage: {
+        parentThreadId: null,
+        relationshipToParent: null,
+        rootThreadId: threadId,
+      },
+      forkedFrom: null,
+      createdAt: now,
+      updatedAt: now,
+      archivedAt: null,
+      settledOverride: null,
+      settledAt: null,
+      lastVisitedAt: null,
+      deletedAt: null,
+    },
+  });
+  yield* projectionStore.apply({
+    id: EventId.make(`event:${suffix}:item-running`),
+    type: "turn-item.updated",
+    threadId,
+    runId,
+    nodeId: rootNodeId,
+    driver,
+    occurredAt: now,
+    payload: {
+      id: TurnItemId.make(`item:${suffix}:orphaned`),
+      threadId,
+      runId,
+      nodeId: rootNodeId,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: 1,
+      status: "running",
+      title: "orphaned command",
+      startedAt: now,
+      completedAt: null,
+      updatedAt: now,
+      type: "command_execution",
+      input: "sleep 60",
+    },
+  });
+
+  return threadId;
+});
 
 it("includes imported runless history when selecting fork context through a run", () => {
   const firstRunId = RunId.make("run:projection-imported-fork:1");
@@ -92,6 +277,24 @@ it("includes imported runless history when selecting fork context through a run"
     }),
   );
 });
+
+it.effect("memory recovery selection ignores unfinished items from rolled-back runs", () =>
+  Effect.gen(function* () {
+    const projectionStore = yield* ProjectionStoreV2;
+    const threadId = yield* addRolledBackRecoveryCandidate("memory-recovery-candidates");
+
+    assert.notInclude(yield* projectionStore.getRecoveryThreadIds("runtime"), threadId);
+  }).pipe(Effect.provide(projectionStoreMemoryLayer)),
+);
+
+it.effect("memory recovery selection includes unfinished items from missing runs", () =>
+  Effect.gen(function* () {
+    const projectionStore = yield* ProjectionStoreV2;
+    const threadId = yield* addOrphanedRecoveryCandidate("memory-recovery-candidates");
+
+    assert.include(yield* projectionStore.getRecoveryThreadIds("runtime"), threadId);
+  }).pipe(Effect.provide(projectionStoreMemoryLayer)),
+);
 
 it.layer(TestLayer)("ProjectionStoreV2", (it) => {
   it.effect("preserves stored provider usage when a terminal update omits it", () =>
@@ -1178,6 +1381,91 @@ it.layer(TestLayer)("ProjectionStoreV2", (it) => {
       );
       assert.equal(shell?.status, "waiting");
       assert.isNull(shell?.activeRunId);
+    }),
+  );
+
+  it.effect("selects only threads with runtime state that needs recovery", () =>
+    Effect.gen(function* () {
+      const projectionStore = yield* ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const settledThreadId = ThreadId.make("thread:recovery-candidates:settled");
+      const runningThreadId = ThreadId.make("thread:recovery-candidates:running");
+      const rolledBackThreadId = yield* addRolledBackRecoveryCandidate("recovery-candidates");
+      const orphanedThreadId = yield* addOrphanedRecoveryCandidate("recovery-candidates");
+      const projectId = ProjectId.make("project:recovery-candidates");
+      const makeThread = (threadId: ThreadId) => ({
+        createdBy: "user" as const,
+        creationSource: "web" as const,
+        id: threadId,
+        projectId,
+        title: "Recovery candidate",
+        providerInstanceId,
+        modelSelection,
+        runtimeMode: "full-access" as const,
+        interactionMode: "default" as const,
+        branch: null,
+        worktreePath: null,
+        activeProviderThreadId: null,
+        lineage: {
+          parentThreadId: null,
+          relationshipToParent: null,
+          rootThreadId: threadId,
+        },
+        forkedFrom: null,
+        createdAt: now,
+        updatedAt: now,
+        archivedAt: null,
+        settledOverride: null,
+        settledAt: null,
+        lastVisitedAt: null,
+        deletedAt: null,
+      });
+
+      for (const threadId of [settledThreadId, runningThreadId]) {
+        yield* projectionStore.apply({
+          id: EventId.make(`event:recovery-candidates:${threadId}:created`),
+          type: "thread.created",
+          threadId,
+          occurredAt: now,
+          payload: makeThread(threadId),
+        });
+      }
+
+      const runId = RunId.make("run:recovery-candidates:running");
+      const rootNodeId = NodeId.make("node:recovery-candidates:running");
+      yield* projectionStore.apply({
+        id: EventId.make("event:recovery-candidates:run-created"),
+        type: "run.created",
+        threadId: runningThreadId,
+        runId,
+        nodeId: rootNodeId,
+        driver,
+        providerInstanceId,
+        occurredAt: now,
+        payload: {
+          id: runId,
+          threadId: runningThreadId,
+          ordinal: 1,
+          providerInstanceId,
+          modelSelection,
+          providerThreadId: null,
+          userMessageId: MessageId.make("message:recovery-candidates:running"),
+          rootNodeId,
+          activeAttemptId: null,
+          status: "running",
+          requestedAt: now,
+          startedAt: now,
+          completedAt: null,
+          checkpointId: null,
+          contextHandoffId: null,
+        },
+      });
+
+      const recoveryThreadIds = yield* projectionStore.getRecoveryThreadIds("runtime");
+      assert.include(recoveryThreadIds, runningThreadId);
+      assert.include(recoveryThreadIds, orphanedThreadId);
+      assert.notInclude(recoveryThreadIds, settledThreadId);
+      assert.notInclude(recoveryThreadIds, rolledBackThreadId);
     }),
   );
 
