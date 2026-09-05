@@ -19,6 +19,7 @@ import * as Connectivity from "../connection/connectivity.ts";
 import { ConnectionBlockedError, type NetworkStatus } from "../connection/model.ts";
 import * as ConnectionWakeups from "../connection/wakeups.ts";
 import * as RelayEnvironmentDiscovery from "./discovery.ts";
+import { NETWORK_BLOCKING_HINT } from "../errors/network.ts";
 
 const environments = [
   {
@@ -305,7 +306,7 @@ describe("RelayEnvironmentDiscovery", () => {
         expect(Option.getOrThrow(state.error)).toMatchObject({
           _tag: "ConnectionTransientError",
           reason: "timeout",
-          message: "Relay environment listing timed out.",
+          message: `Relay environment listing timed out. ${NETWORK_BLOCKING_HINT}`,
         });
       }).pipe(Effect.provide(layer));
     }),

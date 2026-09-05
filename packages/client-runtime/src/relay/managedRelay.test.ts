@@ -9,10 +9,15 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Tracer from "effect/Tracer";
+import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as ManagedRelay from "./managedRelay.ts";
 import { remoteHttpClientLayer } from "../rpc/http.ts";
+import { NETWORK_BLOCKING_HINT } from "../errors/network.ts";
+
+const encodeRelayError = Schema.encodeEffect(ManagedRelay.ManagedRelayClientError);
+const decodeRelayError = Schema.decodeUnknownEffect(ManagedRelay.ManagedRelayClientError);
 
 function managedRelayTestLayer(
   fetchFn: typeof globalThis.fetch,
@@ -529,9 +534,42 @@ describe("ManagedRelayClient", () => {
         _tag: "ManagedRelayRequestTimeoutError",
         activity: "Relay environment listing",
         timeoutMs: ManagedRelay.MANAGED_RELAY_REQUEST_TIMEOUT_MS,
-        message: "Relay environment listing timed out.",
+        message: `Relay environment listing timed out. ${NETWORK_BLOCKING_HINT}`,
       });
     }).pipe(Effect.provide(Layer.merge(TestClock.layer(), managedRelayTestLayer(fetchFn))));
+  });
+
+  it.effect("suggests checking network filtering when fetch fails without a response", () => {
+    const fetchFn = (() =>
+      Promise.reject(new TypeError("Failed to fetch"))) satisfies typeof globalThis.fetch;
+    return Effect.gen(function* () {
+      const relayClient = yield* ManagedRelay.ManagedRelayClient;
+      const error = yield* relayClient
+        .listEnvironments({ clerkToken: "clerk-token" })
+        .pipe(Effect.flip);
+      expect(error).toMatchObject({
+        _tag: "ManagedRelayRequestFailedError",
+        transportFailed: true,
+        message: `Could not list relay-managed environments. ${NETWORK_BLOCKING_HINT}`,
+      });
+      const encoded = yield* encodeRelayError(error);
+      const decoded = yield* decodeRelayError(encoded);
+      expect(decoded.message).toBe(error.message);
+    }).pipe(Effect.provide(managedRelayTestLayer(fetchFn)));
+  });
+
+  it.effect("does not suggest network filtering for an HTTP server error", () => {
+    const fetchFn = (() =>
+      Promise.resolve(
+        new Response("Unavailable", { status: 503 }),
+      )) satisfies typeof globalThis.fetch;
+    return Effect.gen(function* () {
+      const relayClient = yield* ManagedRelay.ManagedRelayClient;
+      const error = yield* relayClient
+        .listEnvironments({ clerkToken: "clerk-token" })
+        .pipe(Effect.flip);
+      expect(error.message).toBe("Could not list relay-managed environments.");
+    }).pipe(Effect.provide(managedRelayTestLayer(fetchFn)));
   });
 
   it.effect("preserves typed relay trace IDs on client errors", () => {
