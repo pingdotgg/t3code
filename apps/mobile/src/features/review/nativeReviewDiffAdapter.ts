@@ -4,11 +4,9 @@ import type {
   NativeReviewDiffLanguage,
 } from "../diffs/nativeReviewDiffTypes";
 import * as Arr from "effect/Array";
-import { pipe } from "effect/Function";
 import type { ResolvedMobileCodeSurface } from "../../lib/appearancePreferences";
 import { type MobileThemeId, type MobileThemeVariables } from "../../lib/mobileTheme";
 import { getMobileTerminalTheme, type TerminalAppearanceScheme } from "../terminal/terminalTheme";
-import { computeWordAltDiffRanges } from "./reviewWordDiffs";
 import {
   getReviewFilePreviewState,
   type ReviewParsedDiff,
@@ -17,8 +15,6 @@ import {
 } from "./reviewModel";
 import type { ReviewInlineComment } from "./reviewCommentSelection";
 
-const NATIVE_REVIEW_MAX_WORD_DIFF_RANGE_COUNT = 4;
-const NATIVE_REVIEW_MAX_WORD_DIFF_COVERAGE = 0.45;
 const NATIVE_HEX_COLOR = /^#([\da-f]{2})([\da-f]{2})([\da-f]{2})$/i;
 const NATIVE_RGBA_COLOR =
   /^rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)(?:\s*,\s*([\d.]+))?\s*\)$/;
@@ -262,114 +258,6 @@ function noticeRowsForFile(file: ReviewRenderableFile): ReadonlyArray<NativeRevi
   return [];
 }
 
-function trimWordDiffRanges(
-  content: string,
-  ranges: NonNullable<NativeReviewDiffRow["wordDiffRanges"]>,
-): NonNullable<NativeReviewDiffRow["wordDiffRanges"]> {
-  return pipe(
-    ranges,
-    Arr.flatMap((range) => {
-      let start = Math.max(0, range.start);
-      let end = Math.min(content.length, range.end);
-
-      while (start < end && /\s/.test(content[start] ?? "")) {
-        start += 1;
-      }
-      while (end > start && /\s/.test(content[end - 1] ?? "")) {
-        end -= 1;
-      }
-
-      return end > start ? [{ start, end }] : [];
-    }),
-  );
-}
-
-function nonWhitespaceLength(value: string) {
-  return value.replace(/\s/g, "").length;
-}
-
-function shouldUseWordDiffRanges(
-  content: string,
-  ranges: NonNullable<NativeReviewDiffRow["wordDiffRanges"]>,
-) {
-  if (ranges.length === 0 || ranges.length > NATIVE_REVIEW_MAX_WORD_DIFF_RANGE_COUNT) {
-    return false;
-  }
-
-  const meaningfulLength = nonWhitespaceLength(content);
-  if (meaningfulLength === 0) {
-    return false;
-  }
-
-  const highlightedLength = ranges.reduce(
-    (total, range) => total + nonWhitespaceLength(content.slice(range.start, range.end)),
-    0,
-  );
-  return highlightedLength / meaningfulLength <= NATIVE_REVIEW_MAX_WORD_DIFF_COVERAGE;
-}
-
-function addNativeWordDiffRanges(
-  rows: ReadonlyArray<NativeReviewDiffRow>,
-): ReadonlyArray<NativeReviewDiffRow> {
-  const nextRows = [...rows];
-  let index = 0;
-
-  while (index < nextRows.length) {
-    const deletedRowIndexes: number[] = [];
-    const addedRowIndexes: number[] = [];
-    const fileId = nextRows[index]?.fileId;
-
-    while (
-      nextRows[index]?.kind === "line" &&
-      nextRows[index]?.change === "delete" &&
-      nextRows[index]?.fileId === fileId
-    ) {
-      deletedRowIndexes.push(index);
-      index += 1;
-    }
-
-    while (
-      nextRows[index]?.kind === "line" &&
-      nextRows[index]?.change === "add" &&
-      nextRows[index]?.fileId === fileId
-    ) {
-      addedRowIndexes.push(index);
-      index += 1;
-    }
-
-    const pairedCount = Math.min(deletedRowIndexes.length, addedRowIndexes.length);
-    for (let pairIndex = 0; pairIndex < pairedCount; pairIndex += 1) {
-      const deletedRowIndex = deletedRowIndexes[pairIndex];
-      const addedRowIndex = addedRowIndexes[pairIndex];
-      const deletedRow = nextRows[deletedRowIndex];
-      const addedRow = nextRows[addedRowIndex];
-      if (!deletedRow?.content || !addedRow?.content) {
-        continue;
-      }
-
-      const ranges = computeWordAltDiffRanges({
-        deletionLine: deletedRow.content,
-        additionLine: addedRow.content,
-      });
-      const deletionRanges = trimWordDiffRanges(deletedRow.content, ranges.deletion);
-      const additionRanges = trimWordDiffRanges(addedRow.content, ranges.addition);
-
-      if (shouldUseWordDiffRanges(deletedRow.content, deletionRanges)) {
-        nextRows[deletedRowIndex] = { ...deletedRow, wordDiffRanges: deletionRanges };
-      }
-      if (shouldUseWordDiffRanges(addedRow.content, additionRanges)) {
-        nextRows[addedRowIndex] = { ...addedRow, wordDiffRanges: additionRanges };
-      }
-    }
-
-    if (deletedRowIndexes.length === 0 && addedRowIndexes.length === 0) {
-      index += 1;
-    }
-  }
-
-  return nextRows;
-}
-
 function mapLineRow(
   file: ReviewRenderableFile,
   row: ReviewRenderableLineRow,
@@ -433,8 +321,7 @@ function prepareFileRows(
     fileId: file.id,
     filePath: file.path,
     lineCount: lineRows.length,
-    // Comments must not split the source deletion/addition runs used for word matching.
-    rows: addNativeWordDiffRanges(rows),
+    rows,
     commentedRows: null,
   };
 }
@@ -559,7 +446,7 @@ export function buildNativeReviewDiffData(
 
 /**
  * Prepares source rows once per parsed diff, including its section-specific IDs.
- * Comment edits reuse those rows, word ranges, and targets. Each file retains
+ * Comment edits reuse those rows and targets. Each file retains
  * only its latest comment overlay, and the weak key releases old parsed diffs.
  */
 export function getCachedNativeReviewDiffData(

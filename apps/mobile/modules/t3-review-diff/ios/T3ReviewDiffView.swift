@@ -36,6 +36,7 @@ private struct ReviewDiffNativeTokenPatch: Decodable, Sendable {
   let resetKey: String?
   let chunkIndex: Int?
   let tokensByRowId: [String: [ReviewDiffNativeToken]]?
+  let wordDiffRangesByRowId: [String: [ReviewDiffNativeWordDiffRange]]?
 }
 
 private struct ReviewDiffNativeThemePayload: Decodable {
@@ -520,11 +521,17 @@ public final class T3ReviewDiffView: ExpoView, UIScrollViewDelegate {
           }
 
           let tokensByRowId = patch.tokensByRowId ?? [:]
-          if tokensByRowId.isEmpty {
+          let wordDiffRangesByRowId = patch.wordDiffRangesByRowId ?? [:]
+          if tokensByRowId.isEmpty && wordDiffRangesByRowId.isEmpty {
             return
           }
 
-          self.contentView.mergeTokensByRowId(tokensByRowId)
+          if !tokensByRowId.isEmpty {
+            self.contentView.mergeTokensByRowId(tokensByRowId)
+          }
+          if !wordDiffRangesByRowId.isEmpty {
+            self.contentView.mergeWordDiffRangesByRowId(wordDiffRangesByRowId)
+          }
           if let chunkIndex = patch.chunkIndex, chunkIndex < 5 || chunkIndex.isMultiple(of: 10) {
             self.emitDebug("tokens-patch-decoded", [
               "chunkIndex": chunkIndex,
@@ -549,6 +556,7 @@ public final class T3ReviewDiffView: ExpoView, UIScrollViewDelegate {
 
     self.tokensResetKey = tokensResetKey
     contentView.tokensByRowId = [:]
+    contentView.clearWordDiffRanges()
     emitDebug("tokens-reset", [
       "resetKey": tokensResetKey,
     ])
@@ -563,6 +571,7 @@ public final class T3ReviewDiffView: ExpoView, UIScrollViewDelegate {
     rowsDecodeGeneration += 1
     tokensDecodeGeneration += 1
     contentView.tokensByRowId = [:]
+    contentView.clearWordDiffRanges()
     rows = []
     contentView.rows = []
     hasAppliedInitialRowIndex = false
@@ -948,6 +957,18 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
       tokenAttributedStringsByRowId.removeValue(forKey: rowId)
     }
     clampHorizontalOffsets()
+    setNeedsDisplayForVisibleBounds()
+  }
+
+  private var wordDiffRangesByRowId: [String: [ReviewDiffNativeWordDiffRange]] = [:]
+
+  func mergeWordDiffRangesByRowId(_ patch: [String: [ReviewDiffNativeWordDiffRange]]) {
+    wordDiffRangesByRowId.merge(patch) { _, next in next }
+    setNeedsDisplayForVisibleBounds()
+  }
+
+  func clearWordDiffRanges() {
+    wordDiffRangesByRowId.removeAll()
     setNeedsDisplayForVisibleBounds()
   }
 
@@ -2261,7 +2282,7 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
     context: CGContext,
     horizontalOffset: CGFloat
   ) {
-    guard let ranges = row.wordDiffRanges, !ranges.isEmpty else {
+    guard let ranges = wordDiffRangesByRowId[row.id] ?? row.wordDiffRanges, !ranges.isEmpty else {
       return
     }
 

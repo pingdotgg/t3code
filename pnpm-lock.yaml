@@ -463,9 +463,15 @@ importers:
       '@types/react':
         specifier: ~19.2.0
         version: 19.2.16
+      '@types/react-test-renderer':
+        specifier: 19.1.0
+        version: 19.1.0
       babel-preset-expo:
         specifier: ~57.0.9
         version: 57.0.9(@babel/core@7.29.7)(@babel/runtime@7.29.7)(expo-widgets@57.0.15)(expo@57.0.18)(react-refresh@0.14.2)
+      react-test-renderer:
+        specifier: 19.2.3
+        version: 19.2.3(react@19.2.3)
       tailwindcss:
         specifier: 4.3.3
         version: 4.3.3
@@ -9358,6 +9364,11 @@ packages:
     peerDependenciesMeta:
       '@types/react':
         optional: true
+
+  react-test-renderer@19.2.3:
+    resolution: {integrity: sha512-TMR1LnSFiWZMJkCgNf5ATSvAheTT2NvKIwiVwdBPHxjBI7n/JbWd4gaZ16DVd9foAXdvDz+sB5yxZTwMjPRxpw==}
+    peerDependencies:
+      react: ^19.2.3
 
   react-test-renderer@19.2.6:
     resolution: {integrity: sha512-GbS6V23YduFTPiWJ5xICbKEjRcqx1Z90js/V5miqhz7qp/d6xSe9Dd6NjSQODFRdzdsqRMPW82E/sFpPRbY5Mw==}
@@ -20302,6 +20313,12 @@ snapshots:
       tslib: 2.8.1
     optionalDependencies:
       '@types/react': 19.2.16
+
+  react-test-renderer@19.2.3(react@19.2.3):
+    dependencies:
+      react: 19.2.3
+      react-is: 19.2.7
+      scheduler: 0.27.0
 
   react-test-renderer@19.2.6(react@19.2.6):
     dependencies:

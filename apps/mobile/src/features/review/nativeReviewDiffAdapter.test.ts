@@ -17,6 +17,8 @@ import {
 import type { ReviewInlineComment } from "./reviewCommentSelection";
 import { buildReviewParsedDiff } from "./reviewModel";
 import * as ReviewWordDiffs from "./reviewWordDiffs";
+import { computeVisibleNativeReviewWordDiffRanges } from "./nativeReviewWordDiffs";
+import type { NativeReviewDiffRow } from "../diffs/nativeReviewDiffSurface";
 
 const parsedDiff = buildReviewParsedDiff(
   [
@@ -89,13 +91,22 @@ describe("getCachedNativeReviewDiffData", () => {
     expect(changed.rows.find((row) => row.kind === "comment")?.commentText).toBe("Changed");
   });
 
-  it("reuses source rows and word matching when a file comment changes", () => {
+  it("defers word matching and reuses its results when a file comment changes", async () => {
     const diff = buildReviewParsedDiff(filesPatch(["example.ts", "second.ts"]), "comment-reuse");
     const matchWords = vi.spyOn(ReviewWordDiffs, "computeWordAltDiffRanges");
     try {
       const base = getCachedNativeReviewDiffData({ parsedDiff: diff });
+      expect(matchWords).not.toHaveBeenCalled();
+      expect(base.rows.filter((row) => row.wordDiffRanges?.length)).toHaveLength(0);
+      const initialRanges = await computeVisibleNativeReviewWordDiffRanges({
+        rows: base.rows,
+        firstRowIndex: 0,
+        lastRowIndex: base.rows.length - 1,
+      });
       expect(matchWords).toHaveBeenCalledTimes(4);
-      expect(base.rows.filter((row) => row.wordDiffRanges?.length)).toHaveLength(8);
+      expect(
+        Object.values(initialRanges.rangesByRowId).filter((ranges) => ranges.length),
+      ).toHaveLength(8);
       const firstComment = makeComment("First file comment");
       const secondComment = {
         ...makeComment("Second file comment"),
@@ -124,6 +135,12 @@ describe("getCachedNativeReviewDiffData", () => {
       }
       const removed = getCachedNativeReviewDiffData({ parsedDiff: diff, comments: [] });
       expect(removed.rows).toEqual(base.rows);
+      const changedRanges = await computeVisibleNativeReviewWordDiffRanges({
+        rows: changed.rows,
+        firstRowIndex: 0,
+        lastRowIndex: changed.rows.length - 1,
+      });
+      expect(changedRanges).toEqual(initialRanges);
       expect(matchWords).toHaveBeenCalledTimes(4);
       expect(first.rows.find((row) => row.id === firstComment.id)?.commentText).toBe(
         "First file comment",
@@ -187,6 +204,146 @@ describe("getCachedNativeReviewDiffData", () => {
       const input = { parsedDiff: diff, comments: [makeComment("Coordinates")] };
       expect(getCachedNativeReviewDiffData(input)).toEqual(buildNativeReviewDiffData(input));
     }
+  });
+});
+
+describe("visible native word diffs", () => {
+  it("matches an offscreen counterpart without preparing unrelated pairs", async () => {
+    const data = buildNativeReviewDiffData(
+      buildReviewParsedDiff(filesPatch(["example.ts"]), "visible-pair"),
+    );
+    const result = await computeVisibleNativeReviewWordDiffRanges({
+      rows: data.rows,
+      firstRowIndex: 2,
+      lastRowIndex: 2,
+      overscanRows: 0,
+    });
+    expect(result.pairCount).toBe(1);
+    expect(Object.keys(result.rangesByRowId)).toEqual([data.rows[2]!.id, data.rows[4]!.id]);
+    expect(result.rangesByRowId[data.rows[4]!.id]?.length).toBeGreaterThan(0);
+    expect(
+      await computeVisibleNativeReviewWordDiffRanges({
+        rows: data.rows,
+        firstRowIndex: 4,
+        lastRowIndex: 4,
+        overscanRows: 0,
+        alreadyHighlightedRowIds: new Set(Object.keys(result.rangesByRowId)),
+      }),
+    ).toEqual({ rangesByRowId: {}, pairCount: 0 });
+  });
+
+  it("does not spend the visible pair budget on collapsed files", async () => {
+    const data = buildNativeReviewDiffData(
+      buildReviewParsedDiff(filesPatch(["first.ts", "second.ts"]), "collapsed-pairs"),
+    );
+    const collapsedFileIds = new Set([data.files[0]!.id]);
+    const result = await computeVisibleNativeReviewWordDiffRanges({
+      rows: data.rows,
+      firstRowIndex: 0,
+      lastRowIndex: data.rows.length - 1,
+      collapsedFileIds,
+      overscanRows: 0,
+      maxPairs: 1,
+    });
+    expect(result.pairCount).toBe(1);
+    expect(Object.keys(result.rangesByRowId)).toEqual([data.rows[8]!.id, data.rows[10]!.id]);
+    collapsedFileIds.clear();
+    const reopened = await computeVisibleNativeReviewWordDiffRanges({
+      rows: data.rows,
+      firstRowIndex: 0,
+      lastRowIndex: data.rows.length - 1,
+      collapsedFileIds,
+      overscanRows: 0,
+      maxPairs: 1,
+    });
+    expect(Object.keys(reopened.rangesByRowId)).toEqual([data.rows[2]!.id, data.rows[4]!.id]);
+  });
+
+  it("yields and cancels while indexing rows without replacement pairs", async () => {
+    const rows: NativeReviewDiffRow[] = Array.from({ length: 2_000 }, (_, index) => ({
+      kind: "line",
+      id: `context-${index}`,
+      fileId: "context",
+      change: "context",
+      content: "unchanged",
+    }));
+    let elapsed = 0;
+    const clock = vi.spyOn(performance, "now").mockImplementation(() => (elapsed += 5));
+    const controller = new AbortController();
+    try {
+      const pending = computeVisibleNativeReviewWordDiffRanges({
+        rows,
+        firstRowIndex: 0,
+        lastRowIndex: rows.length - 1,
+        signal: controller.signal,
+      });
+      setTimeout(() => controller.abort(), 0);
+      expect(await pending).toEqual({ rangesByRowId: {}, pairCount: 0 });
+      expect(controller.signal.aborted).toBe(true);
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  it("discards partial results when cancelled between batches and reuses completed pairs", async () => {
+    const rows: NativeReviewDiffRow[] = (["delete", "add"] as const).flatMap((change) =>
+      Array.from({ length: 65 }, (_, index) => ({
+        kind: "line" as const,
+        id: `${change}-${index}`,
+        fileId: "file",
+        change,
+        content: `const row${index} = renderPanel({ label: "${change === "delete" ? "before" : "after"}", enabled: true });`,
+      })),
+    );
+    const controller = new AbortController();
+    const matchWords = vi.spyOn(ReviewWordDiffs, "computeWordAltDiffRanges");
+    try {
+      const pending = computeVisibleNativeReviewWordDiffRanges({
+        rows,
+        firstRowIndex: 0,
+        lastRowIndex: rows.length - 1,
+        signal: controller.signal,
+      });
+      // Cancellation runs on the next event-loop turn, so word matching must yield to it.
+      setTimeout(() => controller.abort(), 0);
+      expect(await pending).toEqual({ rangesByRowId: {}, pairCount: 0 });
+      expect(matchWords.mock.calls.length).toBeGreaterThan(0);
+      expect(matchWords.mock.calls.length).toBeLessThan(65);
+      const resumed = await computeVisibleNativeReviewWordDiffRanges({
+        rows,
+        firstRowIndex: 0,
+        lastRowIndex: rows.length - 1,
+      });
+      expect(resumed.pairCount).toBe(65);
+      expect(Object.keys(resumed.rangesByRowId)).toHaveLength(130);
+      expect(matchWords).toHaveBeenCalledTimes(65);
+    } finally {
+      matchWords.mockRestore();
+    }
+  });
+
+  it("invalidates a cached pair when its same-ID counterpart changes", async () => {
+    const data = buildNativeReviewDiffData(
+      buildReviewParsedDiff(filesPatch(["example.ts"]), "changed-pair"),
+    );
+    const first = await computeVisibleNativeReviewWordDiffRanges({
+      rows: data.rows,
+      firstRowIndex: 2,
+      lastRowIndex: 2,
+      overscanRows: 0,
+    });
+    const changedRow = {
+      ...data.rows[4]!,
+      content: data.rows[4]!.content!.replace("after", "updated-value"),
+    };
+    const changed = await computeVisibleNativeReviewWordDiffRanges({
+      rows: data.rows.map((row) => (row.id === changedRow.id ? changedRow : row)),
+      firstRowIndex: 2,
+      lastRowIndex: 2,
+      overscanRows: 0,
+    });
+    expect(changed.pairCount).toBe(1);
+    expect(changed.rangesByRowId[changedRow.id]).not.toEqual(first.rangesByRowId[changedRow.id]);
   });
 });
 
