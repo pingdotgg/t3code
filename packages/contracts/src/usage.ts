@@ -21,7 +21,7 @@ import { NonNegativeInt, ProjectId, ThreadId, TrimmedNonEmptyString } from "./ba
  * client renders partial coverage when an environment reports an older version
  * rather than failing the whole page.
  */
-export const USAGE_CONTRACT_VERSION = 11 as const;
+export const USAGE_CONTRACT_VERSION = 12 as const;
 
 /**
  * Oldest {@link UsageSummary} version a current client will still merge.
@@ -29,7 +29,8 @@ export const USAGE_CONTRACT_VERSION = 11 as const;
  * v5 only adds `grok` to {@link UsageProviderKind}; v6 adds the optional bucket
  * `project`; v7 adds its optional stable `projectId`; v8 distinguishes outside
  * projects from unknown attribution; v9 adds the separate thread-breakdown RPC;
- * v10 adds optional cache-write costs; v11 adds optional cache-write TTL counters.
+ * v10 adds optional cache-write costs; v11 adds optional cache-write TTL counters;
+ * v12 adds server-side thread filtering before the breakdown row cap.
  * v4 Claude/Codex buckets remain valid, so mixed-version environments keep those
  * totals instead of treating every older server as stale.
  */
@@ -38,6 +39,8 @@ export const USAGE_MERGE_COMPATIBLE_SINCE = 4 as const;
 export const USAGE_PROJECT_ATTRIBUTION_SINCE = 8 as const;
 /** First contract version that exposes the current thread-breakdown RPC. */
 export const USAGE_THREAD_BREAKDOWN_SINCE = 10 as const;
+/** First contract version that applies `threadId` before the breakdown row cap. */
+export const USAGE_THREAD_FILTER_SINCE = 12 as const;
 
 export const UsageProviderKind = Schema.Literals(["claude", "codex", "grok"]);
 export type UsageProviderKind = typeof UsageProviderKind.Type;

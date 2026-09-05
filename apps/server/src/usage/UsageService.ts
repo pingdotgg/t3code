@@ -49,8 +49,12 @@ import * as ProviderSessionRuntime from "../persistence/ProviderSessionRuntime.t
 import * as ServerSettings from "../serverSettings.ts";
 import { resolveClaudeHomePath } from "../provider/Drivers/ClaudeHome.ts";
 import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
+import {
+  providerResumeCursorSessionId,
+  readProviderResumeCursorHistory,
+} from "../provider/providerResumeCursorHistory.ts";
 import { makeProjectResolver, UsageAggregator } from "./usageAggregation.ts";
-import { dedicatedUsageWorktreePath } from "./usagePaths.ts";
+import { dedicatedUsageWorktreePath, normalizeUsagePath } from "./usagePaths.ts";
 import { createOverrideRateTable, parseRateTable, type RateTable } from "./usagePricing.ts";
 import {
   listTranscriptFiles,
@@ -792,24 +796,16 @@ export const make = Effect.gen(function* () {
       ),
     );
     for (const runtime of runtimes) {
-      const cursor = runtime.resumeCursor;
-      if (typeof cursor !== "object" || cursor === null) continue;
-      const cursorRecord = cursor as Record<string, unknown>;
-      // Claude cursors carry the transcript uuid as `resume`; Codex cursors
-      // carry the rollout uuid as `threadId`. Other providers do not surface
-      // usage transcripts, so their cursors are irrelevant here.
-      const sessionId =
-        runtime.providerName === "claudeAgent"
-          ? cursorRecord["resume"]
-          : runtime.providerName === "codex"
-            ? cursorRecord["threadId"]
-            : undefined;
-      if (typeof sessionId !== "string" || sessionId.length === 0) continue;
-      const provider = runtime.providerName === "claudeAgent" ? "claude" : "codex";
-      sessionToThread.set(`${provider}:${sessionId}`, {
-        threadId: runtime.threadId,
-        title: titles.get(runtime.threadId) ?? runtime.threadId,
-      });
+      for (const sessionKey of runtimeUsageSessionKeys(
+        runtime.providerName,
+        runtime.resumeCursor,
+        runtime.runtimePayload,
+      )) {
+        sessionToThread.set(sessionKey, {
+          threadId: runtime.threadId,
+          title: titles.get(runtime.threadId) ?? runtime.threadId,
+        });
+      }
     }
 
     return { sessionToThread, worktreeToThread };
@@ -866,6 +862,9 @@ export const make = Effect.gen(function* () {
     const settings = yield* readSettings;
     yield* ensureRates(false);
     yield* ensureScanCacheLoaded;
+    const attribution = yield* loadThreadAttribution();
+    const target =
+      input.threadId === undefined ? null : threadTranscriptTarget(attribution, input.threadId);
 
     const dirs = yield* resolveTranscriptDirs(settings).pipe(
       Effect.provideService(Path.Path, path),
@@ -905,6 +904,22 @@ export const make = Effect.gen(function* () {
         listTranscriptFiles(dir, windowStartMs, fileName === undefined ? undefined : { fileName }),
       );
       for (const file of files) {
+        const cached = fileCache.get(file.path);
+        if (
+          target !== null &&
+          !transcriptFileMayMatchThread({
+            path,
+            filePath: file.path,
+            root: dir,
+            provider,
+            target,
+            ...(cached === undefined ? {} : { cached }),
+            size: file.size,
+            mtimeMs: file.mtimeMs,
+          })
+        ) {
+          continue;
+        }
         livePaths.add(file.path);
         const records = yield* readFileRecords(file.path, file.size, file.mtimeMs, provider);
         if (records.length === 0) continue;
@@ -924,18 +939,22 @@ export const make = Effect.gen(function* () {
       }
     }
 
-    const pruned = pruneScanCache(fileCache, {
-      livePaths,
-      walkedRoots,
-      windowStartMs,
-      retentionCutoffMs: startedAtMs - CACHE_RETENTION_DAYS * 24 * 60 * 60 * 1000,
-    });
-    if (pruned > 0) cacheRevision += 1;
-    // A thread-only client must warm and bound the same durable cache as the
-    // summary RPC, otherwise restarts repeat parsing and stale entries grow.
+    // A filtered walk sees only one thread's candidates, so it cannot prove
+    // that other cached files disappeared. Keeping the selected lifetime
+    // records also prevents an old thread from being cold-parsed every turn.
+    if (target === null) {
+      const pruned = pruneScanCache(fileCache, {
+        livePaths,
+        walkedRoots,
+        windowStartMs,
+        retentionCutoffMs: startedAtMs - CACHE_RETENTION_DAYS * 24 * 60 * 60 * 1000,
+      });
+      if (pruned > 0) cacheRevision += 1;
+    }
+    // Persist selected lifetime records so a restart does not cold-parse the
+    // same old thread again. Unfiltered reads retain the normal bounded cache.
     yield* persistScanCache();
 
-    const attribution = yield* loadThreadAttribution();
     const folded = foldThreadRows(accumulator.finish(), attribution, {
       cap: THREAD_ROW_CAP,
       ...(input.projectKey === undefined ? {} : { projectFilter: input.projectKey }),
@@ -982,6 +1001,183 @@ export function shortSessionLabel(sessionKey: string): string {
   if (sessionKey.includes(":file:")) return "Untitled session";
   const sessionId = sessionKey.slice(sessionKey.lastIndexOf(":") + 1);
   return sessionId.length > 8 ? `Session ${sessionId.slice(0, 8)}` : `Session ${sessionId}`;
+}
+
+/** Maps a persisted provider cursor to the transcript session key it owns. */
+export function runtimeUsageSessionKey(providerName: string, cursor: unknown): string | null {
+  let provider: UsageProviderKind;
+  switch (providerName) {
+    case "claudeAgent":
+      provider = "claude";
+      break;
+    case "codex":
+      provider = "codex";
+      break;
+    case "grok":
+      provider = "grok";
+      break;
+    default:
+      return null;
+  }
+  const sessionId = providerResumeCursorSessionId(providerName, cursor);
+  return sessionId === null ? null : `${provider}:${sessionId}`;
+}
+
+/** Maps current and replaced provider cursors to every transcript session owned by a thread. */
+export function runtimeUsageSessionKeys(
+  providerName: string,
+  cursor: unknown,
+  runtimePayload: unknown | null,
+): readonly string[] {
+  const keys = [
+    runtimeUsageSessionKey(providerName, cursor),
+    ...readProviderResumeCursorHistory(runtimePayload).map((entry) =>
+      runtimeUsageSessionKey(entry.providerName, entry.resumeCursor),
+    ),
+  ];
+  return [...new Set(keys.filter((key): key is string => key !== null))];
+}
+
+export interface ThreadTranscriptTarget {
+  readonly sessionIds: ReadonlyMap<UsageProviderKind, ReadonlySet<string>>;
+  readonly worktrees: ReadonlySet<string>;
+}
+
+function threadTranscriptTarget(
+  attribution: {
+    readonly sessionToThread: ReadonlyMap<string, ThreadRef>;
+    readonly worktreeToThread: ReadonlyMap<string, ThreadRef>;
+  },
+  threadId: string,
+): ThreadTranscriptTarget {
+  const mutableSessionIds = new Map<UsageProviderKind, Set<string>>();
+  for (const [sessionKey, ref] of attribution.sessionToThread) {
+    if (ref.threadId !== threadId) continue;
+    const separator = sessionKey.indexOf(":");
+    const provider = sessionKey.slice(0, separator);
+    const sessionId = sessionKey.slice(separator + 1);
+    if (
+      separator <= 0 ||
+      sessionId.length === 0 ||
+      (provider !== "claude" && provider !== "codex" && provider !== "grok")
+    ) {
+      continue;
+    }
+    const ids = mutableSessionIds.get(provider) ?? new Set<string>();
+    ids.add(sessionId);
+    mutableSessionIds.set(provider, ids);
+  }
+  const worktrees = new Set<string>();
+  for (const [worktree, ref] of attribution.worktreeToThread) {
+    if (ref.threadId === threadId) worktrees.add(normalizeUsagePath(worktree));
+  }
+  return { sessionIds: mutableSessionIds, worktrees };
+}
+
+function cwdMatchesTarget(cwd: string, worktrees: ReadonlySet<string>): boolean {
+  if (cwd.length === 0) return false;
+  const normalizedCwd = normalizeUsagePath(cwd);
+  for (const worktree of worktrees) {
+    const prefix = worktree.endsWith("/") ? worktree : `${worktree}/`;
+    if (normalizedCwd === worktree || normalizedCwd.startsWith(prefix)) return true;
+  }
+  return false;
+}
+
+function pathMatchesSession(
+  path: Pick<Path.Path, "basename" | "dirname">,
+  filePath: string,
+  provider: UsageProviderKind,
+  sessionIds: ReadonlySet<string>,
+): boolean {
+  if (sessionIds.size === 0) return false;
+  if (provider === "grok") return sessionIds.has(path.basename(path.dirname(filePath)));
+  if (provider === "claude") {
+    const parent = path.dirname(filePath);
+    const sessionId =
+      path.basename(parent) === "subagents"
+        ? path.basename(path.dirname(parent))
+        : path.basename(filePath, ".jsonl");
+    return sessionIds.has(sessionId);
+  }
+  const name = path.basename(filePath, ".jsonl");
+  for (const sessionId of sessionIds) {
+    if (name === sessionId || name.endsWith(`-${sessionId}`)) return true;
+  }
+  return false;
+}
+
+function pathMatchesWorktree(
+  path: Pick<Path.Path, "relative">,
+  filePath: string,
+  root: string,
+  provider: UsageProviderKind,
+  worktrees: ReadonlySet<string>,
+): boolean {
+  if (worktrees.size === 0 || provider === "codex") return false;
+  const firstSegment = path.relative(root, filePath).replaceAll("\\", "/").split("/")[0];
+  if (firstSegment === undefined) return false;
+  if (provider === "claude") {
+    for (const worktree of worktrees) {
+      if (firstSegment === worktree.replaceAll(/[^A-Za-z0-9]/g, "-")) return true;
+    }
+    return false;
+  }
+  try {
+    return cwdMatchesTarget(decodeURIComponent(firstSegment), worktrees);
+  } catch {
+    return false;
+  }
+}
+
+export function transcriptFileMayMatchThread(input: {
+  readonly path: Pick<Path.Path, "basename" | "dirname" | "relative">;
+  readonly filePath: string;
+  readonly root: string;
+  readonly provider: UsageProviderKind;
+  readonly target: ThreadTranscriptTarget;
+  readonly cached?: {
+    readonly size: number;
+    readonly mtimeMs: number;
+    readonly records: readonly UsageRecord[];
+    readonly tailRecords: readonly UsageRecord[];
+  };
+  readonly size: number;
+  readonly mtimeMs: number;
+}): boolean {
+  const sessionIds = input.target.sessionIds.get(input.provider) ?? new Set<string>();
+  if (pathMatchesSession(input.path, input.filePath, input.provider, sessionIds)) return true;
+  if (
+    pathMatchesWorktree(
+      input.path,
+      input.filePath,
+      input.root,
+      input.provider,
+      input.target.worktrees,
+    )
+  ) {
+    return true;
+  }
+  const cachedRecords =
+    input.cached === undefined ? [] : [...input.cached.records, ...input.cached.tailRecords];
+  if (
+    cachedRecords.some(
+      (record) =>
+        sessionIds.has(record.sessionId) || cwdMatchesTarget(record.cwd, input.target.worktrees),
+    )
+  ) {
+    return true;
+  }
+  // Codex paths carry the session id but not the cwd. An unseen or rewritten
+  // rollout may belong to a dedicated worktree and needs one parse to decide;
+  // unchanged cached non-matches stay skipped on later filtered reads.
+  return (
+    input.provider === "codex" &&
+    input.target.worktrees.size > 0 &&
+    (input.cached === undefined ||
+      input.cached.size !== input.size ||
+      input.cached.mtimeMs !== input.mtimeMs)
+  );
 }
 
 export const layer = Layer.effect(UsageService, make);

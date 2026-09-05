@@ -1,11 +1,10 @@
 // @effect-diagnostics globalDate:off -- The active thread window ends on the viewer's current calendar day.
 import { useAtomValue } from "@effect/atom-react";
 import {
-  USAGE_THREAD_BREAKDOWN_SINCE,
   UsageDay,
   type EnvironmentId,
+  type ExecutionEnvironmentCapabilities,
   type ThreadId,
-  type UsageSummaryInput,
   type UsageThreadBreakdown,
   type UsageThreadBreakdownInput,
   type UsageThreadRow,
@@ -82,8 +81,27 @@ export function millisecondsUntilNextThreadCostDay(now = new Date()): number {
   return Math.max(1, nextDay.getTime() - now.getTime() + 1000);
 }
 
-export function supportsThreadCostBreakdown(contractVersion: number): boolean {
-  return contractVersion >= USAGE_THREAD_BREAKDOWN_SINCE;
+export function supportsThreadCostBreakdown(
+  capabilities: Pick<ExecutionEnvironmentCapabilities, "usageThreadFilter"> | null,
+): boolean | null {
+  return capabilities === null ? null : capabilities.usageThreadFilter === true;
+}
+
+interface ThreadCostState {
+  readonly breakdown: UsageThreadBreakdown | null;
+  readonly isPending: boolean;
+  readonly supported: boolean | null;
+}
+
+export function resolveThreadCostState(
+  capabilities: Pick<ExecutionEnvironmentCapabilities, "usageThreadFilter"> | null,
+  readBreakdown: () => Pick<ThreadCostState, "breakdown" | "isPending">,
+): ThreadCostState {
+  const supported = supportsThreadCostBreakdown(capabilities);
+  if (supported !== true) {
+    return { breakdown: null, isPending: supported === null, supported };
+  }
+  return { ...readBreakdown(), supported: true };
 }
 
 export function summarizeThreadCost(
@@ -163,44 +181,24 @@ export function useThreadCost(input: {
     [currentDay, input.createdAt, input.threadId],
   );
   const queries = useMemo(() => {
-    const summaryInput: UsageSummaryInput = {
-      sinceDay: requestInput.sinceDay,
-      untilDay: requestInput.untilDay,
-      timeZone: requestInput.timeZone,
-    };
-    const summaryQuery = serverEnvironment.usageSummary({
-      environmentId: input.environmentId,
-      input: summaryInput,
-    });
     const breakdownQuery = serverEnvironment.usageThreadBreakdown({
       environmentId: input.environmentId,
       input: requestInput,
     });
-    const stateAtom = Atom.make(
-      (
-        get,
-      ): {
-        readonly breakdown: UsageThreadBreakdown | null;
-        readonly isPending: boolean;
-        readonly supported: boolean | null;
-      } => {
-        const summaryResult = get(summaryQuery);
-        const summary = Option.getOrNull(AsyncResult.value(summaryResult));
-        if (summary === null) {
-          return { breakdown: null, isPending: summaryResult.waiting, supported: null };
-        }
-        if (!supportsThreadCostBreakdown(summary.contractVersion)) {
-          return { breakdown: null, isPending: false, supported: false };
-        }
-        const breakdownResult = get(breakdownQuery);
-        return {
-          breakdown: Option.getOrNull(AsyncResult.value(breakdownResult)),
-          isPending: breakdownResult.waiting,
-          supported: true,
-        };
-      },
+    const stateAtom = Atom.make((get): ThreadCostState =>
+      resolveThreadCostState(
+        get(serverEnvironment.configValueAtom(input.environmentId))?.environment.capabilities ??
+          null,
+        () => {
+          const breakdownResult = get(breakdownQuery);
+          return {
+            breakdown: Option.getOrNull(AsyncResult.value(breakdownResult)),
+            isPending: breakdownResult.waiting,
+          };
+        },
+      ),
     );
-    return { summaryQuery, breakdownQuery, stateAtom };
+    return { breakdownQuery, stateAtom };
   }, [input.environmentId, requestInput]);
   const state = useAtomValue(queries.stateAtom);
   const supported = useRef<boolean | null>(state.supported);
@@ -215,12 +213,10 @@ export function useThreadCost(input: {
     const timeout = window.setTimeout(() => {
       if (supported.current === true) {
         appAtomRegistry.refresh(queries.breakdownQuery);
-      } else if (supported.current === null) {
-        appAtomRegistry.refresh(queries.summaryQuery);
       }
     }, 750);
     return () => window.clearTimeout(timeout);
-  }, [input.refreshKey, queries.breakdownQuery, queries.summaryQuery]);
+  }, [input.refreshKey, queries.breakdownQuery]);
 
   return {
     cost:

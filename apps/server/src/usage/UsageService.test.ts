@@ -481,3 +481,97 @@ describe("shortSessionLabel", () => {
     );
   });
 });
+
+describe("runtimeUsageSessionKey", () => {
+  it("maps every provider with usage transcripts to its persisted session cursor", () => {
+    assert.strictEqual(
+      UsageService.runtimeUsageSessionKey("claudeAgent", { resume: "claude-session" }),
+      "claude:claude-session",
+    );
+    assert.strictEqual(
+      UsageService.runtimeUsageSessionKey("codex", { threadId: "codex-session" }),
+      "codex:codex-session",
+    );
+    assert.strictEqual(
+      UsageService.runtimeUsageSessionKey("grok", { schemaVersion: 1, sessionId: "grok-session" }),
+      "grok:grok-session",
+    );
+  });
+
+  it("includes provider sessions replaced by later model switches", () => {
+    assert.deepEqual(
+      UsageService.runtimeUsageSessionKeys(
+        "codex",
+        { threadId: "current-session" },
+        {
+          _t3PreviousResumeCursors: [
+            { providerName: "codex", resumeCursor: { threadId: "previous-session" } },
+          ],
+        },
+      ),
+      ["codex:current-session", "codex:previous-session"],
+    );
+  });
+
+  it("ignores providers and cursors without a usage transcript session", () => {
+    assert.isNull(UsageService.runtimeUsageSessionKey("opencode", { sessionId: "session" }));
+    assert.isNull(UsageService.runtimeUsageSessionKey("grok", { sessionId: "" }));
+    assert.isNull(UsageService.runtimeUsageSessionKey("grok", null));
+  });
+});
+
+describe("transcriptFileMayMatchThread", () => {
+  const target: UsageService.ThreadTranscriptTarget = {
+    sessionIds: new Map([
+      ["claude", new Set(["claude-session"])],
+      ["codex", new Set(["codex-session"])],
+      ["grok", new Set(["grok-session"])],
+    ]),
+    worktrees: new Set(["/work/app/.wt/thread-1"]),
+  };
+
+  const matches = (
+    provider: "claude" | "codex" | "grok",
+    filePath: string,
+    root: string,
+    cached?: { readonly size: number; readonly mtimeMs: number },
+  ) =>
+    UsageService.transcriptFileMayMatchThread({
+      path: NodePath,
+      provider,
+      filePath,
+      root,
+      target,
+      size: 10,
+      mtimeMs: 20,
+      ...(cached === undefined ? {} : { cached: { ...cached, records: [], tailRecords: [] } }),
+    });
+
+  it("selects provider files from current and historic session ids", () => {
+    assert.isTrue(matches("claude", "/claude/project/claude-session.jsonl", "/claude"));
+    assert.isTrue(
+      matches("claude", "/claude/project/claude-session/subagents/agent-a.jsonl", "/claude"),
+    );
+    assert.isTrue(
+      matches("codex", "/codex/2026/09/rollout-2026-09-05T12-00-00-codex-session.jsonl", "/codex"),
+    );
+    assert.isTrue(matches("grok", "/grok/cwd/grok-session/updates.jsonl", "/grok"));
+    assert.isFalse(matches("claude", "/claude/project/other-session.jsonl", "/claude"));
+  });
+
+  it("selects Claude and Grok files by their encoded dedicated worktree", () => {
+    assert.isTrue(
+      matches("claude", "/claude/-work-app--wt-thread-1/legacy-session.jsonl", "/claude"),
+    );
+    assert.isTrue(
+      matches("grok", "/grok/%2Fwork%2Fapp%2F.wt%2Fthread-1/legacy-session/updates.jsonl", "/grok"),
+    );
+  });
+
+  it("parses an unknown or rewritten Codex rollout once for worktree attribution", () => {
+    const path = "/codex/2026/09/rollout-2026-09-05T12-00-00-other-session.jsonl";
+    assert.isTrue(matches("codex", path, "/codex"));
+    assert.isFalse(matches("codex", path, "/codex", { size: 10, mtimeMs: 20 }));
+    assert.isTrue(matches("codex", path, "/codex", { size: 9, mtimeMs: 19 }));
+  });
+});

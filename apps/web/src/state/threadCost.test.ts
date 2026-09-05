@@ -1,14 +1,10 @@
-import {
-  ThreadId,
-  USAGE_THREAD_BREAKDOWN_SINCE,
-  UsageDay,
-  type UsageThreadRow,
-} from "@t3tools/contracts";
+import { ThreadId, UsageDay, type UsageThreadRow } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   makeThreadCostInput,
   millisecondsUntilNextThreadCostDay,
+  resolveThreadCostState,
   summarizeThreadCost,
   supportsThreadCostBreakdown,
 } from "./threadCost";
@@ -56,9 +52,33 @@ describe("thread cost state", () => {
     expect(delay).toBeLessThan(32_000);
   });
 
-  it("only enables the thread RPC for servers that advertise its contract version", () => {
-    expect(supportsThreadCostBreakdown(USAGE_THREAD_BREAKDOWN_SINCE - 1)).toBe(false);
-    expect(supportsThreadCostBreakdown(USAGE_THREAD_BREAKDOWN_SINCE)).toBe(true);
+  it("only enables the thread RPC when the server advertises pre-cap filtering", () => {
+    expect(supportsThreadCostBreakdown(null)).toBeNull();
+    expect(supportsThreadCostBreakdown({})).toBe(false);
+    expect(supportsThreadCostBreakdown({ usageThreadFilter: true })).toBe(true);
+  });
+
+  it("does not read the breakdown query while the capability is absent or loading", () => {
+    let queryReads = 0;
+    const readBreakdown = () => {
+      queryReads += 1;
+      return { breakdown: null, isPending: false };
+    };
+
+    expect(resolveThreadCostState(null, readBreakdown)).toEqual({
+      breakdown: null,
+      isPending: true,
+      supported: null,
+    });
+    expect(resolveThreadCostState({}, readBreakdown)).toEqual({
+      breakdown: null,
+      isPending: false,
+      supported: false,
+    });
+    expect(queryReads).toBe(0);
+
+    resolveThreadCostState({ usageThreadFilter: true }, readBreakdown);
+    expect(queryReads).toBe(1);
   });
 
   it("combines provider rows and keeps provider-reported cost visible", () => {
