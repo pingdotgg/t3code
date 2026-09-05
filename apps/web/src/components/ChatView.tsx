@@ -2971,21 +2971,25 @@ export default function ChatView(props: ChatViewProps) {
     }
     return byMessageId;
   }, [turnDiffSummaries]);
-  const revertTurnCountByUserMessageId = useMemo(
-    () =>
-      buildRevertTurnCountByUserMessageId({
+  const lastRevertTurnCountRef = useRef<Map<MessageId, number> | null>(null);
+  const revertTurnCountByUserMessageId = useMemo(() => {
+    const next = buildRevertTurnCountByUserMessageId(
+      {
         supportsConversationRollback,
         timelineEntries,
         turnDiffSummaryByAssistantMessageId,
         inferredCheckpointTurnCountByTurnId,
-      }),
-    [
-      supportsConversationRollback,
-      inferredCheckpointTurnCountByTurnId,
-      timelineEntries,
-      turnDiffSummaryByAssistantMessageId,
-    ],
-  );
+      },
+      lastRevertTurnCountRef.current,
+    );
+    lastRevertTurnCountRef.current = next;
+    return next;
+  }, [
+    supportsConversationRollback,
+    inferredCheckpointTurnCountByTurnId,
+    timelineEntries,
+    turnDiffSummaryByAssistantMessageId,
+  ]);
 
   const gitCwd = activeProject
     ? projectScriptCwd({
