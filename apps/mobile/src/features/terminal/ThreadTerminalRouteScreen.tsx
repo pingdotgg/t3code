@@ -353,11 +353,13 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
       terminalId,
     ],
   );
+  const observingTerminal =
+    !canOperateTerminal && canReadTerminal && selectedThread !== null && hasTerminalTarget;
   const terminal = useAttachedTerminalSession({
     environmentId: selectedThread?.environmentId ?? null,
     terminal: canOperateTerminal
       ? terminalAttachInput
-      : canReadTerminal && selectedThread && hasTerminalTarget
+      : observingTerminal
         ? { threadId: selectedThread.id, terminalId }
         : null,
   });
@@ -870,6 +872,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
   useTerminalLifecycle({
     terminalKey,
     canOperate: canOperateTerminal,
+    observing: observingTerminal,
     attached: terminalAttachInput !== null && selectedThread !== null,
     terminal,
     reopen: async () => {
