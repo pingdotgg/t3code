@@ -180,7 +180,11 @@ import {
   snoozeWakeLabel,
   type SnoozePreset,
 } from "./Sidebar.snooze";
-import { ProjectFavicon, useProjectFaviconColor } from "./ProjectFavicon";
+import { ProjectFavicon } from "./ProjectFavicon";
+import {
+  SidebarProjectFaviconColorResolvers,
+  type SidebarProjectFaviconColorSource,
+} from "./SidebarProjectFaviconColors";
 import { ProviderInstanceIcon } from "./chat/ProviderInstanceIcon";
 import { getTriggerDisplayModelLabel } from "./chat/providerIconUtils";
 import {
@@ -770,6 +774,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   environmentMachine: EnvironmentMachineKind;
   projectCwd: string | null;
   projectFaviconPath: string | null;
+  projectFaviconColor: string | null;
   projectIcon: ProjectIconOverride | null;
   projectTitle: string | null;
   projectDisplayName: string | null;
@@ -880,12 +885,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   // switching sidebars must not light up every historical thread as unread.
   const isUnread = hasUnseenCompletion({ ...thread, lastVisitedAt });
   const status = resolveSidebarThreadStatus(thread);
-  const projectFaviconColor = useProjectFaviconColor({
-    environmentId: thread.environmentId,
-    cwd: props.projectCwd ?? "",
-    faviconPath: props.projectFaviconPath,
-    enabled: props.projectIcon === null,
-  });
+  const projectFaviconColor = props.projectFaviconColor;
   const isInFlight =
     status === "working" || status === "monitoring" || status === "approval" || status === "input";
   // A woken thread reappears at its original position (the sort is
@@ -2097,6 +2097,31 @@ export default function Sidebar() {
       ),
     [projects],
   );
+  const projectFaviconColorSources = useMemo<SidebarProjectFaviconColorSource[]>(
+    () =>
+      projects.map((project) => ({
+        projectKey: `${project.environmentId}:${project.id}`,
+        environmentId: project.environmentId,
+        cwd: project.workspaceRoot,
+        faviconPath: project.faviconPath,
+        projectIcon: project.projectIcon,
+      })),
+    [projects],
+  );
+  const [projectFaviconColorByKey, setProjectFaviconColorByKey] = useState<
+    ReadonlyMap<string, string>
+  >(() => new Map());
+  const updateProjectFaviconColor = useCallback((projectKey: string, color: string | null) => {
+    setProjectFaviconColorByKey((current) => {
+      if (color === null ? !current.has(projectKey) : current.get(projectKey) === color) {
+        return current;
+      }
+      const next = new Map(current);
+      if (color === null) next.delete(projectKey);
+      else next.set(projectKey, color);
+      return next;
+    });
+  }, []);
   // Icons use saved titles. Group labels can include a repository owner or a different title.
   const projectTitleByKey = useMemo(
     () =>
@@ -3650,6 +3675,10 @@ export default function Sidebar() {
   return (
     <>
       <SidebarChromeHeader isElectron={isElectron} />
+      <SidebarProjectFaviconColorResolvers
+        sources={projectFaviconColorSources}
+        onColor={updateProjectFaviconColor}
+      />
       <SidebarContent
         className="gap-0"
         fixedHeader={
@@ -4075,6 +4104,11 @@ export default function Sidebar() {
                         }
                         projectFaviconPath={
                           projectFaviconPathByKey.get(
+                            `${thread.environmentId}:${thread.projectId}`,
+                          ) ?? null
+                        }
+                        projectFaviconColor={
+                          projectFaviconColorByKey.get(
                             `${thread.environmentId}:${thread.projectId}`,
                           ) ?? null
                         }
