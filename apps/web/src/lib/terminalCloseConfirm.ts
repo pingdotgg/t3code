@@ -8,14 +8,11 @@ export function isTerminalCloseConfirmPending(): boolean {
 }
 
 /**
- * Confirmation for individual terminal close actions: drawer buttons, panel
- * buttons, the `terminal.close` keybinding, and closing a terminal surface from
- * the tab strip. Auto-exit cleanup and bulk tab closes skip this path and close
- * directly.
+ * Confirmation for terminal close actions. Labels exclude confirmed-idle
+ * terminals; running terminals and those awaiting metadata require confirmation.
  */
-export async function confirmTerminalClose(
-  labels: readonly [string, ...string[]],
-): Promise<boolean> {
+export async function confirmTerminalClose(labels: readonly string[]): Promise<boolean> {
+  if (labels.length === 0) return true;
   const localApi = readLocalApi();
   if (!localApi) return true;
   pendingConfirmations += 1;

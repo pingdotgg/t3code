@@ -121,6 +121,15 @@ export function selectKnownTerminalSessions(
   return sessions;
 }
 
+export function selectIdleTerminalIds(
+  sessions: ReadonlyArray<KnownTerminalSession>,
+): ReadonlyArray<string> {
+  // Only confirmed-idle IDs may skip confirmation; client-created IDs can lead metadata.
+  return sessions
+    .filter((session) => session.state.hasRunningSubprocess === false)
+    .map((session) => session.target.terminalId);
+}
+
 export function useAttachedTerminalSession(input: {
   readonly environmentId: EnvironmentId | null;
   readonly terminal: TerminalAttachInput | null;

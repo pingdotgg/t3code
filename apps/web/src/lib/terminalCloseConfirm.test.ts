@@ -39,6 +39,11 @@ describe("terminal close confirmation", () => {
     expect(isTerminalCloseConfirmPending()).toBe(false);
   });
 
+  it("closes without prompting when no process is running", async () => {
+    await expect(confirmTerminalClose([])).resolves.toBe(true);
+    expect(confirmMock).not.toHaveBeenCalled();
+  });
+
   it("clears pending state and resolves false when the dialog rejects", async () => {
     let reject: (reason?: unknown) => void = () => undefined;
     confirmMock.mockImplementation(

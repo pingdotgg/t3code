@@ -1012,6 +1012,7 @@ interface ThreadTerminalDrawerProps {
   onHeightChange: (height: number) => void;
   onAddTerminalContext: (selection: TerminalContextSelection) => void;
   keybindings: ResolvedKeybindingsConfig;
+  idleTerminalIds: ReadonlyArray<string>;
   /** Prefer server-provided tab titles when present (e.g. active subprocess name). */
   terminalLabelsById?: ReadonlyMap<string, string>;
   /** Prefer per-session launch locations when the server already knows a terminal. */
@@ -1073,6 +1074,7 @@ export default function ThreadTerminalDrawer({
   onHeightChange,
   onAddTerminalContext,
   keybindings,
+  idleTerminalIds,
   terminalLabelsById,
   terminalLaunchLocationsById,
 }: ThreadTerminalDrawerProps) {
@@ -1280,11 +1282,13 @@ export default function ThreadTerminalDrawer({
   const confirmCloseTerminal = useCallback(
     (terminalId: string) => {
       const label = terminalLabelById.get(terminalId) ?? getTerminalLabel(terminalId);
-      void confirmTerminalClose([label]).then((confirmed) => {
-        if (confirmed) onCloseTerminal(terminalId);
-      });
+      void confirmTerminalClose(idleTerminalIds.includes(terminalId) ? [] : [label]).then(
+        (confirmed) => {
+          if (confirmed) onCloseTerminal(terminalId);
+        },
+      );
     },
-    [onCloseTerminal, terminalLabelById],
+    [onCloseTerminal, idleTerminalIds, terminalLabelById],
   );
 
   useEffect(() => {
