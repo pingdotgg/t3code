@@ -1954,17 +1954,6 @@ const make = Effect.gen(function* () {
               pendingRequestIds.add(requestId);
             } else if (activity.kind === "user-input.resolved") {
               pendingRequestIds.delete(requestId);
-            } else if (activity.kind === "provider.user-input.respond.failed") {
-              const detail =
-                typeof payload?.detail === "string" ? payload.detail.toLowerCase() : "";
-              if (
-                detail.includes("stale pending user-input request") ||
-                detail.includes("unknown pending user-input request") ||
-                detail.includes("unknown pending user input request") ||
-                detail.includes("unknown pending codex user input request")
-              ) {
-                pendingRequestIds.delete(requestId);
-              }
             }
           }
           // A terminal turn cannot accept native callback answers. Message-mode
