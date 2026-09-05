@@ -143,6 +143,7 @@ import {
   type TurnDiffSummary,
 } from "../types";
 import { useTheme } from "../hooks/useTheme";
+import { useT3ProjectFileState } from "../hooks/useT3ProjectFileScripts";
 import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
 import { isCommandPaletteOpen } from "../commandPaletteBus";
@@ -362,6 +363,7 @@ import {
   deriveComposerSendState,
   dismissBranchMismatchForSession,
   hasEnvironmentReconnectWarningGraceElapsed,
+  isDiffSurfaceAvailable,
   latestTurnStartFailureId,
   scheduleEnvironmentReconnectWarning,
   hasServerAcknowledgedLocalDispatch,
@@ -3074,6 +3076,9 @@ export default function ChatView(props: ChatViewProps) {
   const activeProjectCwd = activeProject?.workspaceRoot ?? null;
   const activeThreadWorktreePath = activeThread?.worktreePath ?? null;
   const activeWorkspaceRoot = activeThreadWorktreePath ?? activeProjectCwd ?? undefined;
+  const projectFile = useT3ProjectFileState(activeThread?.environmentId ?? null, activeProjectCwd);
+  const hasConfiguredDiffRepositories =
+    activeThreadWorktreePath === null && (projectFile.file?.repositories?.length ?? 0) > 0;
   const activeTerminalLaunchContext =
     terminalUiLaunchContext?.threadId === activeThreadId ? terminalUiLaunchContext : null;
   // Default true while loading to avoid toolbar flicker.
@@ -3735,11 +3740,16 @@ export default function ChatView(props: ChatViewProps) {
     },
     [activeThreadRef, openPreview],
   );
+  const diffSurfaceAvailable = isDiffSurfaceAvailable({
+    isServerThread,
+    isGitRepo,
+    hasConfiguredRepositories: hasConfiguredDiffRepositories,
+  });
   const addDiffSurface = useCallback(() => {
-    if (!activeThreadRef || !isServerThread || !isGitRepo) return;
+    if (!activeThreadRef || !diffSurfaceAvailable) return;
     useRightPanelStore.getState().open(activeThreadRef, "diff");
     onDiffPanelOpen?.();
-  }, [activeThreadRef, isGitRepo, isServerThread, onDiffPanelOpen]);
+  }, [activeThreadRef, diffSurfaceAvailable, onDiffPanelOpen]);
   const addFilesSurface = useCallback(() => {
     if (!activeThreadRef || !activeProject) return;
     useRightPanelStore.getState().open(activeThreadRef, "files");
@@ -8198,7 +8208,7 @@ export default function ChatView(props: ChatViewProps) {
           onAddAgents={addAgentsSurface}
           browserAvailable={isPreviewSupportedInRuntime()}
           terminalAvailable={activeProject !== null}
-          diffAvailable={isServerThread && isGitRepo}
+          diffAvailable={diffSurfaceAvailable}
           filesAvailable={activeProject !== null}
           pullRequestAvailable={pullRequestSurfaceAvailable}
           agentsAvailable
@@ -8248,7 +8258,7 @@ export default function ChatView(props: ChatViewProps) {
             onAddAgents={addAgentsSurface}
             browserAvailable={isPreviewSupportedInRuntime()}
             terminalAvailable={activeProject !== null}
-            diffAvailable={isServerThread && isGitRepo}
+            diffAvailable={diffSurfaceAvailable}
             filesAvailable={activeProject !== null}
             pullRequestAvailable={pullRequestSurfaceAvailable}
             agentsAvailable
