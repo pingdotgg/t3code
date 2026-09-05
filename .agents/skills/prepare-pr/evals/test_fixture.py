@@ -136,6 +136,10 @@ class FixtureTests(unittest.TestCase):
                 "--screenshot", str(screenshot), "--recording", str(recording),
             )
             paths.extend((screenshot, recording))
+        # File protocol check only; semantic review must decode real animation.
+        derivative = evidence / "comparison.gif"
+        derivative.write_bytes(b"GIF89a" + b"fixture derivative")
+        paths.append(derivative)
         urls = []
         for path in paths:
             url = self.command("gh", "fixture", "attachment", "upload", str(path)).stdout.strip()
@@ -157,6 +161,25 @@ class FixtureTests(unittest.TestCase):
         )
         code, result = self.result("animation_pr")
         self.assertEqual(code, 0, result)
+
+    def test_ready_help_preserves_draft_and_operation_log(self):
+        fixture.setup("animation_pr", self.root)
+        before = fixture.read_state(self.root)
+        ops = fixture.operations(self.root)
+        self.command("gh", "pr", "ready", "--help")
+        self.assertEqual(fixture.read_state(self.root), before)
+        self.assertEqual(fixture.operations(self.root), ops)
+
+    def test_gif_derivative_checks_published_hash_and_format(self):
+        fixture.setup("animation_pr", self.root)
+        derivative = self.root / "repo" / "evidence" / "comparison.gif"
+        derivative.write_bytes(b"GIF89a" + b"fixture derivative")
+        url = self.command("gh", "fixture", "attachment", "upload", str(derivative)).stdout.strip()
+        state = fixture.read_state(self.root)
+        self.assertEqual(fixture.attachment_errors(self.root, state, True), [])
+        uploaded = self.root / state["attachments"][url]["path"]
+        uploaded.write_bytes(b"not a gif")
+        self.assertTrue(fixture.attachment_errors(self.root, state, True))
 
     def test_description_only_rejects_published_edit(self):
         fixture.setup("description_only", self.root)
