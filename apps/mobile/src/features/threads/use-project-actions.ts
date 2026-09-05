@@ -5,6 +5,7 @@ import { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { mapAtomCommandResult } from "@t3tools/client-runtime/state/runtime";
 import {
   AuthOrchestrationOperateScope,
+  EnvironmentAuthorizationError,
   ThreadId,
   type ModelSelection,
   type ProviderInteractionMode,
@@ -52,7 +53,10 @@ export function useCreateProjectThread() {
       readonly turnMetadata?: TurnCommandMetadata;
     }) => {
       if (!readEnvironmentScope(input.project.environmentId, AuthOrchestrationOperateScope)) {
-        const error = new Error("This connection cannot start tasks.");
+        const error = new EnvironmentAuthorizationError({
+          message: "This connection cannot start tasks.",
+          requiredScope: AuthOrchestrationOperateScope,
+        });
         setPendingConnectionError(error.message);
         return AsyncResult.failure(Cause.fail(error));
       }
@@ -136,7 +140,10 @@ export function useCreateProjectThread() {
       );
 
       if (!readEnvironmentScope(input.project.environmentId, AuthOrchestrationOperateScope)) {
-        const error = new Error("This connection cannot start tasks.");
+        const error = new EnvironmentAuthorizationError({
+          message: "This connection cannot start tasks.",
+          requiredScope: AuthOrchestrationOperateScope,
+        });
         setPendingConnectionError(error.message);
         return AsyncResult.failure(Cause.fail(error));
       }

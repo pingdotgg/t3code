@@ -1,10 +1,12 @@
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import {
   AuthOrchestrationOperateScope,
+  EnvironmentAuthorizationError,
   EnvironmentId,
   ProjectId,
   ProviderInstanceId,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -100,7 +102,12 @@ describe("new task permissions", () => {
     state.allowed.add(primary);
     const create = useCreateProjectThread();
 
-    expect((await create(input()))._tag).toBe("Failure");
+    const result = await create(input());
+    expect(result._tag).toBe("Failure");
+    if (!AsyncResult.isFailure(result)) throw new Error("Expected permission denial");
+    const error = Cause.squash<unknown>(result.cause);
+    expect(error).toBeInstanceOf(EnvironmentAuthorizationError);
+    expect(error).toMatchObject({ requiredScope: AuthOrchestrationOperateScope });
     expect(state.prepare).not.toHaveBeenCalled();
     expect(state.start).not.toHaveBeenCalled();
     expect(state.reportError).toHaveBeenCalledWith("This connection cannot start tasks.");
@@ -129,7 +136,12 @@ describe("new task permissions", () => {
     });
     const create = useCreateProjectThread();
 
-    expect((await create(input()))._tag).toBe("Failure");
+    const result = await create(input());
+    expect(result._tag).toBe("Failure");
+    if (!AsyncResult.isFailure(result)) throw new Error("Expected permission denial");
+    const error = Cause.squash<unknown>(result.cause);
+    expect(error).toBeInstanceOf(EnvironmentAuthorizationError);
+    expect(error).toMatchObject({ requiredScope: AuthOrchestrationOperateScope });
     expect(state.prepare).toHaveBeenCalledTimes(1);
     expect(state.start).not.toHaveBeenCalled();
     expect(state.cleanup).not.toHaveBeenCalled();
@@ -140,7 +152,12 @@ describe("new task permissions", () => {
     const create = useCreateProjectThread();
     state.allowed.delete(secondary);
 
-    expect((await create(input()))._tag).toBe("Failure");
+    const result = await create(input());
+    expect(result._tag).toBe("Failure");
+    if (!AsyncResult.isFailure(result)) throw new Error("Expected permission denial");
+    const error = Cause.squash<unknown>(result.cause);
+    expect(error).toBeInstanceOf(EnvironmentAuthorizationError);
+    expect(error).toMatchObject({ requiredScope: AuthOrchestrationOperateScope });
     expect(state.prepare).not.toHaveBeenCalled();
     state.allowed.add(secondary);
     expect((await create(input()))._tag).toBe("Success");
