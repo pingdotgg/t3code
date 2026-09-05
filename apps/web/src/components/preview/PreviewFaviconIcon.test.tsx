@@ -1,51 +1,43 @@
-import { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it, vi } from "vite-plus/test";
+import { act } from "react";
+import { create, type ReactTestRenderer } from "react-test-renderer";
+import { afterEach, expect, it, vi } from "vite-plus/test";
 
-const mocks = vi.hoisted(() => ({ favicon: null as string | null }));
+vi.mock("~/browserFaviconStore", () => ({ useFaviconForThreadUrl: () => null }));
 
-vi.mock("~/browserFaviconStore", () => ({
-  useFaviconForThreadUrl: () => mocks.favicon,
-}));
+import { FaviconImage } from "./PreviewFaviconIcon";
 
-import { FaviconImage, PreviewFaviconIcon, selectFaviconSource } from "./PreviewFaviconIcon";
+let renderer: ReactTestRenderer | undefined;
 
-const threadRef = {
-  environmentId: EnvironmentId.make("env-1"),
-  threadId: ThreadId.make("thread-1"),
-};
+afterEach(async () => {
+  await act(async () => renderer?.unmount());
+  vi.unstubAllGlobals();
+});
 
-describe("preview favicon image", () => {
-  it("renders a captured source before later fallback sources", () => {
-    expect(
-      renderToStaticMarkup(
-        <FaviconImage
-          sources={["data:image/png;base64,AAAA", "https://public.example/icon"]}
-          fallback={<span>fallback</span>}
-        />,
-      ),
-    ).toContain('src="data:image/png;base64,AAAA"');
-    const captured = "data:image/png;base64,AAAA";
-    const google = "https://public.example/icon";
-    expect(selectFaviconSource([captured, google], new Set())).toBe(captured);
-    expect(selectFaviconSource([captured, google], new Set([captured]))).toBe(google);
-    expect(selectFaviconSource([captured, google], new Set([captured, google]))).toBeNull();
-    expect(selectFaviconSource(["data:image/png;base64,BBBB", google], new Set([captured]))).toBe(
-      "data:image/png;base64,BBBB",
+it("falls through failed favicon sources and retries when the source list changes", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  const captured = "data:image/png;base64,AAAA";
+  const remote = "https://public.example/icon";
+  await act(async () => {
+    renderer = create(
+      <FaviconImage sources={[captured, remote]} fallback={<span>fallback</span>} />,
     );
   });
+  expect(renderer!.root.findByType("img").props.src).toBe(captured);
 
-  it("uses a stored project icon or falls back to the browser mockup", () => {
-    mocks.favicon = null;
-    const html = renderToStaticMarkup(
-      <PreviewFaviconIcon threadRef={threadRef} url="http://localhost:3000/" />,
+  await act(async () => renderer!.root.findByType("img").props.onError());
+  expect(renderer!.root.findByType("img").props.src).toBe(remote);
+
+  await act(async () => renderer!.root.findByType("img").props.onError());
+  expect(renderer!.root.findAllByType("img")).toHaveLength(0);
+  expect(renderer!.root.findByType("span").children).toEqual(["fallback"]);
+
+  await act(async () => {
+    renderer!.update(
+      <FaviconImage
+        sources={[captured, "https://public.example/new-icon"]}
+        fallback={<span>fallback</span>}
+      />,
     );
-    expect(html).not.toContain("<img");
-    expect(html).toContain("rounded-[5px]");
-    mocks.favicon = "data:image/png;base64,AAAA";
-    const faviconHtml = renderToStaticMarkup(
-      <PreviewFaviconIcon threadRef={threadRef} url="http://localhost:3000/" />,
-    );
-    expect(faviconHtml).toContain('src="data:image/png;base64,AAAA"');
   });
+  expect(renderer!.root.findByType("img").props.src).toBe(captured);
 });
