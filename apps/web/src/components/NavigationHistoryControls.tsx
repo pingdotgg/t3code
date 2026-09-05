@@ -42,11 +42,7 @@ function NavigationButton(props: {
           <Button
             aria-disabled={!props.available}
             aria-label={props.label}
-            className={cn(
-              WORKSPACE_TITLEBAR_CONTROL_CLASS,
-              "aria-disabled:cursor-not-allowed aria-disabled:opacity-64 aria-disabled:hover:bg-transparent",
-              props.className,
-            )}
+            className={cn(WORKSPACE_TITLEBAR_CONTROL_CLASS, props.className)}
             onClick={() => {
               if (props.available) props.onPress();
             }}
