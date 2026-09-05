@@ -15,6 +15,7 @@ import {
   type ScopedProjectRef,
   type ScopedThreadRef,
   type ThreadId,
+  type ThreadLinkedPullRequest,
   type TurnId,
 } from "@t3tools/contracts";
 import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
@@ -105,6 +106,24 @@ export function shouldOpenProactivePullRequest(
   targetKey: string | null,
 ): boolean {
   return previousTargetKey !== undefined && targetKey !== null && targetKey !== previousTargetKey;
+}
+
+/** Follow a changed server link only when the panel still shows the previous linked PR. */
+export function shouldRetargetThreadPullRequestPanel(
+  previous: ThreadLinkedPullRequest | null,
+  current: ThreadLinkedPullRequest | null,
+  surface: RightPanelSurface | null,
+): boolean {
+  if (previous === null || current === null || surface?.kind !== "pull-request") return false;
+  const previousRepository = previous.repository.toLowerCase();
+  return (
+    (previous.projectId !== current.projectId ||
+      previousRepository !== current.repository.toLowerCase() ||
+      previous.number !== current.number) &&
+    surface.projectId === previous.projectId &&
+    surface.repository.toLowerCase() === previousRepository &&
+    surface.number === previous.number
+  );
 }
 
 export function shouldOpenProactiveTurnDiff(input: {

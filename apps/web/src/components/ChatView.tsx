@@ -15,6 +15,7 @@ import {
   type ResolvedKeybindingsConfig,
   type ScopedThreadRef,
   type ThreadId,
+  type ThreadLinkedPullRequest,
   type TurnId,
   type KeybindingCommand,
   OrchestrationThreadActivity,
@@ -178,7 +179,7 @@ import { isThreadOwnPullRequest } from "./pullRequest/pullRequestDetail.logic";
 import { PullRequestDetailPanel } from "./pullRequest/PullRequestDetailPanel";
 import { PullRequestDetailGhost } from "./pullRequest/PullRequestGhosts";
 import { PullRequestsUnavailableState } from "./pullRequest/PullRequestsUnavailableState";
-import { RightPanelTabs, type PullRequestTabStatus } from "./RightPanelTabs";
+import { RightPanelTabs } from "./RightPanelTabs";
 import { AgentsPanel } from "./AgentsPanel";
 import {
   deriveAgentPanelModel,
@@ -328,11 +329,6 @@ import {
   shouldShowThreadErrorBanner,
   ThreadErrorBanner,
 } from "./chat/ThreadErrorBanner";
-import {
-  resolveDisplayedThreadPr,
-  threadChangeRequestSnapshotsAtom,
-  useLinkedThreadPullRequest,
-} from "./ThreadStatusIndicators";
 import type { ComposerBannerStackItem } from "./chat/ComposerBannerStack";
 import { ComposerSurface } from "./chat/ComposerSurface";
 import {
@@ -372,6 +368,7 @@ import {
   shouldShowBranchMismatchBanner,
   shouldShowPlanFollowUpPrompt,
   shouldOpenProactivePullRequest,
+  shouldRetargetThreadPullRequestPanel,
   shouldOpenProactiveTurnDiff,
   shouldRenderPreviewMiniPlayer,
   getStartedThreadModelChangeBlockReason,
@@ -1824,7 +1821,6 @@ export default function ChatView(props: ChatViewProps) {
   );
   const activeThreadKey = activeThreadRef ? scopedThreadKey(activeThreadRef) : null;
   const activeThreadShell = useThreadShell(isServerThread ? activeThreadRef : null);
-  const changeRequestSnapshotByKey = useAtomValue(threadChangeRequestSnapshotsAtom);
   const [timelineAnchor, setTimelineAnchor] = useState<{
     readonly threadKey: string | null;
     readonly messageId: MessageId | null;
@@ -1843,10 +1839,6 @@ export default function ChatView(props: ChatViewProps) {
   const activeRightPanelSurface = useRightPanelStore((state) =>
     selectActiveRightPanelSurface(state.byThreadKey, activeThreadRef),
   );
-  const refreshVcsStatus = useAtomCommand(vcsEnvironment.refreshStatus, { reportFailure: false });
-  const sidebarPrRefreshKeyRef = useRef<string | null>(null);
-  const threadPrRelinkKeysRef = useRef(new Map<string, string>());
-  const threadPrRelinkWriteRef = useRef(Promise.resolve());
   const activePreviewState = useThreadPreviewState(activeThreadRef);
   const activePreviewServerEpoch = activePreviewState.serverEpoch;
   const resolvePreviewRuntimeTabId = useMemo(
@@ -3759,52 +3751,11 @@ export default function ChatView(props: ChatViewProps) {
     },
     [activeProject, activeThreadRef],
   );
-  // The thread's own change request, placed against the project it belongs to. Without a
-  // project there is nothing to resolve it against, so the caller falls back to the browser.
-  const persistedLinkedThreadPullRequest = isServerThread
-    ? (activeThreadShell?.linkedPullRequest ?? activeThread?.linkedPullRequest ?? null)
-    : (activeThread?.linkedPullRequest ?? null);
-  const activeProjectRepository = activeProject?.repositoryIdentity?.displayName ?? null;
-  const persistedLinkedThreadPullRequestStatus = useLinkedThreadPullRequest(
-    activeThreadRef?.environmentId ?? null,
-    persistedLinkedThreadPullRequest,
-  );
-  const replacementLinkedThreadPullRequest = useMemo(() => {
-    const detected = gitStatusQuery.data?.pr;
-    const threadBranch = activeThread?.branch;
-    const projectId = activeProject?.id;
-    if (
-      persistedLinkedThreadPullRequest === null ||
-      (persistedLinkedThreadPullRequestStatus?.pr.state !== "merged" &&
-        persistedLinkedThreadPullRequestStatus?.pr.state !== "closed") ||
-      gitStatusQuery.data?.refName !== threadBranch ||
-      detected?.state !== "open" ||
-      detected.headRef !== threadBranch ||
-      projectId === undefined ||
-      activeProjectRepository === null ||
-      (persistedLinkedThreadPullRequest.projectId === projectId &&
-        persistedLinkedThreadPullRequest.repository.toLowerCase() ===
-          activeProjectRepository.toLowerCase() &&
-        persistedLinkedThreadPullRequest.number === detected.number)
-    ) {
-      return null;
-    }
-    return {
-      projectId,
-      repository: activeProjectRepository,
-      number: detected.number,
-      url: detected.url,
-    };
-  }, [
-    activeProject?.id,
-    activeProjectRepository,
-    activeThread?.branch,
-    gitStatusQuery.data,
-    persistedLinkedThreadPullRequest,
-    persistedLinkedThreadPullRequestStatus?.pr.state,
-  ]);
+  // The shell carries server PR updates even while thread detail is still loading.
+  const activeThreadMetadata = activeThreadShell ?? activeThread;
   const linkedThreadPullRequest =
-    replacementLinkedThreadPullRequest ?? persistedLinkedThreadPullRequest;
+    activeThreadMetadata?.linkedPullRequest ?? activeThreadMetadata?.branchPullRequest ?? null;
+  const activeProjectRepository = activeProject?.repositoryIdentity?.displayName ?? null;
   const linkedThreadPullRequestKey = linkedThreadPullRequest
     ? JSON.stringify([
         linkedThreadPullRequest.projectId,
@@ -3812,86 +3763,31 @@ export default function ChatView(props: ChatViewProps) {
         linkedThreadPullRequest.number,
       ])
     : null;
-  const threadRepository = linkedThreadPullRequest?.repository ?? activeProjectRepository;
-  const openThreadPullRequest = useCallback(
-    (number: number) => {
-      if (!supportsPullRequests || !activeThreadRef) {
-        return;
-      }
-      const projectId = linkedThreadPullRequest?.projectId ?? activeProject?.id;
-      const repository = linkedThreadPullRequest?.repository ?? activeProjectRepository;
-      if (projectId === undefined || repository === null) return;
-      useRightPanelStore.getState().openPullRequest(activeThreadRef, {
-        projectId,
-        repository,
-        number,
-      });
-    },
-    [
-      activeProject,
-      activeProjectRepository,
-      activeThreadRef,
-      linkedThreadPullRequest,
-      supportsPullRequests,
-    ],
-  );
+  const observedThreadPullRequestRef = useRef<{
+    readonly threadKey: string;
+    readonly reference: ThreadLinkedPullRequest | null;
+  } | null>(null);
   useEffect(() => {
     if (!isServerThread || activeThreadKey === null || activeThreadRef === null) {
+      observedThreadPullRequestRef.current = null;
       return;
     }
-    if (replacementLinkedThreadPullRequest === null) {
-      threadPrRelinkKeysRef.current.delete(activeThreadKey);
-      return;
-    }
-    const relinkKey = `${replacementLinkedThreadPullRequest.projectId}:${replacementLinkedThreadPullRequest.repository}#${replacementLinkedThreadPullRequest.number}`;
-    if (threadPrRelinkKeysRef.current.get(activeThreadKey) === relinkKey) return;
-    threadPrRelinkKeysRef.current.set(activeThreadKey, relinkKey);
+    const previous = observedThreadPullRequestRef.current;
+    observedThreadPullRequestRef.current = {
+      threadKey: activeThreadKey,
+      reference: linkedThreadPullRequest,
+    };
+    if (previous?.threadKey !== activeThreadKey || linkedThreadPullRequest === null) return;
     const openSurface = selectActiveRightPanelSurface(
       useRightPanelStore.getState().byThreadKey,
       activeThreadRef,
     );
     if (
-      openSurface?.kind === "pull-request" &&
-      persistedLinkedThreadPullRequest !== null &&
-      openSurface.projectId === persistedLinkedThreadPullRequest.projectId &&
-      openSurface.repository.toLowerCase() ===
-        persistedLinkedThreadPullRequest.repository.toLowerCase() &&
-      openSurface.number === persistedLinkedThreadPullRequest.number
+      shouldRetargetThreadPullRequestPanel(previous.reference, linkedThreadPullRequest, openSurface)
     ) {
-      useRightPanelStore
-        .getState()
-        .openPullRequest(activeThreadRef, replacementLinkedThreadPullRequest);
+      useRightPanelStore.getState().openPullRequest(activeThreadRef, linkedThreadPullRequest);
     }
-
-    threadPrRelinkWriteRef.current = threadPrRelinkWriteRef.current.then(async () => {
-      if (threadPrRelinkKeysRef.current.get(activeThreadKey) !== relinkKey) return;
-      const result = await updateThreadMetadata({
-        environmentId: activeThreadRef.environmentId,
-        input: {
-          threadId: activeThreadRef.threadId,
-          linkedPullRequest: replacementLinkedThreadPullRequest,
-        },
-      });
-      if (threadPrRelinkKeysRef.current.get(activeThreadKey) !== relinkKey) return;
-      if (result._tag !== "Failure") return;
-      threadPrRelinkKeysRef.current.delete(activeThreadKey);
-      if (isAtomCommandInterrupted(result)) return;
-      toastManager.add(
-        stackedThreadToast({
-          type: "error",
-          title: "Unable to update the thread pull request",
-          description: chatActionErrorMessage(squashAtomCommandFailure(result)),
-        }),
-      );
-    });
-  }, [
-    activeThreadKey,
-    activeThreadRef,
-    isServerThread,
-    persistedLinkedThreadPullRequest,
-    replacementLinkedThreadPullRequest,
-    updateThreadMetadata,
-  ]);
+  }, [activeThreadKey, activeThreadRef, isServerThread, linkedThreadPullRequest]);
   const openProjectPullRequest = useCallback(
     (number: number) => {
       if (
@@ -5033,50 +4929,6 @@ export default function ChatView(props: ChatViewProps) {
       resizeObserver.disconnect();
     };
   }, [composerOverlayElement, publishComposerOverlayHeight]);
-  const activeThreadPr =
-    replacementLinkedThreadPullRequest !== null
-      ? (gitStatusQuery.data?.pr ?? null)
-      : resolveDisplayedThreadPr({
-          threadBranch: activeThread?.branch ?? null,
-          gitStatus: gitStatusQuery.data ?? null,
-          snapshot: activeThreadKey ? changeRequestSnapshotByKey.get(activeThreadKey) : undefined,
-          retainTerminalOnBranchMismatch: activeThread?.worktreePath === null,
-          linkedPullRequest: linkedThreadPullRequest,
-          linkedPullRequestStatus: persistedLinkedThreadPullRequestStatus,
-        });
-  const handlePullRequestTabStatusChange = useCallback(
-    (status: Pick<PullRequestTabStatus, "repository" | "number" | "state">) => {
-      if (
-        threadRepository?.toLowerCase() !== status.repository.toLowerCase() ||
-        activeThreadPr?.number !== status.number ||
-        activeThreadPr.state === status.state
-      ) {
-        sidebarPrRefreshKeyRef.current = null;
-        return;
-      }
-      const refreshKey = `${activeThreadKey}:vcs:${status.repository}#${status.number}:${status.state}`;
-      if (sidebarPrRefreshKeyRef.current === refreshKey) return;
-      sidebarPrRefreshKeyRef.current = refreshKey;
-      if (activeThreadRef === null || gitCwd === null) return;
-      void refreshVcsStatus({
-        environmentId: activeThreadRef.environmentId,
-        input: { cwd: gitCwd },
-      }).then(() => {
-        if (sidebarPrRefreshKeyRef.current === refreshKey) {
-          sidebarPrRefreshKeyRef.current = null;
-        }
-      });
-    },
-    [
-      activeThreadKey,
-      activeThreadPr?.number,
-      activeThreadPr?.state,
-      activeThreadRef,
-      gitCwd,
-      refreshVcsStatus,
-      threadRepository,
-    ],
-  );
   const openPanelPullRequestUrl = useOpenPanelPullRequestUrl(activeThreadRef);
   const activeThreadReferenceCopyTarget = useMemo(
     () =>
@@ -5086,15 +4938,8 @@ export default function ChatView(props: ChatViewProps) {
             threadId: activeThreadId,
             openPanelPullRequestUrl,
             linkedPullRequestUrl: linkedThreadPullRequest?.url ?? null,
-            detectedPullRequestUrl: activeThreadPr?.url ?? null,
           }),
-    [
-      activeThreadId,
-      activeThreadPr?.url,
-      isServerThread,
-      linkedThreadPullRequest?.url,
-      openPanelPullRequestUrl,
-    ],
+    [activeThreadId, isServerThread, linkedThreadPullRequest?.url, openPanelPullRequestUrl],
   );
   const copyActiveThreadReference = useCallback(() => {
     const target = activeThreadReferenceCopyTarget;
@@ -5120,14 +4965,12 @@ export default function ChatView(props: ChatViewProps) {
       },
     );
   }, [activeThreadReferenceCopyTarget]);
-  // The right panel offers the thread's own change request, so it can only offer it once the
-  // branch has one; until then the picker says so rather than opening an empty panel.
   const addPullRequestSurface = useCallback(() => {
-    if (activeThreadPr === null) return;
-    openThreadPullRequest(activeThreadPr.number);
-  }, [activeThreadPr, openThreadPullRequest]);
-  const pullRequestSurfaceAvailable =
-    supportsPullRequests && activeThreadPr !== null && threadRepository !== null;
+    if (!supportsPullRequests || activeThreadRef === null || linkedThreadPullRequest === null)
+      return;
+    useRightPanelStore.getState().openPullRequest(activeThreadRef, linkedThreadPullRequest);
+  }, [activeThreadRef, linkedThreadPullRequest, supportsPullRequests]);
+  const pullRequestSurfaceAvailable = supportsPullRequests && linkedThreadPullRequest !== null;
   const supportsSettlement = serverConfig?.environment.capabilities.threadSettlement === true;
   const supportsSnooze = serverConfig?.environment.capabilities.threadSnooze === true;
   const supportsPinning = serverConfig?.environment.capabilities.threadPinning === true;
@@ -7622,9 +7465,9 @@ export default function ChatView(props: ChatViewProps) {
         context={
           isThreadOwnPullRequest(
             {
-              projectId: linkedThreadPullRequest?.projectId ?? activeProject?.id ?? null,
-              repository: threadRepository,
-              number: activeThreadPr?.number ?? null,
+              projectId: linkedThreadPullRequest?.projectId ?? null,
+              repository: linkedThreadPullRequest?.repository ?? null,
+              number: linkedThreadPullRequest?.number ?? null,
             },
             {
               projectId: renderedRightPanelSurface.projectId,
@@ -7636,9 +7479,6 @@ export default function ChatView(props: ChatViewProps) {
             : "page"
         }
         composerDraftTarget={composerDraftTarget}
-        {...(linkedThreadPullRequest === null
-          ? { onStateChange: handlePullRequestTabStatusChange }
-          : {})}
       />
     ) : renderedRightPanelSurface?.kind === "agents" ? (
       <AgentsPanel

@@ -185,6 +185,40 @@ const makeOrchestrationEngine = Effect.gen(function* () {
           });
         }
 
+        // Streaming messages do not invalidate a branch lookup. Metadata
+        // changes and a recreated thread do, including manual Link and Unlink.
+        if (envelope.command.type === "thread.pull-request.sync") {
+          for (const type of ["thread.meta-updated", "thread.created"] as const) {
+            if (
+              yield* eventStore.hasEventAfter({
+                aggregateKind: "thread",
+                aggregateId: envelope.command.threadId,
+                sequenceExclusive: envelope.command.snapshotSequence,
+                type,
+              })
+            ) {
+              return yield* new OrchestrationCommandInvariantError({
+                commandType: envelope.command.type,
+                detail: `thread ${envelope.command.threadId} changed before pull request discovery`,
+              });
+            }
+          }
+        }
+
+        if (
+          envelope.command.type === "thread.pull-request.sync" &&
+          (yield* eventStore.hasEventAfter({
+            aggregateKind: "project",
+            aggregateId: envelope.command.projectId,
+            sequenceExclusive: envelope.command.snapshotSequence,
+          }))
+        ) {
+          return yield* new OrchestrationCommandInvariantError({
+            commandType: envelope.command.type,
+            detail: `project ${envelope.command.projectId} changed before pull request discovery`,
+          });
+        }
+
         if (
           envelope.command.type === "thread.auto-settle" &&
           threadBackgroundLiveness.getThreadBackgroundLiveness(envelope.command.threadId) !== null

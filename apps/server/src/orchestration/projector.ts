@@ -336,6 +336,7 @@ export function projectEvent(
             interactionMode: payload.interactionMode,
             branch: payload.branch,
             worktreePath: payload.worktreePath,
+            branchPullRequest: null,
             latestTurn: null,
             createdAt: payload.createdAt,
             updatedAt: payload.updatedAt,
@@ -509,6 +510,9 @@ export function projectEvent(
             ...(payload.worktreePath !== undefined ? { worktreePath: payload.worktreePath } : {}),
             ...(payload.linkedPullRequest !== undefined
               ? { linkedPullRequest: payload.linkedPullRequest }
+              : {}),
+            ...(payload.branchPullRequest !== undefined
+              ? { branchPullRequest: payload.branchPullRequest }
               : {}),
             updatedAt: payload.updatedAt,
           }),

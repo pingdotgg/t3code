@@ -17,6 +17,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import { forkParked } from "../serverActivation.ts";
 import * as OrchestrationEngine from "./Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "./Services/ProjectionSnapshotQuery.ts";
+import { pullRequestMatchesProject } from "./ThreadPullRequestReactor.ts";
 import {
   isAutoSettlementCandidate,
   resolveAutoSettlementAt,
@@ -46,19 +47,17 @@ export const make = Effect.gen(function* () {
     const snapshot = yield* snapshots.getShellSnapshot();
     const now = DateTime.formatIso(yield* DateTime.now);
     const projects = new Map(snapshot.projects.map((project) => [project.id, project]));
-    // A merge event re-sweeps every candidate, not just the threads linked to
-    // the merged pull request: most threads carry no link and settle from
-    // their branch lookup, which would otherwise wait for the next minute's
-    // sweep on a possibly stale cached answer.
+    // A merge rechecks all candidates, including branches that discovery has
+    // not linked yet. Those lookups can still have cached the PR as open.
     const candidates = snapshot.threads.filter((thread) => isAutoSettlementCandidate(thread, now));
-    // Use the same cwd as the sidebar so both paths share GitManager's PR cache.
+    // Use the same cwd as PR discovery so both paths share GitManager's cache.
     const lookupCwdByThreadId = new Map<string, string>();
     yield* Effect.forEach(
       candidates,
       (thread) =>
         Effect.gen(function* () {
           const project = projects.get(thread.projectId);
-          if (project === undefined || thread.linkedPullRequest != null) return;
+          if (project === undefined || thread.branch === null) return;
           const worktreeExists =
             thread.worktreePath !== null &&
             (yield* fileSystem.exists(thread.worktreePath).pipe(Effect.orElseSucceed(() => false)));
@@ -72,12 +71,8 @@ export const make = Effect.gen(function* () {
       { concurrency: 8, discard: true },
     );
     if (mergedPullRequest !== null) {
-      // The merge just confirmed a terminal state the lookup caches can still
-      // call open (branch answers live two minutes, the sweep runs every
-      // minute). Drop the swept checkouts' cached answers so the merge settles
-      // its branch threads now instead of on a later sweep. Threads linked to
-      // the merged pull request settle from the event itself below and need no
-      // lookup, so they are absent from this map by construction.
+      // The merge confirmed a state the branch cache can still call open.
+      // Recheck those branches now instead of waiting for cache expiry.
       const cwds = [...new Set(lookupCwdByThreadId.values())];
       yield* Effect.forEach(cwds, (cwd) => git.invalidateStatus(cwd), {
         concurrency: 8,
@@ -85,12 +80,15 @@ export const make = Effect.gen(function* () {
       });
     }
     const lookupKey = (thread: (typeof candidates)[number]) => {
-      if (thread.linkedPullRequest != null) {
+      const reference = thread.linkedPullRequest ?? thread.branchPullRequest;
+      if (reference != null) {
         return JSON.stringify([
           "linked",
-          thread.linkedPullRequest.projectId,
-          thread.linkedPullRequest.repository,
-          thread.linkedPullRequest.number,
+          reference.projectId,
+          reference.repository,
+          reference.number,
+          lookupCwdByThreadId.get(thread.id),
+          thread.branch,
         ]);
       }
       if (thread.branch === null) return JSON.stringify(["none", thread.id]);
@@ -104,35 +102,46 @@ export const make = Effect.gen(function* () {
     const pullRequestFor = Effect.fn("ThreadSettlementReactor.pullRequestFor")(function* (
       thread: (typeof candidates)[number],
     ) {
-      if (thread.linkedPullRequest != null) {
-        // The event carries the merged state, so only the threads linked to
-        // that exact pull request settle from it. Every other linked thread
-        // falls through to a fresh summary lookup below: the merge sweep
-        // covers all candidates, and an unrelated merge must never settle
-        // them.
-        if (
+      const reference = thread.linkedPullRequest ?? thread.branchPullRequest;
+      if (reference != null) {
+        const matchesMerge =
           mergedPullRequest !== null &&
-          thread.linkedPullRequest.projectId === mergedPullRequest.projectId &&
-          thread.linkedPullRequest.repository.toLowerCase() ===
-            mergedPullRequest.repository.toLowerCase() &&
-          thread.linkedPullRequest.number === mergedPullRequest.number
-        ) {
-          return {
-            state: "merged",
-            updatedAt: mergedPullRequest.mergedAt,
-          } satisfies SettlementPullRequest;
-        }
-        if (!projects.has(thread.linkedPullRequest.projectId)) {
+          reference.projectId === mergedPullRequest.projectId &&
+          reference.repository.toLowerCase() === mergedPullRequest.repository.toLowerCase() &&
+          reference.number === mergedPullRequest.number;
+        if (!matchesMerge && !projects.has(reference.projectId)) {
           return yield* Effect.die(new Error("linked pull request project not found"));
         }
-        const summary = yield* pullRequests.summary(
-          {
-            projectId: thread.linkedPullRequest.projectId,
-            repository: thread.linkedPullRequest.repository,
-            number: thread.linkedPullRequest.number,
-          },
-          { recoverTransientFailure: false },
-        );
+        const summary = matchesMerge
+          ? ({
+              state: "merged",
+              updatedAt: mergedPullRequest.mergedAt,
+            } satisfies SettlementPullRequest)
+          : yield* pullRequests.summary(
+              {
+                projectId: reference.projectId,
+                repository: reference.repository,
+                number: reference.number,
+              },
+              { recoverTransientFailure: false },
+            );
+        const cwd = lookupCwdByThreadId.get(thread.id);
+        if (summary.state !== "open" && thread.branch !== null && cwd !== undefined) {
+          // A reused branch can already have a new open PR while discovery
+          // is replacing its old link. Do not let settlement win that race.
+          const current = yield* git.branchPullRequest(
+            { cwd, branch: thread.branch },
+            { refresh: true },
+          );
+          const project = projects.get(thread.projectId);
+          if (
+            current?.state === "open" &&
+            project !== undefined &&
+            pullRequestMatchesProject(current, project)
+          ) {
+            return current;
+          }
+        }
         return {
           state: summary.state,
           updatedAt: summary.updatedAt,
