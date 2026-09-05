@@ -51,6 +51,7 @@ import {
   resolveDesktopProductName,
   resolveDesktopUpdateChannel,
   resolveDesktopWebAssetBrand,
+  resolveLinuxArtifactName,
   resolveResourceMonitorRustTargets,
   resolveWindowsServerAsarIgnoreGlobs,
   resourceMonitorExecutableName,
@@ -262,6 +263,14 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
   it("switches desktop packaging product names to nightly for nightly builds", () => {
     assert.equal(resolveDesktopProductName("0.0.17"), "T3 Code (Alpha)");
     assert.equal(resolveDesktopProductName("0.0.17-nightly.20260413.42"), "T3 Code (Nightly)");
+  });
+
+  it("keeps Linux artifact names version-free so updates preserve dock pins", () => {
+    assert.equal(resolveLinuxArtifactName("0.0.17"), "T3-Code-${arch}.${ext}");
+    assert.equal(
+      resolveLinuxArtifactName("0.0.17-nightly.20260413.42"),
+      "T3-Code-Nightly-${arch}.${ext}",
+    );
   });
 
   it("switches desktop packaging icons to the nightly artwork for nightly versions", () => {
