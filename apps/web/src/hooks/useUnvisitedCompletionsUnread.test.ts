@@ -440,6 +440,70 @@ describe("unvisited completion observation", () => {
     expect(unread()).toBe(true);
   });
 
+  it.each([100, 1000])(
+    "notifies once for %s new completions while preserving recorded visits",
+    (count) => {
+      const client = harness();
+      client.connect([LOCAL]);
+      client.emit("live");
+      const read = { ...thread(), id: ThreadId.make("read-thread") };
+      const manuallyUnread = { ...thread(), id: ThreadId.make("manual-unread-thread") };
+      const readKey = scopedThreadKey(scopeThreadRef(LOCAL, read.id));
+      const manualKey = scopedThreadKey(scopeThreadRef(LOCAL, manuallyUnread.id));
+      const visits = {
+        ...Object.fromEntries(
+          Array.from({ length: 100 }, (_, index) => [`old:${index}`, COMPLETED_AT]),
+        ),
+        [readKey]: LATER_COMPLETION,
+        [manualKey]: "2026-09-05T08:00:12.785Z",
+      };
+      useUiStateStore.setState({ threadLastVisitedAtById: visits });
+      let notifications = 0;
+      cleanups.push(
+        useUiStateStore.subscribe(() => {
+          notifications += 1;
+        }),
+      );
+      const completed = Array.from({ length: count }, (_, index) => ({
+        ...thread(),
+        id: ThreadId.make(`batch-${index}`),
+      }));
+      client.emit("live", snapshot([read, manuallyUnread, ...completed]));
+      expect(notifications).toBe(1);
+      const next = useUiStateStore.getState().threadLastVisitedAtById;
+      expect(Object.keys(next)).toHaveLength(102 + count);
+      expect(next[readKey]).toBe(LATER_COMPLETION);
+      expect(next[manualKey]).toBe(visits[manualKey]);
+      expect(next["old:99"]).toBe(COMPLETED_AT);
+      expect(Object.keys(visits)).toHaveLength(102);
+      for (const completedThread of completed) {
+        expect(next[scopedThreadKey(scopeThreadRef(LOCAL, completedThread.id))]).toBe(
+          "2026-09-05T08:00:12.789Z",
+        );
+      }
+      client.emit("live", snapshot([read, manuallyUnread, ...completed]));
+      expect(notifications).toBe(1);
+      expect(useUiStateStore.getState().threadLastVisitedAtById).toBe(next);
+    },
+  );
+
+  it("does not notify for historical, unchanged, or invalid completion timestamps", () => {
+    const client = harness();
+    client.connect([LOCAL]);
+    const before = useUiStateStore.getState();
+    let notifications = 0;
+    cleanups.push(
+      useUiStateStore.subscribe(() => {
+        notifications += 1;
+      }),
+    );
+    client.emit("live", snapshot([thread()]));
+    client.emit("live", snapshot([{ ...thread(), title: "Renamed history" }]));
+    client.emit("live", snapshot([thread("not-a-date")]));
+    expect(notifications).toBe(0);
+    expect(useUiStateStore.getState()).toBe(before);
+  });
+
   it.each(["interrupted", "error"] as const)("does not mark %s turns completed-unread", (state) => {
     const client = harness();
     client.connect([LOCAL]);

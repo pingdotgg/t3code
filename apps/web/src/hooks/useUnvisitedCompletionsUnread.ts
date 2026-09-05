@@ -9,7 +9,7 @@ import { useContext, useEffect } from "react";
 
 import { environmentCatalog } from "../connection/catalog";
 import { environmentShell } from "../state/shell";
-import { useUiStateStore } from "../uiStateStore";
+import { getUnreadVisitedAt, useUiStateStore } from "../uiStateStore";
 
 export function subscribeToUnvisitedCompletions(input: {
   readonly registry: AtomRegistry.AtomRegistry;
@@ -38,6 +38,8 @@ export function subscribeToUnvisitedCompletions(input: {
             const previous = previousCompletions;
             const next = new Map<ThreadId, string | null>();
             previousCompletions = next;
+            const visits = useUiStateStore.getState().threadLastVisitedAtById;
+            let nextVisits: Record<string, string> | null = null;
             for (const thread of state.snapshot.value.threads) {
               const completedAt =
                 thread.latestTurn?.state === "completed" ? thread.latestTurn.completedAt : null;
@@ -47,10 +49,14 @@ export function subscribeToUnvisitedCompletions(input: {
               if (previous === null || !completedAt || previous.get(thread.id) === completedAt)
                 continue;
               const threadKey = scopedThreadKey(scopeThreadRef(environmentId, thread.id));
-              const ui = useUiStateStore.getState();
-              if (ui.threadLastVisitedAtById[threadKey] === undefined) {
-                ui.markThreadUnread(threadKey, completedAt);
-              }
+              if ((nextVisits ?? visits)[threadKey] !== undefined) continue;
+              const unreadVisitedAt = getUnreadVisitedAt(completedAt);
+              if (unreadVisitedAt === null) continue;
+              nextVisits ??= { ...visits };
+              nextVisits[threadKey] = unreadVisitedAt;
+            }
+            if (nextVisits !== null) {
+              useUiStateStore.setState({ threadLastVisitedAtById: nextVisits });
             }
           },
           { immediate: true },
