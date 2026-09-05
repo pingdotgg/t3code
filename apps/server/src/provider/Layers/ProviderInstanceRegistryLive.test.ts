@@ -24,7 +24,6 @@
  */
 import { describe, expect, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import * as Path from "effect/Path";
 import {
   type ClaudeSettings,
   type CodexSettings,
@@ -35,9 +34,12 @@ import {
   type ProviderInstanceConfigMap,
   ProviderInstanceId,
 } from "@t3tools/contracts";
+import { isHostWindows } from "@t3tools/shared/hostProcess";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 
@@ -45,6 +47,7 @@ import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import type { BuiltInDriversEnv } from "../builtInDrivers.ts";
 import { AntigravityInstallation } from "../AntigravityInstallation.ts";
 import { ServerConfig } from "../../config.ts";
+import { expandHomePath } from "../../pathExpansion.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ClaudeDriver } from "../Drivers/ClaudeDriver.ts";
 import { CodexDriver } from "../Drivers/CodexDriver.ts";
@@ -137,6 +140,80 @@ const makeOpenCodeConfig = (overrides: Partial<OpenCodeSettings>): OpenCodeSetti
   serverPassword: "",
   customModels: [],
   ...overrides,
+});
+
+const makeTildeProviderFixtures = Effect.fn(
+  "ProviderInstanceRegistryLive.test.makeTildeProviderFixtures",
+)(function* () {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const homePath = expandHomePath("~");
+  const fixtureDir = yield* fileSystem.makeTempDirectoryScoped({
+    directory: homePath,
+    prefix: ".t3-provider-path-test-",
+  });
+  const codexPath = path.join(fixtureDir, "codex");
+  const claudePath = path.join(fixtureDir, "claude");
+  const claudeHomePath = path.join(fixtureDir, "claude-home");
+  const codexScriptPath = path.join(fixtureDir, "codex-script.json");
+  const codexFixtureDir = path.join(import.meta.dirname, "../testFixtures");
+
+  yield* fileSystem.copyFile(path.join(codexFixtureDir, "codexCollabMockPeer.sh"), codexPath);
+  yield* fileSystem.copyFile(
+    path.join(codexFixtureDir, "codexCollabMockPeer.mjs"),
+    path.join(fixtureDir, "codexCollabMockPeer.mjs"),
+  );
+  yield* fileSystem.copyFile(
+    path.join(codexFixtureDir, "codexMultiAgentWire.json"),
+    path.join(fixtureDir, "codexMultiAgentWire.json"),
+  );
+  yield* fileSystem.writeFileString(
+    codexScriptPath,
+    // @effect-diagnostics-next-line preferSchemaOverJson:off - fixed script document read by the external Codex mock peer.
+    JSON.stringify({ rootThreadId: "probe-thread", notifications: [] }),
+  );
+  yield* fileSystem.chmod(codexPath, 0o755);
+
+  yield* fileSystem.writeFileString(
+    claudePath,
+    [
+      "#!/usr/bin/env node",
+      'import * as NodeReadline from "node:readline";',
+      'if (process.argv.includes("--version")) {',
+      '  process.stdout.write("claude 2.1.219\\n");',
+      "  process.exit(0);",
+      "}",
+      "const lines = NodeReadline.createInterface({ input: process.stdin });",
+      'lines.on("line", (line) => {',
+      "  const message = JSON.parse(line);",
+      '  if (message.type !== "control_request" || message.request?.subtype !== "initialize") return;',
+      "  process.stdout.write(JSON.stringify({",
+      '    type: "control_response",',
+      "    response: {",
+      '      subtype: "success",',
+      "      request_id: message.request_id,",
+      "      response: {",
+      "        commands: [], agents: [], models: [],",
+      '        output_style: "default", available_output_styles: ["default"],',
+      '        account: { email: "test@example.com", subscriptionType: "pro", tokenSource: "oauth" },',
+      "      },",
+      "    },",
+      '  }) + "\\n");',
+      "});",
+      "setInterval(() => {}, 1_000);",
+      "",
+    ].join("\n"),
+  );
+  yield* fileSystem.chmod(claudePath, 0o755);
+  yield* fileSystem.makeDirectory(claudeHomePath);
+
+  const asTildePath = (filePath: string) => `~/${path.relative(homePath, filePath)}`;
+  return {
+    codexBinaryPath: asTildePath(codexPath),
+    claudeBinaryPath: asTildePath(claudePath),
+    claudeHomePath,
+    codexScriptPath,
+  };
 });
 
 describe("ProviderInstanceRegistryLive — multi-instance codex slice", () => {
@@ -258,6 +335,60 @@ describe("ProviderInstanceRegistryLive — multi-instance codex slice", () => {
       expect(instance!.enabled).toBe(false);
       const snapshot = yield* instance!.snapshot.getSnapshot;
       expect(snapshot.enabled).toBe(false);
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.live("runs Codex and Claude readiness probes from configured tilde paths", () =>
+    Effect.gen(function* () {
+      if (yield* isHostWindows) return;
+
+      const fixtures = yield* makeTildeProviderFixtures();
+
+      const codexId = ProviderInstanceId.make("codex_tilde");
+      const claudeId = ProviderInstanceId.make("claude_tilde");
+      const configMap: ProviderInstanceConfigMap = {
+        [codexId]: {
+          driver: ProviderDriverKind.make("codex"),
+          enabled: true,
+          environment: [
+            {
+              name: "T3_CODEX_COLLAB_SCRIPT",
+              value: fixtures.codexScriptPath,
+              sensitive: false,
+            },
+          ],
+          config: makeCodexConfig({ enabled: true, binaryPath: fixtures.codexBinaryPath }),
+        },
+        [claudeId]: {
+          driver: ProviderDriverKind.make("claudeAgent"),
+          enabled: true,
+          config: makeClaudeConfig({
+            enabled: true,
+            binaryPath: fixtures.claudeBinaryPath,
+            homePath: fixtures.claudeHomePath,
+          }),
+        },
+      };
+
+      const { registry } = yield* makeProviderInstanceRegistry({
+        drivers: [CodexDriver, ClaudeDriver],
+        configMap,
+      });
+      const codex = yield* registry.getInstance(codexId);
+      const claude = yield* registry.getInstance(claudeId);
+      expect(codex).toBeDefined();
+      expect(claude).toBeDefined();
+
+      const [codexSnapshot, claudeSnapshot] = yield* Effect.all(
+        [codex!.snapshot.refresh, claude!.snapshot.refresh],
+        { concurrency: "unbounded" },
+      );
+      expect(codexSnapshot).toMatchObject({ status: "ready", installed: true, version: "0.0.0" });
+      expect(claudeSnapshot).toMatchObject({
+        status: "ready",
+        installed: true,
+        version: "2.1.219",
+      });
     }).pipe(Effect.provide(testLayer)),
   );
 

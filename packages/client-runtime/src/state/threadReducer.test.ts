@@ -380,6 +380,40 @@ describe("applyThreadDetailEvent", () => {
       }
     });
 
+    it("keeps imported replies turnless when delivered again", () => {
+      const event = {
+        ...baseEventFields,
+        sequence: 6,
+        occurredAt: "2026-04-01T06:00:00.000Z",
+        aggregateKind: "thread",
+        aggregateId: baseThread.id,
+        type: "thread.message-sent",
+        payload: {
+          threadId: baseThread.id,
+          messageId: MessageId.make("import:codex:session-1:000001"),
+          role: "assistant",
+          text: "Imported reply",
+          turnId: null,
+          streaming: false,
+          createdAt: "2026-03-01T06:00:00.000Z",
+          updatedAt: "2026-03-01T06:00:00.000Z",
+        },
+      } as const;
+
+      const imported = applyThreadDetailEvent(baseThread, event);
+      expect(imported.kind).toBe("updated");
+      if (imported.kind !== "updated") return;
+      expect(imported.thread.latestTurn).toBeNull();
+      expect(imported.thread.checkpoints).toBe(baseThread.checkpoints);
+
+      const repeated = applyThreadDetailEvent(imported.thread, { ...event, sequence: 7 });
+      expect(repeated.kind).toBe("updated");
+      if (repeated.kind !== "updated") return;
+      expect(repeated.thread.messages).toEqual(imported.thread.messages);
+      expect(repeated.thread.latestTurn).toBeNull();
+      expect(repeated.thread.checkpoints).toBe(baseThread.checkpoints);
+    });
+
     it("appends text for streaming messages", () => {
       const threadWithMessage: OrchestrationThread = {
         ...baseThread,
@@ -1178,6 +1212,100 @@ describe("applyThreadDetailEvent", () => {
   });
 
   describe("thread.reverted", () => {
+    it("keeps imported history and removes the first live prompt at checkpoint zero", () => {
+      const threadWithImportedHistory: OrchestrationThread = {
+        ...baseThread,
+        messages: [
+          {
+            id: MessageId.make("import:codex:session-1:000000"),
+            role: "user",
+            text: "Imported prompt",
+            turnId: null,
+            streaming: false,
+            createdAt: "2026-03-01T00:00:00.000Z",
+            updatedAt: "2026-03-01T00:00:00.000Z",
+          },
+          {
+            id: MessageId.make("import:codex:session-1:000001"),
+            role: "assistant",
+            text: "Imported answer",
+            turnId: null,
+            streaming: false,
+            createdAt: "2026-03-01T00:01:00.000Z",
+            updatedAt: "2026-03-01T00:01:00.000Z",
+          },
+          {
+            id: MessageId.make("live-user-message"),
+            role: "user",
+            text: "New work",
+            turnId: null,
+            streaming: false,
+            createdAt: "2026-04-01T01:00:00.000Z",
+            updatedAt: "2026-04-01T01:00:00.000Z",
+          },
+        ],
+      };
+
+      const result = applyThreadDetailEvent(threadWithImportedHistory, {
+        ...baseEventFields,
+        sequence: 14,
+        occurredAt: "2026-04-01T02:00:00.000Z",
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.reverted",
+        payload: { threadId: ThreadId.make("thread-1"), turnCount: 0 },
+      });
+
+      expect(result.kind).toBe("updated");
+      if (result.kind === "updated") {
+        expect(result.thread.messages.map((message) => message.text)).toEqual([
+          "Imported prompt",
+          "Imported answer",
+        ]);
+      }
+    });
+
+    it("fallback-retains the earliest absolute timestamp across offsets", () => {
+      const threadWithOffsetMessages: OrchestrationThread = {
+        ...baseThread,
+        messages: [
+          {
+            id: MessageId.make("earlier-by-offset"),
+            role: "user",
+            text: "Earlier",
+            turnId: null,
+            streaming: false,
+            createdAt: "2026-04-01T10:30:00.000+02:00",
+            updatedAt: "2026-04-01T10:30:00.000+02:00",
+          },
+          {
+            id: MessageId.make("later-in-utc"),
+            role: "user",
+            text: "Later",
+            turnId: null,
+            streaming: false,
+            createdAt: "2026-04-01T09:00:00.000Z",
+            updatedAt: "2026-04-01T09:00:00.000Z",
+          },
+        ],
+      };
+
+      const result = applyThreadDetailEvent(threadWithOffsetMessages, {
+        ...baseEventFields,
+        sequence: 14,
+        occurredAt: "2026-04-01T10:00:00.000Z",
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.reverted",
+        payload: { threadId: ThreadId.make("thread-1"), turnCount: 1 },
+      });
+
+      expect(result.kind).toBe("updated");
+      if (result.kind === "updated") {
+        expect(result.thread.messages.map((message) => message.id)).toEqual(["earlier-by-offset"]);
+      }
+    });
+
     it("filters entities to retained turns", () => {
       const threadWithData: OrchestrationThread = {
         ...baseThread,

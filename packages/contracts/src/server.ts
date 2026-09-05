@@ -748,8 +748,11 @@ export const ServerLifecycleWelcomePayload = Schema.Struct({
   environment: ExecutionEnvironmentDescriptor,
   cwd: TrimmedNonEmptyString,
   projectName: TrimmedNonEmptyString,
+  bootstrapStatus: Schema.optional(Schema.Literals(["pending", "complete"])),
   bootstrapProjectId: Schema.optional(ProjectId),
   bootstrapThreadId: Schema.optional(ThreadId),
+  bootstrapProjectCreated: Schema.optional(Schema.Boolean),
+  bootstrapThreadCreated: Schema.optional(Schema.Boolean),
 });
 export type ServerLifecycleWelcomePayload = typeof ServerLifecycleWelcomePayload.Type;
 

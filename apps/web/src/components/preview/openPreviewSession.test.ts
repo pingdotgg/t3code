@@ -1,5 +1,6 @@
 import {
   DEFAULT_BROWSER_PROFILE_ID,
+  DEFAULT_CLIENT_SETTINGS,
   FILL_PREVIEW_VIEWPORT,
   type PreviewOpenInput,
   type PreviewSessionSnapshot,
@@ -7,8 +8,11 @@ import {
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/unstable/reactivity";
-import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
+import * as browserDefaults from "~/browser/browserDefaults";
+import { BrowserSettingsReadError, openUrlInPreview } from "~/browser/openFileInPreview";
+import { __setClientSettingsForTests } from "~/hooks/useSettings";
 import { readThreadPreviewState, resetPreviewStateForTests } from "~/previewStateStore";
 
 import { openPreviewSession } from "./openPreviewSession";
@@ -31,7 +35,14 @@ const snapshot: PreviewSessionSnapshot = {
   updatedAt: "2026-06-11T23:00:00.000Z",
 };
 
-beforeEach(resetPreviewStateForTests);
+beforeEach(() => {
+  resetPreviewStateForTests();
+  __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 describe("openPreviewSession", () => {
   it("creates an idle tab without recording a recently visited URL", async () => {
@@ -88,4 +99,44 @@ describe("openPreviewSession", () => {
     expect(readThreadPreviewState(threadRef).snapshot).toBeNull();
     expect(readThreadPreviewState(threadRef).recentlySeenUrls).toEqual([]);
   });
+
+  it.each(["session", "link"] as const)(
+    "does not open a %s with unread settings and uses the saved profile on retry",
+    async (entryPoint) => {
+      const failure = new Error("Settings read failed");
+      vi.spyOn(browserDefaults, "resolveBrowserDefaults").mockRejectedValueOnce(failure);
+      const viewport = { _tag: "freeform", width: 1280, height: 720 } as const;
+      __setClientSettingsForTests({
+        ...DEFAULT_CLIENT_SETTINGS,
+        browserDefaultViewport: viewport,
+        browserDefaultProfileId: "work",
+        browserProfiles: [{ id: "work", name: "Work", kind: "persistent" }],
+      });
+      const openPreview = vi.fn(async () => AsyncResult.success(snapshot));
+      const input = { openPreview, threadRef, url: "https://t3.chat/" };
+      const open = entryPoint === "session" ? openPreviewSession : openUrlInPreview;
+
+      const result = await open(input);
+
+      expect(result._tag).toBe("Failure");
+      if (result._tag === "Failure") {
+        expect(Cause.squash(result.cause)).toBeInstanceOf(BrowserSettingsReadError);
+        expect(Cause.squash(result.cause)).toMatchObject({ cause: failure });
+      }
+      expect(openPreview).not.toHaveBeenCalled();
+      expect(readThreadPreviewState(threadRef).snapshot).toBeNull();
+      expect(readThreadPreviewState(threadRef).recentlySeenUrls).toEqual([]);
+
+      await expect(open(input)).resolves.toMatchObject({ _tag: "Success" });
+      expect(openPreview).toHaveBeenCalledExactlyOnceWith({
+        environmentId: threadRef.environmentId,
+        input: {
+          threadId: threadRef.threadId,
+          url: input.url,
+          viewport,
+          profileId: "work",
+        },
+      });
+    },
+  );
 });

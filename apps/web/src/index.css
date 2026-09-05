@@ -1184,6 +1184,39 @@ html[data-theme-id]:not([data-theme-id=""]) {
   --terminal-selection-background: var(--app-theme-terminal-selection-background);
 }
 
+/* The first-run flow owns the whole document so portaled menus and tooltips
+   use the same fixed palette as the wizard. This follows the theme mapping so
+   saved custom themes cannot override it while onboarding is mounted. */
+html[data-onboarding-surface]:root {
+  color-scheme: dark;
+  --accent: #262626;
+  --accent-foreground: #fff;
+  --appearance-contrast-target: #fff;
+  --app-chrome-background: #000;
+  --background: #000;
+  --border: #262626;
+  --card: #000;
+  --card-foreground: #fff;
+  --destructive: var(--color-red-400);
+  --foreground: #fff;
+  --icon-muted: #a1a1aa;
+  --input: #262626;
+  --muted: #171717;
+  --muted-foreground: #a1a1aa;
+  --placeholder: #71717a;
+  --popover: #171717;
+  --popover-foreground: #fff;
+  --ring: #737373;
+  --secondary: #171717;
+  --secondary-foreground: #fff;
+  --secondary-label: #a1a1aa;
+  --success-foreground: var(--color-emerald-400);
+  --terminal-background: #000;
+  --terminal-cursor: #fff;
+  --terminal-foreground: #fff;
+  --terminal-selection-background: rgb(255 255 255 / 20%);
+}
+
 /* Theme-token dependency probes are restored synchronously, before paint. Keep
    transitions from observing the temporary sentinel color in between. */
 html[data-theme-token-probe],
@@ -1385,11 +1418,10 @@ html[data-theme-id="t3-chat"] [data-app-sidebar] {
   }
 }
 
-/* Contrast stays in ordinary custom properties so both Tailwind utilities and
-   global/imperative chrome styles resolve the same adjusted role. Redeclare on
-   the sidebar because it owns a local semantic palette. */
+/* Recompute contrast wherever a subtree owns its own semantic color palette. */
 :root,
-[data-app-sidebar] {
+[data-app-sidebar],
+[data-onboarding-surface] {
   --contrast-toolbar-foreground: color-mix(
     in oklab,
     color-mix(

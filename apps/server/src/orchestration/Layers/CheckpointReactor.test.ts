@@ -1342,6 +1342,36 @@ describe("CheckpointReactor", () => {
     ).toBe("v1\n");
   });
 
+  it("does not create checkpoints while importing historical user messages", async () => {
+    const harness = await createHarness({
+      hasSession: false,
+      seedFilesystemCheckpoints: false,
+      threadWorktreePath: null,
+    });
+    if (runtime === null) throw new Error("Checkpoint test runtime was not initialized.");
+
+    await runtime.runPromise(
+      harness.engine.dispatch({
+        type: "thread.history.import",
+        commandId: CommandId.make("cmd-import-history-without-checkpoint"),
+        threadId: ThreadId.make("thread-1"),
+        messages: [
+          {
+            messageId: MessageId.make("imported-user-message"),
+            role: "user",
+            text: "A message from an existing agent session",
+            createdAt: "2026-01-01T00:00:00.000Z",
+          },
+        ],
+      }),
+    );
+    await harness.drain();
+
+    expect(
+      gitRefExists(harness.cwd, checkpointRefForThreadTurn(ThreadId.make("thread-1"), 0)),
+    ).toBe(false);
+  });
+
   it("captures turn completion checkpoint from project workspace root when provider session cwd is unavailable", async () => {
     const harness = await createHarness({
       hasSession: false,

@@ -67,6 +67,9 @@ export function eventThreadId(event: OrchestrationEvent): ThreadId | null {
 }
 
 export function shouldPublishAgentAwarenessEvent(event: OrchestrationEvent): boolean {
+  if (event.metadata.historyImport === true) {
+    return false;
+  }
   switch (event.type) {
     case "thread.message-sent":
     case "thread.turn-start-requested":

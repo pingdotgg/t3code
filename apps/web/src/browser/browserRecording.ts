@@ -516,10 +516,12 @@ export async function startBrowserRecording(
   activeRecordings.set(tabId, recording);
   publishActiveRecordingTabIds();
   try {
-    const frameRatePromise = ensureClientSettingsHydrated().then(
-      () => getClientSettings().browserRecordingFrameRate,
-    );
-    const [frameRate] = await Promise.all([frameRatePromise, waitForBrowserRecordingPaint()]);
+    await ensureClientSettingsHydrated().catch((cause: unknown) => {
+      clearActiveRecording(recording);
+      throw cause;
+    });
+    const frameRate = getClientSettings().browserRecordingFrameRate;
+    await waitForBrowserRecordingPaint();
     const throwIfStartupCancelled = async (): Promise<void> => {
       // Once a grant starts, a stop lets startup finish so the caller receives an artifact.
       // Only a contended start can be cancelled before it reaches native capture.

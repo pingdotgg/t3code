@@ -57,6 +57,14 @@ rl.on("line", (line) => {
     });
     return;
   }
+  if (method === "account/read") {
+    write({ id, result: { account: { type: "apiKey" }, requiresOpenaiAuth: false } });
+    return;
+  }
+  if (method === "skills/list" || method === "model/list") {
+    write({ id, result: { data: [] } });
+    return;
+  }
   if (method === "thread/start") {
     write({ id, result: fixture.responses.threadStart });
     return;

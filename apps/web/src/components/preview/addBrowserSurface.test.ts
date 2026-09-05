@@ -1,5 +1,6 @@
 import {
   DEFAULT_BROWSER_PROFILE_ID,
+  DEFAULT_CLIENT_SETTINGS,
   FILL_PREVIEW_VIEWPORT,
   type PreviewOpenInput,
   type PreviewSessionSnapshot,
@@ -14,6 +15,7 @@ import {
   resetPreviewStateForTests,
 } from "~/previewStateStore";
 import { selectThreadRightPanelState, useRightPanelStore } from "~/rightPanelStore";
+import { __setClientSettingsForTests } from "~/hooks/useSettings";
 
 import { addBrowserSurface } from "./addBrowserSurface";
 
@@ -32,6 +34,7 @@ const snapshot = (tabId: string): PreviewSessionSnapshot => ({
 });
 
 beforeEach(() => {
+  __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
   resetPreviewStateForTests();
   useRightPanelStore.setState({ byThreadKey: {} });
 });
