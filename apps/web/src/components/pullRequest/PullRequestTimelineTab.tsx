@@ -71,7 +71,7 @@ function TimelineBody({
 }: {
   body: string;
   markdown: boolean;
-  cwd: string;
+  cwd: string | null;
   environmentId: EnvironmentId;
   threadRef: ScopedThreadRef | null;
 }) {
@@ -188,7 +188,7 @@ function ConversationCard({
   event: PullRequestTimelineEvent;
   /** The remark behind this entry, only where this reader may rewrite it. */
   editable: PullRequestComment | null;
-  cwd: string;
+  cwd: string | null;
   onOpen: (url: string) => void;
   reactions: ReactionSurface;
 }) {
@@ -308,7 +308,7 @@ function ConversationGroup({
 }: {
   events: ReadonlyArray<PullRequestTimelineEvent>;
   editable: ReadonlyMap<string, PullRequestComment>;
-  cwd: string;
+  cwd: string | null;
   onOpen: (url: string) => void;
   reactions: ReactionSurface;
 }) {
@@ -465,7 +465,7 @@ function ReviewVerdictEvent({
   outcome: PullRequestReviewOutcome;
   /** Commits landed after this verdict, so it speaks for code the branch no longer has. */
   stale: boolean;
-  cwd: string;
+  cwd: string | null;
   onOpen: (url: string) => void;
   reactions: ReactionSurface;
 }) {

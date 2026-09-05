@@ -7599,7 +7599,10 @@ export default function ChatView(props: ChatViewProps) {
       </Suspense>
     ) : renderedRightPanelSurface?.kind === "pull-request" && !pullRequestsCapabilityKnown ? (
       <PullRequestDetailGhost />
-    ) : renderedRightPanelSurface?.kind === "pull-request" && !supportsPullRequests ? (
+    ) : renderedRightPanelSurface?.kind === "pull-request" &&
+      (!supportsPullRequests ||
+        (renderedRightPanelSurface.projectId === null &&
+          serverConfig?.environment.capabilities.unlinkedGitHubPullRequests !== true)) ? (
       <PullRequestsUnavailableState
         title="Pull requests unavailable"
         error="Update this environment's T3 Code server to browse pull requests."
@@ -7615,7 +7618,7 @@ export default function ChatView(props: ChatViewProps) {
         environmentId={activeThread.environmentId}
         threadRef={activeThreadRef}
         reference={{
-          projectId: renderedRightPanelSurface.projectId as ProjectId,
+          projectId: renderedRightPanelSurface.projectId as ProjectId | null,
           repository: renderedRightPanelSurface.repository,
           number: renderedRightPanelSurface.number,
         }}

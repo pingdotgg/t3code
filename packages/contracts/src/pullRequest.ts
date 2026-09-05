@@ -616,7 +616,8 @@ export const PullRequestListResult = Schema.Struct({
 export type PullRequestListResult = typeof PullRequestListResult.Type;
 
 export const PullRequestRef = Schema.Struct({
-  projectId: ProjectId,
+  /** Null reads a GitHub.com pull request without a local project. */
+  projectId: Schema.NullOr(ProjectId),
   repository: TrimmedNonEmptyString,
   number: PositiveInt,
 });
@@ -628,7 +629,8 @@ export type PullRequestRef = typeof PullRequestRef.Type;
  */
 export const PullRequestSummary = Schema.Struct({
   provider: SourceControlProviderKind,
-  projectId: ProjectId,
+  /** Null reads a GitHub.com pull request without a local project. */
+  projectId: Schema.NullOr(ProjectId),
   repository: TrimmedNonEmptyString,
   number: PositiveInt,
   title: TrimmedNonEmptyString,
@@ -696,9 +698,10 @@ export const PullRequestDetail = Schema.Struct({
   capabilities: PullRequestCapabilities,
   /** What this viewer may do, which `capabilities` says nothing about. Both narrow the page. */
   viewerPermissions: PullRequestViewerPermissions,
-  projectId: ProjectId,
+  /** Null reads a GitHub.com pull request without a local project. */
+  projectId: Schema.NullOr(ProjectId),
   projectTitle: TrimmedNonEmptyString,
-  workspaceRoot: TrimmedNonEmptyString,
+  workspaceRoot: Schema.NullOr(TrimmedNonEmptyString),
   repository: TrimmedNonEmptyString,
   number: PositiveInt,
   title: TrimmedNonEmptyString,

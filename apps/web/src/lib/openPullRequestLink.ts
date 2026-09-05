@@ -1,6 +1,7 @@
 import type {
   EnvironmentId,
   LocalApi,
+  PullRequestRef,
   RepositoryIdentity,
   ScopedThreadRef,
   ThreadLinkedPullRequest,
@@ -13,7 +14,7 @@ import { pullRequestHostOf, type SourceControlProviderKind } from "@t3tools/cont
 
 import { useOpenLink } from "../browser/useOpenLink";
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
-import { useRightPanelStore } from "../rightPanelStore";
+import { PULL_REQUESTS_PANEL_REF, useRightPanelStore } from "../rightPanelStore";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 
 import { useProjects, useServerConfigs } from "../state/entities";
@@ -258,24 +259,25 @@ export function findProjectForChangeRequest(
   });
 }
 
-/**
- * Opens a change request link on the page, and says whether it did. Anything else — another
- * organisation's repository, a host nothing here is checked out from, a link that merely looks
- * like one — is left alone for the caller to handle as the ordinary link it is.
- *
- * Resolving the project here rather than on the page is what makes recognising a URL safe: a
- * lookalike hostname matches no project and stays a link, and the page is handed the project
- * rather than a host to narrow its whole list by.
- *
- * Given a thread, the link opens beside it in the right panel instead of taking the whole app to
- * the pull requests page: a reader following a link the agent wrote is reading the thread, and
- * should still be reading it afterwards. Any change request opens there, not only the thread's
- * own, since the panel is told which one to show.
- */
+/** Modifier clicks leave PR links to the system browser. */
 export function shouldOpenPullRequestExternally(
   event: Pick<MouseEvent<HTMLElement>, "metaKey" | "ctrlKey">,
 ): boolean {
   return event.metaKey || event.ctrlKey;
+}
+
+/** Prefer a local project; otherwise the server can read public-host GitHub PRs directly. */
+export function pullRequestRefForLink(
+  project: EnvironmentProject | undefined,
+  link: ChangeRequestLink,
+  supportsUnlinkedGitHub: boolean,
+): PullRequestRef | null {
+  if (project === undefined && !(supportsUnlinkedGitHub && link.host === "github.com")) return null;
+  return {
+    projectId: project?.id ?? null,
+    repository: project?.repositoryIdentity?.displayName ?? link.repository,
+    number: link.number,
+  };
 }
 
 export function useOpenChangeRequestLink(
@@ -320,17 +322,30 @@ export function useOpenChangeRequestLink(
                   Number(left.environmentId === primaryEnvironmentId),
               );
       const project = findProjectForChangeRequest(projects, parsed);
-      if (project === undefined || !reads(project.environmentId)) return false;
+      const environmentId =
+        project?.environmentId ??
+        resolvedThreadRef?.environmentId ??
+        targetEnvironmentId ??
+        primaryEnvironmentId;
+      if (environmentId === null) return false;
+      const reference = pullRequestRefForLink(
+        project,
+        parsed,
+        serverConfigs.get(environmentId)?.environment.capabilities.unlinkedGitHubPullRequests ===
+          true,
+      );
+      if (reference === null || !reads(environmentId)) return false;
       event.preventDefault();
       event.stopPropagation();
       if (resolvedThreadRef) {
-        useRightPanelStore.getState().openPullRequest(resolvedThreadRef, {
-          projectId: project.id,
-          // The identity's own spelling, not the one read out of the URL: the panel asks the
-          // provider for this repository, while matching a link only ever compares lower case.
-          repository: project.repositoryIdentity?.displayName ?? parsed.repository,
-          number: parsed.number,
-        });
+        useRightPanelStore.getState().openPullRequest(resolvedThreadRef, reference);
+        return true;
+      }
+      if (project === undefined) {
+        useRightPanelStore
+          .getState()
+          .openPullRequest(PULL_REQUESTS_PANEL_REF, { ...reference, environmentId });
+        void navigate({ to: "/pull-requests", search: { involvement: "all", state: "all" } });
         return true;
       }
       void navigate({

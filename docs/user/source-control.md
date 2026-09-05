@@ -91,3 +91,9 @@ reopening a declined pull request.
   remotes can require separate setup from the hosting provider's API access.
 - **A review cannot load:** open it on the host website while resolving connectivity, permissions,
   or rate limits.
+
+### Opening PR links
+
+Click a GitHub pull request link in chat to read it in the Pull Request panel, including PRs from repositories you have not added as projects. Your connected server uses its GitHub credentials to load the PR. Checking out the branch still requires a linked local project.
+
+Cmd-click on macOS or Ctrl-click on Windows and Linux opens the link in your browser. Right-click a link to choose the Pull Request panel, open it in your browser, or copy it. Other Git hosting providers currently require a matching linked project to open in the panel.

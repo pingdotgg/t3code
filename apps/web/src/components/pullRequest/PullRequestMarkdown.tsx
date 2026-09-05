@@ -25,7 +25,7 @@ export function PullRequestMarkdown({
   className,
 }: {
   text: string;
-  cwd: string;
+  cwd: string | null;
   environmentId: EnvironmentId;
   /** Thread the body is shown beside, so its links can open in that thread's in-app browser. */
   threadRef?: ScopedThreadRef | null;
@@ -45,7 +45,7 @@ export function PullRequestMarkdown({
             <ChatMarkdown
               key={segment.id}
               text={segment.text}
-              cwd={cwd}
+              cwd={cwd ?? undefined}
               threadRef={threadRef ?? undefined}
               environmentId={environmentId}
               extraRemarkPlugins={extraRemarkPlugins}

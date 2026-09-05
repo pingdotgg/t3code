@@ -132,7 +132,7 @@ export function isThreadOwnPullRequest(
     readonly number: number | null;
   },
   surface: {
-    readonly projectId: string;
+    readonly projectId: string | null;
     readonly repository: string;
     readonly number: number;
   },
@@ -1016,7 +1016,7 @@ export function pullRequestActionNeedsHostRefresh(action: PullRequestAction): bo
 type SnapshotStorage = Pick<Storage, "getItem" | "setItem">;
 
 export interface PullRequestDetailSnapshotRef {
-  readonly projectId: string;
+  readonly projectId: string | null;
   readonly repository: string;
   readonly number: number;
 }

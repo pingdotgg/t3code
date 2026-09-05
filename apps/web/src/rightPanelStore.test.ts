@@ -712,3 +712,17 @@ describe("rightPanelStore", () => {
     ).toEqual(["terminal:term-1", "browser:tab-b", "browser:tab-c"]);
   });
 });
+
+it("keeps unlinked PRs as distinct, closable panel tabs", () => {
+  const first = { projectId: null, repository: "other/one", number: 1 };
+  const second = { projectId: null, repository: "other/two", number: 1 };
+  useRightPanelStore.getState().openPullRequest(refA, first);
+  useRightPanelStore.getState().openPullRequest(refA, second);
+  expect(
+    selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA).surfaces,
+  ).toHaveLength(2);
+  useRightPanelStore.getState().closeSurface(refA, pullRequestSurfaceId(second));
+  expect(
+    selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA),
+  ).toMatchObject(first);
+});

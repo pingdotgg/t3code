@@ -82,7 +82,7 @@ export const usePullRequestReviewStore = create<PullRequestReviewStoreState>()((
 
 /** The comments a pull request's draft holds, stable across renders while it is empty. */
 export function usePendingReviewComments(reference: {
-  readonly projectId: ProjectId;
+  readonly projectId: ProjectId | null;
   readonly repository: string;
   readonly number: number;
 }): ReadonlyArray<PendingReviewComment> {

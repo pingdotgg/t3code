@@ -4137,3 +4137,53 @@ it.effect("names the signed-in account in the detail, and says nothing where the
     assert.strictEqual(unnamed.viewer, undefined);
   }),
 );
+
+it.effect("reads an unlinked GitHub PR and its diff without a workspace", () =>
+  Effect.gen(function* () {
+    const calls: Array<{ repository: string; host: string; number: number }> = [];
+    const service = yield* makeService({
+      projects: [],
+      providers: [
+        fakeProvider("github", {
+          getChangeRequest: (input) => {
+            calls.push(input);
+            return Effect.succeed(hostedChangeRequest("An external contribution"));
+          },
+          getDiff: (input) => {
+            calls.push(input);
+            return Effect.succeed({ patch: "external diff", truncated: false, nextCursor: null });
+          },
+        }),
+      ],
+    });
+    const reference = { projectId: null, repository: "someone/other-repo", number: 1 };
+    const detail = yield* service.detail(reference);
+    assert.strictEqual(detail.projectId, null);
+    assert.strictEqual(detail.workspaceRoot, null);
+    assert.strictEqual(detail.repository, reference.repository);
+    assert.strictEqual(detail.body, "An external contribution");
+    assert.strictEqual((yield* service.diff(reference)).patch, "external diff");
+    assert.deepStrictEqual(
+      calls.map(({ repository, host, number }) => ({ repository, host, number })),
+      [
+        { repository: reference.repository, host: "github.com", number: 1 },
+        { repository: reference.repository, host: "github.com", number: 1 },
+      ],
+    );
+  }),
+);
+
+it.effect("rejects malformed unlinked repositories before calling GitHub", () =>
+  Effect.gen(function* () {
+    const service = yield* makeService({ projects: [], providers: [fakeProvider("github")] });
+    for (const repository of [
+      "../repo",
+      "acme/..",
+      "https://evil.test/acme/repo",
+      "acme/repo/extra",
+    ]) {
+      const error = yield* Effect.flip(service.detail({ projectId: null, repository, number: 1 }));
+      assert.strictEqual(error._tag, "PullRequestOperationError");
+    }
+  }),
+);
