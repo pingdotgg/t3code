@@ -1,5 +1,6 @@
 import { EnvironmentId, MessageId, ThreadId, type AssistantCitation } from "@t3tools/contracts";
 import { serializeAssistantCitation } from "@t3tools/shared/assistantCitations";
+import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import {
   $createParagraphNode,
@@ -91,6 +92,45 @@ describe("registerComposerInlineTokenPaste", () => {
     vi.unstubAllGlobals();
   });
 
+  it.each([
+    ["@foo(bar)", "@foo(bar)"],
+    ["@écrire(option)", "@écrire(option)"],
+    ["@namespace.foo(bar)\nclass Example {}", "@namespace.foo(bar)\nclass Example {}"],
+    ['@"foo(bar)"', "[foo(bar)](foo%28bar%29) "],
+    ["[foo(bar)](foo%28bar%29)", "[foo(bar)](foo%28bar%29) "],
+    ["@README.md (notes)", "[README.md](README.md) (notes)"],
+  ])("preserves pasted decorator text and explicit file references: %s", (text, expected) => {
+    vi.stubGlobal("ClipboardEvent", TestClipboardEvent);
+    const editor = createEditor();
+    editor.update(
+      () => {
+        const paragraph = $createParagraphNode();
+        $getRoot().append(paragraph);
+        paragraph.selectEnd();
+      },
+      { discrete: true },
+    );
+    registerComposerInlineTokenPaste(editor, {
+      createMentionNode: (path) => $createTextNode(serializeComposerFileLink(path)),
+      createCitationNode: $createComposerCitationNode,
+      getExpandedAbsoluteOffsetForPoint: () => 0,
+    });
+    editor.registerCommand(
+      PASTE_COMMAND,
+      (event) => {
+        const selection = $getSelection();
+        if (!$isRangeSelection(selection) || !(event instanceof ClipboardEvent)) return false;
+        selection.insertRawText(event.clipboardData?.getData("text/plain") ?? "");
+        return true;
+      },
+      COMMAND_PRIORITY_EDITOR,
+    );
+
+    pasteText(editor, text);
+
+    expect(editor.getEditorState().read(() => $getRoot().getTextContent())).toBe(expected);
+  });
+
   it("handles a copied mention without also running the plain-text paste fallback", () => {
     vi.stubGlobal("ClipboardEvent", TestClipboardEvent);
     const editor = createEditor();
@@ -138,7 +178,8 @@ describe("registerComposerInlineTokenPaste", () => {
     "yarn expo install @expo/ui",
     "npm install @jane/foo.js",
     "import '@scope/pkg/sub/path'",
-  ])("leaves scoped package command %s to the plain-text paste fallback", (command) => {
+    "@foo(bar)",
+  ])("leaves ambiguous bare mention text %s to the plain-text paste fallback", (text) => {
     vi.stubGlobal("ClipboardEvent", TestClipboardEvent);
     const editor = createEditor();
     const plainTextFallback = vi.fn((event: ClipboardEvent) => {
@@ -163,7 +204,7 @@ describe("registerComposerInlineTokenPaste", () => {
     });
     editor.registerCommand(PASTE_COMMAND, plainTextFallback, COMMAND_PRIORITY_EDITOR);
 
-    const event = new TestClipboardEvent(command);
+    const event = new TestClipboardEvent(text);
     let handled = false;
     editor.update(
       () => {
@@ -174,7 +215,7 @@ describe("registerComposerInlineTokenPaste", () => {
 
     expect(handled).toBe(true);
     expect(plainTextFallback).toHaveBeenCalledOnce();
-    expect(editor.getEditorState().read(() => $getRoot().getTextContent())).toBe(command);
+    expect(editor.getEditorState().read(() => $getRoot().getTextContent())).toBe(text);
   });
 
   it("pastes a canonical scoped folder link as a mention", () => {
