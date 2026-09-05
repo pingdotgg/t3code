@@ -29,6 +29,18 @@ function processOutput(stdout: string): VcsProcess.VcsProcessOutput {
   };
 }
 
+function mockRepository(
+  repositoryJson: string,
+  config: { readonly subfolder?: string; readonly host?: string } = {},
+) {
+  mockedRun.mockImplementation((run) => {
+    if (run.args[0] !== "config") return Effect.succeed(processOutput(repositoryJson));
+    return Effect.succeed(
+      processOutput(run.args[2] === "subfolder" ? (config.subfolder ?? "") : (config.host ?? "")),
+    );
+  });
+}
+
 afterEach(() => {
   mockedRun.mockReset();
 });
@@ -181,6 +193,346 @@ layer("GitLabCli.layer", (it) => {
         url: "https://gitlab.com/octocat/t3code",
         sshUrl: "git@gitlab.com:octocat/t3code.git",
       });
+    }),
+  );
+
+  it.effect("reduces a repository given as a URL to the project path it names", () =>
+    Effect.gen(function* () {
+      const repositoryJson =
+        // @effect-diagnostics-next-line preferSchemaOverJson:off
+        JSON.stringify({
+          path_with_namespace: "group/subgroup/project",
+          web_url: "https://sourcecontrol.example.com/group/subgroup/project",
+          http_url_to_repo: "https://sourcecontrol.example.com/group/subgroup/project.git",
+          ssh_url_to_repo: "git@sourcecontrol.example.com:group/subgroup/project.git",
+        });
+      const project = "projects/group%2Fsubgroup%2Fproject";
+
+      const cases: ReadonlyArray<readonly [string, string]> = [
+        ["https://sourcecontrol.example.com/group/subgroup/project", project],
+        ["https://sourcecontrol.example.com/group/subgroup/project.git", project],
+        ["https://sourcecontrol.example.com/group/subgroup/project/-/tree/main", project],
+        ["https://sourcecontrol.example.com/group/subgroup/project?ref_type=heads", project],
+        ["git@sourcecontrol.example.com:group/subgroup/project.git", project],
+        ["sourcecontrol.example.com:group/subgroup/project.git", project],
+        ["ssh://git@sourcecontrol.example.com:22/group/subgroup/project.git", project],
+        [
+          "https://sourcecontrol.example.com/group/subgroup/pro%2Dject",
+          "projects/group%2Fsubgroup%2Fpro-ject",
+        ],
+        ["https://sourcecontrol.example.com/group/pro%ZZject", "projects/group%2Fpro%25ZZject"],
+        ["group/subgroup/project", project],
+      ];
+
+      mockRepository(repositoryJson);
+
+      const sent: Array<readonly [string, ReadonlyArray<string> | undefined]> = [];
+      for (const [repository] of cases) {
+        const glab = yield* GitLabCli.GitLabCli;
+        yield* glab.getRepositoryCloneUrls({ cwd: "/repo", repository });
+        sent.push([repository, mockedRun.mock.lastCall?.[0].args]);
+      }
+
+      assert.deepStrictEqual(
+        sent,
+        cases.map(([repository, path]) => [repository, ["api", path]]),
+      );
+    }),
+  );
+
+  it.effect("drops the relative URL root of an instance hosted under a subfolder", () =>
+    Effect.gen(function* () {
+      mockRepository(
+        // @effect-diagnostics-next-line preferSchemaOverJson:off
+        JSON.stringify({
+          path_with_namespace: "group/project",
+          web_url: "https://example.com/gitlab/group/project",
+          http_url_to_repo: "https://example.com/gitlab/group/project.git",
+          ssh_url_to_repo: "git@example.com:group/project.git",
+        }),
+        { subfolder: "gitlab" },
+      );
+
+      const glab = yield* GitLabCli.GitLabCli;
+      const urls = yield* glab.getRepositoryCloneUrls({
+        cwd: "/repo",
+        repository: "https://example.com/gitlab/group/project",
+      });
+
+      assert.deepStrictEqual(mockedRun.mock.calls[0]?.[0].args, [
+        "config",
+        "get",
+        "subfolder",
+        "--host",
+        "example.com",
+      ]);
+      assert.deepStrictEqual(mockedRun.mock.lastCall?.[0].args, [
+        "api",
+        "projects/group%2Fproject",
+      ]);
+      assert.strictEqual(urls.nameWithOwner, "group/project");
+    }),
+  );
+
+  it.effect("reads the relative URL root from a host configured with or without a scheme", () =>
+    Effect.gen(function* () {
+      for (const host of ["example.com/gitlab", "https://example.com/gitlab"]) {
+        mockRepository(
+          // @effect-diagnostics-next-line preferSchemaOverJson:off
+          JSON.stringify({
+            path_with_namespace: "group/subgroup/project",
+            web_url: "https://example.com/gitlab/group/subgroup/project",
+            http_url_to_repo: "https://example.com/gitlab/group/subgroup/project.git",
+            ssh_url_to_repo: "git@example.com:group/subgroup/project.git",
+          }),
+          { host },
+        );
+
+        const glab = yield* GitLabCli.GitLabCli;
+        const urls = yield* glab.getRepositoryCloneUrls({
+          cwd: "/repo",
+          repository: "https://example.com/gitlab/group/subgroup/project.git",
+        });
+
+        assert.deepStrictEqual(
+          mockedRun.mock.lastCall?.[0].args,
+          ["api", "projects/group%2Fsubgroup%2Fproject"],
+          host,
+        );
+        assert.strictEqual(urls.nameWithOwner, "group/subgroup/project");
+      }
+    }),
+  );
+
+  it.effect("strips an installation root whose lowercase spelling changes length", () =>
+    Effect.gen(function* () {
+      mockRepository(
+        // @effect-diagnostics-next-line preferSchemaOverJson:off
+        JSON.stringify({
+          path_with_namespace: "group/project",
+          web_url: "https://example.com/İ/group/project",
+          http_url_to_repo: "https://example.com/İ/group/project.git",
+          ssh_url_to_repo: "git@example.com:group/project.git",
+        }),
+        { subfolder: "İ" },
+      );
+
+      const glab = yield* GitLabCli.GitLabCli;
+      yield* glab.getRepositoryCloneUrls({
+        cwd: "/repo",
+        repository: "https://example.com/İ/group/project",
+      });
+
+      assert.deepStrictEqual(mockedRun.mock.lastCall?.[0].args, [
+        "api",
+        "projects/group%2Fproject",
+      ]);
+    }),
+  );
+
+  it.effect("reads the relative URL root under the port the instance is served on", () =>
+    Effect.gen(function* () {
+      mockRepository(
+        // @effect-diagnostics-next-line preferSchemaOverJson:off
+        JSON.stringify({
+          path_with_namespace: "group/project",
+          web_url: "https://example.com:8443/gitlab/group/project",
+          http_url_to_repo: "https://example.com:8443/gitlab/group/project.git",
+          ssh_url_to_repo: "git@example.com:group/project.git",
+        }),
+        { subfolder: "gitlab" },
+      );
+
+      const glab = yield* GitLabCli.GitLabCli;
+      yield* glab.getRepositoryCloneUrls({
+        cwd: "/repo",
+        repository: "https://example.com:8443/gitlab/group/project",
+      });
+
+      assert.deepStrictEqual(mockedRun.mock.calls[0]?.[0].args, [
+        "config",
+        "get",
+        "subfolder",
+        "--host",
+        "example.com:8443",
+      ]);
+      assert.deepStrictEqual(mockedRun.mock.lastCall?.[0].args, [
+        "api",
+        "projects/group%2Fproject",
+      ]);
+    }),
+  );
+
+  it.effect("keeps a leading segment when the configured root belongs to another host", () =>
+    Effect.gen(function* () {
+      mockRepository(
+        // @effect-diagnostics-next-line preferSchemaOverJson:off
+        JSON.stringify({
+          path_with_namespace: "gitlab/group/project",
+          web_url: "https://gitlab.com/gitlab/group/project",
+          http_url_to_repo: "https://gitlab.com/gitlab/group/project.git",
+          ssh_url_to_repo: "git@gitlab.com:gitlab/group/project.git",
+        }),
+        { host: "https://example.com/gitlab" },
+      );
+
+      const glab = yield* GitLabCli.GitLabCli;
+      const urls = yield* glab.getRepositoryCloneUrls({
+        cwd: "/repo",
+        repository: "https://gitlab.com/gitlab/group/project",
+      });
+
+      assert.deepStrictEqual(mockedRun.mock.lastCall?.[0].args, [
+        "api",
+        "projects/gitlab%2Fgroup%2Fproject",
+      ]);
+      assert.strictEqual(urls.nameWithOwner, "gitlab/group/project");
+    }),
+  );
+
+  it.effect("keeps a root that would leave a project without its namespace", () =>
+    Effect.gen(function* () {
+      mockRepository(
+        // @effect-diagnostics-next-line preferSchemaOverJson:off
+        JSON.stringify({
+          path_with_namespace: "group/project",
+          web_url: "https://example.com/group/project",
+          http_url_to_repo: "https://example.com/group/project.git",
+          ssh_url_to_repo: "git@example.com:group/project.git",
+        }),
+        { subfolder: "group" },
+      );
+
+      const glab = yield* GitLabCli.GitLabCli;
+      yield* glab.getRepositoryCloneUrls({
+        cwd: "/repo",
+        repository: "https://example.com/group/project",
+      });
+
+      assert.deepStrictEqual(mockedRun.mock.lastCall?.[0].args, [
+        "api",
+        "projects/group%2Fproject",
+      ]);
+    }),
+  );
+
+  it.effect("asks for a bare project path without reading any config", () =>
+    Effect.gen(function* () {
+      mockRepository(
+        // @effect-diagnostics-next-line preferSchemaOverJson:off
+        JSON.stringify({
+          path_with_namespace: "group/subgroup/project",
+          web_url: "https://gitlab.com/group/subgroup/project",
+          http_url_to_repo: "https://gitlab.com/group/subgroup/project.git",
+          ssh_url_to_repo: "git@gitlab.com:group/subgroup/project.git",
+        }),
+      );
+
+      const glab = yield* GitLabCli.GitLabCli;
+      yield* glab.getRepositoryCloneUrls({ cwd: "/repo", repository: "group/subgroup/project" });
+
+      assert.deepStrictEqual(
+        mockedRun.mock.calls.map((call) => call[0].args),
+        [["api", "projects/group%2Fsubgroup%2Fproject"]],
+      );
+    }),
+  );
+
+  it.effect("accepts a project served on a non-default port", () =>
+    Effect.gen(function* () {
+      mockRepository(
+        // @effect-diagnostics-next-line preferSchemaOverJson:off
+        JSON.stringify({
+          path_with_namespace: "group/project",
+          web_url: "https://sourcecontrol.example.com:8443/group/project",
+          http_url_to_repo: "https://sourcecontrol.example.com:8443/group/project.git",
+          ssh_url_to_repo: "git@sourcecontrol.example.com:group/project.git",
+        }),
+      );
+
+      const glab = yield* GitLabCli.GitLabCli;
+      const urls = yield* glab.getRepositoryCloneUrls({
+        cwd: "/repo",
+        repository: "git@sourcecontrol.example.com:group/project.git",
+      });
+
+      assert.strictEqual(urls.nameWithOwner, "group/project");
+    }),
+  );
+
+  it.effect("refuses a project served on a different port than the URL named", () =>
+    Effect.gen(function* () {
+      mockRepository(
+        // @effect-diagnostics-next-line preferSchemaOverJson:off
+        JSON.stringify({
+          path_with_namespace: "group/project",
+          web_url: "https://sourcecontrol.example.com/group/project",
+          http_url_to_repo: "https://sourcecontrol.example.com/group/project.git",
+          ssh_url_to_repo: "git@sourcecontrol.example.com:group/project.git",
+        }),
+      );
+
+      const error = yield* Effect.gen(function* () {
+        const glab = yield* GitLabCli.GitLabCli;
+        return yield* glab.getRepositoryCloneUrls({
+          cwd: "/repo",
+          repository: "https://sourcecontrol.example.com:8443/group/project",
+        });
+      }).pipe(Effect.flip);
+
+      assert.strictEqual(error._tag, "GitLabRepositoryHostMismatchError");
+      assert.equal(error.detail.includes("sourcecontrol.example.com:8443"), true);
+    }),
+  );
+
+  it.effect.each([
+    "https://sourcecontrol.example.com/group/project",
+    "https://sourcecontrol.example.com:443/group/project",
+  ])("does not treat the default web port as a wildcard: %s", (repository) =>
+    Effect.gen(function* () {
+      mockRepository(
+        // @effect-diagnostics-next-line preferSchemaOverJson:off
+        JSON.stringify({
+          path_with_namespace: "group/project",
+          web_url: "https://sourcecontrol.example.com:8443/group/project",
+          http_url_to_repo: "https://sourcecontrol.example.com:8443/group/project.git",
+          ssh_url_to_repo: "git@sourcecontrol.example.com:group/project.git",
+        }),
+      );
+
+      const error = yield* Effect.gen(function* () {
+        const glab = yield* GitLabCli.GitLabCli;
+        return yield* glab.getRepositoryCloneUrls({ cwd: "/repo", repository });
+      }).pipe(Effect.flip);
+
+      assert.strictEqual(error._tag, "GitLabRepositoryHostMismatchError");
+      assert.equal(error.detail.includes("sourcecontrol.example.com:8443"), true);
+    }),
+  );
+
+  it.effect("refuses a project resolved on a host the URL did not name", () =>
+    Effect.gen(function* () {
+      mockRepository(
+        // @effect-diagnostics-next-line preferSchemaOverJson:off
+        JSON.stringify({
+          path_with_namespace: "group/project",
+          web_url: "https://gitlab.com/group/project",
+          http_url_to_repo: "https://gitlab.com/group/project.git",
+          ssh_url_to_repo: "git@gitlab.com:group/project.git",
+        }),
+      );
+
+      const error = yield* Effect.gen(function* () {
+        const glab = yield* GitLabCli.GitLabCli;
+        return yield* glab.getRepositoryCloneUrls({
+          cwd: "/repo",
+          repository: "https://sourcecontrol.example.com/group/project",
+        });
+      }).pipe(Effect.flip);
+
+      assert.strictEqual(error._tag, "GitLabRepositoryHostMismatchError");
+      assert.equal(error.detail.includes("sourcecontrol.example.com"), true);
+      assert.equal(error.detail.includes("gitlab.com"), true);
     }),
   );
 

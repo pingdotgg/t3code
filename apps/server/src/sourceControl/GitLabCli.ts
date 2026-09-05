@@ -225,6 +225,25 @@ export class GitLabNamespaceDecodeError extends Schema.TaggedErrorClass<GitLabNa
   }
 }
 
+export class GitLabRepositoryHostMismatchError extends Schema.TaggedErrorClass<GitLabRepositoryHostMismatchError>()(
+  "GitLabRepositoryHostMismatchError",
+  {
+    command: Schema.Literal("glab"),
+    cwd: Schema.String,
+    operation: Schema.Literal("getRepositoryCloneUrls"),
+    requestedHost: Schema.String,
+    resolvedHost: Schema.String,
+  },
+) {
+  get detail(): string {
+    return `This URL names ${this.requestedHost}, but GitLab CLI resolved the project on ${this.resolvedHost}. Run \`glab config set host ${this.requestedHost}\` and retry, or enter the project path to use ${this.resolvedHost}.`;
+  }
+
+  override get message(): string {
+    return `GitLab CLI failed in ${this.operation}: ${this.detail}`;
+  }
+}
+
 export const GitLabCliError = Schema.Union([
   GitLabCliUnavailableError,
   GitLabCliAuthenticationError,
@@ -235,6 +254,7 @@ export const GitLabCliError = Schema.Union([
   GitLabMergeRequestDecodeError,
   GitLabRepositoryDecodeError,
   GitLabNamespaceDecodeError,
+  GitLabRepositoryHostMismatchError,
 ]);
 export type GitLabCliError = typeof GitLabCliError.Type;
 export const isGitLabCliError = Schema.is(GitLabCliError);
@@ -391,6 +411,88 @@ function toSummaryWithOptionalUpdatedAt(
   return Option.isSome(updatedAt) ? { ...summary, updatedAt } : summary;
 }
 
+function decodePathname(pathname: string): string {
+  try {
+    return decodeURIComponent(pathname);
+  } catch {
+    return pathname;
+  }
+}
+
+function stripSubfolder(path: string, subfolder: string): string {
+  if (subfolder.length === 0) return path;
+
+  const prefix = `${subfolder}/`;
+  if (!path.toLowerCase().startsWith(prefix.toLowerCase())) return path;
+
+  const stripped = path.slice(prefix.length);
+  return stripped.includes("/") ? stripped : path;
+}
+
+function relativeRootOf(configuredHost: string, address: string): string {
+  const value = configuredHost.trim();
+  if (value.length === 0) return "";
+
+  const addressed = /^[a-z][a-z0-9+.-]*:\/\//i.test(value) ? value : `https://${value}`;
+  try {
+    const url = new URL(addressed);
+    if (withPort(url.hostname.toLowerCase(), url.port) !== address) return "";
+    return url.pathname.replace(/^\/+|\/+$/g, "");
+  } catch {
+    return "";
+  }
+}
+
+function withPort(hostname: string, port: string): string {
+  return port === "" ? hostname : `${hostname}:${port}`;
+}
+
+function webAddressOf(url: string): { readonly hostname: string; readonly port: string } | null {
+  try {
+    const parsed = new URL(url);
+    return { hostname: parsed.hostname.toLowerCase(), port: parsed.port };
+  } catch {
+    return null;
+  }
+}
+
+function parseProjectTarget(repository: string): {
+  readonly host: string | null;
+  readonly port: string | null;
+  readonly path: string;
+} {
+  const trimmed = repository.trim();
+  let host: string | null = null;
+  let port: string | null = null;
+  let path = trimmed;
+
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed)) {
+    try {
+      const url = new URL(trimmed);
+      host = url.hostname.toLowerCase();
+      port = url.protocol === "http:" || url.protocol === "https:" ? url.port : null;
+      path = decodePathname(url.pathname);
+    } catch {
+      host = null;
+      path = trimmed;
+    }
+  } else {
+    const scpStyle = /^(?:[^/@\s]+@)?([^:/\s]+):(.+)$/.exec(trimmed);
+    if (scpStyle?.[1] !== undefined && scpStyle[2] !== undefined) {
+      host = scpStyle[1].toLowerCase();
+      path = scpStyle[2];
+    }
+  }
+
+  const [beforeProjectContent] = path.split("/-/");
+  const normalized = (beforeProjectContent ?? path)
+    .replace(/^\/+|\/+$/g, "")
+    .replace(/\.git$/i, "");
+  return normalized.length > 0
+    ? { host, port, path: normalized }
+    : { host: null, port: null, path: trimmed };
+}
+
 function parseRepositoryPath(repository: string): {
   readonly namespacePath: string | null;
   readonly projectPath: string;
@@ -517,11 +619,35 @@ export const make = Effect.gen(function* () {
           ),
         ),
       ),
-    getRepositoryCloneUrls: (input) =>
-      execute({
-        cwd: input.cwd,
-        args: ["api", `projects/${encodeURIComponent(input.repository)}`],
-      }).pipe(
+    getRepositoryCloneUrls: (input) => {
+      const target = parseProjectTarget(input.repository);
+      const readConfig = (args: ReadonlyArray<string>) =>
+        execute({ cwd: input.cwd, args: ["config", "get", ...args] }).pipe(
+          Effect.map((result) => result.stdout.trim()),
+          Effect.orElseSucceed(() => ""),
+        );
+      const address = target.host === null ? "" : withPort(target.host, target.port ?? "");
+      const subfolder =
+        target.host === null
+          ? Effect.succeed("")
+          : readConfig(["subfolder", "--host", address]).pipe(
+              Effect.map((configured) => configured.replace(/^\/+|\/+$/g, "")),
+              Effect.flatMap((configured) =>
+                configured.length > 0
+                  ? Effect.succeed(configured)
+                  : readConfig(["host"]).pipe(
+                      Effect.map((configured) => relativeRootOf(configured, address)),
+                    ),
+              ),
+            );
+
+      return subfolder.pipe(
+        Effect.flatMap((prefix) =>
+          execute({
+            cwd: input.cwd,
+            args: ["api", `projects/${encodeURIComponent(stripSubfolder(target.path, prefix))}`],
+          }),
+        ),
         Effect.map((result) => result.stdout.trim()),
         Effect.flatMap((raw) =>
           decodeGitLabRepositoryCloneUrls(raw).pipe(
@@ -538,7 +664,26 @@ export const make = Effect.gen(function* () {
           ),
         ),
         Effect.map(normalizeRepositoryCloneUrls),
-      ),
+        Effect.tap((urls) => {
+          const resolved = webAddressOf(urls.url);
+          if (target.host === null || resolved === null) return Effect.void;
+          const sameServer =
+            resolved.hostname === target.host &&
+            (target.port === null || target.port === resolved.port);
+          if (sameServer) return Effect.void;
+
+          return Effect.fail(
+            new GitLabRepositoryHostMismatchError({
+              command: "glab",
+              cwd: input.cwd,
+              operation: "getRepositoryCloneUrls",
+              requestedHost: withPort(target.host, target.port ?? ""),
+              resolvedHost: withPort(resolved.hostname, resolved.port),
+            }),
+          );
+        }),
+      );
+    },
     createRepository: (input) => {
       const { namespacePath, projectPath } = parseRepositoryPath(input.repository);
       const namespaceId: Effect.Effect<number | null, GitLabCliError> = namespacePath
