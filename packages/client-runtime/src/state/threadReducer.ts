@@ -1,3 +1,4 @@
+import { pendingProviderTurnUpdate } from "@t3tools/shared/pendingProviderTurn";
 import { pipe } from "effect/Function";
 import * as Arr from "effect/Array";
 import * as O from "effect/Order";
@@ -73,7 +74,7 @@ function isResolvableContextWindowActivity(activity: OrchestrationThreadActivity
  * (e.g. resolving attachment preview URLs, normalising model slugs, adding
  * scoped fields like `environmentId`) is the caller's responsibility.
  */
-export function applyThreadDetailEvent(
+function applyThreadDetailEventBase(
   thread: OrchestrationThread,
   event: OrchestrationEvent,
 ): ThreadDetailReducerResult {
@@ -788,4 +789,25 @@ function retainMessagesAfterRevert(
   }
 
   return Arr.filter(messages, (message) => retainedMessageIds.has(message.id));
+}
+
+export function applyThreadDetailEvent(
+  thread: OrchestrationThread,
+  event: OrchestrationEvent,
+): ThreadDetailReducerResult {
+  const result = applyThreadDetailEventBase(thread, event);
+  const update = pendingProviderTurnUpdate(event);
+  if (
+    update === undefined ||
+    result.kind === "deleted" ||
+    (update === null && thread.pendingProviderTurn == null)
+  )
+    return result;
+  return {
+    kind: "updated",
+    thread: {
+      ...(result.kind === "updated" ? result.thread : thread),
+      pendingProviderTurn: update,
+    },
+  };
 }

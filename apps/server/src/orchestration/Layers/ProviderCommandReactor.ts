@@ -1,3 +1,5 @@
+import { makeProviderAvailabilityWaiter } from "../ProviderAvailabilityWaiter.ts";
+import { modelUsageAvailability } from "@t3tools/shared/usageLimits";
 import {
   type ChatAttachment,
   CommandId,
@@ -580,6 +582,7 @@ const make = Effect.gen(function* () {
     options?: {
       readonly modelSelection?: ModelSelection;
       readonly pendingTurnStart?: boolean;
+      readonly runtimeMode?: RuntimeMode;
     },
   ) {
     const thread = yield* resolveThreadShell(threadId);
@@ -587,7 +590,7 @@ const make = Effect.gen(function* () {
       return yield* Effect.die(new Error(`Thread '${threadId}' was not found in read model.`));
     }
 
-    const desiredRuntimeMode = thread.runtimeMode;
+    const desiredRuntimeMode = options?.runtimeMode ?? thread.runtimeMode;
     const requestedModelSelection = options?.modelSelection;
     const resolveActiveSession = (threadId: ThreadId) =>
       providerService
@@ -767,7 +770,7 @@ const make = Effect.gen(function* () {
     const existingSessionThreadId =
       thread.session && thread.session.status !== "stopped" && activeSession ? thread.id : null;
     if (existingSessionThreadId) {
-      const runtimeModeChanged = thread.runtimeMode !== thread.session?.runtimeMode;
+      const runtimeModeChanged = desiredRuntimeMode !== thread.session?.runtimeMode;
       const cwdChanged = effectiveCwd !== activeSession?.cwd;
       const sessionModelSwitch = (yield* providerService.getCapabilities(desiredInstanceId))
         .sessionModelSwitch;
@@ -843,6 +846,7 @@ const make = Effect.gen(function* () {
     readonly attachments?: ReadonlyArray<ChatAttachment>;
     readonly modelSelection?: ModelSelection;
     readonly interactionMode?: "default" | "plan";
+    readonly runtimeMode?: RuntimeMode;
     readonly createdAt: string;
   }) {
     const thread = yield* resolveThreadShell(input.threadId);
@@ -854,6 +858,7 @@ const make = Effect.gen(function* () {
     yield* ensureSessionForThread(input.threadId, input.createdAt, {
       ...(input.modelSelection !== undefined ? { modelSelection: input.modelSelection } : {}),
       pendingTurnStart: true,
+      ...(input.runtimeMode !== undefined ? { runtimeMode: input.runtimeMode } : {}),
     });
     if (input.modelSelection !== undefined) {
       threadModelSelections.set(input.threadId, input.modelSelection);
@@ -1192,6 +1197,11 @@ const make = Effect.gen(function* () {
     if (!thread) {
       return;
     }
+    if (
+      event.payload.providerAvailabilityWait === true &&
+      thread.pendingProviderTurn?.message.messageId !== event.payload.messageId
+    )
+      return;
     const message = thread.messages.find((entry) => entry.id === event.payload.messageId);
     if (!message || message.role !== "user") {
       yield* appendProviderFailureActivity({
@@ -1291,6 +1301,41 @@ const make = Effect.gen(function* () {
       return true;
     }).pipe(Effect.catchCause((cause) => recoverTurnStartFailure(cause).pipe(Effect.as(true))));
     if (authCommandHandled) {
+      return;
+    }
+
+    const activeSession =
+      event.payload.modelSelection === undefined && thread.session?.status !== "stopped"
+        ? (yield* providerService.listSessions()).find((session) => session.threadId === thread.id)
+        : undefined;
+    const previousSelection = threadModelSelections.get(thread.id) ?? thread.modelSelection;
+    const selection = event.payload.modelSelection ?? {
+      ...previousSelection,
+      instanceId: activeSession?.providerInstanceId ?? previousSelection.instanceId,
+      model: activeSession?.model ?? previousSelection.model,
+    };
+    const providerSnapshot = (yield* providerRegistry.getProviders).find(
+      (entry) => entry.instanceId === selection.instanceId,
+    );
+    const availability = modelUsageAvailability(
+      providerSnapshot?.usageLimits,
+      selection.model,
+      DateTime.toEpochMillis(yield* DateTime.now),
+    );
+    if (event.payload.providerAvailabilityWait === true && availability.status !== "available")
+      return;
+    if (availability.status === "exhausted") {
+      const detail =
+        "Usage limit reached. Queue a message with Start when available or choose another provider.";
+      const latestSession = (yield* resolveThreadShell(thread.id))?.session;
+      if (latestSession?.status !== "running" && latestSession?.status !== "starting") {
+        yield* setThreadSessionErrorOnTurnStartFailure({
+          threadId: thread.id,
+          detail,
+          createdAt: event.payload.createdAt,
+        });
+      }
+      yield* appendTurnStartFailure("Usage limit reached", detail);
       return;
     }
 
@@ -1429,6 +1474,7 @@ const make = Effect.gen(function* () {
         ? { modelSelection: event.payload.modelSelection }
         : {}),
       interactionMode: event.payload.interactionMode,
+      runtimeMode: event.payload.runtimeMode,
       createdAt: event.payload.createdAt,
     }).pipe(
       Effect.map(Option.some),
@@ -1723,6 +1769,7 @@ const make = Effect.gen(function* () {
         yield* processTurnStartRequested(event);
         return;
       case "thread.turn-interrupt-requested":
+        if (event.payload.pendingMessageId !== undefined) return;
         yield* processTurnInterruptRequested(event);
         return;
       case "thread.approval-response-requested":
@@ -1769,6 +1816,7 @@ const make = Effect.gen(function* () {
     );
 
   const worker = yield* makeDrainableWorker(processDomainEventSafely);
+  const availabilityWaiter = yield* makeProviderAvailabilityWaiter;
 
   const start: ProviderCommandReactorShape["start"] = Effect.fn("start")(function* () {
     const interruptedTitleRegenerations = yield* findInterruptedThreadTitleRegenerations().pipe(
@@ -1783,6 +1831,7 @@ const make = Effect.gen(function* () {
       }),
     );
     const processEvent = Effect.fn("processEvent")(function* (event: OrchestrationEvent) {
+      yield* availabilityWaiter.onEvent(event);
       if (
         (event.type === "thread.meta-updated" && event.payload.regenerateTitle === true) ||
         event.type === "thread.runtime-mode-set" ||
@@ -1800,6 +1849,7 @@ const make = Effect.gen(function* () {
     // Subscribe before returning, even while event handling waits for server activation.
     const domainEvents = yield* orchestrationEngine.subscribeDomainEvents;
     yield* forkParked(Stream.runForEach(domainEvents, processEvent));
+    yield* availabilityWaiter.start;
 
     // The domain event stream is hot, so work pending before this reactor
     // starts cannot be resumed. Correlated completions only clear the request
@@ -1830,6 +1880,7 @@ const make = Effect.gen(function* () {
   return {
     start,
     drain: Effect.gen(function* () {
+      yield* availabilityWaiter.drain;
       yield* worker.drain;
       yield* threadTitleRegenerationWorker.drain;
     }),

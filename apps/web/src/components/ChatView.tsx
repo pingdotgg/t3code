@@ -6120,7 +6120,11 @@ export default function ChatView(props: ChatViewProps) {
       return;
     }
     const sendCtx = composerRef.current?.getSendContext();
-    if (!sendCtx?.providerAvailable) {
+    if (
+      !sendCtx?.providerAvailable ||
+      activeThread.pendingProviderTurn != null ||
+      (sendCtx.quotaExhausted && submissionIntent !== "when-available")
+    ) {
       notifyDirectAnnotationAttached();
       return;
     }
@@ -6187,6 +6191,7 @@ export default function ChatView(props: ChatViewProps) {
         composerReviewComments.length,
     });
     const feedbackCommand =
+      submissionIntent !== "when-available" &&
       ctxSelectedProvider === "codex" &&
       composerImages.length === 0 &&
       composerFiles.length === 0 &&
@@ -6283,6 +6288,7 @@ export default function ChatView(props: ChatViewProps) {
       return;
     }
     if (
+      submissionIntent !== "when-available" &&
       !directAnnotation &&
       sendInteractionModeEnabled &&
       showPlanFollowUpPrompt &&
@@ -6704,6 +6710,7 @@ export default function ChatView(props: ChatViewProps) {
             attachments: turnAttachmentsResult.value,
           },
           modelSelection: ctxSelectedModelSelection,
+          ...(submissionIntent === "when-available" ? { waitForProvider: true } : {}),
           titleSeed: title,
           runtimeMode,
           interactionMode: sendInteractionMode,
@@ -6718,6 +6725,15 @@ export default function ChatView(props: ChatViewProps) {
         failure = startResult;
       } else {
         turnStartSucceeded = true;
+        if (submissionIntent === "when-available") {
+          setOptimisticUserMessages((messages) => {
+            for (const message of messages) {
+              if (message.id === messageIdForSend) revokeUserMessagePreviewUrls(message);
+            }
+            return messages.filter((message) => message.id !== messageIdForSend);
+          });
+          resetLocalDispatch();
+        }
         if (turnUsesAttachmentUploads) {
           releaseDraftAttachments(composerAttachmentsSnapshot);
         }
@@ -6839,6 +6855,26 @@ export default function ChatView(props: ChatViewProps) {
         currentThreadKey === activeThreadKey ? null : currentThreadKey,
       );
       resetLocalDispatch();
+    }
+  };
+
+  const providerWaitCancellations = useRef(new Set<string>());
+  const onCancelProviderWait = async () => {
+    if (!activeThread?.pendingProviderTurn) return;
+    const pendingMessageId = activeThread.pendingProviderTurn.message.messageId;
+    const cancellationKey = JSON.stringify([environmentId, activeThread.id, pendingMessageId]);
+    if (providerWaitCancellations.current.has(cancellationKey)) return;
+    providerWaitCancellations.current.add(cancellationKey);
+    try {
+      const result = await interruptThreadTurn({
+        environmentId,
+        input: { threadId: activeThread.id, pendingMessageId },
+      });
+      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+        setThreadError(activeThread.id, chatActionErrorMessage(squashAtomCommandFailure(result)));
+      }
+    } finally {
+      providerWaitCancellations.current.delete(cancellationKey);
     }
   };
 
@@ -7932,6 +7968,13 @@ export default function ChatView(props: ChatViewProps) {
                             activeThreadId={activeThreadId}
                             activeThreadEnvironmentId={activeThread?.environmentId}
                             activeThread={activeThread}
+                            supportsProviderWait={
+                              appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)
+                                ?.environment.capabilities.providerAvailabilityWait === true
+                            }
+                            onCancelProviderWait={() => {
+                              void onCancelProviderWait();
+                            }}
                             promptHistoryMessages={timelineMessages}
                             isServerThread={isServerThread}
                             isLocalDraftThread={isLocalDraftThread}

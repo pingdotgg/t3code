@@ -48,6 +48,27 @@ If a window looks stale, refresh Limits to re-check every provider and hub.
 API-key accounts may not report subscription limits. This also applies to Claude connections
 using a proxy through `ANTHROPIC_AUTH_TOKEN`.
 
+## Start after your subscription resets
+
+On web and desktop, an exhausted provider remains in the model picker. When its reported
+limits block the selected model, Send and its keyboard shortcut are disabled. Write your
+message and choose **Start when available** to save it for that provider account.
+
+The environment keeps the exact message, attachments, model options, and permission mode.
+You can close the client or restart the environment while it waits. A waiting banner shows
+the saved message; choose **Cancel queued message** to remove it. Archiving or settling the
+thread also cancels the wait. Cancel the wait before snoozing a thread. Only one message
+can wait per thread.
+
+The environment starts the message after a fresh quota check confirms capacity. A displayed
+reset time is an estimate, not a promise to start at that instant. The environment must be
+running, and the selected account must still be enabled and signed in. It never switches
+accounts automatically. If usage is unavailable, normal sending remains available and
+automatic waiting is not offered.
+
+Starting a new thread may prepare its workspace before saving the wait. The agent itself
+does not start until capacity returns. These controls require an updated environment.
+
 ## Connect a CLIProxyAPI hub
 
 To see pooled accounts, open **Settings → Providers → Usage providers → Add hub**. Choose the

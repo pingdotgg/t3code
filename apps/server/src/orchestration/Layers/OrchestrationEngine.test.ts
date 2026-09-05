@@ -1864,3 +1864,145 @@ describe("OrchestrationEngine", () => {
     await system.dispose();
   });
 });
+
+it("persists a queued prompt without starting a turn, releases exactly once, and cancels after restart", async () => {
+  const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "provider-wait-"));
+  const database = NodePath.join(directory, "state.sqlite");
+  let system = await createOrchestrationSystem(database);
+  const threadId = ThreadId.make("waiting-thread");
+  const projectId = ProjectId.make("waiting-project");
+  const selection = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5-codex" };
+  const message = {
+    messageId: MessageId.make("waiting-message"),
+    role: "user" as const,
+    text: "Keep this exact prompt",
+    attachments: [],
+  };
+  try {
+    await system.run(
+      system.engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.make("wait-project"),
+        projectId,
+        title: "Waiting",
+        workspaceRoot: directory,
+        defaultModelSelection: selection,
+        createdAt: now(),
+      }),
+    );
+    await system.run(
+      system.engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("wait-thread"),
+        threadId,
+        projectId,
+        title: "Waiting",
+        modelSelection: selection,
+        runtimeMode: "approval-required",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdAt: now(),
+      }),
+    );
+    const queue = {
+      type: "thread.turn.start" as const,
+      commandId: CommandId.make("wait-queue"),
+      threadId,
+      message,
+      waitForProvider: true,
+      runtimeMode: "approval-required" as const,
+      interactionMode: "default" as const,
+      createdAt: now(),
+    };
+    await system.run(system.engine.dispatch(queue));
+    let thread = (await system.readModel()).threads[0]!;
+    expect(thread.pendingProviderTurn?.message).toEqual(message);
+    expect(thread.pendingProviderTurn?.modelSelection).toEqual(selection);
+    expect(thread.messages).toHaveLength(0);
+    expect(thread.latestTurn).toBeNull();
+    await expect(
+      system.run(system.engine.dispatch({ ...queue, commandId: CommandId.make("wait-second") })),
+    ).rejects.toThrow("pending work");
+    await expect(
+      system.run(
+        system.engine.dispatch({
+          type: "thread.snooze",
+          commandId: CommandId.make("wait-snooze"),
+          threadId,
+          snoozedUntil: "2099-01-02T00:00:00.000Z",
+        }),
+      ),
+    ).rejects.toThrow("queued turn start");
+    await system.dispose();
+    system = await createOrchestrationSystem(database);
+    thread = (await system.readModel()).threads[0]!;
+    expect(thread.pendingProviderTurn?.message).toEqual(message);
+    const release = {
+      type: "thread.turn.release" as const,
+      commandId: CommandId.make("wait-release"),
+      threadId,
+      messageId: message.messageId,
+      createdAt: "2026-01-02T00:00:00.000Z",
+    };
+    await system.run(system.engine.dispatch(release));
+    await system.run(system.engine.dispatch(release));
+    thread = (await system.readModel()).threads[0]!;
+    expect(thread.messages).toHaveLength(1);
+    expect(thread.messages[0]?.text).toBe(message.text);
+    expect(thread.pendingProviderTurn?.message).toEqual(message);
+    for (const status of ["starting", "ready"] as const) {
+      await system.run(
+        system.engine.dispatch({
+          type: "thread.session.set",
+          commandId: CommandId.make(`wait-session-${status}`),
+          threadId,
+          createdAt: release.createdAt,
+          session: {
+            threadId,
+            status,
+            providerName: "codex",
+            runtimeMode: "approval-required",
+            activeTurnId: null,
+            lastError: null,
+            updatedAt: release.createdAt,
+          },
+        }),
+      );
+    }
+    expect((await system.readModel()).threads[0]?.pendingProviderTurn).toBeNull();
+    await system.run(
+      system.engine.dispatch({
+        ...queue,
+        commandId: CommandId.make("wait-again"),
+        message: { ...message, messageId: MessageId.make("cancel-message") },
+        createdAt: "2026-01-03T00:00:00.000Z",
+      }),
+    );
+    await system.dispose();
+    system = await createOrchestrationSystem(database);
+    await system.run(
+      system.engine.dispatch({
+        type: "thread.turn.interrupt",
+        commandId: CommandId.make("wait-cancel"),
+        threadId,
+        pendingMessageId: MessageId.make("cancel-message"),
+        createdAt: "2026-01-03T01:00:00.000Z",
+      }),
+    );
+    expect((await system.readModel()).threads[0]?.pendingProviderTurn).toBeNull();
+    await expect(
+      system.run(
+        system.engine.dispatch({
+          ...release,
+          commandId: CommandId.make("stale-release"),
+          messageId: MessageId.make("cancel-message"),
+        }),
+      ),
+    ).rejects.toThrow("no longer eligible");
+    expect((await system.readModel()).threads[0]?.messages).toHaveLength(1);
+  } finally {
+    await system.dispose();
+    await NodeFSP.rm(directory, { recursive: true, force: true });
+  }
+});

@@ -1,3 +1,9 @@
+import {
+  ProviderRegistry,
+  type ProviderRegistryShape,
+} from "../../provider/Services/ProviderRegistry.ts";
+import { makeProviderRegistryMock } from "../../provider/testUtils/providerRegistryMock.ts";
+import type { ServerProvider } from "@t3tools/contracts";
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
@@ -69,6 +75,8 @@ import { ProviderCommandReactor } from "../Services/ProviderCommandReactor.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Clock from "effect/Clock";
+import * as DateTime from "effect/DateTime";
+import * as Fiber from "effect/Fiber";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ServerActivation } from "../../serverActivation.ts";
 import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
@@ -166,6 +174,7 @@ describe("ProviderCommandReactor", () => {
   });
 
   async function createHarness(input?: {
+    readonly providerRegistry?: ProviderRegistryShape;
     readonly baseDir?: string;
     readonly threadModelSelection?: ModelSelection;
     readonly sessionModelSwitch?: "unsupported" | "in-session";
@@ -450,7 +459,11 @@ describe("ProviderCommandReactor", () => {
       Layer.provideMerge(projectionSnapshotLayer),
       Layer.provideMerge(Layer.succeed(ProviderService, service)),
       Layer.provide(Layer.mock(ProviderAuthService, { tryHandlePromptCommand })),
-      Layer.provideMerge(makeProviderRegistryLayer(providerSnapshots as never)),
+      Layer.provideMerge(
+        input?.providerRegistry
+          ? Layer.succeed(ProviderRegistry, input.providerRegistry)
+          : makeProviderRegistryLayer(providerSnapshots as never),
+      ),
       Layer.provideMerge(
         Layer.mock(GitWorkflowService.GitWorkflowService)({
           renameBranch,
@@ -616,8 +629,243 @@ describe("ProviderCommandReactor", () => {
     };
   }
 
+  effectIt.live("waits for positive provider capacity and sends the saved prompt only once", () =>
+    Effect.gen(function* () {
+      const now = yield* DateTime.now;
+      const checkedAt = DateTime.formatIso(now);
+      const resetsAt = DateTime.formatIso(DateTime.add(now, { hours: 1 }));
+      let provider: ServerProvider = {
+        instanceId: ProviderInstanceId.make("codex"),
+        driver: ProviderDriverKind.make("codex"),
+        enabled: true,
+        installed: true,
+        status: "ready",
+        version: null,
+        auth: { status: "authenticated" },
+        checkedAt: checkedAt,
+        models: [],
+        slashCommands: [],
+        skills: [],
+        usageLimits: {
+          checkedAt: checkedAt,
+          windows: [
+            {
+              id: "primary",
+              kind: "session",
+              label: "Session",
+              usedPercent: 100,
+              resetsAt: resetsAt,
+            },
+          ],
+        },
+      };
+      const updates = yield* PubSub.unbounded<readonly ServerProvider[]>();
+      const registry = {
+        ...makeProviderRegistryMock(),
+        getProviders: Effect.sync(() => [provider]),
+        refreshInstance: () => Effect.sync(() => [provider]),
+        streamChanges: Stream.fromPubSub(updates),
+      };
+      const harness = yield* Effect.promise(() => createHarness({ providerRegistry: registry }));
+      const threadId = ThreadId.make("thread-1");
+      yield* harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("capacity-queue"),
+        threadId,
+        message: {
+          messageId: MessageId.make("capacity-message"),
+          role: "user",
+          text: "Saved until capacity returns",
+          attachments: [],
+        },
+        waitForProvider: true,
+        runtimeMode: "approval-required",
+        interactionMode: "default",
+        createdAt: checkedAt,
+      });
+      yield* Effect.promise(() => harness.drain());
+      expect(harness.startSession).not.toHaveBeenCalled();
+      expect(harness.sendTurn).not.toHaveBeenCalled();
+      expect(
+        (yield* Effect.promise(() => harness.readModel())).threads[0]?.pendingProviderTurn?.message
+          .text,
+      ).toBe("Saved until capacity returns");
+      expect(yield* Effect.promise(() => harness.readPendingTurnStarts())).toEqual([]);
+      // Capacity can disappear between admission and the provider worker's handoff.
+      yield* harness.engine.dispatch({
+        type: "thread.turn.release",
+        commandId: CommandId.make("raced-capacity-release"),
+        threadId,
+        messageId: MessageId.make("capacity-message"),
+        createdAt: checkedAt,
+      });
+      yield* Effect.promise(() => harness.drain());
+      expect(harness.sendTurn).not.toHaveBeenCalled();
+      expect(
+        (yield* Effect.promise(() => harness.readModel())).threads[0]?.pendingProviderTurn?.message
+          .text,
+      ).toBe("Saved until capacity returns");
+      // Wait for a typed release receipt; no wall-clock sleep or polling.
+      const released = yield* harness.engine.subscribeDomainEvents.pipe(Scope.provide(scope!));
+      const receipt = yield* Effect.forkChild(
+        Stream.runHead(
+          released.pipe(Stream.filter((event) => event.type === "thread.turn-start-requested")),
+        ),
+      );
+      provider = {
+        ...provider,
+        usageLimits: {
+          checkedAt: checkedAt,
+          windows: [
+            {
+              id: "primary",
+              kind: "session",
+              label: "Session",
+              usedPercent: 0,
+              resetsAt: resetsAt,
+            },
+          ],
+        },
+      };
+      yield* PubSub.publish(updates, [provider]);
+      yield* Fiber.join(receipt);
+      yield* Effect.promise(() => harness.drain());
+      expect(harness.sendTurn).toHaveBeenCalledTimes(1);
+      expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({
+        input: "Saved until capacity returns",
+      });
+      expect(
+        (yield* Effect.promise(() => harness.readModel())).threads[0]?.pendingProviderTurn,
+      ).toBeNull();
+      yield* PubSub.publish(updates, [provider]);
+      yield* Effect.promise(() => harness.drain());
+      expect(harness.sendTurn).toHaveBeenCalledTimes(1);
+      // An older client or a direct RPC cannot bypass the server's quota gate.
+      provider = {
+        ...provider,
+        usageLimits: {
+          checkedAt,
+          windows: [
+            { id: "primary", kind: "session", label: "Session", usedPercent: 100, resetsAt },
+          ],
+        },
+      };
+      yield* harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("exhausted-direct-send"),
+        threadId,
+        message: {
+          messageId: MessageId.make("blocked-message"),
+          role: "user",
+          text: "Do not dispatch while exhausted",
+          attachments: [],
+        },
+        runtimeMode: "approval-required",
+        interactionMode: "default",
+        createdAt: checkedAt,
+      });
+      yield* Effect.promise(() => harness.drain());
+      expect(harness.sendTurn).toHaveBeenCalledTimes(1);
+      expect((yield* Effect.promise(() => harness.readModel())).threads[0]?.activities).toEqual(
+        expect.arrayContaining([expect.objectContaining({ summary: "Usage limit reached" })]),
+      );
+    }),
+  );
+
+  effectIt.effect.each(["ready", "running"] as const)(
+    "checks the active model's quota and preserves an unrelated %s session",
+    (sessionStatus) =>
+      Effect.gen(function* () {
+        const threadId = ThreadId.make("thread-1");
+        const instanceId = ProviderInstanceId.make("claude");
+        const createdAt = "2026-01-01T00:00:00.000Z";
+        const harness = yield* Effect.promise(() =>
+          createHarness({
+            threadModelSelection: { instanceId, model: "claude-sonnet-4" },
+            providerRegistry: makeProviderRegistryMock([
+              {
+                instanceId,
+                driver: ProviderDriverKind.make("claude"),
+                enabled: true,
+                installed: true,
+                status: "ready",
+                version: null,
+                auth: { status: "authenticated" },
+                checkedAt: createdAt,
+                models: [],
+                slashCommands: [],
+                skills: [],
+                usageLimits: {
+                  checkedAt: createdAt,
+                  windows: [
+                    { id: "seven_day_sonnet", kind: "weekly", label: "Sonnet", usedPercent: 0 },
+                    { id: "seven_day_opus", kind: "weekly", label: "Opus", usedPercent: 100 },
+                  ],
+                },
+              },
+            ]),
+          }),
+        );
+        harness.runtimeSessions.push({
+          threadId,
+          provider: ProviderDriverKind.make("claude"),
+          providerInstanceId: instanceId,
+          model: "claude-opus-4",
+          status: sessionStatus,
+          runtimeMode: "approval-required",
+          createdAt,
+          updatedAt: createdAt,
+        });
+        const activeTurnId = sessionStatus === "running" ? asTurnId("already-running") : null;
+        yield* harness.engine.dispatch({
+          type: "thread.session.set",
+          commandId: CommandId.make("bind-existing-session"),
+          threadId,
+          session: {
+            threadId,
+            providerName: "claude",
+            providerInstanceId: instanceId,
+            status: sessionStatus,
+            runtimeMode: "approval-required",
+            activeTurnId,
+            lastError: null,
+            updatedAt: createdAt,
+          },
+          createdAt,
+        });
+        yield* harness.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make("omitted-selection-exhausted-send"),
+          threadId,
+          message: {
+            messageId: asMessageId("blocked"),
+            role: "user",
+            text: "Do not send",
+            attachments: [],
+          },
+          runtimeMode: "approval-required",
+          interactionMode: "default",
+          createdAt,
+        });
+        yield* Effect.promise(() => harness.drain());
+        expect(harness.sendTurn).not.toHaveBeenCalled();
+        expect(harness.startSession).not.toHaveBeenCalled();
+        const thread = (yield* Effect.promise(() => harness.readModel())).threads[0];
+        expect(thread?.activities).toContainEqual(
+          expect.objectContaining({ summary: "Usage limit reached" }),
+        );
+        if (sessionStatus === "running") {
+          expect(thread?.session).toMatchObject({
+            status: "running",
+            activeTurnId,
+            lastError: null,
+          });
+        }
+      }),
+  );
+
   effectIt.effect.each(["new", "ready", "stopped"] as const)(
-    "handles sign-out for a %s thread before worktree repair, text helpers, or startup",
+    "handles sign-out for an exhausted %s thread before worktree repair, text helpers, or startup",
     (sessionStatus) =>
       Effect.gen(function* () {
         const instanceId = ProviderInstanceId.make("antigravity-personal");
@@ -629,6 +877,27 @@ describe("ProviderCommandReactor", () => {
               : {
                   threadModelSelection: { instanceId, model: "gemini-3.1-pro" },
                 }),
+            providerRegistry: makeProviderRegistryMock(
+              [instanceId, ProviderInstanceId.make("antigravity-other")].map((id) => ({
+                instanceId: id,
+                driver: ProviderDriverKind.make("antigravity"),
+                enabled: true,
+                installed: true,
+                status: "ready" as const,
+                version: null,
+                auth: { status: "authenticated" as const },
+                checkedAt: "2026-01-01T00:00:00.000Z",
+                models: [],
+                slashCommands: [],
+                skills: [],
+                usageLimits: {
+                  checkedAt: "2026-01-01T00:00:00.000Z",
+                  windows: [
+                    { id: "primary", kind: "session" as const, label: "Session", usedPercent: 100 },
+                  ],
+                },
+              })),
+            ),
             tryHandlePromptCommandEffect: () =>
               Deferred.succeed(handled, undefined).pipe(Effect.as(true)),
           }),

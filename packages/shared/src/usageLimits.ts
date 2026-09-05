@@ -209,3 +209,39 @@ export function formatResetsIn(window: ServerProviderUsageWindow, now: number): 
   if (resetsAt === null) return null;
   return resetsAt <= now ? "resets now" : `resets in ${formatDuration(resetsAt - now)}`;
 }
+
+/** Whether the selected model can use the subscription snapshot. A reset time
+ * triggers a refresh; passing that time alone never proves capacity returned. */
+export function modelUsageAvailability(
+  limits: ServerProviderUsageLimits | undefined,
+  model: string,
+  now: number,
+): { readonly status: "available" | "exhausted" | "unknown"; readonly resetsAt: number | null } {
+  if (!limits || limits.unavailable) return { status: "unknown", resetsAt: null };
+  const modelTokens = model.toLowerCase().split(/[^a-z0-9]+/);
+  const windows = limits.windows.filter((window) => {
+    if (!window.id.startsWith("seven_day_")) return true;
+    const scope = window.id.slice("seven_day_".length);
+    return scope.split("_").every((token) => modelTokens.includes(token));
+  });
+  if (windows.length === 0) return { status: "unknown", resetsAt: null };
+  const exhausted = windows.filter((window) => window.usedPercent >= 100);
+  if (exhausted.length > 0) {
+    const resets = exhausted.map(resetMillis);
+    return {
+      status: "exhausted",
+      resetsAt: resets.some((at) => at === null)
+        ? null
+        : Math.max(...resets.filter((at) => at !== null)),
+    };
+  }
+  // Positive capacity must be recent, and windows from before their reset
+  // must be refreshed before an unattended turn is admitted.
+  const checkedAt = Date.parse(limits.checkedAt);
+  const fresh = checkedAt <= now && now - checkedAt <= 5 * MINUTE;
+  const expired = windows.some((window) => {
+    const reset = resetMillis(window);
+    return reset !== null && reset <= now;
+  });
+  return { status: fresh && !expired ? "available" : "unknown", resetsAt: null };
+}

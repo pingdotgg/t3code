@@ -1,4 +1,5 @@
 import {
+  MessageId,
   EnvironmentId,
   ProjectId,
   ProviderInstanceId,
@@ -206,6 +207,18 @@ describe("environment entity projections", () => {
       ...THREAD_SHELL,
       environmentId: ENVIRONMENT_ID,
       title: "Cached thread",
+      pendingProviderTurn: {
+        message: {
+          messageId: MessageId.make("queued-message"),
+          role: "user",
+          text: "Saved prompt",
+          attachments: [],
+        },
+        modelSelection: THREAD_SHELL.modelSelection,
+        runtimeMode: "approval-required",
+        interactionMode: "default",
+        createdAt: THREAD_SHELL.createdAt,
+      },
       branch: "stale-branch",
       worktreePath: "/repo/stale-worktree",
       deletedAt: null,
@@ -218,6 +231,7 @@ describe("environment entity projections", () => {
       ...THREAD_SHELL,
       environmentId: ENVIRONMENT_ID,
       title: "Current thread",
+      pendingProviderTurn: null,
       branch: "current-branch",
       worktreePath: "/repo/current-worktree",
     };
@@ -230,6 +244,11 @@ describe("environment entity projections", () => {
       worktreePath: "/repo/current-worktree",
     });
     expect(merged?.messages).toBe(messages);
+    expect(merged?.pendingProviderTurn).toBeNull();
+    expect(
+      mergeEnvironmentThread(detail, { ...shell, pendingProviderTurn: detail.pendingProviderTurn })
+        ?.pendingProviderTurn,
+    ).toBe(detail.pendingProviderTurn);
   });
 
   it("preserves untouched project and thread identities across unrelated shell updates", () => {

@@ -1,3 +1,4 @@
+import { modelUsageAvailability } from "@t3tools/shared/usageLimits";
 import type {
   ApprovalRequestId,
   AssistantCitation,
@@ -1149,6 +1150,7 @@ export interface ChatComposerHandle {
     selectedModelOptionsForDispatch: unknown;
     selectedModelSelection: ModelSelection;
     providerAvailable: boolean;
+    quotaExhausted: boolean;
     selectedProvider: ProviderDriverKind;
     selectedModel: string;
     selectedProviderModels: ReadonlyArray<ServerProvider["models"][number]>;
@@ -1164,6 +1166,8 @@ export interface ChatComposerHandle {
 // --------------------------------------------------------------------------
 
 export interface ChatComposerProps {
+  supportsProviderWait: boolean;
+  onCancelProviderWait: () => void;
   composerDraftTarget: ScopedThreadRef | DraftId;
   environmentId: EnvironmentId;
   attachmentUploadsCapabilityKnown: boolean;
@@ -1635,9 +1639,23 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     selectedProviderEntry?.snapshot,
     selectedModel,
   );
-  const sendDisabledReason =
+  const quota = modelUsageAvailability(
+    selectedProviderEntry?.snapshot.usageLimits,
+    selectedModel,
+    Date.now(),
+  );
+  const quotaExhausted = quota.status === "exhausted";
+  const queuedProviderTurn = activeThread?.pendingProviderTurn;
+  const ordinarySendDisabledReason =
     externalSendDisabledReason ??
     (activePendingProgress ? null : (attachmentBlockReason ?? providerSendBlockReason));
+  const sendDisabledReason =
+    ordinarySendDisabledReason ??
+    (queuedProviderTurn
+      ? "Cancel the queued message before sending another"
+      : quotaExhausted && !activePendingProgress
+        ? "Usage limit reached"
+        : null);
   const isSendDisabled = sendDisabledReason !== null;
   const selectedProviderStatus = useMemo(
     () => selectedProviderEntry?.snapshot ?? null,
@@ -2848,7 +2866,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
   const submitComposer = useCallback(
     (event?: { preventDefault: () => void }, intent: ComposerSubmissionIntent = "foreground") => {
-      if (noProviderAvailable || isSendDisabled) {
+      if (
+        noProviderAvailable ||
+        (intent === "when-available"
+          ? ordinarySendDisabledReason !== null ||
+            queuedProviderTurn != null ||
+            !props.supportsProviderWait
+          : isSendDisabled)
+      ) {
         event?.preventDefault();
         return;
       }
@@ -2888,6 +2913,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       activePendingProgress,
       blurMobileComposerAfterSend,
       isSendDisabled,
+      ordinarySendDisabledReason,
+      queuedProviderTurn,
+      props.supportsProviderWait,
       noProviderAvailable,
       onSend,
       promptRef,
@@ -3651,7 +3679,56 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const toggleTasksDrawer = useCallback(() => {
     setIsTasksDrawerOpen((open) => !open);
   }, []);
-  const hasBannerItems = props.bannerItems.length > 0;
+  const providerWaitNotice: ComposerBannerStackItem | null =
+    queuedProviderTurn || quotaExhausted
+      ? {
+          id: "provider-availability",
+          variant: "warning",
+          icon: null,
+          title: queuedProviderTurn
+            ? `Waiting for provider capacity · ${queuedProviderTurn.modelSelection.model}`
+            : "Usage limit reached",
+          description: queuedProviderTurn ? (
+            <span className="line-clamp-2">
+              {queuedProviderTurn.message.text}
+              {queuedProviderTurn.message.attachments.length > 0
+                ? ` · ${queuedProviderTurn.message.attachments.length} attachments`
+                : ""}
+            </span>
+          ) : quota.resetsAt !== null ? (
+            `Resets ${new Date(quota.resetsAt).toLocaleString()}`
+          ) : undefined,
+          actions: queuedProviderTurn ? (
+            <Button type="button" variant="outline" size="sm" onClick={props.onCancelProviderWait}>
+              Cancel queued message
+            </Button>
+          ) : props.supportsProviderWait ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={
+                ordinarySendDisabledReason !== null ||
+                noProviderAvailable ||
+                isSendBusy ||
+                isConnecting ||
+                environmentUnavailable !== null ||
+                !composerSendState.hasSendableContent ||
+                phase === "running" ||
+                activePendingProgress !== null ||
+                activePendingApproval !== null
+              }
+              onClick={() => submitComposer(undefined, "when-available")}
+            >
+              Start when available
+            </Button>
+          ) : undefined,
+        }
+      : null;
+  const notices = providerWaitNotice
+    ? [providerWaitNotice, ...props.bannerItems]
+    : props.bannerItems;
+  const hasBannerItems = notices.length > 0;
   const hasBlockingComposerTopDrawer =
     activePendingApproval !== null || pendingUserInputs.length > 0;
   const showInlineTasksBadge =
@@ -4079,9 +4156,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         content: activityStackContent,
       }
     : null;
-  const bannerStackItems = activityStackItem
-    ? [activityStackItem, ...props.bannerItems]
-    : props.bannerItems;
+  const bannerStackItems = activityStackItem ? [activityStackItem, ...notices] : notices;
   useEffect(() => {
     if (activeTasksProgress === null || activeTaskSteps === null) {
       setIsTasksDrawerOpen(false);
@@ -4696,6 +4771,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         selectedModelOptionsForDispatch,
         selectedModelSelection,
         providerAvailable: !noProviderAvailable && providerSendBlockReason === null,
+        quotaExhausted,
         selectedProvider,
         selectedModel,
         selectedProviderModels,
@@ -4744,6 +4820,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       selectedModelSelection,
       noProviderAvailable,
       providerSendBlockReason,
+      quotaExhausted,
       selectedPromptEffort,
       selectedProvider,
       selectedProviderModels,
