@@ -52,7 +52,6 @@ import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
 import * as ModelManifest from "../ModelManifest.ts";
 import type { ProviderDriver, ProviderInstance } from "../ProviderDriver.ts";
 import { withInstanceIdentity } from "./instanceIdentity.ts";
-import { expandHomePath } from "../../pathExpansion.ts";
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
 import {
   enrichProviderSnapshotWithVersionAdvisory,
@@ -81,19 +80,19 @@ function isCodexStandaloneCommandPath(commandPath: string): boolean {
 }
 
 /**
- * `codex update` replaces the standalone tree under `CODEX_HOME`, so the
- * updater must run with this instance's home or it would update `~/.codex`
- * and leave the instance's binary behind.
+ * `codex update` replaces the standalone tree under `CODEX_HOME`. That tree
+ * lives in the shared home even when an auth-overlay shadow home is in use
+ * (the overlay only carries auth and a few local entries), so the updater
+ * runs against `sharedHomePath` rather than the instance's effective home.
  */
-function makeCodexMaintenanceResolver(homePath: string) {
-  const resolvedHomePath = homePath ? expandHomePath(homePath) : undefined;
+function makeCodexMaintenanceResolver(sharedHomePath: string) {
   return makePackageManagedProviderMaintenanceResolver({
     provider: DRIVER_KIND,
     npmPackageName: "@openai/codex",
     nativeUpdate: {
       args: ["update"],
       isCommandPath: isCodexStandaloneCommandPath,
-      ...(resolvedHomePath ? { env: { CODEX_HOME: resolvedHomePath } } : {}),
+      env: { CODEX_HOME: sharedHomePath },
     },
   });
 }
@@ -162,7 +161,7 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
       } satisfies CodexSettings;
       const resolveMaintenance = yield* makeCachedProviderMaintenanceResolution(
         resolveProviderMaintenanceCapabilitiesEffect(
-          makeCodexMaintenanceResolver(effectiveConfig.homePath),
+          makeCodexMaintenanceResolver(homeLayout.sharedHomePath),
           {
             binaryPath: effectiveConfig.binaryPath,
             env: processEnv,
