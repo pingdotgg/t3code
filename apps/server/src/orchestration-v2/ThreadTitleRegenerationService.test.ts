@@ -7,8 +7,11 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ThreadId,
+  TextGenerationError,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as TestClock from "effect/testing/TestClock";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
@@ -405,6 +408,70 @@ describe("ThreadTitleRegenerationService", () => {
       }).pipe(Effect.provide(harness.layer));
     }),
   );
+
+  for (const [recover, retryable] of [
+    [true, true],
+    [false, true],
+    [false, false],
+  ] as const) {
+    it.effect(
+      `retries initial title failures within a bounded budget (recover=${recover}, retryable=${retryable})`,
+      () =>
+        Effect.gen(function* () {
+          let attempts = 0;
+          const harness = makeHarness({
+            generateTitle: () =>
+              Effect.suspend(() => {
+                attempts += 1;
+                return recover && attempts === 3
+                  ? Effect.succeed({ title: "Recovered title" })
+                  : Effect.fail(
+                      new TextGenerationError({
+                        operation: "generateThreadTitle",
+                        detail: retryable
+                          ? "temporarily unavailable"
+                          : "No provider instance registered.",
+                        retryable,
+                      }),
+                    );
+              }),
+          });
+          yield* Effect.gen(function* () {
+            const threads = yield* ThreadManagement.ThreadManagementService;
+            const titles = yield* ThreadTitleRegeneration.ThreadTitleRegenerationService;
+            const threadId = yield* createThread({
+              command: "command:title:retry:create",
+              thread: "thread:title:retry",
+            });
+            yield* dispatchUserMessage({
+              command: "command:title:retry:message",
+              threadId,
+              text: "Some conversation",
+            });
+            const requestId = yield* armRegeneration({
+              command: "command:title:retry:1",
+              threadId,
+            });
+            const fiber = yield* titles
+              .execute({
+                threadId,
+                requestId,
+                kind: {
+                  type: "initial",
+                  messageId: MessageId.make("command:title:retry:message:message"),
+                },
+              })
+              .pipe(Effect.forkScoped);
+            if (retryable) yield* TestClock.adjust("3 seconds");
+            yield* Fiber.join(fiber);
+            assert.equal(attempts, retryable ? 3 : 1);
+            const projection = yield* threads.getThreadProjection(threadId);
+            assert.equal(projection.thread.title, recover ? "Recovered title" : "Seed title");
+            assert.isNotOk(projection.thread.titleRegeneration);
+          }).pipe(Effect.provide(harness.layer));
+        }),
+    );
+  }
 
   it.effect("completes without generating when the initial message is unavailable", () =>
     Effect.gen(function* () {

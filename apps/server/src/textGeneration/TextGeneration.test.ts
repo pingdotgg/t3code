@@ -115,6 +115,7 @@ describe("makeTextGenerationFromRegistry", () => {
         expect(result.failure._tag).toBe("TextGenerationError");
         expect(result.failure.operation).toBe("generateBranchName");
         expect(result.failure.detail).toContain("missing_instance");
+        expect(result.failure.retryable).toBe(false);
       }
     }),
   );

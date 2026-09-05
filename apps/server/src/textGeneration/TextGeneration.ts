@@ -126,6 +126,7 @@ const resolveInstance = (
             new TextGenerationError({
               operation,
               detail: `No provider instance registered for id '${instanceId}'.`,
+              retryable: false,
             }),
           ),
     ),
