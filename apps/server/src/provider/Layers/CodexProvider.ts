@@ -68,6 +68,34 @@ export interface CodexAppServerProviderSnapshot {
   readonly skills: ReadonlyArray<ServerProviderSkill>;
 }
 
+export interface CodexSkillDiscoveryClient {
+  readonly request: {
+    (
+      method: "plugin/installed",
+      payload: CodexSchema.V2PluginInstalledParams,
+    ): Effect.Effect<CodexSchema.V2PluginInstalledResponse, CodexErrors.CodexAppServerError>;
+    (
+      method: "skills/list",
+      payload: CodexSchema.V2SkillsListParams,
+    ): Effect.Effect<CodexSchema.V2SkillsListResponse, CodexErrors.CodexAppServerError>;
+  };
+}
+
+export const refreshCodexSkillsAfterPluginSync = Effect.fn("refreshCodexSkillsAfterPluginSync")(
+  function* (input: { readonly client: CodexSkillDiscoveryClient; readonly cwd: string }) {
+    // Codex materializes remote plugins asynchronously after initialization.
+    // Reading the installed-plugin inventory is the readiness barrier for the
+    // subsequent forced disk scan; that transition emits no `skills/changed`.
+    yield* input.client.request("plugin/installed", {
+      cwds: [input.cwd],
+    });
+    return yield* input.client.request("skills/list", {
+      cwds: [input.cwd],
+      forceReload: true,
+    });
+  },
+);
+
 const REASONING_EFFORT_LABELS: Readonly<Record<string, string>> = {
   none: "None",
   minimal: "Minimal",
@@ -425,8 +453,9 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
 
   const [skillsResponse, models, rateLimits] = yield* Effect.all(
     [
-      client.request("skills/list", {
-        cwds: [input.cwd],
+      refreshCodexSkillsAfterPluginSync({
+        client,
+        cwd: input.cwd,
       }),
       requestAllCodexModels(client),
       // Usage is an enrichment: a failure or a slow answer degrades to "no
