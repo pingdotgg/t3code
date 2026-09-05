@@ -7,6 +7,7 @@ import { describe, expect, it } from "@effect/vitest";
 import {
   type ClientOrchestrationCommand,
   CommandId,
+  ApprovalRequestId,
   MessageId,
   ThreadId,
 } from "@t3tools/contracts";
@@ -355,6 +356,103 @@ describe("normalizeDispatchCommand attachments", () => {
         },
       }).pipe(Effect.flip);
       expect(mismatchedType.message).toContain("attachment type");
+    }).pipe(Effect.provide(testLayer)),
+  );
+});
+
+describe("question attachments", () => {
+  it.effect(
+    "claims images and files by question, preserves answers, and cleans up failed dispatches",
+    () =>
+      Effect.gen(function* () {
+        const config = yield* ServerConfig.ServerConfig;
+        const imageId = `pending-${attachmentUuid}`;
+        const fileId = `pending-${attachmentUuid}-txt`;
+        NodeFS.writeFileSync(NodePath.join(config.attachmentsDir, `${imageId}.png`), "pixels");
+        NodeFS.writeFileSync(NodePath.join(config.attachmentsDir, `${fileId}.txt`), "report");
+        const command: ClientOrchestrationCommand = {
+          type: "thread.user-input.respond",
+          commandId: CommandId.make("answer"),
+          threadId: ThreadId.make("thread-1"),
+          requestId: ApprovalRequestId.make("request"),
+          answers: { q1: ["Selected option"], q2: "" },
+          createdAt: "2026-08-01T00:00:00.000Z",
+          attachmentsByQuestionId: {
+            q1: [
+              {
+                type: "image",
+                id: imageId,
+                name: "image.png",
+                mimeType: "image/png",
+                sizeBytes: 6,
+              },
+            ],
+            q2: [
+              {
+                type: "file",
+                id: fileId,
+                name: "report.txt",
+                mimeType: "text/plain",
+                sizeBytes: 6,
+              },
+            ],
+          },
+        };
+        const normalized = yield* normalizeDispatchCommand(command);
+        if (normalized.type !== "thread.user-input.respond") throw new Error("Wrong command");
+        expect(normalized.answers).toEqual(command.answers);
+        const image = normalized.attachmentsByQuestionId!.q1![0]!;
+        const file = normalized.attachmentsByQuestionId!.q2![0]!;
+        expect(
+          NodeFS.readFileSync(NodePath.join(config.attachmentsDir, `${image.id}.png`), "utf8"),
+        ).toBe("pixels");
+        expect(
+          NodeFS.readFileSync(NodePath.join(config.attachmentsDir, `${file.id}.txt`), "utf8"),
+        ).toBe("report");
+        yield* cleanupFailedUploadedAttachments(command, normalized);
+        expect(NodeFS.existsSync(NodePath.join(config.attachmentsDir, `${image.id}.png`))).toBe(
+          false,
+        );
+        expect(NodeFS.existsSync(NodePath.join(config.attachmentsDir, `${file.id}.txt`))).toBe(
+          false,
+        );
+        expect(NodeFS.existsSync(NodePath.join(config.attachmentsDir, `${imageId}.png`))).toBe(
+          true,
+        );
+        const retry = yield* normalizeDispatchCommand(command);
+        expect(retry.type).toBe("thread.user-input.respond");
+      }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect("removes all claimed copies if a later question upload is missing", () =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const id = `pending-${attachmentUuid}`;
+      NodeFS.writeFileSync(NodePath.join(config.attachmentsDir, `${id}.png`), "pixels");
+      const result = yield* normalizeDispatchCommand({
+        type: "thread.user-input.respond",
+        commandId: CommandId.make("answer"),
+        threadId: ThreadId.make("thread-1"),
+        requestId: ApprovalRequestId.make("request"),
+        answers: { q1: "", q2: "" },
+        createdAt: "2026-08-01T00:00:00.000Z",
+        attachmentsByQuestionId: {
+          q1: [{ type: "image", id, name: "image.png", mimeType: "image/png", sizeBytes: 6 }],
+          q2: [
+            {
+              type: "file",
+              id: `${id}-txt`,
+              name: "missing.txt",
+              mimeType: "text/plain",
+              sizeBytes: 6,
+            },
+          ],
+        },
+      }).pipe(Effect.result);
+      expect(result._tag).toBe("Failure");
+      expect(
+        NodeFS.readdirSync(config.attachmentsDir).filter((name) => name.startsWith("thread-1-")),
+      ).toEqual([]);
     }).pipe(Effect.provide(testLayer)),
   );
 });

@@ -1,6 +1,7 @@
 import {
   ApprovalRequestId,
   isImportedAgentSessionMessageId,
+  UserInputAttachmentAnswerPayload,
   type ChatAttachment,
   type OrchestrationEvent,
   type OrchestrationSessionStatus,
@@ -12,6 +13,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
@@ -326,6 +328,8 @@ function retainProjectionProposedPlansAfterRevert(
     (proposedPlan) => proposedPlan.turnId === null || retainedTurnIds.has(proposedPlan.turnId),
   );
 }
+
+const decodeQuestionAttachmentAnswer = Schema.decodeUnknownOption(UserInputAttachmentAnswerPayload);
 
 function collectThreadAttachmentRelativePaths(
   threadId: string,
@@ -1156,7 +1160,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
 
     const applyThreadActivitiesProjection: ProjectorDefinition["apply"] = Effect.fn(
       "applyThreadActivitiesProjection",
-    )(function* (event, _attachmentSideEffects) {
+    )(function* (event, attachmentSideEffects) {
       switch (event.type) {
         case "thread.created":
           yield* projectionThreadActivityRepository.deleteByThreadId({
@@ -1204,6 +1208,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           yield* Effect.forEach(keptRows, projectionThreadActivityRepository.upsert, {
             concurrency: 1,
           }).pipe(Effect.asVoid);
+          attachmentSideEffects.prunedThreadRelativePaths.set(event.payload.threadId, new Set());
           return;
         }
 
@@ -1866,10 +1871,20 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           const messages = yield* projectionThreadMessageRepository.listByThreadId({
             threadId: ThreadId.make(threadId),
           });
-          prunedThreadRelativePaths.set(
-            threadId,
-            collectThreadAttachmentRelativePaths(threadId, messages),
-          );
+          const retainedPaths = collectThreadAttachmentRelativePaths(threadId, messages);
+          const activities = yield* projectionThreadActivityRepository.listByThreadId({
+            threadId: ThreadId.make(threadId),
+          });
+          for (const activity of activities) {
+            if (activity.kind !== "user-input.answer-submitted") continue;
+            const payload = decodeQuestionAttachmentAnswer(activity.payload);
+            if (Option.isNone(payload)) continue;
+            for (const attachment of Object.values(payload.value.attachmentsByQuestionId).flat()) {
+              const relativePath = attachmentRelativePath(attachment);
+              if (relativePath) retainedPaths.add(relativePath);
+            }
+          }
+          prunedThreadRelativePaths.set(threadId, retainedPaths);
         }
 
         yield* runAttachmentSideEffects({ deletedThreadIds, prunedThreadRelativePaths });

@@ -354,6 +354,22 @@ export const ChatAttachment = Schema.Union([
   ChatUnknownAttachment,
 ]);
 export type ChatAttachment = typeof ChatAttachment.Type;
+
+export const UserInputAttachments = Schema.Record(
+  Schema.String,
+  Schema.Array(Schema.Union([ChatImageAttachment, ChatFileAttachment])).pipe(
+    Schema.check(Schema.isMaxLength(PROVIDER_SEND_TURN_MAX_ATTACHMENTS)),
+  ),
+);
+export type UserInputAttachments = typeof UserInputAttachments.Type;
+
+export const UserInputAttachmentAnswerPayload = Schema.Struct({
+  requestId: ApprovalRequestId,
+  questionTextById: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+  answers: ProviderUserInputAnswers,
+  attachmentsByQuestionId: UserInputAttachments,
+});
+export type UserInputAttachmentAnswerPayload = typeof UserInputAttachmentAnswerPayload.Type;
 const UploadChatAttachment = Schema.Union([UploadChatImageAttachment]);
 export type UploadChatAttachment = typeof UploadChatAttachment.Type;
 
@@ -1139,6 +1155,7 @@ const ThreadUserInputRespondCommand = Schema.Struct({
   threadId: ThreadId,
   requestId: ApprovalRequestId,
   answers: ProviderUserInputAnswers,
+  attachmentsByQuestionId: Schema.optional(UserInputAttachments),
   createdAt: IsoDateTime,
 });
 
@@ -1585,6 +1602,7 @@ const ThreadUserInputResponseRequestedPayload = Schema.Struct({
   threadId: ThreadId,
   requestId: ApprovalRequestId,
   answers: ProviderUserInputAnswers,
+  attachmentsByQuestionId: Schema.optional(UserInputAttachments),
   createdAt: IsoDateTime,
 });
 
