@@ -3402,6 +3402,14 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         });
         return;
       case "status":
+        // Busy-only heartbeat: every status maps to a busy state, and only
+        // the owning turn moves the projected session out of it again. A
+        // status with no turn to own it (compaction routinely outlives the
+        // turn that requested it) would strand the thread on Working, so it
+        // is only reported while a turn is active.
+        if (context.turnState === undefined) {
+          return;
+        }
         yield* offerRuntimeEvent({
           ...base,
           type: "session.state.changed",
@@ -3674,7 +3682,11 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         // Transport-level retry heartbeat. Surfacing each attempt as a
         // warning row spammed the work log (10 rows during a 502 storm);
         // the terminal result/error path reports the actual failure. Keep
-        // the session visibly alive instead.
+        // the session visibly alive instead. Busy-only like `status`, so it
+        // is only reported while a turn owns it.
+        if (context.turnState === undefined) {
+          return;
+        }
         yield* offerRuntimeEvent({
           ...base,
           type: "session.state.changed",
