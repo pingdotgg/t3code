@@ -161,6 +161,18 @@ describe("ClientSettings proactive panels", () => {
   });
 });
 
+describe("ClientSettings copy on select", () => {
+  it("is opt-in, with the toast defaulting on for when it is enabled", () => {
+    expect(decodeClientSettings({}).copyOnSelect).toBe(false);
+    expect(decodeClientSettings({}).copyOnSelectToast).toBe(true);
+  });
+
+  it("accepts client-local updates", () => {
+    expect(decodeClientSettingsPatch({ copyOnSelect: true }).copyOnSelect).toBe(true);
+    expect(decodeClientSettingsPatch({ copyOnSelectToast: false }).copyOnSelectToast).toBe(false);
+  });
+});
+
 describe("ClientSettings quit confirmation", () => {
   it("defaults to hold", () => {
     expect(decodeClientSettings({}).confirmQuit).toBe("hold");

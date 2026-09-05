@@ -42,6 +42,12 @@ import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
 import { Button } from "~/components/ui/button";
 import { PanelTabCloseButton } from "~/components/ui/panel-tab-close-button";
 import { readTextFromClipboard, writeTextToClipboard } from "~/hooks/useCopyToClipboard";
+import { getClientSettings } from "~/hooks/useSettings";
+import {
+  createTerminalSelectionAutoCopy,
+  normalizeTerminalSelectionText,
+} from "~/lib/copyOnSelect";
+import { toastManager } from "~/components/ui/toast";
 import { cn } from "~/lib/utils";
 import { type TerminalContextSelection } from "~/lib/terminalContext";
 import {
@@ -460,6 +466,17 @@ export function TerminalViewport({
     let setupTerminal: GhosttyTerminalSurface | null = null;
     let setupCleanups: Array<() => void> = [];
     let selectionActions: ReturnType<typeof observeSelectionActions> | null = null;
+    const autoCopyTerminalSelection = createTerminalSelectionAutoCopy({
+      readSettings: () => {
+        const settings = getClientSettings();
+        return {
+          enabled: settings.copyOnSelect,
+          showToast: settings.copyOnSelectToast,
+        };
+      },
+      writeText: (text) => writeTextToClipboard(text, "terminal selection"),
+      onCopied: () => toastManager.add({ type: "success", title: "Copied to clipboard" }),
+    });
 
     const setup = async (): Promise<(() => void) | null> => {
       const setupFont = terminalFontRef.current;
@@ -548,8 +565,8 @@ export function TerminalViewport({
         }
         const selectionText = activeTerminal.getSelection();
         const selectionPosition = activeTerminal.getSelectionPosition();
-        const normalizedText = selectionText.replace(/\r\n/g, "\n").replace(/^\n+|\n+$/g, "");
-        if (!selectionPosition || normalizedText.length === 0) {
+        const normalizedText = normalizeTerminalSelectionText(selectionText);
+        if (!selectionPosition || normalizedText === null) {
           return null;
         }
         const { lineStart, lineEnd } = terminalSelectionLineRange(selectionPosition);
@@ -597,7 +614,14 @@ export function TerminalViewport({
 
       const copySelection = async (text: string, requestId: number) => {
         try {
-          await writeTextToClipboard(text, "terminal selection");
+          const didCopy = await writeTextToClipboard(text, "terminal selection");
+          // A superseded request must stay silent: another selection or
+          // right-click started while this write was pending, so toasting
+          // now would confirm a no-longer-active selection.
+          if (didCopy && requestId === selectionActionRequestIdRef.current) {
+            autoCopyTerminalSelection.rememberCopied(text);
+            toastManager.add({ type: "success", title: "Copied to clipboard" });
+          }
         } catch (error) {
           reportIfCurrent(requestId, error, "Unable to copy terminal selection");
         }
@@ -672,6 +696,10 @@ export function TerminalViewport({
           clearSelectionAction();
           return;
         }
+        // Copy-on-select fires on release, before the popup opens; the popup
+        // stays for Add to chat (and Copy as a fallback when auto-copy is
+        // off or the clipboard write failed).
+        void autoCopyTerminalSelection.copy(nextAction.clipboardText);
         const requestId = ++selectionActionRequestIdRef.current;
         openSelectionMenuRequestIdRef.current = requestId;
         const clicked = await localApi.contextMenu

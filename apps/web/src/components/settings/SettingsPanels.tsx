@@ -551,6 +551,12 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.composerCollapseOnScroll !== DEFAULT_UNIFIED_SETTINGS.composerCollapseOnScroll
         ? ["Collapse composer"]
         : []),
+      ...(settings.copyOnSelect !== DEFAULT_UNIFIED_SETTINGS.copyOnSelect
+        ? ["Copy on select"]
+        : []),
+      ...(settings.copyOnSelectToast !== DEFAULT_UNIFIED_SETTINGS.copyOnSelectToast
+        ? ["Copy on select toast"]
+        : []),
       ...(settings.contextWindowMeterEnabled !== DEFAULT_UNIFIED_SETTINGS.contextWindowMeterEnabled
         ? ["Context window indicator"]
         : []),
@@ -636,6 +642,8 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.sidebarProjectGroupingMode,
       settings.sidebarThreadPreviewCount,
       settings.showSkillsInSlashMenu,
+      settings.copyOnSelect,
+      settings.copyOnSelectToast,
       settings.timestampFormat,
       settings.wordWrap,
       followSystem,
@@ -716,6 +724,8 @@ export function useSettingsRestore(onRestored?: () => void) {
       showSkillsInSlashMenu: DEFAULT_UNIFIED_SETTINGS.showSkillsInSlashMenu,
       composerCollapseOnBlur: DEFAULT_UNIFIED_SETTINGS.composerCollapseOnBlur,
       composerCollapseOnScroll: DEFAULT_UNIFIED_SETTINGS.composerCollapseOnScroll,
+      copyOnSelect: DEFAULT_UNIFIED_SETTINGS.copyOnSelect,
+      copyOnSelectToast: DEFAULT_UNIFIED_SETTINGS.copyOnSelectToast,
       contextWindowMeterEnabled: DEFAULT_UNIFIED_SETTINGS.contextWindowMeterEnabled,
       environmentIdentificationMode: DEFAULT_UNIFIED_SETTINGS.environmentIdentificationMode,
       glassOpacity: DEFAULT_UNIFIED_SETTINGS.glassOpacity,
@@ -2407,6 +2417,61 @@ export function GeneralSettingsPanel() {
             </Select>
           }
         />
+
+
+        <SettingsRow
+          {...searchableSetting("copy-on-select")}
+          description="Automatically copy text selected with the mouse in chat and the terminal, Herdr-style."
+          resetAction={
+            settings.copyOnSelect !== DEFAULT_UNIFIED_SETTINGS.copyOnSelect ? (
+              <SettingResetButton
+                label="copy on select"
+                onClick={() =>
+                  updateSettings({
+                    copyOnSelect: DEFAULT_UNIFIED_SETTINGS.copyOnSelect,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.copyOnSelect}
+              onCheckedChange={(checked) =>
+                updateSettings({ copyOnSelect: Boolean(checked) })
+              }
+              aria-label="Copy on select"
+            />
+          }
+        />
+
+        {settings.copyOnSelect ? (
+          <SettingsRow
+            {...searchableSetting("copy-on-select-toast")}
+            description="Show a confirmation toast after an automatic copy."
+            resetAction={
+              settings.copyOnSelectToast !== DEFAULT_UNIFIED_SETTINGS.copyOnSelectToast ? (
+                <SettingResetButton
+                  label="copy on select toast"
+                  onClick={() =>
+                    updateSettings({
+                      copyOnSelectToast: DEFAULT_UNIFIED_SETTINGS.copyOnSelectToast,
+                    })
+                  }
+                />
+              ) : null
+            }
+            control={
+              <Switch
+                checked={settings.copyOnSelectToast}
+                onCheckedChange={(checked) =>
+                  updateSettings({ copyOnSelectToast: Boolean(checked) })
+                }
+                aria-label="Copy on select toast"
+              />
+            }
+          />
+        ) : null}
 
         <SettingsRow
           serverScoped
