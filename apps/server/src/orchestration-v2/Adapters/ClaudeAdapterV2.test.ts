@@ -2428,7 +2428,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             harness.sdkMessages,
             makeResultFrame({
               uuid: "00000000-0000-4000-8000-000000000205",
-              result: "",
+              result: "Provider failure details.",
               isError: false,
               ...(terminalReason === "overloaded_status"
                 ? { apiErrorStatus: 529 }
@@ -2439,6 +2439,13 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           assert.equal(terminal.status, "failed");
           if (terminal.status !== "failed") return;
           assert.isNotEmpty(terminal.failure.message);
+          assert.isFalse(
+            harness.events.some(
+              (event) =>
+                event.type === "message.updated" &&
+                event.message.text === "Provider failure details.",
+            ),
+          );
           assert.equal(
             terminal.failure.code,
             terminalReason === "overloaded_status" ? "api_error_529" : terminalReason,
