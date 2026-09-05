@@ -39,6 +39,7 @@ import {
   type ProjectionSnapshotQueryShape,
 } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import {
+  isAgentActivityPublishingEnabledValue,
   RELAY_ENVIRONMENT_CREDENTIAL_SECRET,
   RELAY_ISSUER_SECRET,
   RELAY_URL_SECRET,
@@ -220,9 +221,10 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
   });
 
   it("requires an explicit opt-in before publishing agent activity", () => {
-    expect(AgentAwarenessRelay.isAgentActivityPublishingEnabled(null)).toBe(false);
-    expect(AgentAwarenessRelay.isAgentActivityPublishingEnabled("false")).toBe(false);
-    expect(AgentAwarenessRelay.isAgentActivityPublishingEnabled("true")).toBe(true);
+    expect(isAgentActivityPublishingEnabledValue(null)).toBe(false);
+    expect(isAgentActivityPublishingEnabledValue("false")).toBe(false);
+    expect(isAgentActivityPublishingEnabledValue("TRUE")).toBe(false);
+    expect(isAgentActivityPublishingEnabledValue("true")).toBe(true);
   });
 
   it("redacts failed activity details and caps other relay detail", () => {

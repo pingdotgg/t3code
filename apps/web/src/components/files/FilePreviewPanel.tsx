@@ -1266,7 +1266,11 @@ export default function FilePreviewPanel({
             </div>
           ) : relativePath && file.data ? (
             isMarkdown && renderMarkdown ? (
+              // Markdown reconciles in place across text updates, so a file
+              // switch needs a new key or the previous file's disclosure and
+              // wrap state carries into the next document.
               <RenderedMarkdownSurface
+                key={relativePath}
                 environmentId={environmentId}
                 cwd={cwd}
                 relativePath={relativePath}
