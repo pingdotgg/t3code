@@ -131,7 +131,8 @@ export class ManagedRelayRequestTimeoutError extends Schema.TaggedErrorClass<Man
   }
 }
 
-class ManagedRelayUrlInvalidError extends Schema.TaggedErrorClass<ManagedRelayUrlInvalidError>()(
+/** @public Required to name this union member in consumers' inferred relay results. */
+export class ManagedRelayUrlInvalidError extends Schema.TaggedErrorClass<ManagedRelayUrlInvalidError>()(
   "ManagedRelayUrlInvalidError",
   {
     relayUrl: Schema.String,
@@ -158,7 +159,8 @@ export class ManagedRelayRequestFailedError extends Schema.TaggedErrorClass<Mana
   }
 }
 
-class ManagedRelayAccessTokenScopesUnexpectedError extends Schema.TaggedErrorClass<ManagedRelayAccessTokenScopesUnexpectedError>()(
+/** @public Required to name this union member in consumers' inferred relay results. */
+export class ManagedRelayAccessTokenScopesUnexpectedError extends Schema.TaggedErrorClass<ManagedRelayAccessTokenScopesUnexpectedError>()(
   "ManagedRelayAccessTokenScopesUnexpectedError",
   {
     requestedScopes: Schema.Array(RelayDpopAccessTokenScope),
@@ -170,7 +172,8 @@ class ManagedRelayAccessTokenScopesUnexpectedError extends Schema.TaggedErrorCla
   }
 }
 
-class ManagedRelayTokenProofCreationError extends Schema.TaggedErrorClass<ManagedRelayTokenProofCreationError>()(
+/** @public Required to name this union member in consumers' inferred relay results. */
+export class ManagedRelayTokenProofCreationError extends Schema.TaggedErrorClass<ManagedRelayTokenProofCreationError>()(
   "ManagedRelayTokenProofCreationError",
   {
     method: Schema.String,
@@ -183,7 +186,8 @@ class ManagedRelayTokenProofCreationError extends Schema.TaggedErrorClass<Manage
   }
 }
 
-class ManagedRelayRequestProofCreationError extends Schema.TaggedErrorClass<ManagedRelayRequestProofCreationError>()(
+/** @public Required to name this union member in consumers' inferred relay results. */
+export class ManagedRelayRequestProofCreationError extends Schema.TaggedErrorClass<ManagedRelayRequestProofCreationError>()(
   "ManagedRelayRequestProofCreationError",
   {
     method: Schema.String,

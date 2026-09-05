@@ -7,6 +7,12 @@ export * from "./model.ts";
 export { ConnectionOnboarding } from "./onboarding.ts";
 export * from "./presentation.ts";
 export * as ProfileStore from "./profileStore.ts";
-export { EnvironmentRegistry } from "./registry.ts";
+export {
+  /** @public Required to name errors in consumers' inferred registry results. */
+  type EnvironmentNotRegisteredError,
+  EnvironmentRegistry,
+  /** @public Required to name errors in consumers' inferred registry results. */
+  type PlatformEnvironmentRemovalError,
+} from "./registry.ts";
 export { EnvironmentSupervisor } from "./supervisor.ts";
 export * as Wakeups from "./wakeups.ts";
