@@ -363,6 +363,55 @@ describe("normalizeDispatchCommand attachments", () => {
 });
 
 describe("question attachments", () => {
+  it.effect("enforces the total response limit and claims duplicate filenames independently", () =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const id = `pending-${attachmentUuid}-txt`;
+      NodeFS.writeFileSync(NodePath.join(config.attachmentsDir, `${id}.txt`), "report");
+      const attachment = {
+        type: "file" as const,
+        id,
+        name: 'notes "final" ü.txt',
+        mimeType: "text/plain",
+        sizeBytes: 6,
+      };
+      const command: ClientOrchestrationCommand = {
+        type: "thread.user-input.respond",
+        commandId: CommandId.make("answer-cap"),
+        threadId: ThreadId.make("thread-1"),
+        requestId: ApprovalRequestId.make("request-cap"),
+        answers: { first: "", second: "" },
+        createdAt: "2026-08-01T00:00:00.000Z",
+        attachmentsByQuestionId: {
+          first: Array.from({ length: 4 }, () => attachment),
+          second: Array.from({ length: 5 }, () => attachment),
+        },
+      };
+      const failure = yield* normalizeDispatchCommand(command).pipe(Effect.flip);
+      expect(failure.message).toContain("up to 8");
+      expect(NodeFS.readdirSync(config.attachmentsDir)).toEqual([`${id}.txt`]);
+      const accepted = {
+        ...command,
+        attachmentsByQuestionId: {
+          ...command.attachmentsByQuestionId,
+          second: Array.from({ length: 4 }, () => attachment),
+        },
+      };
+      const normalized = yield* normalizeDispatchCommand(accepted);
+      if (normalized.type !== "thread.user-input.respond") throw new Error("Wrong command");
+      const attachments = Object.values(normalized.attachmentsByQuestionId!).flat();
+      expect(attachments).toHaveLength(8);
+      expect(new Set(attachments.map((item) => item.id)).size).toBe(8);
+      for (const item of attachments) {
+        expect(item.name).toBe(attachment.name);
+        expect(
+          NodeFS.readFileSync(NodePath.join(config.attachmentsDir, `${item.id}.txt`), "utf8"),
+        ).toBe("report");
+      }
+      yield* cleanupFailedUploadedAttachments(accepted, normalized);
+      expect(NodeFS.readdirSync(config.attachmentsDir)).toEqual([`${id}.txt`]);
+    }).pipe(Effect.provide(testLayer)),
+  );
   it("requires uploaded metadata for question images, including pasted images", () => {
     expect(
       isClientCommand({
