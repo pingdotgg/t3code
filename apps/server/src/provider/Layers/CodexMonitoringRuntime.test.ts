@@ -215,6 +215,35 @@ it.effect("retains an explicitly rejected wake until a user turn resumes deliver
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
+for (const scenario of ["reject-resume", "timeout-resume"]) {
+  it.effect(`keeps wakes suppressed after ${scenario} until a successful user turn`, () =>
+    Effect.gen(function* () {
+      const { runtime, until, inspect, subscribe } = yield* setup();
+      yield* runtime.sendTurn({ input: "reject-wake" });
+      yield* until("turn/completed");
+      yield* subscribe;
+      yield* runtime.compactThread;
+      yield* until("backgroundMonitor/wakeFailed");
+      const sending = yield* runtime
+        .sendTurn({ input: scenario })
+        .pipe(Effect.result, Effect.forkChild);
+      if (scenario === "timeout-resume") {
+        yield* until("thread/name/updated");
+        yield* TestClock.adjust("10 seconds");
+      }
+      assert.equal((yield* Fiber.join(sending))._tag, "Failure");
+      assert.equal((yield* subscribe.pipe(Effect.result))._tag, "Failure");
+      assert.equal((yield* inspect).wakes.length, 0);
+      yield* runtime.sendTurn({ input: "resume" });
+      yield* until("turn/completed");
+      yield* until("turn/completed");
+      assert.deepStrictEqual((yield* inspect).wakes, [
+        { name: "background_monitor", output: '{"taskId":"watch-command","output":"CI passed"}' },
+      ]);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+}
+
 it.effect("preserves timed-out wake evidence without retrying an ambiguous delivery", () =>
   Effect.gen(function* () {
     const { runtime, until, inspect, subscribe } = yield* setup();
