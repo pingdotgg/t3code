@@ -192,7 +192,11 @@ export function useReviewSections(input: {
   );
 
   return {
-    error: diffPreview.error ?? activeTurnDiff.error ?? reviewCache.asyncState.error,
+    error:
+      diffPreview.error ??
+      activeTurnDiff.error ??
+      reviewCache.asyncState.error ??
+      (selectedSection === null ? fileAccess.error : null),
     loadingGitDiffs: fileAccess.isPending || diffPreview.isPending,
     loadingTurnIds,
     reviewSections,
