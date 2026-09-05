@@ -82,6 +82,7 @@ import { usePullRequestTurnRefresh, useSharedPullRequestSummary } from "~/state/
 import { useAtomCommand } from "~/state/use-atom-command";
 import { PullRequestStackMenu } from "./PullRequestStackMenu";
 import { PullRequestThreadLinks } from "./PullRequestThreadLinks";
+import { useSourceControlCommand } from "~/state/use-source-control-command";
 import { vcsEnvironment } from "~/state/vcs";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
 import { useUiStateStore } from "~/uiStateStore";
@@ -843,13 +844,17 @@ export function PullRequestDetailPanel({
     appliedForcedToken.current = forcedRefreshToken;
     void refreshFromHost();
   }, [forcedRefreshToken, refreshFromHost]);
-  const runAction = useAtomCommand(pullRequestEnvironment.runAction, { reportFailure: false });
-  const postComment = useAtomCommand(pullRequestEnvironment.comment, { reportFailure: false });
+  const runAction = useSourceControlCommand(pullRequestEnvironment.runAction, {
+    reportFailure: false,
+  });
+  const postComment = useSourceControlCommand(pullRequestEnvironment.comment, {
+    reportFailure: false,
+  });
   // Which action is in flight, not merely that one is: every control here is disabled while any
   // of them runs, but only the button that was pressed may say what it is doing.
   const [pendingAction, setPendingAction] = useState<PullRequestAction | null>(null);
   const actionPending = pendingAction !== null;
-  const update = useAtomCommand(pullRequestEnvironment.update, { reportFailure: false });
+  const update = useSourceControlCommand(pullRequestEnvironment.update, { reportFailure: false });
   // Scoped to the pull request it was typed against, since this one panel shows a different one
   // every time it is opened and a half-written title must not follow it there.
   const [titleScope, setTitleScope] = useState<{
@@ -2318,7 +2323,9 @@ export function PullRequestDetailPanel({
                       <Button
                         size="xs"
                         variant="outline"
-                        disabled={titleSaving || titleDraft.trim().length === 0}
+                        disabled={
+                          !canWriteSourceControl || titleSaving || titleDraft.trim().length === 0
+                        }
                         onClick={() => void saveTitle(titleDraft)}
                       >
                         {titleSaving ? "Saving..." : "Save"}
