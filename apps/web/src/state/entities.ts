@@ -8,7 +8,12 @@ import {
   type EnvironmentThreadStatus,
   mergeEnvironmentThread,
 } from "@t3tools/client-runtime/state/threads";
-import type { ScopedProjectRef, ScopedThreadRef, ServerConfig } from "@t3tools/contracts";
+import type {
+  ScopedProjectRef,
+  ScopedThreadRef,
+  ServerConfig,
+  ServerProvider,
+} from "@t3tools/contracts";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { Atom } from "effect/unstable/reactivity";
 import { useMemo } from "react";
@@ -181,6 +186,19 @@ export function waitForProject(
 
 export function readThreadShell(ref: ScopedThreadRef): EnvironmentThreadShell | null {
   return appAtomRegistry.get(environmentThreadShells.threadShellAtom(ref));
+}
+
+/** The provider snapshot backing a thread's current model, or null when the
+    environment's config hasn't loaded or the instance isn't in it. Used to
+    read account-wide usage limits (e.g. for the limits-reset snooze offer)
+    without threading the whole provider list through every caller. */
+export function readThreadProviderSnapshot(threadRef: ScopedThreadRef): ServerProvider | null {
+  const thread = readThreadShell(threadRef);
+  if (thread === null) return null;
+  const instanceId = thread.session?.providerInstanceId ?? thread.modelSelection.instanceId;
+  const providers =
+    appAtomRegistry.get(environmentServerConfigsAtom).get(threadRef.environmentId)?.providers ?? [];
+  return providers.find((provider) => provider.instanceId === instanceId) ?? null;
 }
 
 /** Whether the environment's server understands thread.settle/unsettle.

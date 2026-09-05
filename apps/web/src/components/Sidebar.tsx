@@ -22,6 +22,7 @@ import {
   threadWokeAt,
 } from "@t3tools/client-runtime/state/thread-settled";
 import { resolveSettledThreadTimestamp } from "@t3tools/client-runtime/state/thread-sort";
+import { exhaustedUntil } from "@t3tools/shared/usageLimits";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import {
   parseScopedThreadKey,
@@ -443,13 +444,14 @@ function SnoozePopoverButton(props: {
   onOpenChange: (open: boolean) => void;
   onSnooze: (preset: Pick<SnoozePreset, "snoozedUntil">) => void;
   timestampFormat: TimestampFormat;
+  limitsResetAt: string | null;
 }) {
-  const { open, onOpenChange, onSnooze, timestampFormat } = props;
+  const { open, onOpenChange, onSnooze, timestampFormat, limitsResetAt } = props;
   // Presets resolve at open time so "In 1 hour" is relative to the click,
   // not to when the row mounted.
   const presets = useMemo(
-    () => (open ? resolveSnoozePresets(new Date(), timestampFormat) : []),
-    [open, timestampFormat],
+    () => (open ? resolveSnoozePresets(new Date(), timestampFormat, { limitsResetAt }) : []),
+    [open, timestampFormat, limitsResetAt],
   );
   return (
     <Popover open={open} onOpenChange={onOpenChange}>
@@ -1370,6 +1372,12 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   useEffect(() => {
     if (!showSnoozeButton) setSnoozeMenuOpen(false);
   }, [showSnoozeButton]);
+  // Only worth reading while the popover is actually open — same lazy
+  // pattern as the presets themselves resolving at open time.
+  const snoozeLimitsResetAt = useMemo(
+    () => (snoozeMenuOpen ? exhaustedUntil(providerEntry?.snapshot.usageLimits, Date.now()) : null),
+    [snoozeMenuOpen, providerEntry],
+  );
   const handlePrClick = useCallback(
     (event: ReactMouseEvent<HTMLAnchorElement>) => {
       const url = pr?.url ?? currentLinkedPr?.url;
@@ -1885,6 +1893,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                           onOpenChange={setSnoozeMenuOpen}
                           onSnooze={handleSnoozePreset}
                           timestampFormat={props.timestampFormat}
+                          limitsResetAt={snoozeLimitsResetAt}
                         />
                       ) : null}
                       {props.settlementSupported ? (
@@ -4039,7 +4048,18 @@ export default function Sidebar() {
         const isSnoozed = snoozedThreadKeysRef.current.has(threadKey);
         const isPinned = thread.pinnedAt != null;
         // Presets resolve at menu-open time (same as the popover).
-        const snoozePresets = resolveSnoozePresets(new Date(), timestampFormat);
+        const menuProviderInstanceId =
+          thread.session?.providerInstanceId ?? thread.modelSelection.instanceId;
+        const menuProviderEntry = providerEntriesByEnvironment
+          .get(thread.environmentId)
+          ?.get(menuProviderInstanceId);
+        const menuLimitsResetAt = exhaustedUntil(
+          menuProviderEntry?.snapshot.usageLimits,
+          Date.now(),
+        );
+        const snoozePresets = resolveSnoozePresets(new Date(), timestampFormat, {
+          limitsResetAt: menuLimitsResetAt,
+        });
         const clicked = await settlePromise(() =>
           api.contextMenu.show(
             buildThreadActionMenuItems({
