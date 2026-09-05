@@ -17,6 +17,13 @@ describe("resolveT3McpToolPresentation", () => {
     });
   });
 
+  it("pretty prints thread metadata updates", () => {
+    expect(resolveT3McpToolPresentation("mcp__t3-code__t3_thread_update")).toEqual({
+      displayName: "Update T3 thread metadata",
+      logo: "t3-code",
+    });
+  });
+
   it("pretty prints bare T3 MCP toolkit names", () => {
     expect(resolveT3McpToolPresentation("list_scheduled_tasks")).toEqual({
       displayName: "List scheduled tasks",

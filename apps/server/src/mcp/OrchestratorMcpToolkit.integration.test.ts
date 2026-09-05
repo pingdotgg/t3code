@@ -30,6 +30,7 @@ import {
   type ScheduledTaskUpsertInput,
   type ServerProvider,
   ThreadId,
+  ThreadMetadataMcpUpdateResult,
   TurnItemId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -100,6 +101,7 @@ const decodeThreadListResult = Schema.decodeUnknownEffect(OrchestratorMcpThreadL
 const decodeThreadReadResult = Schema.decodeUnknownEffect(OrchestratorMcpThreadReadResult);
 const decodeThreadSendResult = Schema.decodeUnknownEffect(OrchestratorMcpThreadSendResult);
 const decodeThreadWaitResult = Schema.decodeUnknownEffect(OrchestratorMcpThreadWaitResult);
+const decodeThreadUpdateResult = Schema.decodeUnknownEffect(ThreadMetadataMcpUpdateResult);
 
 const codexSelection = {
   instanceId: codexInstanceId,
@@ -667,13 +669,19 @@ describe("orchestrator MCP toolkit", () => {
               capabilities: new Set(["orchestration"]),
               issuedAt: 1,
             };
-            const invoke = (name: string, args: Record<string, unknown>) =>
+            const invokeAs = (
+              callScope: McpInvocationContext.McpInvocationScope,
+              name: string,
+              args: Record<string, unknown>,
+            ) =>
               server
                 .callTool({ name, arguments: args })
                 .pipe(
-                  Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+                  Effect.provideService(McpInvocationContext.McpInvocationContext, callScope),
                   Effect.provideService(McpSchema.McpServerClient, client),
                 );
+            const invoke = (name: string, args: Record<string, unknown>) =>
+              invokeAs(invocation, name, args);
 
             if (parentRun === undefined || parentRun.rootNodeId === null) {
               return yield* Effect.die(new Error("Parent run missing."));
@@ -1185,6 +1193,28 @@ describe("orchestrator MCP toolkit", () => {
             expect(threadListTool?.tool.annotations?.idempotentHint).toBe(true);
             const threadReadTool = server.tools.find(({ tool }) => tool.name === "t3_thread_read");
             expect(threadReadTool?.tool.annotations?.readOnlyHint).toBe(false);
+            const threadUpdateTool = server.tools.find(
+              ({ tool }) => tool.name === "t3_thread_update",
+            );
+            expect(threadUpdateTool?.tool.annotations?.destructiveHint).toBe(true);
+            expect(threadUpdateTool?.tool.annotations?.idempotentHint).toBe(false);
+            expect(threadUpdateTool?.tool.inputSchema).toMatchObject({
+              type: "object",
+              properties: {
+                action: expect.any(Object),
+                title: expect.any(Object),
+                pullRequest: expect.any(Object),
+              },
+            });
+            const deniedThreadUpdate = yield* invokeAs(
+              { ...invocation, capabilities: new Set() },
+              "t3_thread_update",
+              { action: "rename", title: "Denied title" },
+            );
+            expect(deniedThreadUpdate.structuredContent).toMatchObject({
+              _tag: "OrchestratorMcpFailure",
+              code: "capability_denied",
+            });
             const threadSendTool = server.tools.find(({ tool }) => tool.name === "t3_thread_send");
             expect(threadSendTool?.tool.annotations?.destructiveHint).toBe(true);
             const threadWaitTool = server.tools.find(({ tool }) => tool.name === "t3_thread_wait");
@@ -1728,6 +1758,111 @@ describe("orchestrator MCP toolkit", () => {
             });
             expect(emptyProjection.thread.forkedFrom).toBeNull();
             expect(emptyProjection.runs).toEqual([]);
+
+            const defaultRenameCall = yield* invoke("t3_thread_update", {
+              action: "rename",
+              title: "MCP parent metadata",
+              clientRequestId: "metadata-default-thread-1",
+            });
+            const defaultRenamed = yield* decodeThreadUpdateResult(
+              defaultRenameCall.structuredContent,
+            ).pipe(Effect.orDie);
+            expect(defaultRenamed).toMatchObject({
+              threadId: parentThreadId,
+              action: "rename",
+              title: "MCP parent metadata",
+            });
+
+            const renameCall = yield* invoke("t3_thread_update", {
+              threadId: emptyThread.threadId,
+              action: "rename",
+              title: "Metadata-managed thread",
+              clientRequestId: "metadata-rename-1",
+            });
+            const renamed = yield* decodeThreadUpdateResult(renameCall.structuredContent).pipe(
+              Effect.orDie,
+            );
+            expect(renamed).toMatchObject({
+              threadId: emptyThread.threadId,
+              action: "rename",
+              title: "Metadata-managed thread",
+              linkedPullRequest: null,
+            });
+            const repeatedRenameCall = yield* invoke("t3_thread_update", {
+              threadId: emptyThread.threadId,
+              action: "rename",
+              title: "Metadata-managed thread",
+              clientRequestId: "metadata-rename-1",
+            });
+            const repeatedRename = yield* decodeThreadUpdateResult(
+              repeatedRenameCall.structuredContent,
+            ).pipe(Effect.orDie);
+            expect(repeatedRename.commandId).toBe(renamed.commandId);
+            expect(repeatedRename.sequence).toBe(renamed.sequence);
+
+            const linkedCall = yield* invoke("t3_thread_update", {
+              threadId: emptyThread.threadId,
+              action: "link_pull_request",
+              pullRequest: {
+                repository: "pingdotgg/t3code",
+                number: 8689,
+                url: "https://github.com/pingdotgg/t3code/pull/8689",
+              },
+              clientRequestId: "metadata-link-1",
+            });
+            const linked = yield* decodeThreadUpdateResult(linkedCall.structuredContent).pipe(
+              Effect.orDie,
+            );
+            expect(linked.linkedPullRequest).toEqual({
+              projectId,
+              repository: "pingdotgg/t3code",
+              number: 8689,
+              url: "https://github.com/pingdotgg/t3code/pull/8689",
+            });
+            const metadataReadCall = yield* invoke("t3_thread_read", {
+              threadId: emptyThread.threadId,
+            });
+            const metadataRead = yield* decodeThreadReadResult(
+              metadataReadCall.structuredContent,
+            ).pipe(Effect.orDie);
+            expect(metadataRead.thread).toMatchObject({
+              title: "Metadata-managed thread",
+              linkedPullRequest: linked.linkedPullRequest,
+            });
+            const metadataListCall = yield* invoke("t3_thread_list", { limit: 100 });
+            const metadataList = yield* decodeThreadListResult(
+              metadataListCall.structuredContent,
+            ).pipe(Effect.orDie);
+            expect(
+              metadataList.threads.find((thread) => thread.threadId === emptyThread.threadId),
+            ).toMatchObject({
+              title: "Metadata-managed thread",
+              linkedPullRequest: linked.linkedPullRequest,
+            });
+
+            const unlinkedCall = yield* invoke("t3_thread_update", {
+              threadId: emptyThread.threadId,
+              action: "unlink_pull_request",
+              clientRequestId: "metadata-unlink-1",
+            });
+            const unlinked = yield* decodeThreadUpdateResult(unlinkedCall.structuredContent).pipe(
+              Effect.orDie,
+            );
+            expect(unlinked.linkedPullRequest).toBeNull();
+
+            const regenerateCall = yield* invoke("t3_thread_update", {
+              threadId: emptyThread.threadId,
+              action: "regenerate_title",
+              clientRequestId: "metadata-regenerate-title-1",
+            });
+            const regenerating = yield* decodeThreadUpdateResult(
+              regenerateCall.structuredContent,
+            ).pipe(Effect.orDie);
+            expect(regenerating).toMatchObject({
+              threadId: emptyThread.threadId,
+              action: "regenerate_title",
+              titleRegeneration: { requestId: regenerating.commandId },
+            });
             const promptedProjection = yield* waitForProjection(
               orchestrator,
               promptedThread.threadId,
@@ -1995,6 +2130,15 @@ describe("orchestrator MCP toolkit", () => {
               threadId: foreignThreadId,
             });
             expect(foreignReadCall.structuredContent).toMatchObject({
+              _tag: "OrchestratorMcpFailure",
+              code: "thread_not_found",
+            });
+            const foreignUpdateCall = yield* invoke("t3_thread_update", {
+              threadId: foreignThreadId,
+              action: "rename",
+              title: "Should stay foreign",
+            });
+            expect(foreignUpdateCall.structuredContent).toMatchObject({
               _tag: "OrchestratorMcpFailure",
               code: "thread_not_found",
             });
