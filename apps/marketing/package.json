@@ -11,12 +11,12 @@
   },
   "dependencies": {
     "@t3tools/shared": "workspace:*",
-    "astro": "^7.0.3",
+    "astro": "^7.3.1",
     "sharp": "0.34.5"
   },
   "devDependencies": {
-    "@astrojs/check": "^0.9.7",
-    "@vercel/config": "^0.3.0",
+    "@astrojs/check": "^0.9.10",
+    "@vercel/config": "^0.7.0",
     "typescript": "catalog:"
   }
 }

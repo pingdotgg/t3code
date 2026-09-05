@@ -8,7 +8,7 @@
   },
   "dependencies": {
     "@effect/platform-node": "catalog:",
-    "@oxlint/plugins": "^1.63.0",
+    "@oxlint/plugins": "^1.79.0",
     "effect": "catalog:"
   },
   "devDependencies": {

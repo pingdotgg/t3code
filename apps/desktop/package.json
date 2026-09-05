@@ -24,14 +24,14 @@
     "effect": "catalog:",
     "electron": "43.4.1",
     "electron-store": "^8.2.0",
-    "electron-updater": "^6.6.2",
+    "electron-updater": "^6.8.9",
     "playwright-core": "1.60.0",
-    "react-grab": "^0.1.32"
+    "react-grab": "^0.2.0"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",
     "@types/node": "catalog:",
-    "acorn": "8.16.0",
+    "acorn": "8.18.0",
     "cross-env": "^10.1.0",
     "electron-builder": "26.15.6",
     "tailwindcss": "^4.0.0",
