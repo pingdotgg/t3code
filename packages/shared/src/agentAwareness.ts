@@ -5,7 +5,7 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 
-export type AgentAwarenessPhase =
+type AgentAwarenessPhase =
   | "starting"
   | "running"
   | "waiting_for_approval"
@@ -43,7 +43,7 @@ export interface ProjectThreadAwarenessInput {
   >;
 }
 
-export function buildAgentAwarenessDeepLink(input: {
+function buildAgentAwarenessDeepLink(input: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
 }): string {

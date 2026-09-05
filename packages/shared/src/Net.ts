@@ -63,7 +63,7 @@ export class NetService extends Context.Service<NetService, NetServiceShape>()(
   "@t3tools/shared/Net/NetService",
 ) {}
 
-export const make = () => {
+const make = () => {
   /**
    * Returns true when a TCP server can bind to {host, port}.
    * `EADDRNOTAVAIL` is treated as available so IPv6-absent hosts don't fail

@@ -13,13 +13,13 @@ const textEncoder = new TextEncoder();
 
 export type TraceAttributes = Readonly<Record<string, unknown>>;
 
-export interface TraceRecordEvent {
+interface TraceRecordEvent {
   readonly name: string;
   readonly timeUnixNano: string;
   readonly attributes: Readonly<Record<string, unknown>>;
 }
 
-export interface TraceRecordLink {
+interface TraceRecordLink {
   readonly traceId: string;
   readonly spanId: string;
   readonly attributes: Readonly<Record<string, unknown>>;
@@ -40,7 +40,7 @@ interface BaseTraceRecord {
   readonly links: ReadonlyArray<TraceRecordLink>;
 }
 
-export interface EffectTraceRecord extends BaseTraceRecord {
+interface EffectTraceRecord extends BaseTraceRecord {
   readonly type: "effect-span";
   readonly exit:
     | {
@@ -303,7 +303,7 @@ export function truncateTraceAttributes(attributes: TraceAttributes): TraceAttri
   return truncated ?? attributes;
 }
 
-export function spanToTraceRecord(span: SerializableSpan): EffectTraceRecord {
+function spanToTraceRecord(span: SerializableSpan): EffectTraceRecord {
   const status = span.status as Extract<Tracer.SpanStatus, { _tag: "Ended" }>;
   const parentSpanId = Option.getOrUndefined(span.parent)?.spanId;
 

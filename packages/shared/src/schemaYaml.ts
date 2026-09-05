@@ -15,8 +15,8 @@ import {
   type ToStringOptions,
 } from "yaml";
 
-export type YamlParseOptions = ParseOptions & DocumentOptions & SchemaOptions & ToJSOptions;
-export type YamlStringifyOptions = DocumentOptions &
+type YamlParseOptions = ParseOptions & DocumentOptions & SchemaOptions & ToJSOptions;
+type YamlStringifyOptions = DocumentOptions &
   SchemaOptions &
   ParseOptions &
   CreateNodeOptions &
@@ -55,9 +55,7 @@ function formatYamlParseError(error: unknown): string {
  *
  * @see {@link stringifyYaml} for the inverse operation
  */
-export function parseYaml<E extends string>(
-  options?: YamlParseOptions,
-): SchemaGetter.Getter<unknown, E> {
+function parseYaml<E extends string>(options?: YamlParseOptions): SchemaGetter.Getter<unknown, E> {
   return SchemaGetter.transformOrFail((input: E) =>
     Effect.try({
       try: () => parseYamlString(input, options) as unknown,
@@ -89,9 +87,7 @@ export function parseYaml<E extends string>(
  *
  * @see {@link parseYaml} for the inverse operation
  */
-export function stringifyYaml(
-  options?: YamlStringifyOptions,
-): SchemaGetter.Getter<string, unknown> {
+function stringifyYaml(options?: YamlStringifyOptions): SchemaGetter.Getter<string, unknown> {
   return SchemaGetter.transformOrFail((input: unknown) =>
     Effect.try({
       try: () => stringifyYamlValue(input, options),

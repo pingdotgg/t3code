@@ -20,9 +20,9 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { HostProcessArchitecture, HostProcessPlatform } from "./hostProcess.ts";
 
 export const CLOUDFLARED_VERSION = "2026.5.2";
-export const CLOUDFLARED_PATH_ENV_NAME = "T3CODE_CLOUDFLARED_PATH";
+const CLOUDFLARED_PATH_ENV_NAME = "T3CODE_CLOUDFLARED_PATH";
 
-export type RelayClientExecutableSource = "override" | "managed" | "path";
+type RelayClientExecutableSource = "override" | "managed" | "path";
 
 export type RelayClientStatus =
   | {
@@ -42,7 +42,7 @@ export type RelayClientStatus =
       readonly version: string;
     };
 
-export type AvailableRelayClient = Extract<RelayClientStatus, { readonly status: "available" }>;
+type AvailableRelayClient = Extract<RelayClientStatus, { readonly status: "available" }>;
 
 export class RelayClientInstallError extends Data.TaggedError("RelayClientInstallError")<{
   readonly reason:
