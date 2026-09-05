@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - realpathSync.native resolves Windows 8.3 short names, which the Effect realPath does not.
 import * as NodeFS from "node:fs";
+import * as NodeURL from "node:url";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { assert, it, describe } from "@effect/vitest";
@@ -1409,7 +1410,14 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         }),
     );
 
-    for (const sourceState of ["populated", "shallow", "uninitialized"] as const) {
+    for (const sourceState of [
+      "cached",
+      "populated",
+      "shallow",
+      "uninitialized",
+      "inactive",
+      "update-none",
+    ] as const) {
       it.effect(`checks out independent submodules from a ${sourceState} source worktree`, () =>
         Effect.gen(function* () {
           const fileSystem = yield* FileSystem.FileSystem;
@@ -1440,7 +1448,12 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
 
           const nestedRepo = yield* makeTmpDir("git-nested-submodule-");
           yield* initRepoWithCommit(nestedRepo);
-          yield* git(submoduleRepo, ["submodule", "add", nestedRepo, "nested module"]);
+          yield* git(submoduleRepo, [
+            "submodule",
+            "add",
+            NodeURL.pathToFileURL(nestedRepo).href,
+            "nested module",
+          ]);
           yield* git(submoduleRepo, ["commit", "-am", "nested submodule"]);
 
           const cwd = yield* makeTmpDir();
@@ -1450,10 +1463,15 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
             "add",
             "--name",
             "shared tooling",
-            submoduleRepo,
+            NodeURL.pathToFileURL(submoduleRepo).href,
             "shared",
           ]);
-          yield* git(cwd, ["submodule", "add", nestedRepo, "other module"]);
+          yield* git(cwd, [
+            "submodule",
+            "add",
+            NodeURL.pathToFileURL(nestedRepo).href,
+            "other module",
+          ]);
           yield* git(cwd, ["commit", "-m", "add submodule"]);
 
           const source = pathService.join(yield* makeTmpDir(), "source worktree");
@@ -1472,17 +1490,58 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
           if (sourceState === "uninitialized") {
             yield* git(source, ["submodule", "deinit", "--force", "--all"]);
           }
-          // The remote can advance after the source was populated. Clone references
-          // must not replace the gitlink with either the source or remote HEAD.
-          yield* writeTextFile(submoduleRepo, "LATER.md", "later remote commit\n");
-          yield* git(submoduleRepo, ["add", "."]);
-          yield* git(submoduleRepo, ["commit", "-m", "advance remote"]);
-          const pinned = yield* git(submoduleRepo, ["rev-parse", "HEAD"]);
-          yield* git(cwd, ["update-index", "--cacheinfo", `160000,${pinned},shared`]);
-          yield* git(cwd, ["commit", "-m", "pin commit missing from source"]);
-          yield* writeTextFile(submoduleRepo, "NEWEST.md", "not the selected commit\n");
-          yield* git(submoduleRepo, ["add", "."]);
-          yield* git(submoduleRepo, ["commit", "-m", "advance beyond selected pin"]);
+          let pinned = yield* git(submoduleRepo, ["rev-parse", "HEAD"]);
+          if (sourceState !== "cached") {
+            // The remote can advance after the source was populated. Clone references
+            // must not replace the gitlink with either the source or remote HEAD.
+            yield* writeTextFile(submoduleRepo, "LATER.md", "later remote commit\n");
+            yield* git(submoduleRepo, ["add", "."]);
+            yield* git(submoduleRepo, ["commit", "-m", "advance remote"]);
+            pinned = yield* git(submoduleRepo, ["rev-parse", "HEAD"]);
+            yield* git(cwd, ["update-index", "--cacheinfo", `160000,${pinned},shared`]);
+            yield* git(cwd, ["commit", "-m", "pin commit missing from source"]);
+            yield* writeTextFile(submoduleRepo, "NEWEST.md", "not the selected commit\n");
+            yield* git(submoduleRepo, ["add", "."]);
+            yield* git(submoduleRepo, ["commit", "-m", "advance beyond selected pin"]);
+          }
+          const excludesOther = sourceState === "inactive" || sourceState === "update-none";
+          if (sourceState === "inactive") {
+            yield* git(cwd, ["config", "--unset", "submodule.other module.active"]);
+            yield* git(cwd, ["config", "submodule.active", "shared"]);
+          }
+          if (sourceState === "update-none") {
+            yield* git(cwd, [
+              "config",
+              "--file",
+              ".gitmodules",
+              "submodule.other module.update",
+              "none",
+            ]);
+            yield* git(cwd, ["add", ".gitmodules"]);
+            yield* git(cwd, ["commit", "-m", "skip other module"]);
+          }
+          const sourceSubmodule = pathService.join(source, "shared");
+          if (sourceState !== "uninitialized") {
+            yield* writeTextFile(sourceSubmodule, "SHARED.md", "uncommitted edit\n");
+            yield* writeTextFile(sourceSubmodule, "STAGED.md", "staged edit\n");
+            yield* git(sourceSubmodule, ["add", "STAGED.md"]);
+            yield* writeTextFile(sourceSubmodule, "UNTRACKED.md", "untracked edit\n");
+          }
+          const sourceCwd =
+            sourceState === "cached" ? pathService.join(source, "project subdirectory") : source;
+          yield* fileSystem.makeDirectory(sourceCwd, { recursive: true });
+          const sourceStatus = yield* git(source, ["status", "--porcelain"]);
+          const packetTrace = pathService.join(yield* makeTmpDir(), "packets.log");
+          if (sourceState === "cached") {
+            const previousPacketTrace = process.env.GIT_TRACE_PACKET;
+            process.env.GIT_TRACE_PACKET = packetTrace;
+            yield* Effect.addFinalizer(() =>
+              Effect.sync(() => {
+                if (previousPacketTrace === undefined) delete process.env.GIT_TRACE_PACKET;
+                else process.env.GIT_TRACE_PACKET = previousPacketTrace;
+              }),
+            );
+          }
 
           const worktreePath = pathService.join(
             yield* makeTmpDir("git-worktrees-"),
@@ -1490,7 +1549,7 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
           );
           const driver = yield* GitVcsDriver.GitVcsDriver;
           yield* driver.createWorktree({
-            cwd: source,
+            cwd: sourceCwd,
             path: worktreePath,
             refName: initialBranch,
             newRefName: "feature/submodules",
@@ -1506,12 +1565,34 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
           );
           assert.equal(
             yield* fileSystem.exists(pathService.join(worktreePath, "shared", "LATER.md")),
-            true,
+            sourceState !== "cached",
           );
           assert.equal(
             yield* fileSystem.exists(pathService.join(worktreePath, "shared", "NEWEST.md")),
             false,
           );
+          assert.equal(yield* git(source, ["status", "--porcelain"]), sourceStatus);
+          if (sourceState !== "uninitialized") {
+            assert.equal(
+              yield* fileSystem.readFileString(pathService.join(sourceSubmodule, "SHARED.md")),
+              "uncommitted edit\n",
+            );
+          }
+          assert.equal(
+            yield* fileSystem.exists(pathService.join(worktreePath, "shared", "STAGED.md")),
+            false,
+          );
+          assert.equal(
+            yield* fileSystem.exists(pathService.join(worktreePath, "shared", "UNTRACKED.md")),
+            false,
+          );
+          if (sourceState === "cached") {
+            // file:// forces the fetch transport rather than local hardlinks.
+            // A fully cached clone advertises refs but requests no object pack.
+            const packets = yield* fileSystem.readFileString(packetTrace);
+            assert.include(packets, "packet:");
+            assert.notMatch(packets, /\bwant [0-9a-f]{40}/);
+          }
           // Remove the actual reference object stores, including the nested one.
           // The destination must keep working after their lifetime ends.
           for (const submodule of sourceState === "uninitialized"
@@ -1523,7 +1604,15 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
             ]);
             yield* fileSystem.remove(gitDir, { recursive: true });
           }
-          for (const submodule of ["shared", "shared/nested module", "other module"]) {
+          assert.equal(
+            yield* fileSystem.exists(pathService.join(worktreePath, "other module", "README.md")),
+            !excludesOther,
+          );
+          for (const submodule of [
+            "shared",
+            "shared/nested module",
+            ...(excludesOther ? [] : ["other module"]),
+          ]) {
             const destination = pathService.join(worktreePath, submodule);
             const alternates = yield* git(destination, [
               "rev-parse",
