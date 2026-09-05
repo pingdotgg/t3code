@@ -5,13 +5,13 @@ import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
-import { discoverGrokSkills, parseGrokInspectSkills } from "./GrokSkills.ts";
+import { discoverGrokSkills, decodeGrokInspectSkills } from "./GrokSkills.ts";
 
 const inspectPayload = (skills: ReadonlyArray<unknown>) => JSON.stringify({ skills });
 
-describe("parseGrokInspectSkills", () => {
+describe("decodeGrokInspectSkills", () => {
   it("maps inspect entries onto provider skills, sorted by name", () => {
-    const skills = parseGrokInspectSkills(
+    const skills = decodeGrokInspectSkills(
       inspectPayload([
         {
           name: "writing-docs",
@@ -50,7 +50,7 @@ describe("parseGrokInspectSkills", () => {
   });
 
   it("disables skills the CLI marks as not user-invocable", () => {
-    const skills = parseGrokInspectSkills(
+    const skills = decodeGrokInspectSkills(
       inspectPayload([
         {
           name: "internal-helper",
@@ -71,7 +71,7 @@ describe("parseGrokInspectSkills", () => {
   });
 
   it("skips entries without a name or a filesystem path", () => {
-    const skills = parseGrokInspectSkills(
+    const skills = decodeGrokInspectSkills(
       inspectPayload([
         { name: "  ", source: { type: "user", path: "/tmp/skills/a/SKILL.md" } },
         { name: "no-path", source: { type: "user" } },
@@ -81,14 +81,14 @@ describe("parseGrokInspectSkills", () => {
       ]),
     );
 
-    expect(skills.map((skill) => skill.name)).toEqual(["kept"]);
+    expect(skills?.map((skill) => skill.name)).toEqual(["kept"]);
   });
 
-  it("returns an empty list for malformed or unexpected output", () => {
-    expect(parseGrokInspectSkills("not json")).toEqual([]);
-    expect(parseGrokInspectSkills("null")).toEqual([]);
-    expect(parseGrokInspectSkills(JSON.stringify({ skills: "nope" }))).toEqual([]);
-    expect(parseGrokInspectSkills(JSON.stringify({}))).toEqual([]);
+  it("rejects malformed or unexpected output", () => {
+    expect(decodeGrokInspectSkills("not json")).toBeUndefined();
+    expect(decodeGrokInspectSkills("null")).toBeUndefined();
+    expect(decodeGrokInspectSkills(JSON.stringify({ skills: "nope" }))).toBeUndefined();
+    expect(decodeGrokInspectSkills(JSON.stringify({}))).toBeUndefined();
   });
 });
 

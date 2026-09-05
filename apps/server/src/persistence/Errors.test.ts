@@ -43,7 +43,7 @@ it.effect("names a real SQLite condition without copying query data", () =>
     assert.equal(error.cause, cause);
     assert.notInclude(error.message, payload);
     assert.notInclude(error.message, "private_column");
-  }).pipe(Effect.provide(NodeSqliteClient.layerMemory())),
+  }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
 );
 
 it("reads the condition through a wrapping driver error", () => {

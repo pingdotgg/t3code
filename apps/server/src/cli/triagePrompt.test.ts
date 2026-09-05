@@ -52,7 +52,6 @@ it("context file carries every path the playbook depends on", () => {
       dbPath: "/home/u/.t3/userdata/state.sqlite",
       settingsPath: "/home/u/.t3/userdata/settings.json",
       logsDir: "/home/u/.t3/userdata/logs",
-      serverLogPath: "/home/u/.t3/userdata/logs/server.log",
       serverTracePath: "/home/u/.t3/userdata/logs/server.trace.ndjson",
       providerEventLogPath: "/home/u/.t3/userdata/logs/provider/events.log",
       terminalLogsDir: "/home/u/.t3/userdata/logs/terminals",

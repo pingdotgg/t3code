@@ -397,16 +397,6 @@ describe("DesktopShellEnvironment", () => {
     }),
   );
 
-  it("resolves dbus runtime dir candidates with existence checks", () => {
-    const busPath = DesktopShellEnvironment.resolveDefaultLinuxDbusSessionBusAddress({
-      env: { XDG_RUNTIME_DIR: "/tmp/stale-runtime" },
-      uid: 1000,
-      exists: (path) => path === "/run/user/1000/bus",
-    });
-
-    assert.equal(busPath, "unix:path=/run/user/1000/bus");
-  });
-
   it.effect("logs command failures with safe probe context and the exact cause", () => {
     const env: NodeJS.ProcessEnv = {
       SHELL: "/bin/bash",

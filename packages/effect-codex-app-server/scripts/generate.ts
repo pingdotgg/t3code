@@ -16,6 +16,7 @@ import {
   HttpClientResponse,
 } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { deduplicateGeneratedSchemas } from "../../../scripts/lib/deduplicateGeneratedSchemas.ts";
 
 const UPSTREAM_REF = "678157acaa819d5510adfe359abb5d0392cfe461";
 const USER_AGENT = "effect-codex-app-server-generator";
@@ -665,6 +666,16 @@ function rewriteExternalRefs(
 const generateFiles = Effect.fn("generateFiles")(function* () {
   yield* ensureGeneratedDir();
 
+  if (process.argv.includes("--deduplicate-existing")) {
+    const fs = yield* FileSystem.FileSystem;
+    const { schemaOutputPath } = yield* getGeneratedPaths();
+    yield* fs.writeFileString(
+      schemaOutputPath,
+      deduplicateGeneratedSchemas(yield* fs.readFileString(schemaOutputPath)),
+    );
+    return;
+  }
+
   const [rootJsonEntries, v1JsonEntries, v2JsonEntries] = yield* Effect.all([
     fetchDirectoryEntries("schema/json"),
     fetchDirectoryEntries("schema/json/v1"),
@@ -881,7 +892,7 @@ const generateFiles = Effect.fn("generateFiles")(function* () {
   const fs = yield* FileSystem.FileSystem;
   const { generatedDir, metaOutputPath, namespacesOutputPath, schemaOutputPath } =
     yield* getGeneratedPaths();
-  yield* fs.writeFileString(schemaOutputPath, schemaOutput);
+  yield* fs.writeFileString(schemaOutputPath, deduplicateGeneratedSchemas(schemaOutput));
   yield* fs.writeFileString(metaOutputPath, metaOutput);
   yield* fs.writeFileString(namespacesOutputPath, namespacesOutput);
 

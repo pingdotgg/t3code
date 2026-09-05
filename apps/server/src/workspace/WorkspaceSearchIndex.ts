@@ -98,12 +98,6 @@ export class WorkspaceSearchIndexDestroyFailed extends Schema.TaggedErrorClass<W
   }
 }
 
-export type WorkspaceSearchIndexError =
-  | WorkspaceSearchIndexCreateFailed
-  | WorkspaceSearchIndexScanTimedOut
-  | WorkspaceSearchIndexSearchFailed
-  | WorkspaceSearchIndexRefreshFailed;
-
 export class WorkspaceSearchIndex extends Context.Service<
   WorkspaceSearchIndex,
   {

@@ -2,11 +2,105 @@ import { assert, it } from "@effect/vitest";
 import * as Schema from "effect/Schema";
 
 import * as CodexSchema from "./schema.ts";
+import { deduplicateGeneratedSchemas } from "../../../scripts/lib/deduplicateGeneratedSchemas.ts";
 
 const isGetAccountResponse = Schema.is(CodexSchema.V2GetAccountResponse);
 const isThreadReadResponse = Schema.is(CodexSchema.V2ThreadReadResponse);
 const isThreadResumeResponse = Schema.is(CodexSchema.V2ThreadResumeResponse);
 const isThreadRollbackResponse = Schema.is(CodexSchema.V2ThreadRollbackResponse);
+
+it("deduplicates schema declarations and references without changing a second pass", () => {
+  const source = `
+export type A = { readonly value: string };
+export const A = Schema.Struct({ value: Schema.String });
+export type B = { readonly value: string };
+export const B = Schema.Struct({ value: Schema.String });
+export type ParentA = { readonly child: A };
+export const ParentA = Schema.Struct({ child: A });
+export type ParentB = { readonly child: B };
+export const ParentB = Schema.Struct({ child: B });
+`;
+  const output = deduplicateGeneratedSchemas(source);
+
+  assert.include(output, "export type B = A;\nexport const B = A;");
+  assert.include(output, "export type ParentB = ParentA;\nexport const ParentB = ParentA;");
+  assert.equal(deduplicateGeneratedSchemas(output), output);
+});
+
+it("does not rename property keys, descriptions or defaults that match schema names", () => {
+  const source = `
+export type A = string;
+export const A = Schema.String;
+export type B = string;
+export const B = Schema.String;
+export type KeyA = { A: string };
+export const KeyA = Schema.Struct({ A: Schema.String });
+export type KeyB = { B: string };
+export const KeyB = Schema.Struct({ B: Schema.String });
+export type NoteA = string;
+export const NoteA = Schema.String.annotate({ description: "A", default: "A" });
+export type NoteB = string;
+export const NoteB = Schema.String.annotate({ description: "B", default: "B" });
+`;
+
+  assert.equal(
+    deduplicateGeneratedSchemas(source),
+    source.replace(
+      "export type B = string;\nexport const B = Schema.String;",
+      "export type B = A;\nexport const B = A;",
+    ),
+  );
+});
+
+it("preserves each alias's root identifier and the shared annotations", () => {
+  const source = `
+export type A = string;
+export const A = Schema.String.annotate({ identifier: "A", title: "Value", description: "A", default: "A" });
+export type B = string;
+export const B = Schema.String.annotate({ identifier: "B", title: "Value", description: "A", default: "A" });
+export type Literal = string;
+export const Literal = Schema.String.annotate({ identifier: "<schema identifier>", title: "Value", description: "A", default: "A" });
+export type ParentA = { child: A };
+export const ParentA = Schema.Struct({ child: A });
+export type ParentB = { child: B };
+export const ParentB = Schema.Struct({ child: B });
+`;
+  const output = deduplicateGeneratedSchemas(source);
+
+  assert.include(output, 'export const B = A.annotate({ identifier: "B" });');
+  assert.include(output, 'identifier: "A", title: "Value", description: "A", default: "A"');
+  assert.include(
+    output,
+    'export const Literal = Schema.String.annotate({ identifier: "<schema identifier>"',
+  );
+  assert.include(output, "export const ParentB = Schema.Struct({ child: B });");
+  assert.equal(deduplicateGeneratedSchemas(output), output);
+});
+
+it("leaves recursive declarations and local bindings separate", () => {
+  const source = `
+export type A = { next: A };
+export const A = Schema.suspend((): Schema.Codec<A> => Schema.Struct({ next: A }));
+export type B = { next: B };
+export const B = Schema.suspend((): Schema.Codec<B> => Schema.Struct({ next: B }));
+export type Value = string;
+export const Value = Schema.String;
+export type OtherValue = string;
+export const OtherValue = Schema.String;
+export type ShadowA = string;
+export const ShadowA = ((Value) => Value)(Schema.String);
+export type ShadowB = string;
+export const ShadowB = ((OtherValue) => OtherValue)(Schema.String);
+`;
+
+  assert.equal(
+    deduplicateGeneratedSchemas(source),
+    source.replace(
+      "export type OtherValue = string;\nexport const OtherValue = Schema.String;",
+      "export type OtherValue = Value;\nexport const OtherValue = Value;",
+    ),
+  );
+});
 
 it("keeps async questions in live notifications and thread history", () => {
   const item = {

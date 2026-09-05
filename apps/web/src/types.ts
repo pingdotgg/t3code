@@ -4,7 +4,6 @@ import type {
   ChatUnknownAttachment as ContractChatUnknownAttachment,
   OrchestrationCheckpointFile,
   OrchestrationCheckpointSummary,
-  OrchestrationLatestTurn,
   OrchestrationMessage,
   OrchestrationProposedPlan,
   OrchestrationSession,
@@ -86,10 +85,6 @@ export type TurnDiffSummary = OrchestrationCheckpointSummary;
 export type Project = EnvironmentProject;
 export type Thread = EnvironmentThread;
 export type ThreadShell = EnvironmentThreadShell;
-
-export interface ThreadTurnState {
-  latestTurn: OrchestrationLatestTurn | null;
-}
 
 export type SidebarThreadSummary = EnvironmentThreadShell;
 export type ThreadSession = OrchestrationSession;

@@ -39,7 +39,6 @@ export interface ServerDerivedPaths {
   readonly worktreesDir: string;
   readonly attachmentsDir: string;
   readonly logsDir: string;
-  readonly serverLogPath: string;
   readonly serverTracePath: string;
   readonly providerLogsDir: string;
   readonly providerEventLogPath: string;
@@ -126,7 +125,6 @@ export const deriveServerPaths = Effect.fn(function* (
     worktreesDir: join(baseDir, "worktrees"),
     attachmentsDir,
     logsDir,
-    serverLogPath: join(logsDir, "server.log"),
     serverTracePath: join(logsDir, "server.trace.ndjson"),
     providerLogsDir,
     providerEventLogPath: join(providerLogsDir, "events.log"),

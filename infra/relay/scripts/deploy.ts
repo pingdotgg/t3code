@@ -130,22 +130,6 @@ export function reconcileRootEnvPublicConfig(contents: string, config: RelayPubl
   return next;
 }
 
-export function reconcileRootEnvRelayUrl(contents: string, relayUrl: string): string {
-  return reconcileRootEnvPublicConfig(contents, {
-    relayUrl,
-    mobileTracingUrl: "",
-    mobileTracingDataset: "",
-    mobileTracingToken: "",
-    clientTracingUrl: "",
-    clientTracingDataset: "",
-    clientTracingToken: "",
-  })
-    .split("\n")
-    .filter((line) => !line.startsWith("T3CODE_MOBILE_OTLP_TRACES_"))
-    .filter((line) => !line.startsWith("T3CODE_RELAY_CLIENT_OTLP_TRACES_"))
-    .join("\n");
-}
-
 export function hasDeployChanges(plan: Plan.Plan): boolean {
   return (
     Object.keys(plan.deletions).length > 0 ||

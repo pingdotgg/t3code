@@ -110,13 +110,10 @@ export class DevServeFailedError extends Schema.TaggedErrorClass<DevServeFailedE
   }
 }
 
-export const DevShareError = Schema.Union([
-  TailscaleUnavailableError,
-  TailnetNameMissingError,
-  DevServeFailedError,
-]);
-export type DevShareError = typeof DevShareError.Type;
-export const isDevShareError = Schema.is(DevShareError);
+export type DevShareError =
+  | TailscaleUnavailableError
+  | TailnetNameMissingError
+  | DevServeFailedError;
 
 /**
  * Removes any mapping for `webPort`, reporting whether the port is now clear.

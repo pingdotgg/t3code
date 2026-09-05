@@ -47,7 +47,9 @@ class GrokSkillsProbeError extends Schema.TaggedErrorClass<GrokSkillsProbeError>
  * name or a filesystem path are skipped; `userInvocable: false` skills are
  * kept but disabled so pickers that filter on `enabled` hide them.
  */
-function decodeGrokInspectSkills(stdout: string): ReadonlyArray<ServerProviderSkill> | undefined {
+export function decodeGrokInspectSkills(
+  stdout: string,
+): ReadonlyArray<ServerProviderSkill> | undefined {
   let parsed: unknown;
   try {
     parsed = JSON.parse(stdout);
@@ -89,10 +91,6 @@ function decodeGrokInspectSkills(stdout: string): ReadonlyArray<ServerProviderSk
   }
 
   return [...skillsByName.values()].sort((left, right) => left.name.localeCompare(right.name));
-}
-
-export function parseGrokInspectSkills(stdout: string): ReadonlyArray<ServerProviderSkill> {
-  return decodeGrokInspectSkills(stdout) ?? [];
 }
 
 /**

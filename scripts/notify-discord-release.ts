@@ -90,13 +90,6 @@ export class DiscordReleaseWebhookResponseError extends Schema.TaggedErrorClass<
   }
 }
 
-export const DiscordReleaseAnnouncementError = Schema.Union([
-  DiscordReleaseWebhookRequestError,
-  DiscordReleaseWebhookResponseError,
-]);
-export type DiscordReleaseAnnouncementError = typeof DiscordReleaseAnnouncementError.Type;
-export const isDiscordReleaseAnnouncementError = Schema.is(DiscordReleaseAnnouncementError);
-
 const targetLabels = {
   prerelease: "Prerelease",
   latest: "Latest",

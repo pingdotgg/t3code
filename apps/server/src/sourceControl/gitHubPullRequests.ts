@@ -5,7 +5,7 @@ import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import { PositiveInt, TrimmedNonEmptyString } from "@t3tools/contracts";
-import { decodeJsonResult, formatSchemaError } from "@t3tools/shared/schemaJson";
+import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 
 export interface NormalizedGitHubPullRequestRecord {
   readonly number: number;
@@ -108,8 +108,6 @@ function normalizeGitHubPullRequestRecord(
 const decodeGitHubPullRequestList = decodeJsonResult(Schema.Array(Schema.Unknown));
 const decodeGitHubPullRequest = decodeJsonResult(GitHubPullRequestSchema);
 const decodeGitHubPullRequestEntry = Schema.decodeUnknownExit(GitHubPullRequestSchema);
-
-export const formatGitHubJsonDecodeError = formatSchemaError;
 
 export function decodeGitHubPullRequestListJson(
   raw: string,

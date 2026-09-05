@@ -50,7 +50,6 @@ export const ElectronSafeStorageError = Schema.Union([
   ElectronSafeStorageDecryptError,
 ]);
 export type ElectronSafeStorageError = typeof ElectronSafeStorageError.Type;
-export const isElectronSafeStorageError = Schema.is(ElectronSafeStorageError);
 
 export class ElectronSafeStorage extends Context.Service<
   ElectronSafeStorage,

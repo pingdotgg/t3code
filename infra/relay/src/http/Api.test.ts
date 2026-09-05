@@ -202,9 +202,7 @@ function relayUnlinkTestLayer(input?: {
       EnvironmentLinks.EnvironmentLinks,
       EnvironmentLinks.EnvironmentLinks.of({
         upsert: () => Effect.die("unused upsert"),
-        listUsersForEnvironment: () => Effect.die("unused listUsersForEnvironment"),
         listDeliveryUsersForEnvironment: () => Effect.die("unused listDeliveryUsersForEnvironment"),
-        listPublicKeysForEnvironment: () => Effect.die("unused listPublicKeysForEnvironment"),
         listForUser: () => Effect.die("unused listForUser"),
         getForUser: input?.getForUser ?? (() => Effect.succeed(null)),
         revokeForUser: input?.revokeForUser ?? (() => Effect.succeed(false)),

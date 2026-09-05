@@ -10,7 +10,6 @@ import {
   appendClientConnectionParams,
   bootstrapRemoteBearerSession,
   exchangeRemoteDpopAccessToken,
-  fetchRemoteDpopSessionState,
   fetchRemoteSessionState,
   issueRemoteDpopWebSocketTicket,
   issueRemoteWebSocketTicket,
@@ -375,45 +374,6 @@ describe("remote environment authorization", () => {
         method: "POST",
         headers: {
           authorization: "Bearer bearer-token",
-        },
-      });
-    }),
-  );
-
-  it.effect("loads remote session state with a DPoP-bound access token", () =>
-    Effect.gen(function* () {
-      const fetch = recordedFetch(
-        Response.json({
-          authenticated: true,
-          auth: {
-            policy: "remote-reachable",
-            bootstrapMethods: ["one-time-token"],
-            sessionMethods: ["dpop-access-token"],
-            sessionCookieName: "t3_session",
-          },
-          sessionMethod: "dpop-access-token",
-          scopes: [
-            "orchestration:read",
-            "orchestration:operate",
-            "terminal:operate",
-            "review:write",
-          ],
-          expiresAt: "2026-05-01T12:00:00.000Z",
-        }),
-      );
-
-      yield* fetchRemoteDpopSessionState({
-        httpBaseUrl: "https://remote.example.com/",
-        accessToken: "dpop-access-token",
-        dpopProof: "dpop-proof",
-      }).pipe(provideRemoteHttp(fetch.fetchFn));
-
-      expectFetchCall(fetch.calls, 1, {
-        url: "https://remote.example.com/api/auth/session",
-        method: "GET",
-        headers: {
-          authorization: "DPoP dpop-access-token",
-          dpop: "dpop-proof",
         },
       });
     }),

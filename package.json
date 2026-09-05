@@ -44,6 +44,7 @@
     "sync:repos": "node scripts/sync-reference-repos.ts"
   },
   "devDependencies": {
+    "@babel/parser": "7.29.7",
     "@babel/plugin-transform-react-jsx": "7.28.6",
     "@effect/tsgo": "catalog:",
     "@oxlint/plugins": "^1.63.0",

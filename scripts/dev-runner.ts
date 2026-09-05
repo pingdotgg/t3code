@@ -98,10 +98,6 @@ type PortAvailabilityCheck<R = never> = (
 
 const DEV_RUNNER_MODES = Object.keys(MODE_ARGS) as Array<DevMode>;
 
-export function getDevRunnerModeArgs(mode: DevMode): ReadonlyArray<string> {
-  return MODE_ARGS[mode];
-}
-
 export function isBrowserAllowedPort(port: number): boolean {
   return !FETCH_BAD_PORTS.has(port);
 }
@@ -189,17 +185,6 @@ export class DevRunnerHostNotProxiableError extends Schema.TaggedErrorClass<DevR
     return `--host ${this.host} cannot be combined with ${this.mode}: single-origin browser dev proxies the backend at localhost, and a backend bound only to ${this.host} leaves localhost unanswered, so every proxied request fails. Use a wildcard (0.0.0.0 or ::) to serve that interface and loopback together, or --share for remote access.`;
   }
 }
-
-export const DevRunnerError = Schema.Union([
-  DevRunnerConfigurationError,
-  DevRunnerHostNotProxiableError,
-  DevRunnerInvalidPortOffsetError,
-  DevRunnerPortExhaustedError,
-  DevRunnerProcessError,
-  DevRunnerProcessExitError,
-]);
-export type DevRunnerError = typeof DevRunnerError.Type;
-export const isDevRunnerError = Schema.is(DevRunnerError);
 
 const optionalStringConfig = (name: string): Config.Config<string | undefined> =>
   Config.string(name).pipe(
