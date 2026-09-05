@@ -16,6 +16,7 @@ function record(overrides: Partial<UsageRecord> = {}): UsageRecord {
     timestampMs: 1_786_000_000_000,
     model: "claude-fable-5",
     sessionId: "session-a",
+    cwd: "/home/theo/project",
     totals: {
       uncachedInputTokens: 2,
       cachedInputTokens: 1000,
@@ -80,6 +81,7 @@ describe("scan cache round trip", () => {
         codexState: {
           model: "gpt-5.2-codex",
           sessionId: "session-c",
+          cwd: "/home/theo/codex-project",
           lastUsageSignature: '{"input_tokens":1}',
           sawSessionMeta: true,
           suppressingForkCopies: false,
@@ -185,6 +187,22 @@ describe("scan cache round trip", () => {
 
     const restored = decodeScanCache(JSON.parse(JSON.stringify(poisoned)));
     expect(restored.has("/a.jsonl")).toBe(false);
+  });
+
+  it.each([0.5, 99])("drops an entry with invalid cwd index %s", (cwdIndex) => {
+    const encoded = encodeScanCache(cacheWith([["/a.jsonl", 100, [record()]]]));
+    const row = encoded.files["/a.jsonl"]!.r[0]!;
+    const poisoned = {
+      ...encoded,
+      files: {
+        "/a.jsonl": {
+          ...encoded.files["/a.jsonl"]!,
+          r: [[...row.slice(0, 10), cwdIndex]],
+        },
+      },
+    };
+
+    expect(decodeScanCache(JSON.parse(JSON.stringify(poisoned))).has("/a.jsonl")).toBe(false);
   });
 });
 
