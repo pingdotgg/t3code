@@ -37,7 +37,6 @@ import {
   getMobileUniwindThemeName,
   type MobileThemeRuntimeState,
 } from "../../../lib/mobileThemeRuntime";
-import { cacheTerminalFontSize } from "../../terminal/terminalUiState";
 
 interface AppearancePreferencesContextValue {
   /** Effective values with base-size derivation applied. Use this for rendering. */
@@ -143,8 +142,7 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
   useLayoutEffect(() => {
     selectedThemeIdsRef.current = themeIds;
     syncThemeRuntime(runtimeState);
-    cacheTerminalFontSize(appearance.terminalFontSize);
-  }, [appearance.terminalFontSize, runtimeState, syncThemeRuntime, themeIds]);
+  }, [runtimeState, syncThemeRuntime, themeIds]);
 
   const setThemeIdForAppearance = useCallback(
     (appearance: MobileThemeAppearance, value: MobileThemeId) => {
