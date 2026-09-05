@@ -47,7 +47,7 @@ vi.mock("~/lib/openPullRequestLink", () => ({
   useOpenChangeRequestLink: () => vi.fn(),
 }));
 
-import ChatMarkdown from "./ChatMarkdown";
+import ChatMarkdown, { ChatMarkdownAssetImage } from "./ChatMarkdown";
 import { FileMarkdownPreview } from "./files/FileMarkdownPreview";
 
 const threadRef = {
@@ -257,6 +257,24 @@ describe("ChatMarkdown workspace images", () => {
     const style = firstInlineStyle(render("![shot](.t3/workspace-image.svg)"));
 
     expect(style).toMatchObject({ width: "720px", "aspect-ratio": "720 / 1400" });
+  });
+
+  it("folds a caller's height cap into the width bound so the ratio holds", () => {
+    testState.imageDimensions = { width: 720, height: 1400 };
+
+    const html = renderToStaticMarkup(
+      <ChatMarkdownAssetImage
+        environmentId={threadRef.environmentId}
+        resource={{ _tag: "media-file", threadId: threadRef.threadId, path: "/shot.png" }}
+        alt="shot"
+        maxHeightRem={16}
+      />,
+    );
+
+    expect(firstInlineStyle(html)).toMatchObject({
+      "aspect-ratio": "720 / 1400",
+      "max-width": `min(100%, 30rem, ${(16 * 720) / 1400}rem)`,
+    });
   });
 
   it("lets an authored size override server-reported dimensions", () => {
