@@ -90,7 +90,23 @@ describe("waitForHostReadiness", () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
-  it("bounds a stalled status probe and does not poll again if it completes late", async () => {
+  it.each([false, true])(
+    "keeps a probe result of %s that wins the deadline race",
+    async (ready) => {
+      const isReady = vi.fn(
+        () => new Promise<boolean>((resolve) => setTimeout(() => resolve(ready), 80)),
+      );
+      const result = waitForHostReadiness(80, isReady);
+
+      await vi.advanceTimersByTimeAsync(80);
+
+      expect(await result).toBe(ready);
+      expect(isReady).toHaveBeenCalledTimes(1);
+      expect(vi.getTimerCount()).toBe(0);
+    },
+  );
+
+  it("bounds a stalled status probe and ignores a late ready result", async () => {
     let completeProbe!: (ready: boolean) => void;
     const isReady = vi.fn(
       () =>
@@ -104,7 +120,7 @@ describe("waitForHostReadiness", () => {
     expect(await result).toBe(false);
     expect(vi.getTimerCount()).toBe(0);
 
-    completeProbe(false);
+    completeProbe(true);
     await vi.runAllTimersAsync();
     expect(isReady).toHaveBeenCalledTimes(1);
     expect(vi.getTimerCount()).toBe(0);

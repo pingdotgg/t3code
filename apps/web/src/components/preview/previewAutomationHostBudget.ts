@@ -32,8 +32,8 @@ export async function waitForHostReadiness(
     } finally {
       clearTimeout(timeout);
     }
-    if (ready === null || Date.now() >= deadlineMs) return false;
     if (ready) return true;
+    if (ready === null || Date.now() >= deadlineMs) return false;
     await new Promise<void>((resolve) =>
       setTimeout(resolve, Math.min(50, deadlineMs - Date.now())),
     );
