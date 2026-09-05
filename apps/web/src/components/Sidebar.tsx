@@ -1200,6 +1200,15 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
       !props.isActive &&
       !isSelected &&
       "opacity-70 motion-safe:transition-opacity hover:opacity-100 focus-visible:opacity-100",
+    projectFaviconColor &&
+      !hasUnsentDraft &&
+      !props.isActive &&
+      !isSelected && [
+        "[--sidebar-project-wash:color-mix(in_srgb,var(--sidebar-row-project-color)_12%,transparent)] dark:[--sidebar-project-wash:color-mix(in_srgb,var(--sidebar-row-project-color)_18%,transparent)]",
+        "pointer-fine:hover:bg-[linear-gradient(to_right,var(--sidebar-project-wash),transparent_85%)]",
+        "focus-visible:bg-sidebar-row-hover focus-visible:bg-[linear-gradient(to_right,var(--sidebar-project-wash),transparent_85%)] focus-visible:text-sidebar-foreground",
+        "forced-colors:pointer-fine:hover:bg-none forced-colors:focus-visible:bg-none",
+      ],
   );
   const rowSurfaceStyle = projectFaviconColor
     ? ({ "--sidebar-row-project-color": projectFaviconColor } as CSSProperties)
@@ -1346,15 +1355,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                 tabIndex={0}
                 data-testid="sidebar-row-slim"
                 aria-busy={isRegeneratingTitle || undefined}
-                className={cn(
-                  rowSurfaceClassName,
-                  "flex h-9 items-center gap-2.5 px-2.5",
-                  projectFaviconColor &&
-                    !hasUnsentDraft &&
-                    !props.isActive &&
-                    !isSelected &&
-                    "sidebar-project-hover",
-                )}
+                className={cn(rowSurfaceClassName, "flex h-9 items-center gap-2.5 px-2.5")}
                 style={rowSurfaceStyle}
                 onClick={handleClick}
                 onDoubleClick={handleDoubleClick}
@@ -1519,14 +1520,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
               tabIndex={0}
               data-testid="sidebar-row-card"
               aria-busy={isRegeneratingTitle || undefined}
-              className={cn(
-                rowSurfaceClassName,
-                projectFaviconColor &&
-                  !hasUnsentDraft &&
-                  !props.isActive &&
-                  !isSelected &&
-                  "sidebar-project-hover",
-              )}
+              className={rowSurfaceClassName}
               style={rowSurfaceStyle}
               onClick={handleClick}
               onDoubleClick={handleDoubleClick}
