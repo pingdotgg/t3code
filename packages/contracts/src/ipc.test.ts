@@ -58,9 +58,11 @@ describe("desktop update repository", () => {
   );
 });
 
+const decodeDesktopUpdateState = Schema.decodeUnknownSync(DesktopUpdateStateSchema);
+
 describe("desktop update status compatibility", () => {
   it("accepts protocol-v1 update state without a repository", () => {
-    const state = Schema.decodeUnknownSync(DesktopUpdateStateSchema)({
+    const state = decodeDesktopUpdateState({
       enabled: true,
       status: "idle",
       channel: "latest",
@@ -79,9 +81,8 @@ describe("desktop update status compatibility", () => {
       canRetry: false,
     });
     expect(state.repository).toBeNull();
-    expect(
-      Schema.decodeUnknownSync(DesktopUpdateStateSchema)({ ...state, repository: "fork/releases" })
-        .repository,
-    ).toBe("fork/releases");
+    expect(decodeDesktopUpdateState({ ...state, repository: "fork/releases" }).repository).toBe(
+      "fork/releases",
+    );
   });
 });

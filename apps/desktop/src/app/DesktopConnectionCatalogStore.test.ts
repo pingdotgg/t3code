@@ -21,6 +21,11 @@ import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 
 const textDecoder = new TextDecoder();
 const textEncoder = new TextEncoder();
+const encodeEncryptedCatalogFixture = Schema.encodeEffect(
+  Schema.fromJsonString(
+    Schema.Struct({ version: Schema.Literal(1), encryptedCatalog: Schema.String }),
+  ),
+);
 const decodeConnectionCatalog = Schema.decodeEffect(
   Schema.fromJsonString(ConnectionCatalogDocument),
 );
@@ -248,11 +253,7 @@ describe("DesktopConnectionCatalogStore", () => {
       yield* fileSystem.makeDirectory(`${baseDir}/userdata`, { recursive: true });
       yield* fileSystem.writeFileString(
         legacyPath,
-        yield* Schema.encodeEffect(
-          Schema.fromJsonString(
-            Schema.Struct({ version: Schema.Literal(1), encryptedCatalog: Schema.String }),
-          ),
-        )({
+        yield* encodeEncryptedCatalogFixture({
           version: 1,
           encryptedCatalog: Buffer.from(`encrypted:${oldCatalog}`).toString("base64"),
         }),
