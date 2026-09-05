@@ -265,6 +265,47 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
     }).pipe(Effect.provide(Layer.mergeAll(makeSessionStoreLayer(), SqlitePersistenceMemory))),
   );
 
+  it.effect.each(["insert", "revoke"] as const)(
+    "keeps existing browser sessions valid when replacement cannot %s",
+    (operation) =>
+      Effect.gen(function* () {
+        const sessions = yield* SessionStore.SessionStore;
+        const sql = yield* SqlClient.SqlClient;
+        const previous = yield* sessions.issue({ subject: "one-time-token" });
+        const unrelated = yield* sessions.issue({ subject: "one-time-token" });
+        if (operation === "insert") {
+          yield* sql`
+            CREATE TRIGGER reject_auth_session_insert BEFORE INSERT ON auth_sessions
+            BEGIN
+              SELECT RAISE(ABORT, 'simulated insert failure');
+            END
+          `;
+        } else {
+          yield* sql`
+            CREATE TRIGGER reject_auth_session_revocation BEFORE UPDATE OF revoked_at ON auth_sessions
+            BEGIN
+              SELECT RAISE(ABORT, 'simulated revocation failure');
+            END
+          `;
+        }
+
+        const error = yield* sessions
+          .issue({
+            subject: "replacement-pairing",
+            scopes: ["orchestration:read"],
+            replaceSessionId: previous.sessionId,
+          })
+          .pipe(Effect.flip);
+
+        expect(error._tag).toBe("SessionCredentialIssueError");
+        expect((yield* sessions.verify(previous.token)).sessionId).toBe(previous.sessionId);
+        expect((yield* sessions.verify(unrelated.token)).sessionId).toBe(unrelated.sessionId);
+        expect((yield* sessions.listActive()).map((session) => session.sessionId).sort()).toEqual(
+          [previous.sessionId, unrelated.sessionId].sort(),
+        );
+      }).pipe(Effect.provide(Layer.mergeAll(makeSessionStoreLayer(), SqlitePersistenceMemory))),
+  );
+
   it.effect("rejects websocket tokens once the parent session has expired", () =>
     Effect.gen(function* () {
       const sessions = yield* SessionStore.SessionStore;

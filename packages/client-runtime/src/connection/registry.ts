@@ -323,7 +323,10 @@ export const make = Effect.gen(function* () {
       SubscriptionRef.changes(entries),
     ).pipe(
       Stream.map((current) => Option.fromUndefinedOr(current.get(environmentId))),
-      Stream.changes,
+      // Re-pairing can replace the supervisor while its catalog details stay unchanged.
+      Stream.changesWith(
+        (previous, current) => Option.getOrNull(previous) === Option.getOrNull(current),
+      ),
       Stream.switchMap(
         Option.match({
           onNone: () => Stream.empty,
