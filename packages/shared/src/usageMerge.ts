@@ -62,6 +62,12 @@ export interface CostQuality {
   readonly cacheSavingsUsd: number;
 }
 
+export interface UsageContractMismatch {
+  readonly environmentId: EnvironmentId;
+  readonly direction: "serverBehind" | "clientBehind";
+  readonly contractVersion: number;
+}
+
 export interface MergedUsage {
   readonly costUsd: number;
   readonly uncachedInputTokens: number;
@@ -80,7 +86,7 @@ export interface MergedUsage {
   /** Environments whose data was dropped as a duplicate of another's. */
   readonly duplicateSources: readonly string[];
   readonly contributingEnvironments: readonly EnvironmentId[];
-  readonly staleEnvironments: readonly EnvironmentId[];
+  readonly contractMismatches: readonly UsageContractMismatch[];
 }
 
 /**
@@ -199,15 +205,15 @@ const EMPTY_MERGED: MergedUsage = {
   },
   duplicateSources: [],
   contributingEnvironments: [],
-  staleEnvironments: [],
+  contractMismatches: [],
 };
 
 /**
  * Merges every connected environment's summary.
  *
- * `expectedContractVersion` guards against an environment running older server
- * code: rather than blocking the page, incompatible data is excluded and its
- * id is reported so the UI can say coverage is partial. Versions in
+ * `expectedContractVersion` guards against incompatible server code: rather
+ * than blocking the page, its data is excluded and the mismatch direction is
+ * reported so the UI can identify which side needs updating. Versions in
  * [{@link USAGE_MERGE_COMPATIBLE_SINCE}, expected] still merge, so an additive
  * provider expansion does not drop Claude/Codex totals from older servers.
  */
@@ -218,14 +224,21 @@ export function mergeUsage(
   if (environments.length === 0) return EMPTY_MERGED;
 
   const current: EnvironmentUsage[] = [];
-  const staleEnvironments: EnvironmentId[] = [];
+  const contractMismatches: UsageContractMismatch[] = [];
   for (const environment of environments) {
     if (
       isCompatibleUsageContractVersion(environment.summary.contractVersion, expectedContractVersion)
     ) {
       current.push(environment);
     } else {
-      staleEnvironments.push(environment.environmentId);
+      contractMismatches.push({
+        environmentId: environment.environmentId,
+        direction:
+          environment.summary.contractVersion < expectedContractVersion
+            ? "serverBehind"
+            : "clientBehind",
+        contractVersion: environment.summary.contractVersion,
+      });
     }
   }
 
@@ -421,6 +434,6 @@ export function mergeUsage(
     },
     duplicateSources: duplicates,
     contributingEnvironments,
-    staleEnvironments,
+    contractMismatches,
   };
 }
