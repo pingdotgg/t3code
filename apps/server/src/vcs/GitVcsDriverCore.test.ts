@@ -523,8 +523,12 @@ it.effect("ignores worktree metadata for directories that no longer exist", () =
       );
 
       const refs = yield* driver.listRefs({ cwd, refresh: true });
+      const inventory = yield* driver.listWorktrees(cwd);
 
       assert.equal(refs.refs.find((ref) => ref.name === "stale-worktree")?.worktreePath, null);
+      assert.deepEqual(inventory.worktrees, [
+        { path: missingWorktreePath, refName: "stale-worktree" },
+      ]);
     }),
   ).pipe(Effect.provide(ServerConfigLayer.pipe(Layer.provideMerge(NodeServices.layer)))),
 );
@@ -1559,6 +1563,64 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
   });
 
   describe("worktree operations", () => {
+    it.effect("lists canonical attached and detached worktrees through a symlinked checkout", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const fileSystem = yield* FileSystem.FileSystem;
+        const pathService = yield* Path.Path;
+        const worktreesRoot = yield* makeTmpDir("git-vcs-driver-worktrees-");
+        const detachedPath = pathService.join(worktreesRoot, "detached");
+        const linksRoot = yield* makeTmpDir("git-vcs-driver-links-");
+        const checkoutLink = pathService.join(linksRoot, "checkout");
+        const nestedDirectory = pathService.join(cwd, "packages", "server");
+        yield* fileSystem.makeDirectory(nestedDirectory, { recursive: true });
+        yield* git(cwd, ["worktree", "add", "--detach", detachedPath, "HEAD"]);
+        yield* fileSystem.symlink(cwd, checkoutLink);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        const inventory = yield* driver.listWorktrees(
+          pathService.join(checkoutLink, "packages", "server"),
+        );
+
+        assert.deepEqual(
+          inventory.worktrees.toSorted((left, right) => left.path.localeCompare(right.path)),
+          [
+            { path: yield* fileSystem.realPath(cwd), refName: initialBranch },
+            { path: yield* fileSystem.realPath(detachedPath), refName: null },
+          ].toSorted((left, right) => left.path.localeCompare(right.path)),
+        );
+        assert.equal(inventory.currentWorktreeRoot, yield* fileSystem.realPath(cwd));
+        assert.equal(
+          inventory.repositoryCommonDir,
+          yield* fileSystem.realPath(pathService.join(cwd, ".git")),
+        );
+      }),
+    );
+
+    it.effect("resolves a nested repository independently from its containing checkout", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const fileSystem = yield* FileSystem.FileSystem;
+        const pathService = yield* Path.Path;
+        const nestedDirectory = pathService.join(cwd, "vendor", "independent");
+        yield* fileSystem.makeDirectory(nestedDirectory, { recursive: true });
+        yield* initRepoWithCommit(nestedDirectory);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        const outerInventory = yield* driver.listWorktrees(cwd);
+        const nestedInventory = yield* driver.listWorktrees(nestedDirectory);
+
+        assert.equal(outerInventory.currentWorktreeRoot, yield* fileSystem.realPath(cwd));
+        assert.equal(
+          nestedInventory.currentWorktreeRoot,
+          yield* fileSystem.realPath(nestedDirectory),
+        );
+        assert.notEqual(nestedInventory.repositoryCommonDir, outerInventory.repositoryCommonDir);
+      }),
+    );
+
     // NTFS rejects a newline in a file name, so there is nothing to preserve there.
     it.effect.skipIf(HostProcessPlatform.defaultValue() === "win32")(
       "preserves newline characters in worktree paths when listing refs",
@@ -1567,6 +1629,7 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
           const cwd = yield* makeTmpDir();
           yield* initRepoWithCommit(cwd);
           const worktreesRoot = yield* makeTmpDir("git-vcs-driver-worktrees-");
+          const fileSystem = yield* FileSystem.FileSystem;
           const pathService = yield* Path.Path;
           const worktreePath = pathService.join(worktreesRoot, "linked\nworktree");
           const driver = yield* GitVcsDriver.GitVcsDriver;

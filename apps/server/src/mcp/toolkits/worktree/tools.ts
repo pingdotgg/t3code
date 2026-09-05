@@ -2,6 +2,8 @@ import {
   WorktreeMcpFailure,
   WorktreeMcpHandoffInput,
   WorktreeMcpHandoffResult,
+  WorktreeMcpListInput,
+  WorktreeMcpListResult,
   WorktreeMcpStatusResult,
 } from "@t3tools/contracts";
 import { Tool, Toolkit } from "effect/unstable/ai";
@@ -28,7 +30,7 @@ export const WorktreeHandoffTool = Tool.make("t3_worktree_handoff", {
 
 export const WorktreeStatusTool = Tool.make("t3_worktree_status", {
   description:
-    "Report this agent thread's worktree binding: whether it is attached to a git worktree, the worktree path and branch, the project's main workspace root, and the server default for t3_worktree_handoff's startFromOrigin. Call this before t3_worktree_handoff to check whether a handoff is possible or has already happened.",
+    "Report both the durable workspace recorded on this agent thread and the branch actually checked out on disk. The agreement field calls out a branch mismatch, a missing worktree binding, or a non-repository path. Call this before a handoff or checkout and after failures.",
   // No `parameters`: Tool.make defaults to Tool.EmptyParams, which serializes
   // to a top-level `type: "object"` JSON Schema. An explicit empty
   // Schema.Struct({}) serializes to `anyOf: [object, array]`, which is not a
@@ -44,4 +46,23 @@ export const WorktreeStatusTool = Tool.make("t3_worktree_status", {
   .annotate(Tool.Idempotent, true)
   .annotate(Tool.OpenWorld, false);
 
-export const WorktreeToolkit = Toolkit.make(WorktreeHandoffTool, WorktreeStatusTool);
+export const WorktreeListTool = Tool.make("t3_worktree_list", {
+  description:
+    "Page through the calling thread's project root and Git-registered worktrees, including detached checkouts. Paths are canonicalized from Git's repository identity. Each entry includes the actual checked-out branch, dirty state, availability, and a bounded list plus total count of threads bound to that checkout. Use cursor until nextCursor is null. This tool does not create, remove, prune, or repair worktrees.",
+  parameters: WorktreeMcpListInput,
+  success: WorktreeMcpListResult,
+  failure: WorktreeMcpFailure,
+  failureMode: "return",
+  dependencies,
+})
+  .annotate(Tool.Title, "List project git worktrees")
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, false);
+
+export const WorktreeToolkit = Toolkit.make(
+  WorktreeHandoffTool,
+  WorktreeStatusTool,
+  WorktreeListTool,
+);

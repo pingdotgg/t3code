@@ -612,7 +612,7 @@ describe("cached VCS refs", () => {
     ),
   );
 
-  it.effect("emits persisted refs before a live refresh", () =>
+  it.effect("emits a persisted legacy branch-list shape before a live refresh", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const client = {

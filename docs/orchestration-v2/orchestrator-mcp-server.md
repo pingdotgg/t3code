@@ -140,7 +140,7 @@ selection model-visible without allowing a request that cannot run.
 
 ## Tool Surface
 
-The server exposes eleven orchestration tools.
+The server exposes orchestration and thread-scoped workspace tools.
 
 ### `orchestrator_capabilities`
 
@@ -312,6 +312,32 @@ Without `runId`, it selects the newest interruptible run. A terminal run is
 returned unchanged, and a thread with no active provider turn returns
 `no_active_run`.
 
+### `t3_worktree_status`
+
+Reads the calling thread's saved branch and worktree path, then reads Git status from that path.
+The result keeps recorded and actual state separate and reports whether they agree. A missing
+worktree, non-repository path, or branch mismatch is visible without changing either state.
+
+### `t3_worktree_list`
+
+Lists the project root and every Git-registered worktree in the calling thread's current project,
+including detached checkouts. Git's canonical common-directory inventory and real paths determine
+repository membership, so symlinked paths and saved branch labels are not treated as proof. Each
+result distinguishes the project's configured execution directory from its canonical physical
+worktree root and Git common directory. Each entry includes its listed and actual branch, dirty
+state, and threads bound to the checkout.
+Bindings keep each thread's recorded branch and worktree path separate from the actual checkout.
+Results are paginated before status reads, and each entry returns a bounded binding list with its
+full binding count when every nested or aliased recorded path for that page was resolved. Path
+resolution first selects recorded paths whose nearest listed physical checkout is on the requested
+page, then verifies each candidate through Git repository and worktree identity. The work is bounded
+by the page and binding limits, with a hard ceiling of 400 lookups. The result reports how many
+page candidates were attempted, whether the candidate list was truncated, and whether resolution
+completed without a Git inventory failure. Binding counts are lower bounds unless resolution is
+complete. A missing or unreadable checkout remains in the page with an availability and error
+instead of failing discovery of the other worktrees. The tool does not create, remove, prune, or
+repair worktrees.
+
 ## Delegated Task Lifecycle
 
 The MCP server is a command ingress into V2. It does not call provider adapters
@@ -355,6 +381,8 @@ falls back to a terminal-status message when no assistant text exists.
 - General thread management is limited to the calling thread's project. Send
   additionally enforces the same runtime and interaction privilege ceiling as
   child creation.
+- Workspace discovery is limited to the calling thread's current project. It does not accept an
+  environment or cross-project target.
 - Provider instances must be enabled, installed, available, authenticated, and
   backed by a V2 adapter.
 - A requested model must be advertised by the selected provider when the

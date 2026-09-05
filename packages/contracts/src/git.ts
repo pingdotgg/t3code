@@ -88,6 +88,7 @@ const VcsWorktree = Schema.Struct({
   path: TrimmedNonEmptyStringSchema,
   refName: TrimmedNonEmptyStringSchema,
 });
+
 const GitResolvedPullRequest = Schema.Struct({
   number: PositiveInt,
   title: TrimmedNonEmptyStringSchema,
