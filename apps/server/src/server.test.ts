@@ -16,6 +16,7 @@ import {
   CommandId,
   DEFAULT_SERVER_SETTINGS,
   type DpopFailureReason,
+  EnvironmentAuthorizationError,
   EnvironmentId,
   EventId,
   GitCommandError,
@@ -43,6 +44,7 @@ import {
   type ServerLifecycleStreamEvent,
   ThreadId,
   TurnId,
+  UsageDay,
   WS_METHODS,
   WsRpcGroup,
   EditorId,
@@ -869,7 +871,7 @@ const buildAppUnderTest = (options?: {
         Layer.mock(TraceDiagnostics.TraceDiagnostics)({
           read: () =>
             Effect.succeed({
-              traceFilePath: "",
+              traceFilePath: config.serverTracePath,
               scannedFilePaths: [],
               readAt: TEST_EPOCH,
               recordCount: 0,
@@ -4261,6 +4263,126 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(rpcError._tag, "EnvironmentAuthorizationError");
       if (rpcError._tag === "EnvironmentAuthorizationError") {
         assert.equal(rpcError.requiredScope, "orchestration:read");
+      }
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  for (const scope of ["orchestration:read", "diagnostics:read"] as const) {
+    it.effect(`separates diagnostics RPC access for ${scope} sessions`, () =>
+      Effect.gen(function* () {
+        yield* buildAppUnderTest();
+        const { response, body } = yield* exchangeAccessToken(defaultDesktopBootstrapToken, {
+          scope,
+        });
+        assert.equal(response.status, 200);
+        assert.equal(body.scope, scope);
+        const ticketResponse = yield* HttpClient.post("/api/auth/websocket-ticket", {
+          headers: { authorization: `Bearer ${body.access_token ?? ""}` },
+        });
+        const { ticket } = (yield* ticketResponse.json) as { readonly ticket: string };
+        const wsUrl = `${yield* getWsServerUrl("/ws", { authenticated: false })}?wsTicket=${encodeURIComponent(ticket)}`;
+
+        yield* Effect.scoped(
+          withWsRpcClient(wsUrl, (client) =>
+            Effect.gen(function* () {
+              const diagnosticsReads = [
+                client[WS_METHODS.serverGetTraceDiagnostics]({}).pipe(Effect.asVoid),
+                client[WS_METHODS.serverGetProcessDiagnostics]({}).pipe(Effect.asVoid),
+                client[WS_METHODS.serverGetProcessResourceHistory]({
+                  windowMs: 60_000,
+                  bucketMs: 10_000,
+                }).pipe(Effect.asVoid),
+                client[WS_METHODS.serverGetResourceTelemetryHistory]({
+                  windowMs: 60_000,
+                  bucketMs: 10_000,
+                }).pipe(Effect.asVoid),
+                client[WS_METHODS.subscribeResourceTelemetry]({}).pipe(
+                  Stream.runHead,
+                  Effect.asVoid,
+                ),
+                client[WS_METHODS.serverGetUsageSummary]({
+                  sinceDay: UsageDay.make("2026-09-01"),
+                  untilDay: UsageDay.make("2026-09-01"),
+                  timeZone: "UTC",
+                }).pipe(Effect.asVoid),
+                client[WS_METHODS.serverRefreshUsageRates]({}).pipe(Effect.asVoid),
+              ];
+              for (const read of diagnosticsReads) {
+                if (scope === "diagnostics:read") {
+                  yield* read;
+                } else {
+                  const error = yield* Effect.flip(read);
+                  if (!Schema.is(EnvironmentAuthorizationError)(error)) {
+                    assert.fail(`Expected a diagnostics authorization error, got ${String(error)}`);
+                  }
+                  assert.equal(error.requiredScope, "diagnostics:read");
+                }
+              }
+              if (scope === "orchestration:read") {
+                yield* client[WS_METHODS.serverGetConfig]({});
+              } else {
+                const error = yield* Effect.flip(client[WS_METHODS.serverGetConfig]({}));
+                assert.equal(error._tag, "EnvironmentAuthorizationError");
+                const mutationError = yield* Effect.flip(
+                  client[WS_METHODS.serverRetryResourceTelemetry]({}),
+                );
+                assert.equal(mutationError._tag, "EnvironmentAuthorizationError");
+              }
+            }),
+          ),
+        );
+      }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+    );
+  }
+
+  it.effect("requires maintenance and diagnostics grants before retrying telemetry", () =>
+    Effect.gen(function* () {
+      let retries = 0;
+      yield* buildAppUnderTest({
+        layers: {
+          nativeTelemetryClient: {
+            retry: Effect.sync(() => {
+              retries += 1;
+              return true;
+            }),
+          },
+        },
+      });
+      for (const scope of [
+        "environment:maintain",
+        "diagnostics:read",
+        "environment:maintain diagnostics:read",
+      ]) {
+        const token = yield* exchangeAccessToken(defaultDesktopBootstrapToken, { scope });
+        assert.equal(token.response.status, 200);
+        const ticketResponse = yield* HttpClient.post("/api/auth/websocket-ticket", {
+          headers: { authorization: `Bearer ${token.body.access_token ?? ""}` },
+        });
+        const { ticket } = yield* responseJsonEffect<{ readonly ticket: string }>(ticketResponse);
+        const wsUrl = `${yield* getWsServerUrl("/ws", { authenticated: false })}?wsTicket=${encodeURIComponent(ticket)}`;
+        yield* Effect.scoped(
+          withWsRpcClient(wsUrl, (client) =>
+            Effect.gen(function* () {
+              const retry = client[WS_METHODS.serverRetryResourceTelemetry]({});
+              if (scope === "environment:maintain diagnostics:read") {
+                const result = yield* retry;
+                assert.equal(result.accepted, true);
+                assert.ok(result.snapshot.health);
+                assert.equal(retries, 1);
+              } else {
+                const error = yield* Effect.flip(retry);
+                if (error._tag !== "EnvironmentAuthorizationError") {
+                  assert.fail(`Expected an authorization error, got ${String(error)}`);
+                }
+                assert.equal(
+                  error.requiredScope,
+                  scope === "environment:maintain" ? "diagnostics:read" : "environment:maintain",
+                );
+                assert.equal(retries, 0);
+              }
+            }),
+          ),
+        );
       }
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );

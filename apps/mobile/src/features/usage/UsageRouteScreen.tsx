@@ -66,6 +66,7 @@ export function UsageRouteScreen() {
   const isPast24Hours = windowDays === 1;
   const { merged, environments, isPending, isPartial, refresh } = useUsage(window);
   const limits = useRefreshLimits();
+  const canReadDiagnostics = environments.some((environment) => environment.canReadDiagnostics);
 
   const days = useMemo(
     () => enumerateDays(window.sinceDay, window.untilDay),
@@ -134,10 +135,12 @@ export function UsageRouteScreen() {
         contentContainerClassName="gap-6 px-5 pt-4"
         contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
         refreshControl={
-          <RefreshControl
-            refreshing={showingLimits ? limits.refreshing : refreshingUsage}
-            onRefresh={showingLimits ? () => void limits.refresh() : refreshWindow}
-          />
+          showingLimits || canReadDiagnostics ? (
+            <RefreshControl
+              refreshing={showingLimits ? limits.refreshing : refreshingUsage}
+              onRefresh={showingLimits ? () => void limits.refresh() : refreshWindow}
+            />
+          ) : undefined
         }
       >
         <SegmentedControl options={TAB_OPTIONS} selected={tab} onSelect={setTab} role="tab" />
@@ -164,11 +167,6 @@ export function UsageRouteScreen() {
                 className="w-36"
               />
             </View>
-            <UsageCoverageNotice
-              environments={environments}
-              merged={merged}
-              isPartial={isPartial}
-            />
             {isPending ? (
               <Text className="py-16 text-center text-base text-foreground-muted">
                 Scanning provider transcripts…
@@ -177,8 +175,25 @@ export function UsageRouteScreen() {
               <Text className="py-16 text-center text-base text-foreground-muted">
                 Connect an environment to see usage.
               </Text>
+            ) : !canReadDiagnostics ? (
+              <View className="gap-2 py-16">
+                {environments.map((environment) => (
+                  <Text
+                    key={environment.environmentId}
+                    className="text-center text-base text-foreground-muted"
+                  >
+                    {environments.length > 1 ? `${environment.label}: ` : null}
+                    {environment.error}
+                  </Text>
+                ))}
+              </View>
             ) : (
               <>
+                <UsageCoverageNotice
+                  environments={environments}
+                  merged={merged}
+                  isPartial={isPartial}
+                />
                 <ChartCard
                   merged={merged}
                   days={chartDays}
@@ -516,7 +531,7 @@ function UsageCoverageNotice(props: {
       ) : null}
       {failed.map((environment) => (
         <Text key={environment.environmentId} className="text-sm text-foreground-muted">
-          {environment.label} could not report usage.
+          {environment.label}: {environment.error}
         </Text>
       ))}
       {stale.map((environment) => (
