@@ -808,6 +808,7 @@ export const CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS: ReadonlyArray<string> = [
   "mcp__t3-code__list_scheduled_tasks",
   "mcp__t3-code__t3_thread_list",
   "mcp__t3-code__t3_thread_wait",
+  "mcp__t3-code__t3_thread_configuration",
 ];
 
 // The SDK's `allowedTools` only pre-approves tool calls; availability is the

@@ -4,12 +4,15 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { HttpBody, HttpClient, HttpRouter } from "effect/unstable/http";
 
 import * as ServerEnvironment from "../../../environment/ServerEnvironment.ts";
 import * as GitWorkflowService from "../../../git/GitWorkflowService.ts";
 import { ThreadManagementService } from "../../../orchestration-v2/ThreadManagementService.ts";
+import { CommandReceiptStoreV2 } from "../../../orchestration-v2/CommandReceiptStore.ts";
+import { ProviderSwitchServiceV2 } from "../../../orchestration-v2/ProviderSwitchService.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
 import * as ProjectSetupScriptRunner from "../../../project/ProjectSetupScriptRunner.ts";
 import { ProviderRegistry } from "../../../provider/Services/ProviderRegistry.ts";
@@ -22,6 +25,10 @@ import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
 
 const StubServicesLive = Layer.mergeAll(
   Layer.mock(ThreadManagementService)({}),
+  Layer.mock(CommandReceiptStoreV2)({
+    getByCommandId: () => Effect.succeed(Option.none()),
+  }),
+  Layer.mock(ProviderSwitchServiceV2)({}),
   Layer.mock(ProviderRegistry)({}),
   Layer.mock(ScheduledTaskService)({}),
   Layer.mock(ProjectService.ProjectService)({}),

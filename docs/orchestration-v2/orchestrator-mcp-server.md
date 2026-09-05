@@ -140,7 +140,7 @@ selection model-visible without allowing a request that cannot run.
 
 ## Tool Surface
 
-The server exposes eleven orchestration tools.
+The server exposes orchestration tools for delegation, thread management, scheduling, and conversation configuration.
 
 ### `orchestrator_capabilities`
 
@@ -311,6 +311,49 @@ Interrupts a selected active run through the normal V2 `run.interrupt` command.
 Without `runId`, it selects the newest interruptible run. A terminal run is
 returned unchanged, and a thread with no active provider turn returns
 `no_active_run`.
+
+### `t3_thread_configuration`
+
+Reads one current-project thread's complete provider selection, including its
+provider instance, model, and selected model options. It also returns runtime
+and interaction modes, the caller-bounded allowed mode lists, and configured
+providers with their advertised model option descriptors. Omitting `threadId`
+targets the calling thread.
+
+### `t3_thread_configure`
+
+Validates a requested provider, model, full option replacement, runtime mode,
+and interaction mode before dispatching the first command. Omitted options are
+preserved when the provider and model stay the same. An explicit empty array
+clears them, while changing provider or model starts without options unless the
+request supplies a compatible replacement.
+
+Selection changes use `thread.model-selection.set` within a provider instance
+and `provider.switch` across instances. Runtime and interaction changes use
+their existing thread commands. The service asks `ProviderSwitchServiceV2` for
+the exact selection transition before dispatch. The response normally reports
+one post-dispatch configuration snapshot, active and queued run IDs, and a
+receipt for every V2 command. If that optional read fails after a command is
+accepted, `observation: pre_dispatch_fallback` marks the settings and run IDs
+as the last pre-dispatch observation instead of inferring current state from
+the request. A stored provider-session detach event is reported as a
+requested effect because its worker can interrupt active shared-session work.
+Cross-provider handoff is reported as required next-turn planning; the command
+does not claim a context transfer was already queued or completed.
+
+Queued runs retain the model selection captured at creation. Their runtime and
+interaction policies are resolved from the projected thread when execution
+starts.
+
+All fields are validated before the first command. If a later command fails
+after an earlier command committed, the tool returns `partially_applied` with
+the committed receipts and the failed setting. Reusing `clientRequestId`
+replays the same durable accepted or rejected decisions and never reapplies an
+accepted leg. A rejected leg stays rejected under that key; after resolving its
+cause, the caller must use a new `clientRequestId` to request another attempt.
+The result repeats this policy in `retryGuidance`. Keyed requests record a
+receipt even when the requested setting already matches, preventing a later
+retry from turning that accepted no-op into a new mutation.
 
 ## Delegated Task Lifecycle
 

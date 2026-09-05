@@ -1,7 +1,13 @@
 import { assert, describe, it } from "@effect/vitest";
 import { Tool } from "effect/unstable/ai";
 
-import { CreateThreadsTool, DelegateTaskTool, ScheduleTaskTool } from "./tools.ts";
+import {
+  CreateThreadsTool,
+  DelegateTaskTool,
+  ScheduleTaskTool,
+  ThreadConfigurationTool,
+  ThreadConfigureTool,
+} from "./tools.ts";
 
 describe("orchestrator MCP tool guidance", () => {
   it("directs subagent requests to delegation instead of ordinary threads", () => {
@@ -54,5 +60,29 @@ describe("orchestrator MCP tool guidance", () => {
     assert.isAtLeast(schema.properties?.schedule?.anyOf?.length ?? 0, 2);
     assert.include(ScheduleTaskTool.description ?? "", "STRUCTURED OBJECT");
     assert.include(ScheduleTaskTool.description ?? "", "nextRunAt");
+  });
+
+  it("publishes discoverable root objects for conversation configuration", () => {
+    const readSchema = Tool.getJsonSchema(ThreadConfigurationTool) as {
+      readonly type?: unknown;
+      readonly properties?: Readonly<Record<string, unknown>>;
+    };
+    const configureSchema = Tool.getJsonSchema(ThreadConfigureTool) as {
+      readonly type?: unknown;
+      readonly properties?: Readonly<Record<string, unknown>>;
+    };
+
+    assert.equal(readSchema.type, "object");
+    assert.hasAllKeys(readSchema.properties ?? {}, ["threadId"]);
+    assert.equal(configureSchema.type, "object");
+    assert.hasAllKeys(configureSchema.properties ?? {}, [
+      "threadId",
+      "providerInstanceId",
+      "model",
+      "options",
+      "runtimeMode",
+      "interactionMode",
+      "clientRequestId",
+    ]);
   });
 });
