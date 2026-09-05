@@ -723,6 +723,7 @@ describe("default merge-readiness ranking", () => {
       number: 4,
       checksState: "passing",
       reviewDecision: "approved",
+      additions: 1_000,
       updatedAt: "2026-06-01T00:00:00Z",
     });
     const draft = entry({
@@ -747,7 +748,7 @@ describe("default merge-readiness ranking", () => {
     ).toEqual([4, 3, 5, 2, 6, 1]);
   });
 
-  it("uses recency inside one readiness tier", () => {
+  it("uses recency when readiness and diff size tie", () => {
     const older = entry({ number: 1, checksState: "passing" });
     const newer = entry({
       number: 2,
@@ -760,13 +761,13 @@ describe("default merge-readiness ranking", () => {
     ]);
   });
 
-  it("keeps readiness order stable when optional diff counts arrive", () => {
+  it("ranks smaller measured diffs first within a readiness tier as counts arrive", () => {
     const larger = entry({
       number: 1,
       checksState: "passing",
       reviewDecision: "approved",
-      additions: 40,
-      deletions: 10,
+      additions: 1,
+      deletions: 49,
       updatedAt: "2026-09-01T00:00:00Z",
     });
     const smaller = entry({
@@ -788,14 +789,30 @@ describe("default merge-readiness ranking", () => {
 
     expect(
       rankPullRequestsByMergeReadiness([larger, unknown, smaller]).map((row) => row.number),
-    ).toEqual([3, 1, 2]);
+    ).toEqual([2, 1, 3]);
     expect(
       rankPullRequestsByMergeReadiness([
         larger,
-        { ...unknown, additions: 500, deletions: 200 },
+        { ...unknown, additions: 1, deletions: 0 },
         smaller,
       ]).map((row) => row.number),
-    ).toEqual([3, 1, 2]);
+    ).toEqual([3, 2, 1]);
+  });
+
+  it("distinguishes measured empty diffs from missing counts when sorting groups", () => {
+    const unknown = entry({ number: 1, additions: 0, deletions: 0 });
+    const measured = entry({ number: 2 });
+    const empty = entry({ number: 3, additions: 0, deletions: 0 });
+    const groups = [
+      { key: "others", label: "Others", entries: [unknown, measured, empty] },
+    ] as const;
+
+    const sorted = sortPullRequestGroups(groups, "ready", "", (row) => row.number !== 1);
+
+    expect(sorted[0]!.entries.map((row) => row.number)).toEqual([3, 2, 1]);
+    expect(sortPullRequestGroups(groups, "ready", "sidebar", (row) => row.number !== 1)).toEqual(
+      groups,
+    );
   });
 
   it("keeps authored work first and ranks each group by readiness", () => {

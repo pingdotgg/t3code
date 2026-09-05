@@ -292,7 +292,7 @@ function PullRequestsRouteView() {
   const search = Route.useSearch();
   const sort = search.sort ?? "ready";
   const statsPolicy: PullRequestStatsPolicy =
-    sort === "largest" || sort === "smallest" ? "eager" : "visible";
+    sort === "ready" || sort === "largest" || sort === "smallest" ? "eager" : "visible";
   const navigate = useNavigate({ from: Route.fullPath });
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const { environments } = useEnvironments();
@@ -826,7 +826,7 @@ function PullRequestsRouteView() {
   // from the first moment rather than the second: a button that stays live through the slow half
   // of its own work is a button that gets pressed again, and buys the whole cascade twice.
   const [invalidating, setInvalidating] = useState(false);
-  const refreshFromHost = async () => {
+  const refreshFromHost = async (includeDetail = true) => {
     const requestedStatsScope = statsScopeRef.current;
     setInvalidating(true);
     try {
@@ -851,7 +851,7 @@ function PullRequestsRouteView() {
       setStatsTargetState({ key: requestedStatsScope.key, batches });
       statsQuery.refresh(batches.map(({ environmentId, input }) => ({ environmentId, input })));
     }
-    setDetailRefreshToken((token) => token + 1);
+    if (includeDetail) setDetailRefreshToken((token) => token + 1);
   };
   const refreshing = invalidating || listQuery.isPending;
 
@@ -1270,8 +1270,8 @@ function PullRequestsRouteView() {
     viewers,
   ]);
 
-  // Date sorts keep optional line-count reads near the viewport. Size sorts need every loaded
-  // count before their order is final. Received counts stay cached across both policies.
+  // Date sorts keep optional line-count reads near the viewport. Size and readiness sorts need
+  // every loaded count before their order is final. Counts stay cached across both policies.
   const entriesByStatsKey = useRef<ReadonlyMap<string, EnvironmentPullRequestEntry>>(new Map());
   entriesByStatsKey.current = new Map(
     groups.flatMap((group) =>
@@ -1950,10 +1950,10 @@ function PullRequestsRouteView() {
                 ) ?? null
               }
               refreshToken={detailRefreshToken}
-              // Merging, closing or reopening changes the row this panel was opened from, so
-              // the list behind it is out of date the moment the host takes the action.
+              // Host actions can change both readiness and diff size, so refresh the counts
+              // alongside the list. The panel already refreshes itself after each action.
               onActed={() => {
-                refreshList(true);
+                void refreshFromHost(false);
               }}
             />
           </RightPanelTabs>
