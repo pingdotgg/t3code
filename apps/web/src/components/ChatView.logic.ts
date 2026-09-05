@@ -641,6 +641,16 @@ export function readFileAsDataUrl(file: File): Promise<string> {
   });
 }
 
+export function resolveBranchAfterEnvModeChange(input: {
+  currentMode: DraftThreadEnvMode;
+  nextMode: DraftThreadEnvMode;
+  currentBranch: string | null;
+}): string | null {
+  return input.currentMode !== "worktree" && input.nextMode === "worktree"
+    ? null
+    : input.currentBranch;
+}
+
 export function resolveSendEnvMode(input: {
   requestedEnvMode: DraftThreadEnvMode;
   isGitRepo: boolean;
