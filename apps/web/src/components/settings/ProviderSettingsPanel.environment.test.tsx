@@ -116,6 +116,7 @@ vi.mock("../../state/session", () => ({
 }));
 
 import { EnvironmentProviderSettings } from "./ProviderSettingsPanel";
+import { AddProviderInstanceDialog } from "./AddProviderInstanceDialog";
 
 const environmentId = EnvironmentId.make("remote-device");
 const codexId = ProviderInstanceId.make("codex");
@@ -303,6 +304,24 @@ describe("EnvironmentProviderSettings routing", () => {
     ).toBeNull();
     expect(visitElements(panel, isRefreshButton)).not.toBeNull();
     expect(visitElements(panel, isAddProviderButton)).not.toBeNull();
+  });
+
+  it("removes an open add-instance dialog when the provider grant is revoked", () => {
+    let panel = renderPanel();
+    const add = visitElements(panel, isAddProviderButton);
+    if (!add) throw new Error("Missing Add provider action.");
+    (add.props.onClick as () => void)();
+    panel = renderPanel();
+    expect(
+      visitElements(panel, (element) => element.type === AddProviderInstanceDialog),
+    ).not.toBeNull();
+
+    commands.canManageProviders = false;
+    panel = renderPanel({ readOnly: true });
+    expect(
+      visitElements(panel, (element) => element.type === AddProviderInstanceDialog),
+    ).toBeNull();
+    expect(settingsState.updateSettings).not.toHaveBeenCalled();
   });
 
   it("keeps Advanced visible when search targets the provider health interval", () => {

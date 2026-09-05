@@ -21,6 +21,7 @@ import {
   useState,
 } from "react";
 import {
+  AuthOrchestrationOperateScope,
   AuthSettingsWriteScope,
   type KeybindingCommand,
   type KeybindingWhenNode,
@@ -1345,6 +1346,10 @@ export function KeybindingsSettingsPanel() {
     primaryEnvironment?.environmentId ?? null,
     AuthSettingsWriteScope,
   );
+  const canOpenKeybindingsFile = useEnvironmentScope(
+    primaryEnvironment?.environmentId ?? null,
+    AuthOrchestrationOperateScope,
+  );
   const upsertKeybinding = useAtomCommand(serverEnvironment.upsertKeybinding, {
     reportFailure: false,
   });
@@ -1390,7 +1395,12 @@ export function KeybindingsSettingsPanel() {
   }, []);
 
   const openKeybindingsFile = useCallback(() => {
-    if (!keybindingsConfigPath) return;
+    if (
+      !keybindingsConfigPath ||
+      !primaryEnvironment ||
+      !readEnvironmentScope(primaryEnvironment.environmentId, AuthOrchestrationOperateScope)
+    )
+      return;
     void (async () => {
       const result = await openInPreferredEditor(keybindingsConfigPath);
       if (result._tag === "Success" || isAtomCommandInterrupted(result)) {
@@ -1404,7 +1414,7 @@ export function KeybindingsSettingsPanel() {
         type: "error",
       });
     })();
-  }, [keybindingsConfigPath, openInPreferredEditor]);
+  }, [keybindingsConfigPath, openInPreferredEditor, primaryEnvironment]);
 
   const saveKeybinding = useCallback(
     (input: ServerUpsertKeybindingInput) => {
@@ -1547,7 +1557,7 @@ export function KeybindingsSettingsPanel() {
                     type="button"
                     size="icon-xs"
                     variant="ghost-muted"
-                    disabled={!keybindingsConfigPath}
+                    disabled={!keybindingsConfigPath || !canOpenKeybindingsFile}
                     onClick={openKeybindingsFile}
                     aria-label="Open keybindings.json"
                   >
