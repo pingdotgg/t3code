@@ -59,6 +59,12 @@ describe("readImageDimensions", () => {
       width: 3024,
       height: 4032,
     });
+    // A later XMP APP1 segment must not clear the rotation.
+    const xmp = bytes([0xff, 0xe1], u16(2 + 29), "http://ns.adobe.com/xap/1.0/\0");
+    expect(readImageDimensions(bytes([0xff, 0xd8], [...app1], [...xmp], [...sof0]))).toEqual({
+      width: 3024,
+      height: 4032,
+    });
     // Orientation 1 leaves the frame size alone.
     const upright = [...tiff];
     upright[19] = 0x01;

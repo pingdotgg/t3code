@@ -9,8 +9,12 @@ export interface ImageDimensions {
   readonly height: number;
 }
 
-/** Enough for every supported header, including JPEG files with an EXIF/ICC prefix. */
-export const IMAGE_DIMENSIONS_HEADER_BYTES = 64 * 1024;
+/**
+ * Enough for every supported header. A JPEG's frame header can sit behind
+ * several 64 KiB metadata segments (EXIF, an ICC profile, XMP), so allow a
+ * few of them before giving up.
+ */
+export const IMAGE_DIMENSIONS_HEADER_BYTES = 256 * 1024;
 
 export function readImageDimensions(bytes: Uint8Array): ImageDimensions | null {
   const dimensions = readPng(bytes) ?? readGif(bytes) ?? readWebp(bytes) ?? readJpeg(bytes);
@@ -116,7 +120,9 @@ function readJpeg(bytes: Uint8Array): ImageDimensions | null {
     const length = data.getUint16(offset + 2);
     // Viewers apply the EXIF orientation before display, so a phone photo
     // stored on its side takes the swapped size on screen.
-    if (marker === 0xe1) rotated = exifOrientationSwapsAxes(bytes, offset + 4, offset + 2 + length);
+    if (marker === 0xe1 && !rotated) {
+      rotated = exifOrientationSwapsAxes(bytes, offset + 4, offset + 2 + length);
+    }
     offset += 2 + length;
   }
   return null;
