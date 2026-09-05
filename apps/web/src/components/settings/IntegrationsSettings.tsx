@@ -170,6 +170,35 @@ export const importFailureReason = (cause: unknown): BrowserImportFailureReason 
   );
 };
 
+function truncateBrowserProfileName(name: string, maxLength: number): string {
+  const truncated = name.slice(0, maxLength);
+  const lastCodeUnit = truncated.charCodeAt(truncated.length - 1);
+  return lastCodeUnit >= 0xd800 && lastCodeUnit <= 0xdbff ? truncated.slice(0, -1) : truncated;
+}
+
+export function importedBrowserProfileName(
+  sourceName: string,
+  sourceProfileName: string,
+  takenNames: ReadonlySet<string>,
+): string {
+  const baseName = `${sourceName} ${sourceProfileName}`;
+  const unsuffixedName = truncateBrowserProfileName(
+    baseName,
+    BROWSER_PROFILE_NAME_MAX_LENGTH,
+  ).trimEnd();
+  if (!takenNames.has(unsuffixedName)) return unsuffixedName;
+
+  for (let index = 2; ; index += 1) {
+    const suffix = ` ${index}`;
+    const stem = truncateBrowserProfileName(
+      baseName,
+      BROWSER_PROFILE_NAME_MAX_LENGTH - suffix.length,
+    ).trimEnd();
+    const name = `${stem}${suffix}`;
+    if (!takenNames.has(name)) return name;
+  }
+}
+
 const viewportSelectValue = (viewport: PreviewViewportSetting): string => {
   if (viewport._tag === "fill") return FILL_VALUE;
   if (
@@ -815,7 +844,11 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
   const runWizardImport = async (
     source: BrowserImportSource,
     environmentId: EnvironmentId,
-    input: { readonly sourceProfileDirectory: string; readonly target: WizardTarget },
+    input: {
+      readonly sourceProfileDirectory: string;
+      readonly sourceProfileName: string;
+      readonly target: WizardTarget;
+    },
   ): Promise<ImportOutcome> => {
     if (!previewBridge) return { kind: "blocked", reason: "sessionUnavailable" };
     if (!settingsHydrated) return { kind: "blocked", reason: "sessionUnavailable" };
@@ -865,8 +898,7 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
               const taken = new Set(
                 resolveBrowserProfiles(current.browserProfiles).map((profile) => profile.name),
               );
-              let name = source.name;
-              for (let index = 2; taken.has(name); index += 1) name = `${source.name} ${index}`;
+              const name = importedBrowserProfileName(source.name, input.sourceProfileName, taken);
               return {
                 ...current,
                 browserProfiles: [
@@ -877,7 +909,8 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
             });
             targetName =
               persisted.browserProfiles.find((profile) => profile.id === input.target.profileId)
-                ?.name ?? source.name;
+                ?.name ??
+              importedBrowserProfileName(source.name, input.sourceProfileName, new Set());
           } catch (cause) {
             // This target id belongs only to the attempted new profile. Clear
             // its partition so a failed registration cannot strand imported

@@ -27,6 +27,7 @@ import {
   outcomeToStep,
   refreshedSourceProfileDirectory,
   refreshedSourceStep,
+  resolveSourceProfile,
   resolveWizardTarget,
   type ImportOutcome,
   type WizardTarget,
@@ -52,6 +53,7 @@ interface BrowserImportWizardProps {
    */
   readonly onImport: (input: {
     readonly sourceProfileDirectory: string;
+    readonly sourceProfileName: string;
     readonly target: WizardTarget;
   }) => Promise<ImportOutcome>;
   /** Re-checks the source's availability after the user quits the browser. */
@@ -98,6 +100,11 @@ export function BrowserImportWizard({
 
   const runImport = () => {
     if (importInFlight.current) return;
+    const sourceProfile = resolveSourceProfile(sourceProfileDirectory, source);
+    if (sourceProfile === undefined) {
+      setStep({ step: "blocked", reason: "unknownSourceProfile" });
+      return;
+    }
     const chosen = resolveWizardTarget(target, newProfileId.current, targetProfiles);
     if (chosen === undefined) {
       setTargetError("That profile is no longer available. Choose where to import these cookies.");
@@ -107,7 +114,11 @@ export function BrowserImportWizard({
     setTargetError(undefined);
     importInFlight.current = true;
     setStep({ step: "importing" });
-    void onImport({ sourceProfileDirectory, target: chosen })
+    void onImport({
+      sourceProfileDirectory,
+      sourceProfileName: sourceProfile.name,
+      target: chosen,
+    })
       .then((outcome) => setStep(outcomeToStep(outcome)))
       .catch(() => setStep({ step: "blocked", reason: "readFailed" }))
       .finally(() => {
