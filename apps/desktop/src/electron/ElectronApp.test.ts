@@ -36,7 +36,7 @@ const {
   isDefaultProtocolClientMock: vi.fn(() => false),
   onMock: vi.fn(),
   quitMock: vi.fn(),
-  readFileMock: vi.fn(() => Promise.resolve('{"name":"t3code"}')),
+  readFileMock: vi.fn(() => '{"name":"t3code"}'),
   relaunchMock: vi.fn(),
   removeListenerMock: vi.fn(),
   removeSwitchMock: vi.fn(),
@@ -50,8 +50,8 @@ const {
   whenReadyMock: vi.fn(() => Promise.resolve()),
 }));
 
-vi.mock("node:fs/promises", () => ({
-  readFile: readFileMock,
+vi.mock("node:fs", () => ({
+  readFileSync: readFileMock,
 }));
 
 vi.mock("electron", () => ({
@@ -100,11 +100,16 @@ describe("ElectronApp", () => {
     onMock.mockClear();
     quitMock.mockClear();
     readFileMock.mockClear();
-    readFileMock.mockResolvedValue('{"name":"t3code"}');
+    readFileMock.mockReturnValue('{"name":"t3code"}');
     relaunchMock.mockClear();
     removeListenerMock.mockClear();
     removeSwitchMock.mockClear();
     setPathMock.mockClear();
+  });
+
+  it("resolves packaged metadata without yielding before Electron ready", () => {
+    const metadata = Effect.runSync(ElectronApp.make.metadata);
+    assert.equal(metadata.isPackaged, true);
   });
 
   it.effect("reads app metadata through the service", () =>
@@ -123,7 +128,7 @@ describe("ElectronApp", () => {
   );
 
   it.effect("reads the packaged desktop identity from package metadata", () => {
-    readFileMock.mockResolvedValueOnce(
+    readFileMock.mockReturnValueOnce(
       JSON.stringify({
         t3codeDesktopIdentity: {
           appId: "com.t3tools.t3code.fork",
@@ -147,7 +152,9 @@ describe("ElectronApp", () => {
 
   it.effect("preserves the underlying package metadata read failure", () => {
     const cause = new Error("manifest unavailable");
-    readFileMock.mockRejectedValueOnce(cause);
+    readFileMock.mockImplementationOnce(() => {
+      throw cause;
+    });
 
     return Effect.gen(function* () {
       const electronApp = yield* ElectronApp.ElectronApp;
@@ -160,7 +167,7 @@ describe("ElectronApp", () => {
   });
 
   it.effect("rejects malformed packaged desktop identity metadata", () => {
-    readFileMock.mockResolvedValueOnce(
+    readFileMock.mockReturnValueOnce(
       JSON.stringify({
         t3codeDesktopIdentity: {
           appId: "",

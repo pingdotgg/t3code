@@ -8,7 +8,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
-import * as NodeFSP from "node:fs/promises";
+import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
 import * as Electron from "electron";
@@ -129,8 +129,8 @@ export const make = ElectronApp.of({
         }),
     });
     const packageMetadata = Electron.app.isPackaged
-      ? yield* Effect.tryPromise({
-          try: () => NodeFSP.readFile(NodePath.join(appPath, "package.json"), "utf8"),
+      ? yield* Effect.try({
+          try: () => NodeFS.readFileSync(NodePath.join(appPath, "package.json"), "utf8"),
           catch: (cause) =>
             new ElectronAppMetadataReadError({
               property: "package-metadata",

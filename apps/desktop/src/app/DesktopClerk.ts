@@ -1,3 +1,5 @@
+// @effect-diagnostics nodeBuiltinImport:off - Clerk must select its profile and register its scheme without yielding before Electron ready.
+import * as NodeFS from "node:fs";
 import { createClerkBridge } from "@clerk/electron";
 import { storage } from "@clerk/electron/storage";
 import * as Context from "effect/Context";
@@ -97,7 +99,16 @@ export const make = Effect.gen(function* () {
   // directory here — under the default productName-derived path, acquiring
   // the lock would create "T3 Code (Alpha)" and make the legacy-install
   // detection in resolveUserDataPath match on fresh installs.
-  const userDataPath = yield* DesktopAppIdentity.resolveUserDataPath;
+  const userDataPath = yield* DesktopAppIdentity.resolveUserDataPathWith((candidate) =>
+    Effect.try({
+      try: () => NodeFS.existsSync(candidate),
+      catch: (cause) =>
+        new DesktopAppIdentity.DesktopUserDataPathResolutionError({
+          candidatePath: candidate,
+          cause,
+        }),
+    }),
+  );
   yield* electronApp.setPath("userData", userDataPath);
 
   const bridge = yield* Effect.acquireRelease(

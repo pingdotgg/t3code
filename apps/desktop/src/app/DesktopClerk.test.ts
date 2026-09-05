@@ -51,7 +51,7 @@ const makeDesktopClerkLayer = (isDevelopment = true, events: string[] = []) => {
       Layer.mergeAll(
         Layer.succeed(DesktopEnvironment.DesktopEnvironment, environment),
         Layer.succeed(ElectronApp.ElectronApp, electronApp),
-        FileSystem.layerNoop({ exists: () => Effect.succeed(false) }),
+        FileSystem.layerNoop({ exists: () => Effect.promise(async () => false) }),
       ),
     ),
   );
@@ -72,6 +72,13 @@ describe("DesktopClerk", () => {
     );
     assert.equal(DesktopClerk.resolveDesktopClerkFrontendApiHostname(""), undefined);
     assert.equal(DesktopClerk.resolveDesktopClerkFrontendApiHostname("invalid"), undefined);
+  });
+
+  it("acquires the bridge synchronously before Electron ready", () => {
+    storageMock.mockReturnValue(storageAdapter);
+    createClerkBridgeMock.mockReturnValue({ cleanup: vi.fn(), isPrimaryInstance: true });
+    Effect.runSync(Effect.scoped(Layer.build(makeDesktopClerkLayer(false))));
+    assert.equal(createClerkBridgeMock.mock.calls.length, 1);
   });
 
   it.effect("acquires and releases the SDK bridge with the layer", () => {
