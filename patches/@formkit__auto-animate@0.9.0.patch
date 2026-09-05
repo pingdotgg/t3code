@@ -1,5 +1,5 @@
 diff --git a/index.mjs b/index.mjs
-index 7ad811c..fb275fd 100644
+index 7ad811c..1b5bbee 100644
 --- a/index.mjs
 +++ b/index.mjs
 @@ -142,17 +142,20 @@ function updatePos(el, debounce = true) {
@@ -82,10 +82,10 @@ index 7ad811c..fb275fd 100644
              const mo = mutationObservers.get(el);
 +            const nodes = new Set();
 +            forEach(el, (node) => nodes.add(node));
-+            // DOM removals may be queued when a layout effect destroys the controller.
++            // Include queued removals unless another animated parent now owns the node.
 +            for (const mutation of (mo === null || mo === void 0 ? void 0 : mo.takeRecords()) || []) {
 +                for (const node of mutation.removedNodes) {
-+                    if (node instanceof Element)
++                    if (node instanceof Element && !parents.has(node.parentElement))
 +                        nodes.add(node);
 +                }
 +            }

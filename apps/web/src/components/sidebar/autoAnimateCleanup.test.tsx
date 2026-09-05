@@ -116,12 +116,12 @@ function queueRemoval(child: TestElement) {
   return observer;
 }
 
-async function start() {
+async function start(node = parent) {
   // External ESM imports survive vi.resetModules; each case needs fresh browser globals.
   library ??= (await import(
     /* @vite-ignore */ `${libraryUrl.href}?cleanup-test=${moduleInstance++}`
   )) as typeof import("@formkit/auto-animate");
-  const controller = library.autoAnimate(parent as unknown as HTMLElement);
+  const controller = library.autoAnimate(node as unknown as HTMLElement);
   controllers.push(controller);
   return controller;
 }
@@ -228,6 +228,23 @@ describe("AutoAnimate controller cleanup", () => {
     expectStopped();
   });
 
+  it("ignores queued root-resize work after recreating the same parent", async () => {
+    const controller = await start();
+    await vi.advanceTimersByTimeAsync(250);
+    const resize = TestObserver.instances.find((observer) => observer.observed.has(root))!;
+    resize.callback([{ target: root } as unknown as MutationRecord]);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(idleCallbacks).toHaveLength(1);
+    controller.destroy?.();
+    const next = await start();
+    await vi.advanceTimersByTimeAsync(250);
+    expect(vi.getTimerCount()).toBe(1);
+    idleCallbacks.splice(0).forEach((callback) => callback());
+    expect(vi.getTimerCount()).toBe(1);
+    next.destroy?.();
+    expectStopped();
+  });
+
   it("does not restore observers from an already-running position update", async () => {
     const controller = await start();
     // Fire the debounce without flushing its awaited continuation.
@@ -270,6 +287,33 @@ describe("AutoAnimate controller cleanup", () => {
       controller.destroy?.();
       expectStopped();
     }
+  });
+
+  it("preserves a moved child's live registration in another animated parent", async () => {
+    const child = new TestElement();
+    parent.appendChild(child);
+    const first = await start();
+    const destination = new TestElement();
+    const second = await start(destination);
+    await vi.advanceTimersByTimeAsync(2_000);
+    queueRemoval(child);
+    destination.appendChild(child);
+    const observer = TestObserver.instances.find(
+      (item) => item.observed.has(destination) && item.observed.size === 1,
+    )!;
+    observer.callback([
+      { target: destination, addedNodes: [child], removedNodes: [] } as unknown as MutationRecord,
+    ]);
+    child.animate.mock.results[0]!.value.finish();
+    destination.animate.mock.results[0]!.value.finish();
+    await vi.advanceTimersByTimeAsync(1);
+    const tracking = TestObserver.instances.filter((item) => item.observed.has(child));
+    expect(tracking).toHaveLength(2);
+    first.destroy?.();
+    expect(tracking.every((item) => item.observed.has(child))).toBe(true);
+    expect(vi.getTimerCount()).toBe(2);
+    second.destroy?.();
+    expectStopped();
   });
 
   it("does not resume observing a removed child from queued root-resize work", async () => {
