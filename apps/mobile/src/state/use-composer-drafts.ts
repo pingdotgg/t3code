@@ -1003,7 +1003,9 @@ function clearComposerDraftModelSelectionState(
   if (modelSelectionId === undefined || existing?.modelSelectionId !== modelSelectionId)
     return current;
   const { modelSelection: _selection, modelSelectionId: _id, ...draft } = existing;
-  if (isEmptyDraft(draft)) {
+  // A share-import receipt outlives its content, so an otherwise empty draft
+  // still carrying one is kept: dropping it would re-import the same share.
+  if (isEmptyDraft(draft) && (draft.importedShareIds?.length ?? 0) === 0) {
     const next = { ...current };
     delete next[draftKey];
     return next;
@@ -1301,6 +1303,8 @@ export function undoComposerDraftMergeState(
     attachments: existing.attachments.filter(
       (attachment) => !insertedAttachmentIds.has(attachment.id),
     ),
+    // Present-but-undefined is meaningful: it records that the live draft
+    // cleared its model, so a cloud restore keeps that over the archived one.
     modelSelection: modelOwner.modelSelection,
     modelSelectionId: modelOwner.modelSelectionId,
     runtimeMode: undoSetting("runtimeMode"),
