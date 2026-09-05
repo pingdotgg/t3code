@@ -36,7 +36,10 @@ import {
   type LegacyV1ThreadImportError,
 } from "./LegacyV1ThreadImporter.ts";
 import type { CommandReceiptV2 } from "./CommandReceiptStore.ts";
-import { makeKeyedSerialExecutor } from "./KeyedSerialExecutor.ts";
+import {
+  ThreadCommandExecutor,
+  layer as threadCommandExecutorLayer,
+} from "./ThreadCommandExecutor.ts";
 
 export type ThreadManagementSendMode = "auto" | "queue" | "steer" | "restart";
 
@@ -372,11 +375,11 @@ export function latestSteerableRun(
 const make = Effect.gen(function* () {
   const orchestrator = yield* OrchestratorV2;
   const legacyImporter = yield* LegacyV1ThreadImporter;
-  const projectMutations = yield* makeKeyedSerialExecutor<ProjectId>();
+  const threadCommands = yield* ThreadCommandExecutor;
 
   const withProjectCreationAdmission: ThreadManagementServiceShape["withProjectCreationAdmission"] =
     (input, effect) =>
-      projectMutations.withLock(
+      threadCommands.withProjectLock(
         input.projectId,
         orchestrator.getCommandReceipt(input.commandId).pipe(
           Effect.mapError(
@@ -470,7 +473,7 @@ const make = Effect.gen(function* () {
     return ensureCommandTranscripts(command).pipe(
       Effect.andThen(orchestrator.getThreadProjection(admissionThreadId)),
       Effect.flatMap((projection) =>
-        projectMutations.withLock(projection.thread.projectId, dispatchCommand),
+        threadCommands.withProjectLock(projection.thread.projectId, dispatchCommand),
       ),
     );
   };
@@ -702,7 +705,7 @@ const make = Effect.gen(function* () {
 
   return ThreadManagementService.of({
     withProjectCreationAdmission,
-    withProjectMutationLock: projectMutations.withLock,
+    withProjectMutationLock: threadCommands.withProjectLock,
     ensureLegacyTranscript,
     dispatch,
     getThreadProjection,
@@ -736,10 +739,10 @@ const legacyV1ThreadImporterNoopLayer = Layer.succeed(
 export const layer: Layer.Layer<ThreadManagementService, never, OrchestratorV2> = Layer.effect(
   ThreadManagementService,
   make,
-).pipe(Layer.provide(legacyV1ThreadImporterNoopLayer));
+).pipe(Layer.provide(legacyV1ThreadImporterNoopLayer), Layer.provide(threadCommandExecutorLayer));
 
 export const layerWithLegacyImporter: Layer.Layer<
   ThreadManagementService,
   never,
   LegacyV1ThreadImporter | OrchestratorV2
-> = Layer.effect(ThreadManagementService, make);
+> = Layer.effect(ThreadManagementService, make).pipe(Layer.provide(threadCommandExecutorLayer));

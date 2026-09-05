@@ -150,7 +150,7 @@ it.layer(TestLayer)("ProjectService", (it) => {
       });
       assert.isFalse(reset.autoPull);
       assert.isNull(reset.projectIcon);
-      assert.equal(reset.faviconPath, hydratedCreated.faviconPath);
+      assert.equal(reset.faviconPath, "/work/project/favicon.svg");
       assert.isNull(reset.defaultThreadEnvMode);
       assert.deepEqual(
         (yield* service.snapshot).projects.map((project) => project.id),

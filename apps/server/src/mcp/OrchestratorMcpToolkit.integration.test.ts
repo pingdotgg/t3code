@@ -50,6 +50,10 @@ import { ClaudeProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/Claud
 import { CodexProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import { CodexOrchestratorReplayHarness } from "../orchestration-v2/Adapters/CodexAdapterV2.testkit.ts";
 import * as ClientCommandDispatch from "../orchestration-v2/ClientCommandDispatch.ts";
+import {
+  ThreadCommandExecutor,
+  layer as threadCommandExecutorLayer,
+} from "../orchestration-v2/ThreadCommandExecutor.ts";
 import { OrchestratorV2, type OrchestratorV2Shape } from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import {
@@ -614,23 +618,6 @@ describe("orchestrator MCP toolkit", () => {
                         )
                       : effect(receipt),
                   ),
-                withProjectMutationLock: (lockedProjectId, effect) =>
-                  lockedProjectId === deletionRaceProjectId
-                    ? Effect.gen(function* () {
-                        const locked = yield* Effect.forkChild(
-                          actual.withProjectMutationLock(
-                            lockedProjectId,
-                            Deferred.succeed(deletionLockAcquired, undefined).pipe(
-                              Effect.andThen(Deferred.await(allowDeletion)),
-                              Effect.andThen(effect),
-                            ),
-                          ),
-                          { startImmediately: true },
-                        );
-                        yield* Deferred.succeed(deletionLockAttemptSettled, undefined);
-                        return yield* Fiber.join(locked);
-                      })
-                    : actual.withProjectMutationLock(lockedProjectId, effect),
               });
             }),
           ).pipe(Layer.provide(threadManagementLayer));
@@ -690,26 +677,80 @@ describe("orchestrator MCP toolkit", () => {
               runNow: () => Effect.die("ScheduledTaskService.runNow is unused in this test"),
             }),
           );
-          const projectLayer = Layer.mock(ProjectService.ProjectService)({
-            getById: (requestedProjectId, options) =>
-              requestedProjectId === deletionRaceProjectId
-                ? Ref.get(deletionRaceProjectState).pipe(
-                    Effect.map((project) =>
-                      project.deletedAt === null || options?.includeDeleted === true
-                        ? Option.some(project)
-                        : Option.none(),
-                    ),
-                  )
-                : Effect.succeed(Option.none()),
-            delete: ({ projectId: deletedProjectId }) =>
-              deletedProjectId === deletionRaceProjectId
-                ? Ref.updateAndGet(deletionRaceProjectState, (project) => ({
-                    ...project,
-                    deletedAt: "2026-08-30T00:01:00.000Z",
-                    updatedAt: "2026-08-30T00:01:00.000Z",
-                  }))
-                : Effect.die(`Unexpected project deletion: ${deletedProjectId}`),
-          });
+          const projectLayer = Layer.effect(
+            ProjectService.ProjectService,
+            Effect.gen(function* () {
+              const threadCommands = yield* ThreadCommandExecutor;
+              const threads = yield* ThreadManagement.ThreadManagementService;
+              return ProjectService.ProjectService.of({
+                create: () => Effect.die("unused"),
+                bootstrap: () => Effect.die("unused"),
+                update: () => Effect.die("unused"),
+                delete: () => Effect.die("unused"),
+                deleteDetailed: ({ commandId, projectId: deletedProjectId }) =>
+                  Effect.gen(function* () {
+                    if (deletedProjectId !== deletionRaceProjectId) {
+                      return yield* Effect.die(`Unexpected project deletion: ${deletedProjectId}`);
+                    }
+                    const deletion = yield* Effect.forkChild(
+                      threadCommands.withProjectLock(
+                        deletedProjectId,
+                        Deferred.succeed(deletionLockAcquired, undefined).pipe(
+                          Effect.andThen(Deferred.await(allowDeletion)),
+                          Effect.andThen(
+                            Effect.gen(function* () {
+                              const snapshot = yield* threads.getShellSnapshot();
+                              const projectThreads = [
+                                ...snapshot.threads,
+                                ...snapshot.archivedThreads,
+                              ].filter((thread) => thread.projectId === deletedProjectId);
+                              yield* Effect.forEach(
+                                projectThreads,
+                                (thread) =>
+                                  threads.dispatch({
+                                    type: "thread.delete",
+                                    commandId: CommandId.make(
+                                      `${commandId}:delete-thread:${thread.id}`,
+                                    ),
+                                    threadId: thread.id,
+                                  }),
+                                { concurrency: 1, discard: true },
+                              );
+                              const project = yield* Ref.updateAndGet(
+                                deletionRaceProjectState,
+                                (current) => ({
+                                  ...current,
+                                  deletedAt: "2026-08-30T00:01:00.000Z",
+                                  updatedAt: "2026-08-30T00:01:00.000Z",
+                                }),
+                              );
+                              return { project, deletedThreadCount: projectThreads.length };
+                            }),
+                          ),
+                        ),
+                      ),
+                      { startImmediately: true },
+                    );
+                    yield* Deferred.succeed(deletionLockAttemptSettled, undefined);
+                    return yield* Fiber.join(deletion);
+                  }),
+                getById: (requestedProjectId, options) =>
+                  requestedProjectId === deletionRaceProjectId
+                    ? Ref.get(deletionRaceProjectState).pipe(
+                        Effect.map((project) =>
+                          project.deletedAt === null || options?.includeDeleted === true
+                            ? Option.some(project)
+                            : Option.none(),
+                        ),
+                      )
+                    : Effect.succeed(Option.none()),
+                getByWorkspaceRoot: () => Effect.die("unused"),
+                snapshot: Effect.die("unused"),
+              });
+            }),
+          ).pipe(
+            Layer.provide(Layer.merge(threadCommandExecutorLayer, gatedThreadManagementLayer)),
+          );
           const toolkitRegistrationLayer = Layer.merge(
             McpHttpServer.OrchestratorToolkitRegistrationLive,
             McpHttpServer.ProjectToolkitRegistrationLive,
@@ -3015,7 +3056,7 @@ describe("orchestrator MCP toolkit", () => {
         );
         const orchestrationLayer = Layer.merge(
           orchestratorLayer,
-          threadManagementServiceLayer.pipe(Layer.provide(orchestratorLayer)),
+          ThreadManagement.layer.pipe(Layer.provide(orchestratorLayer)),
         );
         const providerRegistryLayer = makeProviderRegistryLayer([
           makeProviderSnapshot({

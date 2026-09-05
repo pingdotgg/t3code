@@ -26,6 +26,10 @@ import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import { CodexProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import type { ProviderAdapterV2Shape } from "../orchestration-v2/ProviderAdapter.ts";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
+import {
+  ThreadCommandExecutor,
+  layer as threadCommandExecutorLayer,
+} from "../orchestration-v2/ThreadCommandExecutor.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import { makeOrchestratorV2ReplayLayerWithRegistry } from "../orchestration-v2/testkit/ProviderReplayHarness.ts";
 import * as ProjectService from "../project/ProjectService.ts";
@@ -111,6 +115,7 @@ it.effect("creates, reads, and updates project defaults through the project MCP 
           return project;
         }),
       delete: () => Effect.die("unused"),
+      deleteDetailed: () => Effect.die("unused"),
       getById: (projectId) =>
         Ref.get(state).pipe(
           Effect.map((projects) => Option.fromNullishOr(projects.get(projectId))),
@@ -307,9 +312,7 @@ it.effect("clones before registration and requires explicit cascading for nonemp
     });
     const state = yield* Ref.make<Project | null>(null);
     const cloneInputs = yield* Ref.make<ReadonlyArray<{ readonly destinationPath: string }>>([]);
-    const deletedThreadCommands = yield* Ref.make<ReadonlyArray<CommandId>>([]);
     const deletedProjects = yield* Ref.make<ReadonlyArray<ProjectId>>([]);
-    const lockedProjects = yield* Ref.make<ReadonlyArray<ProjectId>>([]);
     const testLayer = ProjectMcp.layer.pipe(
       Layer.provide(
         Layer.mock(ProjectService.ProjectService)({
@@ -331,12 +334,12 @@ it.effect("clones before registration and requires explicit cascading for nonemp
                   : Option.some(current),
               ),
             ),
-          delete: ({ projectId }) =>
+          deleteDetailed: ({ projectId }) =>
             Effect.gen(function* () {
               yield* Ref.update(deletedProjects, (current) => [...current, projectId]);
               const deleted = { ...project, deletedAt: now } satisfies Project;
               yield* Ref.set(state, deleted);
-              return deleted;
+              return { project: deleted, deletedThreadCount: 2 };
             }),
         }),
       ),
@@ -367,10 +370,6 @@ it.effect("clones before registration and requires explicit cascading for nonemp
       ),
       Layer.provide(
         Layer.mock(ThreadManagement.ThreadManagementService)({
-          withProjectMutationLock: (lockedProjectId, effect) =>
-            Ref.update(lockedProjects, (current) => [...current, lockedProjectId]).pipe(
-              Effect.andThen(effect),
-            ),
           getShellSnapshot: (options) =>
             Effect.succeed({
               schemaVersion: 1,
@@ -395,13 +394,6 @@ it.effect("clones before registration and requires explicit cascading for nonemp
                     ]
                   : [],
             }),
-          dispatch: (command) =>
-            command.type === "thread.delete"
-              ? Ref.update(deletedThreadCommands, (current) => [
-                  ...current,
-                  command.commandId,
-                ]).pipe(Effect.as({} as never))
-              : Effect.die("unexpected command"),
         }),
       ),
       Layer.provide(NodeServices.layer),
@@ -439,7 +431,6 @@ it.effect("clones before registration and requires explicit cascading for nonemp
         workspaceRoot: "/work/cloned",
         workspaceFilesDeleted: false,
       });
-      expect(yield* Ref.get(deletedThreadCommands)).toHaveLength(2);
       expect(yield* Ref.get(deletedProjects)).toEqual([projectId]);
 
       const replayed = yield* service.delete(scope, {
@@ -454,7 +445,6 @@ it.effect("clones before registration and requires explicit cascading for nonemp
         workspaceFilesDeleted: false,
       });
       expect(yield* Ref.get(deletedProjects)).toEqual([projectId]);
-      expect(yield* Ref.get(lockedProjects)).toEqual([projectId, projectId, projectId]);
 
       const createRetry = yield* service
         .create(scope, {
@@ -532,15 +522,6 @@ it.effect("serializes delegated thread admission with cascading project deletion
         const actual = yield* ThreadManagement.ThreadManagementService;
         return ThreadManagement.ThreadManagementService.of({
           ...actual,
-          withProjectMutationLock: (lockedProjectId, effect) =>
-            Deferred.succeed(deleteLockAttempted, undefined).pipe(
-              Effect.andThen(
-                actual.withProjectMutationLock(
-                  lockedProjectId,
-                  Deferred.succeed(deleteLockAcquired, undefined).pipe(Effect.andThen(effect)),
-                ),
-              ),
-            ),
           getShellSnapshot: (options) =>
             actual.getShellSnapshot(options).pipe(
               Effect.tap(() => Deferred.succeed(snapshotEntered, undefined)),
@@ -549,15 +530,62 @@ it.effect("serializes delegated thread admission with cascading project deletion
         });
       }),
     ).pipe(Layer.provide(actualThreads));
+    const projectLayer = Layer.effect(
+      ProjectService.ProjectService,
+      Effect.gen(function* () {
+        const threadCommands = yield* ThreadCommandExecutor;
+        const threadManagement = yield* ThreadManagement.ThreadManagementService;
+        return ProjectService.ProjectService.of({
+          create: () => Effect.die("unused"),
+          bootstrap: () => Effect.die("unused"),
+          update: () => Effect.die("unused"),
+          delete: () => Effect.die("unused"),
+          deleteDetailed: ({ commandId, projectId: deletedProjectId }) =>
+            Effect.gen(function* () {
+              const deletion = yield* Effect.forkChild(
+                threadCommands.withProjectLock(
+                  deletedProjectId,
+                  Deferred.succeed(deleteLockAcquired, undefined).pipe(
+                    Effect.andThen(
+                      Effect.gen(function* () {
+                        const snapshot = yield* threadManagement.getShellSnapshot();
+                        const projectThreads = [
+                          ...snapshot.threads,
+                          ...snapshot.archivedThreads,
+                        ].filter((thread) => thread.projectId === deletedProjectId);
+                        yield* Effect.forEach(
+                          projectThreads,
+                          (thread) =>
+                            threadManagement.dispatch({
+                              type: "thread.delete",
+                              commandId: CommandId.make(`${commandId}:delete-thread:${thread.id}`),
+                              threadId: thread.id,
+                            }),
+                          { concurrency: 1, discard: true },
+                        );
+                        const project = yield* Ref.updateAndGet(projectState, (current) => ({
+                          ...current,
+                          deletedAt: now,
+                        }));
+                        return { project, deletedThreadCount: projectThreads.length };
+                      }),
+                    ),
+                  ),
+                ),
+                { startImmediately: true },
+              );
+              yield* Deferred.succeed(deleteLockAttempted, undefined);
+              return yield* Fiber.join(deletion);
+            }),
+          getById: () => Ref.get(projectState).pipe(Effect.map(Option.some)),
+          getByWorkspaceRoot: () => Effect.die("unused"),
+          snapshot: Effect.die("unused"),
+        });
+      }),
+    ).pipe(Layer.provide(Layer.merge(threadCommandExecutorLayer, gatedThreads)));
     const testLayer = ProjectMcp.layer.pipe(
       Layer.provideMerge(gatedThreads),
-      Layer.provide(
-        Layer.mock(ProjectService.ProjectService)({
-          getById: () => Ref.get(projectState).pipe(Effect.map(Option.some)),
-          delete: () =>
-            Ref.updateAndGet(projectState, (current) => ({ ...current, deletedAt: now })),
-        }),
-      ),
+      Layer.provide(projectLayer),
       Layer.provide(Layer.mock(T3ProjectFileLoader.T3ProjectFileLoader)({})),
       Layer.provide(
         Layer.mock(ServerSettingsService.ServerSettingsService)({

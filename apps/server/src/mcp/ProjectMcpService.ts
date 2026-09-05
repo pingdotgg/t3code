@@ -372,17 +372,17 @@ const make = Effect.gen(function* () {
           workspaceFilesDeleted: false,
         } satisfies ProjectMcpDeleteResult;
       }
-      const [active, archived] = yield* Effect.all([
-        threads.getShellSnapshot({ location: "active" }),
-        threads.getShellSnapshot({ location: "archive" }),
-      ]).pipe(
-        redactOperationFailure(
-          "inspect-project-threads",
-          "Unable to inspect the project's threads.",
-        ),
-      );
-      const projectThreads = [
-        ...new Map(
+      if (input.cascadeThreads !== true) {
+        const [active, archived] = yield* Effect.all([
+          threads.getShellSnapshot({ location: "active" }),
+          threads.getShellSnapshot({ location: "archive" }),
+        ]).pipe(
+          redactOperationFailure(
+            "inspect-project-threads",
+            "Unable to inspect the project's threads.",
+          ),
+        );
+        const threadCount = new Set(
           [
             ...active.threads,
             ...active.archivedThreads,
@@ -390,38 +390,18 @@ const make = Effect.gen(function* () {
             ...archived.archivedThreads,
           ]
             .filter((thread) => thread.projectId === input.projectId)
-            .map((thread) => [thread.id, thread] as const),
-        ).values(),
-      ];
-      if (projectThreads.length > 0 && input.cascadeThreads !== true) {
-        return yield* failure(
-          "project_not_empty",
-          `Project '${input.projectId}' has ${projectThreads.length} thread${projectThreads.length === 1 ? "" : "s"}. Retry with cascadeThreads=true to delete their records first. Workspace files will remain untouched.`,
-        );
+            .map((thread) => thread.id),
+        ).size;
+        if (threadCount > 0) {
+          return yield* failure(
+            "project_not_empty",
+            `Project '${input.projectId}' has ${threadCount} thread${threadCount === 1 ? "" : "s"}. Retry with cascadeThreads=true to delete their records first. Workspace files will remain untouched.`,
+          );
+        }
       }
       const key = yield* requestKey(input.clientRequestId);
-      yield* Effect.forEach(
-        projectThreads,
-        (thread) =>
-          threads.dispatch({
-            type: "thread.delete",
-            commandId: stableCommandId({
-              scope,
-              requestKey: key,
-              operation: "project-delete-thread",
-              suffix: thread.id,
-            }),
-            threadId: thread.id,
-          }),
-        { concurrency: 1, discard: true },
-      ).pipe(
-        redactOperationFailure(
-          "delete-project-threads",
-          "Unable to delete the project's thread records.",
-        ),
-      );
-      yield* projects
-        .delete({
+      const deletion = yield* projects
+        .deleteDetailed({
           commandId: stableCommandId({
             scope,
             requestKey: key,
@@ -429,20 +409,34 @@ const make = Effect.gen(function* () {
             suffix: input.projectId,
           }),
           projectId: input.projectId,
+          ...(input.cascadeThreads === true ? { force: true } : {}),
         })
-        .pipe(redactOperationFailure("delete-project", "Unable to delete the requested project."));
+        .pipe(
+          Effect.tapError(() =>
+            Effect.logWarning("Project MCP operation failed.", { operation: "delete-project" }),
+          ),
+          Effect.mapError((error) =>
+            error._tag === "ProjectNotEmptyError"
+              ? failure(
+                  "project_not_empty",
+                  `Project '${input.projectId}' is not empty. Retry with cascadeThreads=true to delete its thread records first. Workspace files will remain untouched.`,
+                )
+              : error._tag === "ProjectNotFoundError"
+                ? failure("project_not_found", `Project '${input.projectId}' was not found.`)
+                : failure("operation_failed", "Unable to delete the requested project."),
+          ),
+        );
       return {
         projectId: input.projectId,
         deleted: true,
         alreadyDeleted: false,
-        deletedThreadCount: projectThreads.length,
+        deletedThreadCount: deletion.deletedThreadCount,
         workspaceRoot: project.workspaceRoot,
         workspaceFilesDeleted: false,
       } satisfies ProjectMcpDeleteResult;
     });
 
-  const deleteProject: ProjectMcpService["Service"]["delete"] = (scope, input) =>
-    threads.withProjectMutationLock(input.projectId, deleteProjectUnderLock(scope, input));
+  const deleteProject: ProjectMcpService["Service"]["delete"] = deleteProjectUnderLock;
 
   return ProjectMcpService.of({ list, read, create, update, delete: deleteProject });
 });

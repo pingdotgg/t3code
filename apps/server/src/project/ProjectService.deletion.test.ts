@@ -1,5 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { assert, it } from "@effect/vitest";
+import { assert, it, vi } from "@effect/vitest";
 import {
   CommandId,
   EventId,
@@ -9,7 +9,9 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -39,7 +41,10 @@ import {
   ProjectionStoreV2,
   layer as projectionStoreLayer,
 } from "../orchestration-v2/ProjectionStore.ts";
-import { layer as threadCommandExecutorLayer } from "../orchestration-v2/ThreadCommandExecutor.ts";
+import {
+  ThreadCommandExecutor,
+  layer as threadCommandExecutorLayer,
+} from "../orchestration-v2/ThreadCommandExecutor.ts";
 import { ProjectionProjectRepositoryLive } from "../persistence/Layers/ProjectionProjects.ts";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
@@ -135,6 +140,75 @@ function nativeThreadCreated(projectId: ProjectId, threadId: ThreadId) {
     payload,
   };
 }
+
+it.effect("serializes admitted thread creation with project deletion", () =>
+  Effect.gen(function* () {
+    const projectId = ProjectId.make("project:create-delete-race");
+    const threadId = ThreadId.make("thread:create-delete-race");
+    const createCommandId = CommandId.make("command:create-delete-race:create");
+    const deleteCommandId = CommandId.make("command:create-delete-race:delete");
+    yield* seedProject(projectId);
+
+    yield* Effect.gen(function* () {
+      const executor = yield* ThreadCommandExecutor;
+      const eventSink = yield* EventSinkV2;
+      const projections = yield* ProjectionStoreV2;
+      const service = yield* ProjectService.make;
+      const creationEntered = yield* Deferred.make<void>();
+      const allowCreation = yield* Deferred.make<void>();
+      const deletionAttempted = yield* Deferred.make<void>();
+      const withProjectLock = executor.withProjectLock;
+      let projectLockCalls = 0;
+      const lockSpy = vi.spyOn(executor, "withProjectLock").mockImplementation((key, effect) => {
+        if (key !== projectId || ++projectLockCalls !== 2) {
+          return withProjectLock(key, effect);
+        }
+        return Deferred.succeed(deletionAttempted, undefined).pipe(
+          Effect.andThen(withProjectLock(key, effect)),
+        );
+      });
+
+      yield* Effect.gen(function* () {
+        const creation = yield* executor
+          .withProjectLock(
+            projectId,
+            Deferred.succeed(creationEntered, undefined).pipe(
+              Effect.andThen(Deferred.await(allowCreation)),
+              Effect.andThen(
+                eventSink.commitCommand({
+                  commandId: createCommandId,
+                  commandType: "thread.create",
+                  threadId,
+                  acceptedAt: DateTime.makeUnsafe("2026-01-01T00:00:00.000Z"),
+                  events: [nativeThreadCreated(projectId, threadId)],
+                  effects: [],
+                }),
+              ),
+            ),
+          )
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(creationEntered);
+
+        const deletion = yield* service
+          .deleteDetailed({ commandId: deleteCommandId, projectId, force: true })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(deletionAttempted);
+        assert.isUndefined(deletion.pollUnsafe());
+
+        yield* Deferred.succeed(allowCreation, undefined);
+        const accepted = yield* Fiber.join(creation);
+        assert.equal(accepted.receipt.status, "accepted");
+        const result = yield* Fiber.join(deletion);
+        assert.equal(result.deletedThreadCount, 1);
+        assert.isNotNull(result.project.deletedAt);
+        assert.isNotNull((yield* projections.getThreadProjection(threadId)).thread.deletedAt);
+      }).pipe(
+        Effect.ensuring(Deferred.succeed(allowCreation, undefined)),
+        Effect.ensuring(Effect.sync(() => lockSpy.mockRestore())),
+      );
+    }).pipe(Effect.provide(servicesLayer));
+  }).pipe(Effect.provide(databaseLayer)),
+);
 
 it.effect("retries a partial project deletion without repeating child events or cleanup", () =>
   Effect.gen(function* () {
