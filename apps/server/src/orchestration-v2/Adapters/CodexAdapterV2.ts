@@ -890,6 +890,7 @@ function codexErrorInfoCode(value: unknown): string | null {
 }
 
 interface ActiveCodexTurnContext {
+  readonly nativeStartReady?: Deferred.Deferred<void>;
   readonly input: ProviderAdapterV2TurnInput;
   readonly projectionAppThread: OrchestrationV2AppThread;
   readonly projectionThreadId: ThreadId;
@@ -1671,6 +1672,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
           readonly turnInput: ProviderAdapterV2TurnInput;
           readonly nativeTurnId: string;
           readonly startedAt: DateTime.Utc;
+          readonly waitForNativeStart?: boolean;
         }) =>
           Effect.gen(function* () {
             const existing = (yield* Ref.get(activeTurns)).get(input.nativeTurnId);
@@ -1682,6 +1684,9 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               nativeTurnId: input.nativeTurnId,
             });
             const context: ActiveCodexTurnContext = {
+              ...(input.waitForNativeStart
+                ? { nativeStartReady: yield* Deferred.make<void>() }
+                : {}),
               input: input.turnInput,
               projectionAppThread: input.turnInput.appThread,
               projectionThreadId: input.turnInput.threadId,
@@ -3549,6 +3554,9 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
           Effect.gen(function* () {
             const context = (yield* Ref.get(activeTurns)).get(payload.turn.id);
             if (context !== undefined) {
+              if (context.nativeStartReady !== undefined) {
+                yield* Deferred.succeed(context.nativeStartReady, undefined);
+              }
               return;
             }
             const pendingRootTurn = (yield* Ref.get(pendingRootTurns)).get(payload.threadId);
@@ -4798,6 +4806,9 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                 updated.delete(input.nativeTurnId);
                 return updated;
               });
+              if (input.context.nativeStartReady !== undefined) {
+                yield* Deferred.succeed(input.context.nativeStartReady, undefined);
+              }
               yield* flushReadyRootTerminals();
               if (!retainSettledContext && !interruptInProgress) {
                 yield* Ref.update(runningCommandItemsByTurn, (current) => {
@@ -5022,7 +5033,12 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               const started = yield* client.request("turn/start", turnStartParams);
               const nativeTurnId = started.turn.id;
               const startedAt = codexTimestamp(started.turn.startedAt);
-              yield* registerRootTurn({ turnInput, nativeTurnId, startedAt });
+              yield* registerRootTurn({
+                turnInput,
+                nativeTurnId,
+                startedAt,
+                waitForNativeStart: started.turn.startedAt === null,
+              });
               yield* Ref.update(pendingRootTurns, (current) => {
                 const updated = new Map(current);
                 updated.delete(threadId);
@@ -5282,6 +5298,11 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               yield* Effect.gen(function* () {
                 for (const target of interruptTargets) {
                   const context = target.context;
+                  // A null start timestamp acknowledges a queued turn; Codex cannot interrupt it
+                  // until turn/started confirms that the native task exists.
+                  if (context.nativeStartReady !== undefined) {
+                    yield* Deferred.await(context.nativeStartReady);
+                  }
                   if ((yield* Ref.get(activeTurns)).get(context.nativeTurnId) !== context) {
                     continue;
                   }
