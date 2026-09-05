@@ -60,6 +60,7 @@ import { isOnboardingRelayEnvironment } from "../../onboarding/targetEnvironment
 import { useProjectScans } from "../../onboarding/useProjectScans";
 import { projectEnvironment } from "../../state/projects";
 import { serverEnvironment } from "../../state/server";
+import { readEnvironmentScope, useEnvironmentsWithScope } from "../../state/session";
 import { terminalEnvironment } from "../../state/terminal";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { connectPairing } from "../../connection/onboarding";
@@ -1145,6 +1146,8 @@ function AgentInstallTerminal({
 
 // ── Step 4: import ───────────────────────────────────────────
 
+const IMPORT_PERMISSION_MESSAGE = "This connection cannot import projects or thread history.";
+
 function ImportStep({
   scans,
   isImporting,
@@ -1161,6 +1164,7 @@ function ImportStep({
   ) => Promise<boolean>;
 }) {
   const { environments } = useEnvironments();
+  const writableEnvironments = useEnvironmentsWithScope(scans, AuthOrchestrationOperateScope);
   const createProject = useAtomCommand(projectEnvironment.create, { reportFailure: false });
   const importThreads = useAtomCommand(agentSessionImport, { reportFailure: false });
   const projects = useProjects();
@@ -1222,6 +1226,9 @@ function ImportStep({
   );
   const selected = candidates.filter((candidate) => selectedKeys.has(candidate.key));
 
+  const canImport = selected.every((candidate) => writableEnvironments.has(candidate.environmentId));
+  const visibleImportError = !canImport ? IMPORT_PERMISSION_MESSAGE : importError === IMPORT_PERMISSION_MESSAGE ? "" : importError;
+
   const finishAfterImport = () => {
     const projectRef = resolveOnboardingLandingProject(
       lastImportSelectionRef.current,
@@ -1238,6 +1245,12 @@ function ImportStep({
 
   const runImport = async (selection: typeof candidates) => {
     if (isImporting) return;
+    const hasAccess = () => selection.every((candidate) => readEnvironmentScope(candidate.environmentId, AuthOrchestrationOperateScope));
+    const stopForDeniedAccess = () => {
+      setIsImporting(false);
+      setImportError(IMPORT_PERMISSION_MESSAGE);
+    };
+    if (!hasAccess()) { stopForDeniedAccess(); return; }
     if (selection.length === 0) {
       void onDone();
       return;
@@ -1269,6 +1282,7 @@ function ImportStep({
       ) {
         return;
       }
+      if (!hasAccess()) { stopForDeniedAccess(); return; }
       if (importedProjects.has(candidate.key)) continue;
       let projectId = resolveOnboardingProjectId(readProjects(), environmentId, candidate);
       if (projectId === null) {
@@ -1308,6 +1322,7 @@ function ImportStep({
         }
       }
 
+      if (!hasAccess()) { stopForDeniedAccess(); return; }
       const threadImportResult = await importThreads({
         environmentId,
         input: { projectId, expectedWorkspaceRoot: candidate.path },
@@ -1457,13 +1472,14 @@ function ImportStep({
           })}
         </div>
       </ScrollArea>
+      {visibleImportError ? <p className="mt-3 text-sm text-destructive">{visibleImportError}</p> : null}
       <div className="mt-6 flex flex-wrap items-center justify-end gap-3">
         <Button variant="ghost-muted" disabled={isImporting} onClick={finishAfterImport}>
           Do not import projects
         </Button>
         <Button
           autoFocus
-          disabled={isImporting || selected.length === 0}
+          disabled={!canImport || isImporting || selected.length === 0}
           onClick={() => void runImport(selected)}
         >
           {isImporting
