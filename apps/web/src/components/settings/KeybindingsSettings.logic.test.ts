@@ -82,13 +82,21 @@ describe("KeybindingsSettings.logic", () => {
       ),
     ).toBe("mod+shift+1");
 
-    // Numpad digits map to numbers
+    // Numpad digits map to numbers when NumLock is on (key is "3")
     expect(
       keybindingFromKeyboardEvent(
         { key: "3", code: "Numpad3", metaKey: false, ctrlKey: true, altKey: false, shiftKey: false },
         "Win32",
       ),
     ).toBe("mod+3");
+
+    // Numpad navigation when NumLock is off (key is "End") preserves navigation
+    expect(
+      keybindingFromKeyboardEvent(
+        { key: "End", code: "Numpad1", metaKey: false, ctrlKey: true, altKey: false, shiftKey: false },
+        "Win32",
+      ),
+    ).toBe("mod+end");
 
     // BracketLeft / BracketRight shortcuts with shift
     expect(

@@ -541,7 +541,7 @@ describe("model picker navigation helpers", () => {
     assert.isNull(modelPickerJumpIndexFromCommand("thread.jump.1"));
   });
 
-  it("resolves jump shortcuts with digit and numpad key codes", () => {
+  it("resolves jump shortcuts with digit key codes and preserves NumLock-off navigation", () => {
     assert.strictEqual(
       resolveShortcutCommand(
         event({ key: "1", code: "Digit1", metaKey: true }),
@@ -550,13 +550,13 @@ describe("model picker navigation helpers", () => {
       ),
       "modelPicker.jump.1",
     );
-    assert.strictEqual(
+    // With NumLock off, Numpad1 produces key: "End" and must not trigger mod+1
+    assert.isNull(
       resolveShortcutCommand(
-        event({ key: "1", code: "Numpad1", metaKey: true }),
+        event({ key: "End", code: "Numpad1", metaKey: true }),
         DEFAULT_BINDINGS,
         { platform: "MacIntel", context: { modelPickerOpen: true } },
       ),
-      "modelPicker.jump.1",
     );
   });
 });
