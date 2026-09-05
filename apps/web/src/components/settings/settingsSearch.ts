@@ -3,6 +3,7 @@ import { isMacPlatform, isWindowsPlatform, normalizeSearchText } from "~/lib/uti
 
 export type SettingsPath =
   | "/settings/general"
+  | "/settings/voice"
   | "/settings/appearance"
   | "/settings/keybindings"
   | "/settings/providers"
@@ -48,6 +49,7 @@ export interface SettingsSearchAvailability {
  */
 export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/general": "General",
+  "/settings/voice": "Voice",
   "/settings/appearance": "Appearance",
   "/settings/keybindings": "Keybindings",
   "/settings/providers": "Providers",
@@ -149,6 +151,18 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Project grouping",
     to: "/settings/general",
     searchTerms: ["combine matching repositories environments sidebar"],
+  },
+  {
+    id: "local-voice-input",
+    title: "Local voice input",
+    to: "/settings/voice",
+    desktopOnly: true,
+  },
+  {
+    id: "microphone",
+    title: "Microphone",
+    to: "/settings/voice",
+    desktopOnly: true,
   },
   {
     id: "auto-settle-inactive-threads",

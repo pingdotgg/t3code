@@ -135,6 +135,14 @@ describe("ClaudeSettings auto-compaction", () => {
   });
 });
 
+describe("ClientSettings microphone", () => {
+  it("accepts microphone selection patches", () => {
+    expect(decodeClientSettingsPatch({ voiceMicrophone: "studio-mic" }).voiceMicrophone).toBe(
+      "studio-mic",
+    );
+  });
+});
+
 describe("ClientSettings word wrap", () => {
   it("defaults word wrap on", () => {
     expect(decodeClientSettings({}).wordWrap).toBe(true);

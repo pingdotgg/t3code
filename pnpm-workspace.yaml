@@ -15,6 +15,7 @@ allowBuilds:
   electron: true
   electron-winstaller: false
   esbuild: true
+  koffi: true
   msgpackr-extract: true
   msw: false
   node-pty: true

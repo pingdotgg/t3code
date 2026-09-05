@@ -190,6 +190,15 @@ describe("searchSettings", () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 
+  it("keeps voice settings on the voice page", () => {
+    expect(SETTINGS_SEARCH_ITEMS.find((item) => item.id === "local-voice-input")?.to).toBe(
+      "/settings/voice",
+    );
+    expect(SETTINGS_SEARCH_ITEMS.find((item) => item.id === "microphone")?.to).toBe(
+      "/settings/voice",
+    );
+  });
+
   it("serves anchor props to panels from the catalog", () => {
     expect(searchableSetting("word-wrap")).toEqual({ id: "word-wrap", title: "Word wrap" });
     expect(searchableSetting("archive")).toEqual({ id: "archive", title: "Archived threads" });

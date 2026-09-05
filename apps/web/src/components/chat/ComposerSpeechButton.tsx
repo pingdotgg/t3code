@@ -1,0 +1,107 @@
+import type { VoiceInputState } from "@t3tools/client-runtime/voice-input";
+import { CircleAlertIcon, MicIcon, SquareIcon, XIcon } from "lucide-react";
+
+import { Button } from "../ui/button";
+import { Spinner } from "../ui/spinner";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { cn } from "~/lib/utils";
+import { useMediaQuery } from "~/hooks/useMediaQuery";
+
+export function ComposerSpeechButton(props: {
+  state: VoiceInputState;
+  progress: { downloaded: number; total: number } | null;
+  level: number;
+  disabled?: boolean;
+  onStart(): void;
+  onStop(): void;
+  onCancel(): void;
+}) {
+  const prefersReducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
+  const phase = props.state.phase;
+  const recording = phase === "recording";
+  const busy = phase === "preparing" || phase === "transcribing";
+  const inactive = !recording && (props.disabled || busy);
+  const label = recording
+    ? "Stop and transcribe"
+    : phase === "preparing"
+      ? props.progress
+        ? `Downloading speech model ${Math.round((props.progress.downloaded / Math.max(1, props.progress.total)) * 100)}%`
+        : "Preparing voice input"
+      : phase === "transcribing"
+        ? "Transcribing voice input"
+        : phase === "error"
+          ? (props.state.error ?? "Voice input failed")
+          : "Start voice input";
+
+  return (
+    <div className="flex items-center gap-1">
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button
+              type="button"
+              size="icon-sm"
+              variant={
+                recording ? "destructive" : phase === "error" ? "destructive-outline" : "ghost"
+              }
+              aria-label={label}
+              aria-pressed={recording}
+              aria-disabled={inactive}
+              onPointerDown={(event) => event.preventDefault()}
+              onClick={() => {
+                if (inactive) return;
+                if (recording) props.onStop();
+                else props.onStart();
+              }}
+              className={cn(
+                "relative",
+                inactive && "cursor-not-allowed opacity-64 hover:bg-transparent!",
+              )}
+            >
+              {recording ? (
+                <>
+                  <span
+                    aria-hidden
+                    className="absolute inset-0 rounded-[inherit] bg-white/20 transition-transform motion-reduce:transition-none"
+                    style={
+                      prefersReducedMotion
+                        ? undefined
+                        : { transform: `scale(${0.84 + Math.min(1, props.level) * 0.16})` }
+                    }
+                  />
+                  <SquareIcon className="relative size-3 fill-current" />
+                </>
+              ) : busy ? (
+                <Spinner aria-hidden />
+              ) : phase === "error" ? (
+                <CircleAlertIcon />
+              ) : (
+                <MicIcon />
+              )}
+            </Button>
+          }
+        />
+        <TooltipPopup side="top">{label}</TooltipPopup>
+      </Tooltip>
+      {recording ? (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                type="button"
+                size="icon-xs"
+                variant="ghost"
+                aria-label="Discard voice input"
+                onPointerDown={(event) => event.preventDefault()}
+                onClick={props.onCancel}
+              >
+                <XIcon />
+              </Button>
+            }
+          />
+          <TooltipPopup side="top">Discard voice input</TooltipPopup>
+        </Tooltip>
+      ) : null}
+    </div>
+  );
+}

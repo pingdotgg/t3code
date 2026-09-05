@@ -19,3 +19,8 @@ export {
   type VoiceTranscriptionErrorCode,
   type VoiceTranscriptionOptions,
 } from "./transcription.ts";
+export {
+  getEnvironmentSpeechStatus,
+  removeEnvironmentSpeechModel,
+  transcribeEnvironmentPcm,
+} from "./environment.ts";
