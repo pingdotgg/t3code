@@ -1,6 +1,12 @@
 import {
+  isRequestResponseStale,
+  legacyStaleRequestFailureDetails,
+} from "@t3tools/shared/requestActivity";
+import * as Predicate from "effect/Predicate";
+import {
   AgentSessionImportSource,
   ApprovalRequestId,
+  EventId,
   ChatAttachment,
   CheckpointRef,
   IsoDateTime,
@@ -1199,6 +1205,29 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       `,
   });
 
+  const staleRequestResponseSql = sql.and([
+    sql.in("kind", Object.keys(legacyStaleRequestFailureDetails)),
+    sql.or([
+      sql`json_extract(payload_json, '$.reason') = 'request-not-found'`,
+      sql.and([
+        sql`json_type(payload_json, '$.reason') IS NULL`,
+        sql.or(
+          Object.entries(legacyStaleRequestFailureDetails).map(([kind, details]) =>
+            sql.and([
+              sql`kind = ${kind}`,
+              sql.or(
+                details.map(
+                  (detail) =>
+                    sql`lower(COALESCE(json_extract(payload_json, '$.detail'), '')) LIKE ${`%${detail}%`}`,
+                ),
+              ),
+            ]),
+          ),
+        ),
+      ]),
+    ]),
+  ]);
+
   const getUserInputActivityRow = SqlSchema.findOneOption({
     Request: Schema.Struct({ threadId: ThreadId, requestId: ApprovalRequestId }),
     Result: ProjectionThreadActivityDbRowSchema,
@@ -1215,9 +1244,13 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         created_at AS "createdAt"
       FROM projection_thread_activities
       WHERE thread_id = ${threadId}
-        AND kind IN ('user-input.requested', 'user-input.resolved')
+        AND (
+          kind IN ('user-input.requested', 'user-input.resolved')
+          OR (kind = 'provider.user-input.respond.failed' AND ${staleRequestResponseSql})
+        )
         AND json_extract(payload_json, '$.requestId') = ${requestId}
-      ORDER BY sequence DESC, created_at DESC, activity_id DESC
+      ORDER BY CASE WHEN kind = 'user-input.requested' THEN 1 ELSE 0 END ASC,
+        sequence DESC, created_at DESC, activity_id DESC
       LIMIT 1
     `,
   });
@@ -1553,7 +1586,8 @@ pending_approval_requests AS (
             activity.kind,
             ROW_NUMBER() OVER (
               PARTITION BY json_extract(activity.payload_json, '$.requestId')
-              ORDER BY activity.created_at DESC, activity.activity_id DESC
+              ORDER BY CASE WHEN activity.kind = 'user-input.requested' THEN 1 ELSE 0 END ASC,
+                activity.created_at DESC, activity.activity_id DESC
             ) AS request_order
           FROM pending_user_input_thread AS pending
           CROSS JOIN projection_thread_activities AS activity
@@ -1562,16 +1596,7 @@ pending_approval_requests AS (
               activity.kind IN ('user-input.requested', 'user-input.resolved')
               OR (
                 activity.kind = 'provider.user-input.respond.failed'
-                AND (
-                  lower(COALESCE(json_extract(activity.payload_json, '$.detail'), ''))
-                    LIKE '%stale pending user-input request%'
-                  OR lower(COALESCE(json_extract(activity.payload_json, '$.detail'), ''))
-                    LIKE '%unknown pending user-input request%'
-                  OR lower(COALESCE(json_extract(activity.payload_json, '$.detail'), ''))
-                    LIKE '%unknown pending user input request%'
-                  OR lower(COALESCE(json_extract(activity.payload_json, '$.detail'), ''))
-                    LIKE '%unknown pending codex user input request%'
-                )
+                AND ${staleRequestResponseSql}
               )
             )
             AND json_extract(activity.payload_json, '$.requestId') IS NOT NULL
@@ -2906,6 +2931,84 @@ pending_approval_requests AS (
         readonly mode: "client";
       };
 
+  const listRequestTerminalIds = SqlSchema.findAll({
+    Request: Schema.Struct({ threadId: ThreadId, requestIds: Schema.Array(Schema.String) }),
+    Result: Schema.Struct({ activityId: EventId }),
+    execute: ({ threadId, requestIds }) => sql`
+      SELECT activity_id AS "activityId"
+      FROM (
+        SELECT activity_id, ROW_NUMBER() OVER (
+          PARTITION BY json_extract(payload_json, '$.requestId')
+          ORDER BY created_at DESC, activity_id DESC
+        ) AS terminal_order
+        FROM projection_thread_activities
+        WHERE thread_id = ${threadId}
+          AND json_extract(payload_json, '$.requestId') IN ${sql.in(requestIds)}
+          AND (kind IN ('approval.resolved', 'user-input.resolved') OR ${staleRequestResponseSql})
+      )
+      WHERE terminal_order = 1
+    `,
+  });
+
+  // A request in the loaded window must not outlive a close outside that window.
+  const includeRequestTerminalActivities = Effect.fn(
+    "ProjectionSnapshotQuery.includeRequestTerminalActivities",
+  )(function* (threadId: ThreadId, activities: OrchestrationThreadActivity[]) {
+    const requested = new Set<string>();
+    const closed = new Set<string>();
+    for (const activity of activities) {
+      if (!Predicate.isObject(activity.payload) || typeof activity.payload.requestId !== "string")
+        continue;
+      const requestId = activity.payload.requestId;
+      if (activity.kind === "approval.requested" || activity.kind === "user-input.requested") {
+        requested.add(requestId);
+      } else if (
+        activity.kind === "approval.resolved" ||
+        activity.kind === "user-input.resolved" ||
+        isRequestResponseStale(activity)
+      ) {
+        closed.add(requestId);
+      }
+    }
+    const requestIds = [...requested].filter((requestId) => !closed.has(requestId));
+    if (requestIds.length === 0) return activities;
+    const terminalIds = yield* listRequestTerminalIds({ threadId, requestIds }).pipe(
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "ProjectionSnapshotQuery.includeRequestTerminalActivities:queryIds",
+          "ProjectionSnapshotQuery.includeRequestTerminalActivities:decodeIds",
+        ),
+      ),
+    );
+    const terminalActivities: OrchestrationThreadActivity[] = [];
+    for (
+      let offset = 0;
+      offset < terminalIds.length;
+      offset += THREAD_DETAIL_ACTIVITY_PAYLOAD_BATCH_SIZE
+    ) {
+      const rows = yield* listThreadActivityRowsByIds({
+        activityIds: terminalIds
+          .slice(offset, offset + THREAD_DETAIL_ACTIVITY_PAYLOAD_BATCH_SIZE)
+          .map(({ activityId }) => activityId),
+      }).pipe(
+        Effect.mapError(
+          toPersistenceSqlOrDecodeError(
+            "ProjectionSnapshotQuery.includeRequestTerminalActivities:queryRows",
+            "ProjectionSnapshotQuery.includeRequestTerminalActivities:decodeRows",
+          ),
+        ),
+      );
+      terminalActivities.push(...rows.map(mapThreadActivityRow));
+    }
+    if (terminalActivities.length === 0) return activities;
+    return [...activities, ...terminalActivities].sort(
+      (left, right) =>
+        (left.sequence ?? -1) - (right.sequence ?? -1) ||
+        left.createdAt.localeCompare(right.createdAt) ||
+        left.id.localeCompare(right.id),
+    );
+  });
+
   const listProjectedThreadActivities = Effect.fn(
     "ProjectionSnapshotQuery.listProjectedThreadActivities",
   )(function* (threadId: ThreadId, bounds: ThreadDetailBounds | undefined) {
@@ -2957,7 +3060,8 @@ pending_approval_requests AS (
       }
     }
 
-    return activities.toSorted(
+    const completeActivities = yield* includeRequestTerminalActivities(threadId, activities);
+    return completeActivities.toSorted(
       (left, right) =>
         (left.sequence ?? -1) - (right.sequence ?? -1) ||
         left.createdAt.localeCompare(right.createdAt) ||
@@ -3019,6 +3123,11 @@ pending_approval_requests AS (
                       left.activityId.localeCompare(right.activityId),
                   )
                   .map(mapThreadActivityRow),
+              ),
+              Effect.flatMap((activities) =>
+                activityRead.query?.activityKinds === undefined
+                  ? includeRequestTerminalActivities(threadId, activities)
+                  : Effect.succeed(activities),
               ),
             );
 

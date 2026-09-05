@@ -3521,6 +3521,7 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       NodeAssert.equal(reply._tag, "Failure");
       if (reply._tag === "Failure" && reply.failure._tag === "ProviderAdapterRequestError") {
         NodeAssert.match(reply.failure.detail, /still loading/);
+        NodeAssert.equal(reply.failure.reason, "provider-error");
       }
       const openedFiber = yield* adapter.streamEvents.pipe(
         Stream.filter((event) => event.threadId === threadId && event.type === "request.opened"),

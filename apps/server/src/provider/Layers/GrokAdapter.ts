@@ -2049,6 +2049,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
             provider: PROVIDER,
             method: "session/request_permission",
             detail: `Unknown pending approval request: ${requestId}`,
+            reason: "request-not-found",
           });
         }
         yield* Deferred.succeed(pending.decision, decision);
@@ -2067,6 +2068,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
             provider: PROVIDER,
             method: "_x.ai/ask_user_question",
             detail: `Unknown pending user-input request: ${requestId}`,
+            reason: "request-not-found",
           });
         }
         yield* Deferred.succeed(pending.resolution, { _tag: "answered", answers });

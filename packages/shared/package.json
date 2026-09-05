@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./requestActivity": {
+      "types": "./src/requestActivity.ts",
+      "import": "./src/requestActivity.ts"
+    },
     "./themePalettes": {
       "types": "./src/themePalettes.ts",
       "import": "./src/themePalettes.ts"

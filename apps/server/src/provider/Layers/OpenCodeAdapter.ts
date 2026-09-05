@@ -3621,6 +3621,10 @@ export function makeOpenCodeAdapter(
             context.pendingRequestRecovery || context.requestRelationRetries.has(requestId)
               ? "OpenCode is still loading this permission request. Try again."
               : `Unknown pending permission request: ${requestId}`,
+          reason:
+            context.pendingRequestRecovery || context.requestRelationRetries.has(requestId)
+              ? "provider-error"
+              : "request-not-found",
         });
       }
 
@@ -3673,6 +3677,10 @@ export function makeOpenCodeAdapter(
             context.pendingRequestRecovery || context.requestRelationRetries.has(requestId)
               ? "OpenCode is still loading this question. Try again."
               : `Unknown pending user-input request: ${requestId}`,
+          reason:
+            context.pendingRequestRecovery || context.requestRelationRetries.has(requestId)
+              ? "provider-error"
+              : "request-not-found",
         });
       }
 

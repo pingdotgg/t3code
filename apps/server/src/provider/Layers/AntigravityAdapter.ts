@@ -1181,6 +1181,7 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
           provider: PROVIDER,
           method: "session/request_permission",
           detail: "This approval request is no longer pending.",
+          reason: "request-not-found",
         });
       }
       const optionId =
@@ -1213,6 +1214,7 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
           provider: PROVIDER,
           method: "session/request_permission",
           detail: "This question is no longer pending.",
+          reason: "request-not-found",
         });
       }
       const result = makeAntigravityUserInputResponse(pending.request, answers);

@@ -41,6 +41,9 @@ import { ProviderAdapterValidationError } from "../Errors.ts";
 import type { CodexAdapterShape } from "../Services/CodexAdapter.ts";
 import { ProviderSessionDirectory } from "../Services/ProviderSessionDirectory.ts";
 import {
+  CodexSessionRuntimePendingApprovalNotFoundError,
+  CodexSessionRuntimePendingUserInputNotFoundError,
+  type CodexSessionRuntimeError,
   type CodexSessionRuntimeOptions,
   type CodexSessionRuntimeSendTurnInput,
   type CodexSessionRuntimeShape,
@@ -108,6 +111,8 @@ class FakeCodexRuntime implements CodexSessionRuntimeShape {
     Promise.resolve({ threadId: "provider-thread-1" }),
   );
 
+  public requestError?: CodexSessionRuntimeError;
+
   public readonly respondToRequestImpl = vi.fn(
     (_requestId: ApprovalRequestId, _decision: ProviderApprovalDecision): Promise<void> =>
       Promise.resolve(undefined),
@@ -151,11 +156,15 @@ class FakeCodexRuntime implements CodexSessionRuntimeShape {
   }
 
   respondToRequest(requestId: ApprovalRequestId, decision: ProviderApprovalDecision) {
-    return Effect.promise(() => this.respondToRequestImpl(requestId, decision));
+    return this.requestError
+      ? Effect.fail(this.requestError)
+      : Effect.promise(() => this.respondToRequestImpl(requestId, decision));
   }
 
   respondToUserInput(requestId: ApprovalRequestId, answers: ProviderUserInputAnswers) {
-    return Effect.promise(() => this.respondToUserInputImpl(requestId, answers));
+    return this.requestError
+      ? Effect.fail(this.requestError)
+      : Effect.promise(() => this.respondToUserInputImpl(requestId, answers));
   }
 
   get events() {
@@ -319,6 +328,34 @@ const sessionErrorLayer = it.layer(
 );
 
 sessionErrorLayer("CodexAdapterLive session errors", (it) => {
+  it.effect.each(["approval", "user-input"])(
+    "preserves a missing %s callback outcome",
+    (requestKind) =>
+      Effect.gen(function* () {
+        const adapter = yield* CodexAdapter;
+        const threadId = asThreadId(`missing-${requestKind}`);
+        yield* adapter.startSession({
+          provider: ProviderDriverKind.make("codex"),
+          threadId,
+          runtimeMode: "full-access",
+        });
+        const runtime = sessionRuntimeFactory.lastRuntime;
+        NodeAssert.ok(runtime);
+        const requestId = ApprovalRequestId.make("missing-request");
+        runtime.requestError =
+          requestKind === "approval"
+            ? new CodexSessionRuntimePendingApprovalNotFoundError({ requestId })
+            : new CodexSessionRuntimePendingUserInputNotFoundError({ requestId });
+        const error = yield* (
+          requestKind === "approval"
+            ? adapter.respondToRequest(threadId, requestId, "accept")
+            : adapter.respondToUserInput(threadId, requestId, { choice: "yes" })
+        ).pipe(Effect.flip);
+        NodeAssert.equal(error._tag, "ProviderAdapterRequestError");
+        NodeAssert.equal(error.reason, "request-not-found");
+      }),
+  );
+
   it.effect("maps missing adapter sessions to ProviderAdapterSessionNotFoundError", () =>
     Effect.gen(function* () {
       const adapter = yield* CodexAdapter;

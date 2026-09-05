@@ -1,3 +1,4 @@
+import { isRequestResponseStale } from "@t3tools/shared/requestActivity";
 import {
   ApprovalRequestId,
   type AssistantDeliveryMode,
@@ -1939,6 +1940,7 @@ const make = Effect.gen(function* () {
               threadId: thread.id,
             });
           const pendingRequestIds = new Set<string>();
+          const closedRequestIds = new Set<string>();
           for (const activity of userInputActivities) {
             const payload =
               typeof activity.payload === "object" && activity.payload !== null
@@ -1951,8 +1953,12 @@ const make = Effect.gen(function* () {
               activity.turnId === turnId &&
               payload?.responseMode !== "message"
             ) {
-              pendingRequestIds.add(requestId);
-            } else if (activity.kind === "user-input.resolved") {
+              if (!closedRequestIds.has(requestId)) pendingRequestIds.add(requestId);
+            } else if (
+              activity.kind === "user-input.resolved" ||
+              isRequestResponseStale(activity)
+            ) {
+              closedRequestIds.add(requestId);
               pendingRequestIds.delete(requestId);
             }
           }

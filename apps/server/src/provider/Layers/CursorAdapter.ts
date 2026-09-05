@@ -1132,6 +1132,7 @@ export function makeCursorAdapter(
             provider: PROVIDER,
             method: "session/request_permission",
             detail: `Unknown pending approval request: ${requestId}`,
+            reason: "request-not-found",
           });
         }
         yield* Deferred.succeed(pending.decision, decision);
@@ -1150,6 +1151,7 @@ export function makeCursorAdapter(
             provider: PROVIDER,
             method: "cursor/ask_question",
             detail: `Unknown pending user-input request: ${requestId}`,
+            reason: "request-not-found",
           });
         }
         yield* Deferred.succeed(pending.answers, answers);

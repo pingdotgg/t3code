@@ -5,6 +5,7 @@ import {
   ProviderDriverKind,
   ThreadId,
   type OrchestrationEvent,
+  type OrchestrationThreadActivity,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import { it as effectIt } from "@effect/vitest";
@@ -981,6 +982,115 @@ describe("orchestration projector", () => {
       })),
     ).toEqual([{ id: "assistant-keep", role: "assistant", turnId: "turn-1" }]);
   });
+
+  effectIt.effect(
+    "retains an unsequenced close only while its sequenced request remains loaded",
+    () =>
+      Effect.gen(function* () {
+        const createdAt = "2026-03-01T10:00:00.000Z";
+        const created = yield* projectEvent(
+          createEmptyReadModel(createdAt),
+          makeEvent({
+            sequence: 1,
+            type: "thread.created",
+            aggregateKind: "thread",
+            aggregateId: "thread-requests",
+            occurredAt: createdAt,
+            commandId: "create-requests",
+            payload: {
+              threadId: "thread-requests",
+              projectId: "project-1",
+              title: "Requests",
+              modelSelection: { provider: ProviderDriverKind.make("codex"), model: "gpt-5-codex" },
+              runtimeMode: "full-access",
+              branch: null,
+              worktreePath: null,
+              createdAt,
+              updatedAt: createdAt,
+            },
+          }),
+        );
+        const activities: OrchestrationThreadActivity[] = Array.from(
+          { length: 500 },
+          (_, index) => ({
+            id: EventId.make(`activity-${index + 1}`),
+            sequence: index + 1,
+            kind: index === 0 ? "user-input.requested" : "tool.completed",
+            summary: "Work",
+            tone: "info",
+            turnId: null,
+            createdAt,
+            payload:
+              index === 0 ? { requestId: "question", responseMode: "message", questions: [] } : {},
+          }),
+        );
+        const initial = { ...created, threads: [{ ...created.threads[0]!, activities }] };
+        const closed = yield* projectEvent(
+          initial,
+          makeEvent({
+            sequence: 502,
+            type: "thread.activity-appended",
+            aggregateKind: "thread",
+            aggregateId: "thread-requests",
+            occurredAt: createdAt,
+            commandId: "close-question",
+            payload: {
+              threadId: "thread-requests",
+              activity: {
+                id: "question-closed",
+                kind: "provider.user-input.respond.failed",
+                summary: "Callback ended",
+                tone: "error",
+                turnId: null,
+                createdAt,
+                payload: {
+                  requestId: "question",
+                  reason: "request-not-found",
+                  detail: "Callback ended.",
+                },
+              },
+            },
+          }),
+        );
+        expect(closed.threads[0]?.activities.some((activity) => activity.id === "activity-1")).toBe(
+          true,
+        );
+        expect(
+          closed.threads[0]?.activities.some((activity) => activity.id === "question-closed"),
+        ).toBe(true);
+
+        const advanced = yield* projectEvent(
+          closed,
+          makeEvent({
+            sequence: 503,
+            type: "thread.activity-appended",
+            aggregateKind: "thread",
+            aggregateId: "thread-requests",
+            occurredAt: createdAt,
+            commandId: "more-work",
+            payload: {
+              threadId: "thread-requests",
+              activity: {
+                id: "more-work",
+                sequence: 501,
+                kind: "tool.completed",
+                summary: "Work",
+                tone: "info",
+                turnId: null,
+                createdAt,
+                payload: {},
+              },
+            },
+          }),
+        );
+        expect(advanced.threads[0]?.activities).toHaveLength(500);
+        expect(
+          advanced.threads[0]?.activities.some(
+            (activity) => activity.id === "activity-1" || activity.id === "question-closed",
+          ),
+        ).toBe(false);
+      }),
+  );
 
   it("caps message and checkpoint retention for long-lived threads", async () => {
     const createdAt = "2026-03-01T10:00:00.000Z";

@@ -1,3 +1,4 @@
+import { isRequestResponseStale } from "@t3tools/shared/requestActivity";
 import {
   ApprovalRequestId,
   isImportedAgentSessionMessageId,
@@ -121,17 +122,6 @@ function extractActivityRequestId(payload: unknown): ApprovalRequestId | null {
   return typeof requestId === "string" ? ApprovalRequestId.make(requestId) : null;
 }
 
-function isStalePendingApprovalFailureDetail(detail: string | null): boolean {
-  if (detail === null) {
-    return false;
-  }
-  return (
-    detail.includes("stale pending approval request") ||
-    detail.includes("unknown pending approval request") ||
-    detail.includes("unknown pending permission request")
-  );
-}
-
 // A refresh reads each persisted summary source, so skip activities that cannot change the result.
 function shouldRefreshThreadShellSummary(event: OrchestrationEvent): boolean {
   if (event.type !== "thread.activity-appended") {
@@ -155,41 +145,20 @@ function derivePendingUserInputCountFromActivities(
   activities: ReadonlyArray<ProjectionThreadActivity>,
 ): number {
   const openRequestIds = new Set<string>();
-  const ordered = [...activities].toSorted(
-    (left, right) =>
-      left.createdAt.localeCompare(right.createdAt) ||
-      left.activityId.localeCompare(right.activityId),
-  );
+  const closedRequestIds = new Set<string>();
 
-  for (const activity of ordered) {
+  for (const activity of activities) {
     const requestId = extractActivityRequestId(activity.payload);
     if (requestId === null) {
       continue;
     }
-    const payload =
-      typeof activity.payload === "object" && activity.payload !== null
-        ? (activity.payload as Record<string, unknown>)
-        : null;
-    const detail = typeof payload?.detail === "string" ? payload.detail.toLowerCase() : null;
-
     if (activity.kind === "user-input.requested") {
-      openRequestIds.add(requestId);
+      if (!closedRequestIds.has(requestId)) openRequestIds.add(requestId);
       continue;
     }
 
-    if (activity.kind === "user-input.resolved") {
-      openRequestIds.delete(requestId);
-      continue;
-    }
-
-    if (
-      activity.kind === "provider.user-input.respond.failed" &&
-      detail !== null &&
-      (detail.includes("stale pending user-input request") ||
-        detail.includes("unknown pending user-input request") ||
-        detail.includes("unknown pending user input request") ||
-        detail.includes("unknown pending codex user input request"))
-    ) {
+    if (activity.kind === "user-input.resolved" || isRequestResponseStale(activity)) {
+      closedRequestIds.add(requestId);
       openRequestIds.delete(requestId);
     }
   }
@@ -1703,14 +1672,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             return;
           }
           if (event.payload.activity.kind === "provider.approval.respond.failed") {
-            const payload =
-              typeof event.payload.activity.payload === "object" &&
-              event.payload.activity.payload !== null
-                ? (event.payload.activity.payload as Record<string, unknown>)
-                : null;
-            const detail =
-              typeof payload?.detail === "string" ? payload.detail.toLowerCase() : null;
-            if (isStalePendingApprovalFailureDetail(detail)) {
+            if (isRequestResponseStale(event.payload.activity)) {
               if (Option.isNone(existingRow)) {
                 return;
               }
@@ -1745,18 +1707,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
               if (activity.kind === "approval.resolved") {
                 return true;
               }
-              if (activity.kind !== "provider.approval.respond.failed") {
-                return false;
-              }
-              const activityPayload =
-                typeof activity.payload === "object" && activity.payload !== null
-                  ? (activity.payload as Record<string, unknown>)
-                  : null;
-              return isStalePendingApprovalFailureDetail(
-                typeof activityPayload?.detail === "string"
-                  ? activityPayload.detail.toLowerCase()
-                  : null,
-              );
+              return isRequestResponseStale(activity);
             });
             if (wasRequested && !wasResolved) {
               yield* projectionPendingApprovalRepository.upsert({

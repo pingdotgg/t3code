@@ -3698,7 +3698,8 @@ describe("ProviderCommandReactor", () => {
         new ProviderAdapterRequestError({
           provider: ProviderDriverKind.make("codex"),
           method: "item/requestApproval/decision",
-          detail: "Unknown pending Codex approval request: approval-request-1",
+          detail: "The callback has ended.",
+          reason: "request-not-found",
         }),
       ),
     );
@@ -3753,14 +3754,7 @@ describe("ProviderCommandReactor", () => {
       }),
     );
 
-    await waitFor(async () => {
-      const readModel = await harness.readModel();
-      const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
-      if (!thread) return false;
-      return thread.activities.some(
-        (activity) => activity.kind === "provider.approval.respond.failed",
-      );
-    });
+    await harness.drain();
 
     const readModel = await harness.readModel();
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
@@ -3772,6 +3766,7 @@ describe("ProviderCommandReactor", () => {
     expect(failureActivity).toBeDefined();
     expect(failureActivity?.payload).toMatchObject({
       requestId: "approval-request-1",
+      reason: "request-not-found",
       detail: expect.stringContaining("Stale pending approval request: approval-request-1"),
     });
 
@@ -3793,7 +3788,8 @@ describe("ProviderCommandReactor", () => {
         new ProviderAdapterRequestError({
           provider: ProviderDriverKind.make("claudeAgent"),
           method: "item/tool/respondToUserInput",
-          detail: "Unknown pending Codex user input request: user-input-request-1",
+          detail: "The callback has ended.",
+          reason: "request-not-found",
         }),
       ),
     );
@@ -3862,14 +3858,7 @@ describe("ProviderCommandReactor", () => {
       }),
     );
 
-    await waitFor(async () => {
-      const readModel = await harness.readModel();
-      const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
-      if (!thread) return false;
-      return thread.activities.some(
-        (activity) => activity.kind === "provider.user-input.respond.failed",
-      );
-    });
+    await harness.drain();
 
     const readModel = await harness.readModel();
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
@@ -3881,6 +3870,7 @@ describe("ProviderCommandReactor", () => {
     expect(failureActivity).toBeDefined();
     expect(failureActivity?.payload).toMatchObject({
       requestId: "user-input-request-1",
+      reason: "request-not-found",
       detail: expect.stringContaining("Stale pending user-input request: user-input-request-1"),
     });
 

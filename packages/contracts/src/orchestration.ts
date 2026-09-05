@@ -437,6 +437,20 @@ export const OrchestrationThreadActivityTone = Schema.Literals([
 ]);
 export type OrchestrationThreadActivityTone = typeof OrchestrationThreadActivityTone.Type;
 
+export const ProviderRequestFailureReason = Schema.Literals([
+  "request-not-found",
+  "provider-error",
+]);
+export type ProviderRequestFailureReason = typeof ProviderRequestFailureReason.Type;
+
+export const OrchestrationRequestResponseFailedPayload = Schema.Struct({
+  requestId: ApprovalRequestId,
+  reason: ProviderRequestFailureReason,
+  detail: Schema.String,
+});
+export type OrchestrationRequestResponseFailedPayload =
+  typeof OrchestrationRequestResponseFailedPayload.Type;
+
 export const OrchestrationThreadActivity = Schema.Struct({
   id: EventId,
   tone: OrchestrationThreadActivityTone,

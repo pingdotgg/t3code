@@ -2448,7 +2448,8 @@ describe("ProviderRuntimeIngestion", () => {
         turnId: request.turnId ?? null,
         payload: {
           requestId: request.requestId,
-          detail: "Unknown pending user input request",
+          detail: "The callback has ended.",
+          reason: "request-not-found",
         },
         createdAt: "2026-01-01T00:00:02.000Z",
       },
@@ -2471,7 +2472,7 @@ describe("ProviderRuntimeIngestion", () => {
       (await harness.readModel()).threads[0]!.activities.filter(
         (activity) => activity.kind === "user-input.resolved",
       ),
-    ).toMatchObject([{ payload: { requestId: request.requestId } }]);
+    ).toEqual([]);
   });
 
   it("preserves answered questions and leaves newer, child and async questions pending", async () => {

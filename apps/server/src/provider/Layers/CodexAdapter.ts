@@ -153,6 +153,11 @@ function mapCodexRuntimeError(
     provider: PROVIDER,
     method,
     detail: error.message,
+    reason:
+      error._tag === "CodexSessionRuntimePendingApprovalNotFoundError" ||
+      error._tag === "CodexSessionRuntimePendingUserInputNotFoundError"
+        ? "request-not-found"
+        : "provider-error",
     cause: error,
   });
 }

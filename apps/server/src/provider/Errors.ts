@@ -1,3 +1,4 @@
+import { ProviderRequestFailureReason } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
 import type { CheckpointServiceError } from "../checkpointing/Errors.ts";
@@ -60,6 +61,7 @@ export class ProviderAdapterRequestError extends Schema.TaggedErrorClass<Provide
     provider: Schema.String,
     method: Schema.String,
     detail: Schema.String,
+    reason: Schema.optional(ProviderRequestFailureReason),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
