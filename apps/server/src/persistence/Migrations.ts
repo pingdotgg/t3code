@@ -10,6 +10,7 @@
 
 import * as Migrator from "effect/unstable/sql/Migrator";
 import * as Effect from "effect/Effect";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 // Import all migrations statically
 import Migration0001 from "./Migrations/001_OrchestrationEvents.ts";
@@ -161,6 +162,66 @@ export const makeMigrationLoader = (throughId?: number) =>
  */
 const run = Migrator.make({});
 
+// Early V2 builds numbered this same migration sequence from 44 or 45.
+// Match the complete recorded prefix before moving IDs; names alone must not
+// cause an unknown or partially applied schema to be accepted as current.
+const reconcileHistoricalV2 = Effect.fn("reconcileHistoricalV2")(function* (
+  toMigrationInclusive?: number,
+) {
+  const sql = yield* SqlClient.SqlClient;
+  const tables =
+    yield* sql`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'effect_sql_migrations'`;
+  if (tables.length === 0) return [];
+
+  const rows = yield* sql<{ migration_id: number; name: string }>`
+    SELECT migration_id, name FROM effect_sql_migrations ORDER BY migration_id
+  `;
+  const firstV2 = rows.find(({ name }) => name === "OrchestrationV2");
+  if (!firstV2 || firstV2.migration_id === 48) return [];
+
+  const base = firstV2.migration_id - 1;
+  const valid =
+    (base === 43 || base === 44) &&
+    rows.every((row, index) => {
+      const entry = migrationEntries[index < base ? index : index + 47 - base];
+      return row.migration_id === index + 1 && entry?.[1] === row.name;
+    });
+  if (!valid) {
+    return yield* new Migrator.MigrationError({
+      kind: "BadState",
+      message: "Unrecognized historical Orchestrator V2 migration manifest",
+    });
+  }
+
+  if (toMigrationInclusive !== undefined && toMigrationInclusive < 47) {
+    return yield* new Migrator.MigrationError({
+      kind: "BadState",
+      message: "Historical V2 reconciliation requires a migration ceiling of at least 47",
+    });
+  }
+
+  // Descending updates leave room for each lower ID and retain original dates.
+  for (const row of rows.slice(base).toReversed()) {
+    yield* sql`UPDATE effect_sql_migrations SET migration_id = ${row.migration_id + 47 - base}
+      WHERE migration_id = ${row.migration_id}`;
+  }
+  const executed: Array<readonly [number, string]> = [];
+  for (const [id, name, migration] of migrationEntries.filter(([id]) => id > base && id < 48)) {
+    yield* Effect.mapError(
+      migration,
+      (cause: unknown) =>
+        new Migrator.MigrationError({
+          kind: "Failed",
+          message: `Migration "${id}_${name}" failed during historical V2 reconciliation`,
+          cause,
+        }),
+    );
+    yield* sql`INSERT INTO effect_sql_migrations (migration_id, name) VALUES (${id}, ${name})`;
+    executed.push([id, name]);
+  }
+  return executed;
+});
+
 export interface RunMigrationsOptions {
   readonly toMigrationInclusive?: number | undefined;
 }
@@ -178,7 +239,14 @@ export interface RunMigrationsOptions {
 export const runMigrations = Effect.fn("runMigrations")(function* ({
   toMigrationInclusive,
 }: RunMigrationsOptions = {}) {
-  const executedMigrations = yield* run({ loader: makeMigrationLoader(toMigrationInclusive) });
+  const sql = yield* SqlClient.SqlClient;
+  const executedMigrations = yield* sql.withTransaction(
+    Effect.gen(function* () {
+      const reconciled = yield* reconcileHistoricalV2(toMigrationInclusive);
+      const pending = yield* run({ loader: makeMigrationLoader(toMigrationInclusive) });
+      return [...reconciled, ...pending];
+    }),
+  );
   const migrations = executedMigrations.map(([id, name]) => `${id}_${name}`);
   yield* migrations.length === 0
     ? Effect.logDebug("Database schema is current")
