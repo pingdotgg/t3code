@@ -85,6 +85,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
     : props.model === ANTIGRAVITY_DEFAULT_MODEL
       ? "Choose model"
       : props.model || "Choose model";
+  const triggerSubProvider = selectedModel?.subProvider?.trim() || null;
   const triggerLabel = selectedModel
     ? `${getTriggerDisplayModelLabel(selectedModel)}${selectedModel.isUnavailable ? " (Unavailable)" : ""}`
     : triggerTitle;
@@ -172,7 +173,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
             data-chat-provider-model-picker="true"
             className={cn(
               "min-w-0 justify-between whitespace-nowrap",
-              props.compact ? "max-w-42 shrink-0" : "max-w-48 shrink sm:max-w-56",
+              props.compact ? "max-w-42 shrink-0" : "shrink",
               props.triggerClassName,
             )}
             disabled={props.disabled}
@@ -201,12 +202,17 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
             <TooltipTrigger
               render={
                 <span
-                  className="min-w-0 flex-1 overflow-hidden truncate"
+                  className="flex min-w-0 flex-1 items-center gap-1 overflow-hidden"
                   data-chat-provider-model-picker-label="true"
                 />
               }
             >
-              {triggerTitle}
+              <span className="min-w-0 truncate">{triggerTitle}</span>
+              {triggerSubProvider ? (
+                <span className="min-w-0 truncate text-muted-foreground">
+                  · {triggerSubProvider}
+                </span>
+              ) : null}
             </TooltipTrigger>
             <TooltipPopup side="top">{triggerLabel}</TooltipPopup>
           </Tooltip>

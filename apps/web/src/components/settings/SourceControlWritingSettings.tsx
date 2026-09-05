@@ -23,7 +23,8 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../
 import { Switch } from "../ui/switch";
 import { Textarea } from "../ui/textarea";
 import {
-  SETTINGS_PICKER_TRIGGER_CLASSNAME,
+  SETTINGS_MODEL_CONTROLS_CLASSNAME,
+  SETTINGS_MODEL_PICKER_TRIGGER_CLASSNAME,
   SettingResetButton,
   SettingsRow,
   SettingsSection,
@@ -197,7 +198,7 @@ export function SourceControlWritingSettingsSection() {
         {...searchableSetting("source-control-writer-model")}
         description="Model for source control text and branch or bookmark names. Off uses the global default."
         control={
-          <div className="flex flex-wrap items-center justify-end gap-2">
+          <div className={`${SETTINGS_MODEL_CONTROLS_CLASSNAME} gap-2`}>
             {usesDedicatedModel && !canEnableDedicatedModel ? (
               <span className="text-sm text-muted-foreground">
                 No text generation providers available.
@@ -211,7 +212,7 @@ export function SourceControlWritingSettingsSection() {
                 instanceEntries={instanceEntries}
                 modelOptionsByInstance={modelOptionsByInstance}
                 triggerVariant="outline"
-                triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+                triggerClassName={SETTINGS_MODEL_PICKER_TRIGGER_CLASSNAME}
                 triggerAriaLabel="Source control writer model"
                 {...(environmentId
                   ? {

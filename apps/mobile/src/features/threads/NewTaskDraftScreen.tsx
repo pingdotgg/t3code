@@ -1337,7 +1337,7 @@ export function NewTaskDraftScreen(props: {
                         />
                       }
                       label={flow.selectedModelOption?.label ?? "Choose model"}
-                      maxWidth={152}
+                      maxWidth={null}
                       onPress={settingsSheetPresentation.open}
                     />
                     {flow.planModeEnabled ? (

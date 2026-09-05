@@ -126,6 +126,11 @@ export function SettingsSearchTarget({
 export const SETTINGS_PICKER_TRIGGER_CLASSNAME =
   "h-8 min-h-8 min-w-0 max-w-none shrink-0 text-foreground/90 hover:text-foreground sm:h-7 sm:min-h-7";
 
+export const SETTINGS_MODEL_PICKER_TRIGGER_CLASSNAME = `${SETTINGS_PICKER_TRIGGER_CLASSNAME} max-w-full`;
+
+export const SETTINGS_MODEL_CONTROLS_CLASSNAME =
+  "flex max-w-full flex-wrap items-center justify-end sm:max-w-[26rem]";
+
 /** Info affordance explaining how a setting interacts with the shared background policy. */
 export function PolicyTooltip({ children }: { readonly children: string }) {
   return (
