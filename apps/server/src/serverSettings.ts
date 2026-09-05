@@ -609,9 +609,20 @@ const make = Effect.gen(function* () {
           }
 
           nextSecretKeys.add(secretName);
-          if (!variable.valueRedacted) {
-            if (variable.value.length > 0) {
-              yield* secretStore.set(secretName, textEncoder.encode(variable.value)).pipe(
+          // A redacted save must migrate an inline value before replacing it with a placeholder.
+          const inlineValue = variable.valueRedacted
+            ? current.providerInstances[ProviderInstanceId.make(instanceId)]?.environment?.find(
+                (previous) =>
+                  previous.name === variable.name &&
+                  previous.sensitive &&
+                  !previous.valueRedacted &&
+                  previous.value.length > 0,
+              )?.value
+            : undefined;
+          const value = inlineValue ?? variable.value;
+          if (!variable.valueRedacted || inlineValue !== undefined) {
+            if (value.length > 0) {
+              yield* secretStore.set(secretName, textEncoder.encode(value)).pipe(
                 Effect.mapError(
                   (cause) =>
                     new ServerSettingsError({
