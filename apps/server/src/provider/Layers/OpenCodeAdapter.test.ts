@@ -21,6 +21,7 @@ import type {
   Event as OpenCodeEvent,
   PermissionRequest,
   QuestionRequest,
+  ToolPart,
 } from "@opencode-ai/sdk/v2";
 
 import {
@@ -42,12 +43,12 @@ import {
   type OpenCodeRuntimeShape,
 } from "../opencodeRuntime.ts";
 import {
-  appendOpenCodeAssistantTextDelta,
   isOpenCodeNotFound,
   isSameOpenCodeDirectory,
   makeOpenCodeAdapter,
   mergeOpenCodeAssistantText,
 } from "./OpenCodeAdapter.ts";
+import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 
 // Test-local service tag so the rest of the file can keep using `yield* OpenCodeAdapter`.
 class OpenCodeAdapter extends Context.Service<OpenCodeAdapter, OpenCodeAdapterShape>()(
@@ -515,6 +516,7 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
 
 const providerSessionDirectoryTestLayer = Layer.succeed(ProviderSessionDirectory, {
   upsert: () => Effect.void,
+  recordImportedTranscript: () => Effect.die("unused"),
   getProvider: () =>
     Effect.die(new Error("ProviderSessionDirectory.getProvider is not used in test")),
   getBinding: () => Effect.succeed(Option.none()),
@@ -6400,46 +6402,45 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
     }),
   );
 
-  it.effect("treats lexically or physically identical directories as the same", () =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const sameDirectory = (left: string, right: string) =>
-        isSameOpenCodeDirectory(fileSystem, path, left, right);
+  it.effect.skipIf(!symlinksSupported)(
+    "treats lexically or physically identical directories as the same",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const sameDirectory = (left: string, right: string) =>
+          isSameOpenCodeDirectory(fileSystem, path, left, right);
 
-      // Lexical-only differences (trailing slash, dot segments) short-circuit
-      // without touching the filesystem — the paths need not exist.
-      NodeAssert.equal(yield* sameDirectory("/repo/project/", "/repo/project"), true);
-      NodeAssert.equal(yield* sameDirectory("/repo/nested/../project", "/repo/project"), true);
-      // Nonexistent paths degrade to the lexical comparison instead of failing.
-      NodeAssert.equal(yield* sameDirectory("/repo/project", "/repo/other"), false);
+        // Lexical-only differences (trailing slash, dot segments) short-circuit
+        // without touching the filesystem — the paths need not exist.
+        NodeAssert.equal(yield* sameDirectory("/repo/project/", "/repo/project"), true);
+        NodeAssert.equal(yield* sameDirectory("/repo/nested/../project", "/repo/project"), true);
+        // Nonexistent paths degrade to the lexical comparison instead of failing.
+        NodeAssert.equal(yield* sameDirectory("/repo/project", "/repo/other"), false);
 
-      // A symlinked cwd (the macOS `/tmp` → `/private/tmp` shape) resolves to
-      // the directory it points at, so the two spellings compare equal.
-      const base = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-opencode-dir-" });
-      const real = path.join(base, "real");
-      const link = path.join(base, "link");
-      yield* fileSystem.makeDirectory(real);
-      yield* fileSystem.symlink(real, link);
-      NodeAssert.equal(yield* sameDirectory(link, real), true);
-      NodeAssert.equal(yield* sameDirectory(link, path.join(base, "other")), false);
-    }).pipe(Effect.scoped),
+        // A symlinked cwd (the macOS `/tmp` → `/private/tmp` shape) resolves to
+        // the directory it points at, so the two spellings compare equal.
+        const base = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-opencode-dir-" });
+        const real = path.join(base, "real");
+        const link = path.join(base, "link");
+        yield* fileSystem.makeDirectory(real);
+        yield* fileSystem.symlink(real, link);
+        NodeAssert.equal(yield* sameDirectory(link, real), true);
+        NodeAssert.equal(yield* sameDirectory(link, path.join(base, "other")), false);
+      }).pipe(Effect.scoped),
   );
 
-  it.effect("appends raw assistant text deltas and reconciles part update snapshots", () =>
+  it.effect("reconciles assistant text snapshots", () =>
     Effect.sync(() => {
       const firstUpdate = mergeOpenCodeAssistantText(undefined, "Hello");
-      const overlapDelta = appendOpenCodeAssistantTextDelta(firstUpdate.latestText, "lo world");
-      const secondUpdate = mergeOpenCodeAssistantText(overlapDelta.nextText, "Hellolo world");
       const appendedUpdate = mergeOpenCodeAssistantText("Hello", "Hello world");
       const changedUpdate = mergeOpenCodeAssistantText("Hello world", "Hello there");
       const staleUpdate = mergeOpenCodeAssistantText("Hello world", "Hello");
 
-      NodeAssert.deepEqual(
-        [firstUpdate.deltaToEmit, overlapDelta.deltaToEmit, secondUpdate.deltaToEmit],
-        ["Hello", "lo world", ""],
-      );
-      NodeAssert.equal(secondUpdate.latestText, "Hellolo world");
+      NodeAssert.deepEqual(firstUpdate, {
+        latestText: "Hello",
+        deltaToEmit: "Hello",
+      });
       NodeAssert.deepEqual(appendedUpdate, {
         latestText: "Hello world",
         deltaToEmit: " world",
@@ -6533,6 +6534,133 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       if (completed?.type === "item.completed") {
         NodeAssert.equal(completed.payload.detail, "A BBonus");
       }
+    }),
+  );
+
+  it.effect("emits tool lifecycle events before late assistant metadata", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-tool-lifecycle");
+      const sessionID = "http://127.0.0.1:9999/session";
+      const messageID = "msg-tools-before-role";
+      const start = promiseWithResolvers<OpenCodeEvent>();
+      const input = { command: "pwd" };
+      const states = [
+        { status: "pending", input, raw: "" },
+        { status: "running", input, title: "Working directory", time: { start: 1 } },
+        {
+          status: "completed",
+          input,
+          output: "/repo\n",
+          title: "Working directory",
+          metadata: {},
+          time: { start: 1, end: 2 },
+        },
+        { status: "error", input, error: "Command failed", time: { start: 3, end: 4 } },
+      ] satisfies ReadonlyArray<ToolPart["state"]>;
+      runtimeMock.state.subscribedEvents = [
+        start.promise,
+        ...states.map(
+          (state) =>
+            ({
+              id: `evt-tool-${state.status}`,
+              type: "message.part.updated",
+              properties: {
+                sessionID,
+                time: 4,
+                part: {
+                  id: state.status === "error" ? "part-failed" : "part-working",
+                  sessionID,
+                  messageID,
+                  type: "tool",
+                  callID: state.status === "error" ? "call-failed" : "call-working",
+                  tool: "bash",
+                  state,
+                },
+              },
+            }) satisfies OpenCodeEvent,
+        ),
+        {
+          id: "evt-text-before-role",
+          type: "message.part.updated",
+          properties: {
+            sessionID,
+            time: 4,
+            part: {
+              id: "part-late-text",
+              sessionID,
+              messageID,
+              type: "text",
+              text: "Tool results received",
+              time: { start: 4 },
+            },
+          },
+        },
+        {
+          id: "evt-late-assistant-role",
+          type: "message.updated",
+          properties: { sessionID, info: { id: messageID, role: "assistant" } },
+        },
+        {
+          id: "evt-tool-lifecycle-drained",
+          type: "session.compacted",
+          properties: { sessionID },
+        },
+      ];
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId),
+        Stream.takeUntil((event) => event.type === "thread.state.changed"),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId,
+        input: "Read the working directory",
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("opencode"),
+          "opencode/kimi-k3",
+        ),
+      });
+      start.resolve({
+        id: "evt-tool-lifecycle-started",
+        type: "session.status",
+        properties: { sessionID, status: { type: "busy" } },
+      });
+      const events = yield* Fiber.join(eventsFiber);
+      const tools = events.filter(
+        (event) =>
+          event.type === "item.started" ||
+          event.type === "item.updated" ||
+          event.type === "item.completed",
+      );
+      NodeAssert.deepEqual(
+        tools.map((event) => [event.type, event.itemId, event.payload.status]),
+        [
+          ["item.started", "call-working", "inProgress"],
+          ["item.updated", "call-working", "inProgress"],
+          ["item.completed", "call-working", "completed"],
+          ["item.completed", "call-failed", "failed"],
+        ],
+      );
+      NodeAssert.partialDeepStrictEqual(tools[2]?.payload.data, {
+        command: "pwd",
+        result: "/repo\n",
+      });
+      NodeAssert.partialDeepStrictEqual(tools[3]?.payload.data, {
+        command: "pwd",
+        state: { error: "Command failed" },
+      });
+      NodeAssert.deepEqual(
+        events
+          .filter((event) => event.type === "content.delta")
+          .map((event) => event.payload.delta),
+        ["Tool results received"],
+      );
     }),
   );
 

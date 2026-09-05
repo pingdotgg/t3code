@@ -12,10 +12,10 @@ import { extractToolActivityPresentation } from "@t3tools/client-runtime/work-lo
 import {
   ApprovalRequestId,
   isToolLifecycleItemType,
+  type AssetResource,
   type OrchestrationLatestTurn,
   type OrchestrationThreadActivity,
   type OrchestrationProposedPlanId,
-  ProviderDriverKind,
   ProviderApprovalOption,
   ProviderRequestKind,
   type ToolLifecycleItemType,
@@ -24,52 +24,18 @@ import {
   type TurnId,
 } from "@t3tools/contracts";
 
-import type {
-  ChatAttachment,
-  ChatMessage,
-  ProposedPlan,
-  SessionPhase,
-  Thread,
-  ThreadSession,
-  TurnDiffSummary,
+import {
+  isImageAttachment,
+  type ChatAttachment,
+  type ChatMessage,
+  type ProposedPlan,
+  type SessionPhase,
+  type Thread,
+  type ThreadSession,
+  type TurnDiffSummary,
 } from "./types";
 
-export type ProviderPickerKind = ProviderDriverKind;
-
-export const PROVIDER_OPTIONS: Array<{
-  value: ProviderPickerKind;
-  label: string;
-  available: boolean;
-  /** Shown on the model picker sidebar when relevant */
-  pickerSidebarBadge?: "new" | "soon";
-}> = [
-  { value: ProviderDriverKind.make("codex"), label: "Codex", available: true },
-  { value: ProviderDriverKind.make("claudeAgent"), label: "Claude", available: true },
-  {
-    value: ProviderDriverKind.make("opencode"),
-    label: "OpenCode",
-    available: true,
-    pickerSidebarBadge: "new",
-  },
-  {
-    value: ProviderDriverKind.make("cursor"),
-    label: "Cursor",
-    available: true,
-    pickerSidebarBadge: "new",
-  },
-  {
-    value: ProviderDriverKind.make("grok"),
-    label: "Grok",
-    available: true,
-    pickerSidebarBadge: "new",
-  },
-  {
-    value: ProviderDriverKind.make("antigravity"),
-    label: "Antigravity",
-    available: true,
-    pickerSidebarBadge: "new",
-  },
-];
+export { formatDuration } from "@t3tools/shared/orchestrationTiming";
 
 export type WorkLogToolLifecycleStatus =
   | "inProgress"
@@ -351,32 +317,6 @@ export function workEntryIndicatesToolNeutralStatus(entry: WorkLogEntry): boolea
     return false;
   }
   return true;
-}
-
-export function formatDuration(durationMs: number): string {
-  if (!Number.isFinite(durationMs) || durationMs < 0) return "0ms";
-  if (durationMs < 1_000) return `${Math.max(1, Math.round(durationMs))}ms`;
-  if (durationMs < 10_000) {
-    const tenths = Math.round(durationMs / 100) / 10;
-    // 9.95s+ rounds up to the next bucket — render "10s", not "10.0s".
-    return tenths >= 10 ? "10s" : `${tenths.toFixed(1)}s`;
-  }
-  if (durationMs < 60_000) return `${Math.round(durationMs / 1_000)}s`;
-  const minutes = Math.floor(durationMs / 60_000);
-  const seconds = Math.round((durationMs % 60_000) / 1_000);
-  if (seconds === 0) return `${minutes}m`;
-  if (seconds === 60) return `${minutes + 1}m`;
-  return `${minutes}m ${seconds}s`;
-}
-
-export function formatElapsed(startIso: string, endIso: string | undefined): string | null {
-  if (!endIso) return null;
-  const startedAt = Date.parse(startIso);
-  const endedAt = Date.parse(endIso);
-  if (Number.isNaN(startedAt) || Number.isNaN(endedAt) || endedAt < startedAt) {
-    return null;
-  }
-  return formatDuration(endedAt - startedAt);
 }
 
 type LatestTurnTiming = Pick<OrchestrationLatestTurn, "turnId" | "startedAt" | "completedAt">;
@@ -962,6 +902,14 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   const viewedImagePath = asTrimmedString(asRecord(payload?.data)?.imagePath);
   if (detail) {
     entry.detail = detail;
+  } else if (activity.kind === "runtime.error" || activity.kind === "runtime.warning") {
+    const message = asTrimmedString(payload?.message);
+    if (
+      message &&
+      normalizePreviewForComparison(message) !== normalizePreviewForComparison(activity.summary)
+    ) {
+      entry.detail = message;
+    }
   }
   if (viewedImagePath) {
     entry.viewedImagePath = viewedImagePath;
@@ -1881,6 +1829,43 @@ function mergeTimelineEntrySuffix(
     }
   }
   return merged;
+}
+
+type AttachmentResource = Extract<AssetResource, { readonly _tag: "attachment" }>;
+const EMPTY_IMAGE_RESOURCES = Object.freeze<ReadonlyArray<AttachmentResource>>([]);
+
+/** A mounted row requests its stored images. Local previews keep their existing URLs. */
+export function selectMessageImageResources(
+  attachments: ChatMessage["attachments"],
+): ReadonlyArray<AttachmentResource> {
+  const attachmentIds = new Set<string>();
+  for (const attachment of attachments ?? []) {
+    if (!isImageAttachment(attachment)) continue;
+    const previewUrl = attachment.previewUrl;
+    if (previewUrl?.startsWith("blob:") || previewUrl?.startsWith("data:")) continue;
+    attachmentIds.add(attachment.id);
+  }
+  return attachmentIds.size === 0
+    ? EMPTY_IMAGE_RESOURCES
+    : Array.from(attachmentIds, (attachmentId) => ({ _tag: "attachment", attachmentId }));
+}
+
+/** Handoffs need server URLs even while their message rows are unmounted. */
+export function selectHandoffImageResources(
+  messages: ReadonlyArray<ChatMessage> | undefined,
+  handoffs: Readonly<Record<string, ReadonlyArray<string>>>,
+): ReadonlyArray<AttachmentResource> {
+  if (Object.keys(handoffs).length === 0) return EMPTY_IMAGE_RESOURCES;
+  const attachmentIds = new Set<string>();
+  for (const message of messages ?? []) {
+    if (message.role !== "user" || !handoffs[message.id]?.length) continue;
+    for (const attachment of message.attachments ?? []) {
+      if (isImageAttachment(attachment)) attachmentIds.add(attachment.id);
+    }
+  }
+  return attachmentIds.size === 0
+    ? EMPTY_IMAGE_RESOURCES
+    : Array.from(attachmentIds, (attachmentId) => ({ _tag: "attachment", attachmentId }));
 }
 
 /** Own one mapper per preview stage. Immutable messages retain unchanged preview objects. */

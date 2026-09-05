@@ -84,7 +84,7 @@ export function PullRequestLinkPreview({
   return (
     <PreviewCard open={open} onOpenChange={setOpen}>
       <PreviewCardTrigger render={trigger} delay={350} closeDelay={120} />
-      <PreviewCardPopup className="w-80 max-w-[calc(100vw-2rem)] p-3">
+      <PreviewCardPopup align="center" className="w-80 max-w-[calc(100vw-2rem)] p-3">
         {detail === null ? (
           <p className="text-xs leading-relaxed text-muted-foreground wrap-anywhere">
             {detailQuery.isPending ? "Loading pull request details…" : originalUrl}

@@ -218,9 +218,11 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "continue-threads-after-server-update",
-    title: "Continue threads after server updates",
+    title: "Continue threads after restarts",
     to: "/settings/general",
-    searchTerms: ["resume running active work restart desktop update automatically"],
+    searchTerms: [
+      "resume running active interrupted work restart reboot machine crash desktop update automatically",
+    ],
   },
   {
     id: "background-activity",
