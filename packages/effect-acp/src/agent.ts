@@ -254,7 +254,7 @@ interface AcpCoreAgentRequestHandlers {
 
 const decodeCancelNotification = Schema.decodeUnknownEffect(AcpSchema.CancelNotification);
 
-export const make = Effect.fn("effect-acp/AcpAgent.make")(function* (
+const make = Effect.fn("effect-acp/AcpAgent.make")(function* (
   stdio: Stdio.Stdio,
   options: AcpAgentOptions = {},
 ): Effect.fn.Return<AcpAgent["Service"], never, Scope.Scope> {
