@@ -4681,7 +4681,12 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         canUseTool,
         onUserDialog,
         supportedDialogKinds: ["resume_return"],
-        env: claudeEnvironment,
+        env: mcpSession
+          ? {
+              ...claudeEnvironment,
+              T3_MCP_AUTHORIZATION: mcpSession.authorizationHeader,
+            }
+          : claudeEnvironment,
         additionalDirectories,
         ...(Object.keys(extraArgs).length > 0 ? { extraArgs } : {}),
         ...(mcpSession
@@ -4691,7 +4696,8 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
                   type: "http",
                   url: mcpSession.endpoint,
                   headers: {
-                    Authorization: mcpSession.authorizationHeader,
+                    // Claude expands this after the SDK serializes MCP config into argv.
+                    Authorization: "${T3_MCP_AUTHORIZATION}",
                   },
                 },
               },
