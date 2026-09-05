@@ -3472,6 +3472,130 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
       ]);
     }),
   );
+
+  it.effect("does not let a later missing placeholder clobber a ready checkpoint", () =>
+    Effect.gen(function* () {
+      const projectionPipeline = yield* OrchestrationProjectionPipeline;
+      const eventStore = yield* OrchestrationEventStore;
+      const sql = yield* SqlClient.SqlClient;
+      const appendAndProject = (event: Parameters<typeof eventStore.append>[0]) =>
+        eventStore
+          .append(event)
+          .pipe(Effect.flatMap((savedEvent) => projectionPipeline.projectEvent(savedEvent)));
+
+      yield* appendAndProject({
+        type: "project.created",
+        eventId: EventId.make("evt-checkpoint-guard-1"),
+        aggregateKind: "project",
+        aggregateId: ProjectId.make("project-checkpoint-guard"),
+        occurredAt: "2026-02-26T14:00:00.000Z",
+        commandId: CommandId.make("cmd-checkpoint-guard-1"),
+        causationEventId: null,
+        correlationId: CorrelationId.make("cmd-checkpoint-guard-1"),
+        metadata: {},
+        payload: {
+          projectId: ProjectId.make("project-checkpoint-guard"),
+          title: "Project Checkpoint Guard",
+          workspaceRoot: "/tmp/project-checkpoint-guard",
+          defaultModelSelection: null,
+          scripts: [],
+          createdAt: "2026-02-26T14:00:00.000Z",
+          updatedAt: "2026-02-26T14:00:00.000Z",
+        },
+      });
+
+      yield* appendAndProject({
+        type: "thread.created",
+        eventId: EventId.make("evt-checkpoint-guard-2"),
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-checkpoint-guard"),
+        occurredAt: "2026-02-26T14:00:01.000Z",
+        commandId: CommandId.make("cmd-checkpoint-guard-2"),
+        causationEventId: null,
+        correlationId: CorrelationId.make("cmd-checkpoint-guard-2"),
+        metadata: {},
+        payload: {
+          threadId: ThreadId.make("thread-checkpoint-guard"),
+          projectId: ProjectId.make("project-checkpoint-guard"),
+          title: "Thread Checkpoint Guard",
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5-codex",
+          },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          createdAt: "2026-02-26T14:00:01.000Z",
+          updatedAt: "2026-02-26T14:00:01.000Z",
+        },
+      });
+
+      yield* appendAndProject({
+        type: "thread.turn-diff-completed",
+        eventId: EventId.make("evt-checkpoint-guard-3"),
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-checkpoint-guard"),
+        occurredAt: "2026-02-26T14:00:02.000Z",
+        commandId: CommandId.make("cmd-checkpoint-guard-3"),
+        causationEventId: null,
+        correlationId: CorrelationId.make("cmd-checkpoint-guard-3"),
+        metadata: {},
+        payload: {
+          threadId: ThreadId.make("thread-checkpoint-guard"),
+          turnId: TurnId.make("turn-ready"),
+          checkpointTurnCount: 1,
+          checkpointRef: CheckpointRef.make("refs/t3/checkpoints/thread-checkpoint-guard/turn/1"),
+          status: "ready",
+          files: [],
+          assistantMessageId: MessageId.make("assistant-ready"),
+          completedAt: "2026-02-26T14:00:02.000Z",
+        },
+      });
+
+      yield* appendAndProject({
+        type: "thread.turn-diff-completed",
+        eventId: EventId.make("evt-checkpoint-guard-4"),
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-checkpoint-guard"),
+        occurredAt: "2026-02-26T14:00:03.000Z",
+        commandId: CommandId.make("cmd-checkpoint-guard-4"),
+        causationEventId: null,
+        correlationId: CorrelationId.make("cmd-checkpoint-guard-4"),
+        metadata: {},
+        payload: {
+          threadId: ThreadId.make("thread-checkpoint-guard"),
+          turnId: TurnId.make("turn-ready"),
+          checkpointTurnCount: 1,
+          checkpointRef: CheckpointRef.make("refs/t3/checkpoints/thread-checkpoint-guard/turn/1"),
+          status: "missing",
+          files: [],
+          assistantMessageId: MessageId.make("assistant-ready"),
+          completedAt: "2026-02-26T14:00:03.000Z",
+        },
+      });
+
+      const turnRows = yield* sql<{
+        readonly turnId: string;
+        readonly checkpointStatus: string | null;
+        readonly checkpointRef: string | null;
+      }>`
+        SELECT
+          turn_id AS "turnId",
+          checkpoint_status AS "checkpointStatus",
+          checkpoint_ref AS "checkpointRef"
+        FROM projection_turns
+        WHERE thread_id = 'thread-checkpoint-guard'
+      `;
+      assert.deepEqual(turnRows, [
+        {
+          turnId: "turn-ready",
+          checkpointStatus: "ready",
+          checkpointRef: "refs/t3/checkpoints/thread-checkpoint-guard/turn/1",
+        },
+      ]);
+    }),
+  );
 });
 
 it.layer(makeProjectionPipelinePrefixedTestLayer("t3-pending-turn-terminal-test-"))(
