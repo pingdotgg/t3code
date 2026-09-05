@@ -67,9 +67,22 @@ export function buildComposerSlashCommandItems(input: {
       label: "/default",
       description: "Switch to default mode",
     },
+    ...(input.hasThread && input.selectedProviderStatus?.driver === "codex"
+      ? [
+          {
+            id: "cmd:reconnect-mcp",
+            type: "slash-command" as const,
+            command: "reconnect-mcp",
+            label: "/reconnect-mcp",
+            description: "Reconnect MCP servers before the next turn",
+          },
+        ]
+      : []),
   ] satisfies ComposerCommandItem[];
   const items: ComposerCommandItem[] = builtIn.filter(
-    (item) => item.command.includes(query) && (item.command === "model" || allowInteractionMode),
+    (item) =>
+      item.command.includes(query) &&
+      (item.command === "model" || item.command === "reconnect-mcp" || allowInteractionMode),
   );
 
   // Providers expand commands only at the start of a message. T3 commands

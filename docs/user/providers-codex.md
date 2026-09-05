@@ -49,6 +49,13 @@ reported accounts, refresh provider status, and confirm the second instance has
 its own shadow path and login. A shadow-home conflict usually means the directory
 contains a copied Codex setup. Use a fresh shadow directory and sign in again.
 
+## Reconnect MCP servers
+
+In an idle Codex thread, send `/reconnect-mcp` to disconnect that thread's MCP servers. They
+restart with fresh tool definitions when you send the next message. The command preserves the
+conversation and workspace, but it reconnects every MCP server used by that thread. Wait for an
+active turn to finish before running it.
+
 ## Answer questions while Codex works
 
 Codex can ask a question and keep working. Answer it in the thread's question

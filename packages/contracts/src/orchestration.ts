@@ -1039,6 +1039,10 @@ const ThreadSessionStopCommand = Schema.Struct({
   // closes the race a post-settle snapshot read cannot: commands are decided
   // serially against the authoritative read model.
   onlyIfSettled: Schema.optional(Schema.Boolean),
+  // User-triggered provider recycling must never interrupt active work. The
+  // decider validates this against the authoritative thread state so a turn
+  // started by another client cannot race the caller's snapshot check.
+  onlyIfIdle: Schema.optional(Schema.Boolean),
 });
 
 const DispatchableClientOrchestrationCommand = Schema.Union([
