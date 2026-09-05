@@ -113,7 +113,7 @@ An empty database is a bad test. Seed your worktree's `.t3` with a copy of real 
 ## Pull requests
 
 When creating, updating, or babysitting a PR, use
-[prepare-proof-media](.agents/skills/prepare-proof-media/SKILL.md). Recheck the
+[prepare-pr](.agents/skills/prepare-pr/SKILL.md). Recheck the
 published title and description against the complete diff whenever the PR head
 changes, and correct stale claims before reporting it ready.
 
