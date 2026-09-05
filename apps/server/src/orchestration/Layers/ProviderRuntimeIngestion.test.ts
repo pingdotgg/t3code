@@ -5,6 +5,7 @@ import * as NodePath from "node:path";
 import * as NodeChildProcess from "node:child_process";
 
 import {
+  CodexSettings,
   OrchestrationReadModel,
   ProviderDriverKind,
   ProviderRuntimeEvent,
@@ -29,10 +30,12 @@ import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
+import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as Tracer from "effect/Tracer";
@@ -46,6 +49,9 @@ import {
   ProviderService,
   type ProviderServiceShape,
 } from "../../provider/Services/ProviderService.ts";
+import type { CodexAdapterShape } from "../../provider/Services/CodexAdapter.ts";
+import { makeCodexAdapter } from "../../provider/Layers/CodexAdapter.ts";
+import codexMultiAgentWire from "../../provider/testFixtures/codexMultiAgentWire.json" with { type: "json" };
 import * as RepositoryIdentityResolver from "../../project/RepositoryIdentityResolver.ts";
 import * as CheckpointStore from "../../checkpointing/CheckpointStore.ts";
 import * as VcsDriverRegistry from "../../vcs/VcsDriverRegistry.ts";
@@ -75,6 +81,7 @@ const asEventId = (value: string): EventId => EventId.make(value);
 const asMessageId = (value: string): MessageId => MessageId.make(value);
 const asThreadId = (value: string): ThreadId => ThreadId.make(value);
 const asTurnId = (value: string): TurnId => TurnId.make(value);
+const decodeCodexSettings = Schema.decodeSync(CodexSettings);
 
 type LegacyProviderRuntimeEvent = {
   readonly type: string;
@@ -203,6 +210,56 @@ function createProviderServiceHarness() {
   };
 }
 
+function providerServiceFromCodexAdapter(
+  adapter: CodexAdapterShape,
+  turnCompletionEnqueued: Deferred.Deferred<void>,
+): ProviderServiceShape {
+  const unsupported = () =>
+    Effect.die(new Error("Unsupported provider call in Codex progress test"));
+  return {
+    startSession: (threadId, input) => adapter.startSession({ ...input, threadId }),
+    sendTurn: adapter.sendTurn,
+    compactThread: unsupported,
+    interruptTurn: ({ threadId, turnId }) => adapter.interruptTurn(threadId, turnId),
+    respondToRequest: ({ threadId, requestId, decision }) =>
+      adapter.respondToRequest(threadId, requestId, decision),
+    respondToUserInput: ({ threadId, requestId, answers }) =>
+      adapter.respondToUserInput(threadId, requestId, answers),
+    stopSession: ({ threadId }) => adapter.stopSession(threadId),
+    listSessions: adapter.listSessions,
+    getCapabilities: () => Effect.succeed(adapter.capabilities),
+    assertConversationRollbackSupported: unsupported,
+    getInstanceInfo: (instanceId) =>
+      Effect.succeed({
+        instanceId,
+        driverKind: adapter.provider,
+        displayName: undefined,
+        enabled: true,
+        continuationIdentity: {
+          driverKind: adapter.provider,
+          continuationKey: `${adapter.provider}:instance:${instanceId}`,
+        },
+      }),
+    rollbackConversation: ({ threadId, numTurns }) =>
+      adapter.rollbackThread(threadId, numTurns).pipe(Effect.asVoid),
+    uploadFeedback: adapter.uploadFeedback,
+    get streamEvents() {
+      return adapter.streamEvents.pipe(
+        Stream.flatMap((event) =>
+          Stream.concat(
+            Stream.succeed(event),
+            event.type === "turn.completed"
+              ? Stream.fromEffect(Deferred.succeed(turnCompletionEnqueued, undefined)).pipe(
+                  Stream.drain,
+                )
+              : Stream.empty,
+          ),
+        ),
+      );
+    },
+  };
+}
+
 type ProviderRuntimeTestReadModel = OrchestrationReadModel;
 type ProviderRuntimeTestThread = ProviderRuntimeTestReadModel["threads"][number];
 type ProviderRuntimeTestMessage = ProviderRuntimeTestThread["messages"][number];
@@ -238,6 +295,7 @@ describe("ProviderRuntimeIngestion", () => {
     unknown
   > | null = null;
   let scope: Scope.Closeable | null = null;
+  const providerScopes: Scope.Closeable[] = [];
   const tempDirs: string[] = [];
 
   function makeTempDir(prefix: string): string {
@@ -251,6 +309,9 @@ describe("ProviderRuntimeIngestion", () => {
       await Effect.runPromise(Scope.close(scope, Exit.void));
     }
     scope = null;
+    for (const providerScope of providerScopes.splice(0)) {
+      await Effect.runPromise(Scope.close(providerScope, Exit.void));
+    }
     if (runtime) {
       await runtime.dispose();
     }
@@ -262,6 +323,7 @@ describe("ProviderRuntimeIngestion", () => {
 
   async function createHarness(options?: {
     serverSettings?: Partial<ServerSettings>;
+    providerService?: ProviderServiceShape;
     threadTitle?: string;
     workspaceSubdirectory?: string;
   }) {
@@ -294,7 +356,9 @@ describe("ProviderRuntimeIngestion", () => {
       Layer.provideMerge(ThreadBackgroundLiveness.layer),
       Layer.provideMerge(ThreadPlanProgress.layer),
       Layer.provideMerge(SqlitePersistenceMemory),
-      Layer.provideMerge(Layer.succeed(ProviderService, provider.service)),
+      Layer.provideMerge(
+        Layer.succeed(ProviderService, options?.providerService ?? provider.service),
+      ),
       Layer.provideMerge(makeTestServerSettingsLayer(options?.serverSettings)),
       Layer.provideMerge(CheckpointStore.layer.pipe(Layer.provide(VcsDriverRegistry.layer))),
       Layer.provideMerge(VcsProcess.layer),
@@ -3807,6 +3871,231 @@ describe("ProviderRuntimeIngestion", () => {
     expect(activity?.tone).toBe("info");
     expect(activity?.payload).toMatchObject({ requestId: "message-compact" });
   });
+
+  effectIt.effect.each([false, true])(
+    "bounds a Codex child progress burst with lifecycle barrier %s",
+    (withLifecycleBarrier) =>
+      Effect.gen(function* () {
+        const rootThreadId = codexMultiAgentWire.rootThreadId;
+        const childThreadId = codexMultiAgentWire.childThreadIds[0];
+        const childTurnStarted = codexMultiAgentWire.notifications.find(
+          (entry) =>
+            entry.method === "turn/started" &&
+            (entry.params as { threadId?: string }).threadId === childThreadId,
+        );
+        const childRegistration = codexMultiAgentWire.notifications.find((entry) => {
+          const params = entry.params as {
+            threadId?: string;
+            item?: { type?: string; agentThreadId?: string };
+          };
+          return (
+            params.threadId === rootThreadId &&
+            params.item?.type === "subAgentActivity" &&
+            params.item.agentThreadId === childThreadId
+          );
+        });
+        const childTurnCompleted = codexMultiAgentWire.notifications.find(
+          (entry) =>
+            entry.method === "turn/completed" &&
+            (entry.params as { threadId?: string }).threadId === childThreadId,
+        );
+        expect(childRegistration).toBeDefined();
+        expect(childTurnStarted).toBeDefined();
+        expect(childTurnCompleted).toBeDefined();
+
+        const childTurnId = (childTurnStarted?.params as { turn?: { id?: string } } | undefined)
+          ?.turn?.id;
+        expect(childTurnId).toBeDefined();
+        const burstSize = 32;
+        const burst = Array.from({ length: burstSize }, (_, index) => [
+          {
+            method: "item/completed",
+            params: {
+              threadId: childThreadId,
+              turnId: childTurnId,
+              completedAtMs: 1_785_898_350_000 + index,
+              item: {
+                type: "webSearch",
+                id: `child-search-${index}`,
+                query: `latest-query-${index}`,
+                results: [],
+              },
+            },
+          },
+          {
+            method: "thread/tokenUsage/updated",
+            params: {
+              threadId: childThreadId,
+              turnId: childTurnId,
+              tokenUsage: {
+                total: {
+                  totalTokens: 10_000 + index,
+                  inputTokens: 9_000 + index,
+                  cachedInputTokens: 8_000 + index,
+                  cacheWriteInputTokens: 0,
+                  outputTokens: 1_000,
+                  reasoningOutputTokens: index,
+                },
+                last: {
+                  totalTokens: 100 + index,
+                  inputTokens: 90 + index,
+                  cachedInputTokens: 80 + index,
+                  cacheWriteInputTokens: 0,
+                  outputTokens: 10,
+                  reasoningOutputTokens: index,
+                },
+                modelContextWindow: 258_400,
+              },
+            },
+          },
+        ]).flat();
+        const scriptPath = NodePath.join(makeTempDir("t3-codex-progress-script-"), "script.json");
+        NodeFS.writeFileSync(
+          scriptPath,
+          // @effect-diagnostics-next-line preferSchemaOverJson:off
+          JSON.stringify({
+            rootThreadId,
+            notifications: [
+              childRegistration,
+              childTurnStarted,
+              ...burst.slice(0, burstSize),
+              ...(withLifecycleBarrier
+                ? [
+                    {
+                      method: "thread/status/changed",
+                      params: {
+                        threadId: childThreadId,
+                        status: { type: "active", activeFlags: ["waitingOnApproval"] },
+                      },
+                    },
+                    {
+                      method: "thread/status/changed",
+                      params: {
+                        threadId: childThreadId,
+                        status: { type: "active", activeFlags: [] },
+                      },
+                    },
+                  ]
+                : []),
+              ...burst.slice(burstSize),
+              childTurnCompleted,
+            ],
+          }),
+          "utf8",
+        );
+
+        const providerScope = yield* Scope.make("sequential");
+        providerScopes.push(providerScope);
+        const peerPath = NodePath.join(
+          import.meta.dirname,
+          "../../provider/testFixtures/codexCollabMockPeer.sh",
+        );
+        const adapter = yield* makeCodexAdapter(decodeCodexSettings({ binaryPath: peerPath }), {
+          environment: { ...process.env, T3_CODEX_COLLAB_SCRIPT: scriptPath },
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              Layer.succeed(Scope.Scope, providerScope),
+              ServerConfig.layerTest(process.cwd(), process.cwd()),
+            ).pipe(Layer.provideMerge(NodeServices.layer)),
+          ),
+        );
+        const turnCompletionEnqueued = yield* Deferred.make<void>();
+        const harness = yield* Effect.promise(() =>
+          createHarness({
+            providerService: providerServiceFromCodexAdapter(adapter, turnCompletionEnqueued),
+          }),
+        );
+        const threadId = asThreadId("thread-1");
+        const stopAdapter = yield* Deferred.make<void>();
+        const adapterRun = yield* Effect.gen(function* () {
+          yield* adapter.startSession({
+            provider: ProviderDriverKind.make("codex"),
+            threadId,
+            runtimeMode: "full-access",
+          });
+          yield* adapter.sendTurn({ threadId, input: "fan out" });
+          yield* Deferred.await(stopAdapter);
+          yield* adapter.stopSession(threadId);
+        }).pipe(Effect.forkChild);
+
+        try {
+          yield* Deferred.await(turnCompletionEnqueued);
+          yield* Effect.promise(() => harness.drain());
+
+          const events = Array.from(yield* Stream.runCollect(harness.engine.readEvents(0)));
+          const childActivities = events.flatMap((event) => {
+            if (event.type !== "thread.activity-appended") return [];
+            const activity = event.payload.activity;
+            const payload = activity.payload as { taskId?: string } | undefined;
+            return payload?.taskId === childThreadId
+              ? [{ activity, durableSequence: event.sequence }]
+              : [];
+          });
+          const progress = childActivities.filter(
+            ({ activity }) => activity.kind === "task.progress",
+          );
+          const completion = childActivities.find(({ activity }) => {
+            if (activity.kind !== "task.updated") return false;
+            const payload = activity.payload as { status?: string } | undefined;
+            return payload?.status === "idle";
+          });
+
+          expect(
+            progress.some(({ activity }) => {
+              const payload = activity.payload as { summary?: string } | undefined;
+              return payload?.summary === `latest-query-${burstSize - 1}`;
+            }),
+          ).toBe(true);
+          const latestUsage = progress.find(
+            ({ activity }) =>
+              (activity.payload as { typedUsage?: { totalTokens?: number } } | undefined)
+                ?.typedUsage?.totalTokens ===
+              10_000 + burstSize - 1,
+          );
+          expect(latestUsage?.activity.payload).toMatchObject({
+            typedUsage: {
+              totalTokens: 10_000 + burstSize - 1,
+              inputTokens: 9_000 + burstSize - 1,
+              cachedInputTokens: 8_000 + burstSize - 1,
+              outputTokens: 1_000,
+              reasoningOutputTokens: burstSize - 1,
+            },
+          });
+          expect(completion).toBeDefined();
+          expect(
+            progress.every(
+              ({ durableSequence }) =>
+                completion !== undefined && durableSequence < completion.durableSequence,
+            ),
+          ).toBe(true);
+          expect(progress.length).toBe(withLifecycleBarrier ? 4 : 2);
+          if (withLifecycleBarrier) {
+            const waiting = childActivities.find(
+              ({ activity }) =>
+                activity.kind === "task.updated" &&
+                (activity.payload as { status?: string } | undefined)?.status === "waiting",
+            );
+            expect(waiting).toBeDefined();
+            expect(
+              progress.filter(
+                ({ durableSequence }) =>
+                  waiting !== undefined && durableSequence < waiting.durableSequence,
+              ),
+            ).toHaveLength(2);
+            expect(
+              progress.filter(
+                ({ durableSequence }) =>
+                  waiting !== undefined && durableSequence > waiting.durableSequence,
+              ),
+            ).toHaveLength(2);
+          }
+        } finally {
+          yield* Deferred.succeed(stopAdapter, undefined);
+          yield* Fiber.join(adapterRun);
+        }
+      }),
+  );
 
   it("projects Codex task lifecycle chunks into thread activities", async () => {
     const harness = await createHarness();

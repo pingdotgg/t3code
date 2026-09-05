@@ -12,6 +12,7 @@ import {
   ProviderItemId,
   type ProviderApprovalDecision,
   type ProviderEvent,
+  type ProviderRuntimeEvent,
   type ProviderSession,
   type ProviderTurnStartResult,
   type ProviderUserInputAnswers,
@@ -23,6 +24,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it, vi } from "@effect/vitest";
 
 import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -58,6 +60,15 @@ const asThreadId = (value: string): ThreadId => ThreadId.make(value);
 const asTurnId = (value: string): TurnId => TurnId.make(value);
 const asEventId = (value: string): EventId => EventId.make(value);
 const asItemId = (value: string): ProviderItemId => ProviderItemId.make(value);
+
+type CodexTaskRuntimeEvent = Extract<
+  ProviderRuntimeEvent,
+  { type: "task.progress" | "task.updated" }
+>;
+
+function isCodexTaskRuntimeEvent(event: ProviderRuntimeEvent): event is CodexTaskRuntimeEvent {
+  return event.type === "task.progress" || event.type === "task.updated";
+}
 
 class FakeCodexRuntime implements CodexSessionRuntimeShape {
   private readonly eventQueue = Effect.runSync(Queue.unbounded<ProviderEvent>());
@@ -2480,6 +2491,442 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
         lastReasoningOutputTokens: 0,
         compactsAutomatically: true,
       });
+    }),
+  );
+
+  it.effect("flushes both progress lanes before each child terminal lifecycle event", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startLifecycleRuntime();
+      const terminals = [
+        {
+          childId: "child-turn-completed",
+          method: "collabAgent/turnCompleted",
+          payload: { turn: { status: "completed" } },
+          status: "idle",
+        },
+        {
+          childId: "child-status-idle",
+          method: "collabAgent/statusChanged",
+          payload: { status: { type: "idle" } },
+          status: "idle",
+        },
+        {
+          childId: "child-closed",
+          method: "collabAgent/closed",
+          payload: {},
+          status: "interrupted",
+        },
+        {
+          childId: "child-error",
+          method: "collabAgent/statusChanged",
+          payload: { status: { type: "systemError" } },
+          status: "failed",
+        },
+        {
+          childId: "child-parent-interrupted",
+          method: "collabAgent/activity",
+          payload: { activityKind: "interrupted" },
+          status: "interrupted",
+        },
+      ] as const;
+      const taskEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter(
+          (event) =>
+            (event.type === "task.progress" || event.type === "task.updated") &&
+            terminals.some((terminal) => terminal.childId === event.payload.taskId),
+        ),
+        Stream.take(terminals.length * 3),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      for (const [index, terminal] of terminals.entries()) {
+        const eventBase = {
+          kind: "notification" as const,
+          provider: ProviderDriverKind.make("codex"),
+          threadId: asThreadId("thread-1"),
+          turnId: asTurnId("turn-1"),
+          createdAt: "2026-01-01T00:00:00.000Z",
+        };
+        yield* runtime.emit({
+          ...eventBase,
+          id: asEventId(`evt-${terminal.childId}-item-old`),
+          method: "collabAgent/item",
+          payload: {
+            agentThreadId: terminal.childId,
+            agentPath: `/root/${terminal.childId}`,
+            item: { type: "webSearch", query: `old-${index}` },
+          },
+        } satisfies ProviderEvent);
+        yield* runtime.emit({
+          ...eventBase,
+          id: asEventId(`evt-${terminal.childId}-item-latest`),
+          method: "collabAgent/item",
+          payload: {
+            agentThreadId: terminal.childId,
+            agentPath: `/root/${terminal.childId}`,
+            item: { type: "webSearch", query: `latest-${index}` },
+          },
+        } satisfies ProviderEvent);
+        yield* runtime.emit({
+          ...eventBase,
+          id: asEventId(`evt-${terminal.childId}-usage-old`),
+          method: "collabAgent/tokenUsage",
+          payload: {
+            agentThreadId: terminal.childId,
+            agentPath: `/root/${terminal.childId}`,
+            tokenUsage: { total: { totalTokens: 100 + index } },
+          },
+        } satisfies ProviderEvent);
+        yield* runtime.emit({
+          ...eventBase,
+          id: asEventId(`evt-${terminal.childId}-usage-latest`),
+          method: "collabAgent/tokenUsage",
+          payload: {
+            agentThreadId: terminal.childId,
+            agentPath: `/root/${terminal.childId}`,
+            tokenUsage: { total: { totalTokens: 200 + index } },
+          },
+        } satisfies ProviderEvent);
+        yield* runtime.emit({
+          ...eventBase,
+          id: asEventId(`evt-${terminal.childId}-terminal`),
+          method: terminal.method,
+          payload: { agentThreadId: terminal.childId, ...terminal.payload },
+        } satisfies ProviderEvent);
+      }
+
+      const taskEvents = Array.from(yield* Fiber.join(taskEventsFiber)).filter(
+        isCodexTaskRuntimeEvent,
+      );
+      for (const [index, terminal] of terminals.entries()) {
+        const childEvents = taskEvents.filter((event) => event.payload.taskId === terminal.childId);
+        NodeAssert.deepEqual(
+          childEvents.map((event) => event.type),
+          ["task.progress", "task.progress", "task.updated"],
+        );
+        const itemProgress = childEvents[0];
+        const usageProgress = childEvents[1];
+        const terminalEvent = childEvents[2];
+        NodeAssert.equal(itemProgress?.type, "task.progress");
+        NodeAssert.equal(usageProgress?.type, "task.progress");
+        NodeAssert.equal(terminalEvent?.type, "task.updated");
+        if (
+          itemProgress?.type !== "task.progress" ||
+          usageProgress?.type !== "task.progress" ||
+          terminalEvent?.type !== "task.updated"
+        ) {
+          return;
+        }
+        NodeAssert.equal(itemProgress.payload.summary, `latest-${index}`);
+        NodeAssert.equal(usageProgress.payload.typedUsage?.totalTokens, 200 + index);
+        NodeAssert.equal(terminalEvent.payload.status, terminal.status);
+      }
+    }),
+  );
+
+  it.effect("cancels pending child progress on stop and isolates a restarted session", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      const firstThreadId = asThreadId("thread-progress-close-a");
+      const childId = "shared-child-after-close";
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("codex"),
+        threadId: firstThreadId,
+        runtimeMode: "full-access",
+      });
+      const firstRuntime = lifecycleRuntimeFactory.lastRuntime;
+      NodeAssert.ok(firstRuntime);
+
+      const firstMarkerSeen = yield* Deferred.make<void>();
+      const taskEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.tap((event) =>
+          event.type === "thread.metadata.updated" && event.payload.name === "before-close"
+            ? Deferred.succeed(firstMarkerSeen, undefined).pipe(Effect.asVoid)
+            : Effect.void,
+        ),
+        Stream.takeUntil(
+          (event) =>
+            event.type === "thread.metadata.updated" && event.payload.name === "after-restart",
+        ),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      const firstEventBase = {
+        kind: "notification" as const,
+        provider: ProviderDriverKind.make("codex"),
+        threadId: firstThreadId,
+        createdAt: "2026-01-01T00:00:00.000Z",
+      };
+      yield* firstRuntime.emit({
+        ...firstEventBase,
+        id: asEventId("evt-progress-before-close"),
+        method: "collabAgent/item",
+        payload: {
+          agentThreadId: childId,
+          item: { type: "webSearch", query: "must be cancelled" },
+        },
+      } satisfies ProviderEvent);
+      yield* firstRuntime.emit({
+        ...firstEventBase,
+        id: asEventId("evt-marker-before-close"),
+        method: "thread/name/updated",
+        payload: { threadId: "provider-thread-1", threadName: "before-close" },
+      } satisfies ProviderEvent);
+      yield* Deferred.await(firstMarkerSeen);
+
+      yield* adapter.stopSession(firstThreadId);
+      yield* TestClock.adjust("1 second");
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("codex"),
+        threadId: firstThreadId,
+        runtimeMode: "full-access",
+      });
+      const secondRuntime = lifecycleRuntimeFactory.lastRuntime;
+      NodeAssert.ok(secondRuntime);
+      NodeAssert.notEqual(secondRuntime, firstRuntime);
+      yield* firstRuntime.emit({
+        ...firstEventBase,
+        id: asEventId("evt-old-session-after-restart"),
+        method: "collabAgent/item",
+        payload: { agentThreadId: childId, item: { type: "webSearch", query: "old runtime" } },
+      });
+      yield* secondRuntime.emit({
+        ...firstEventBase,
+        id: asEventId("evt-new-session-progress"),
+        method: "collabAgent/item",
+        payload: { agentThreadId: childId, item: { type: "webSearch", query: "new runtime" } },
+      });
+      yield* secondRuntime.emit({
+        ...firstEventBase,
+        id: asEventId("evt-idle-after-restart"),
+        method: "collabAgent/statusChanged",
+        payload: {
+          agentThreadId: childId,
+          status: { type: "idle" },
+        },
+      } satisfies ProviderEvent);
+      yield* TestClock.adjust("1 second");
+      yield* secondRuntime.emit({
+        ...firstEventBase,
+        id: asEventId("evt-marker-after-restart"),
+        method: "thread/name/updated",
+        payload: { threadId: "provider-thread-1", threadName: "after-restart" },
+      });
+
+      const taskEvents = Array.from(yield* Fiber.join(taskEventsFiber)).filter(
+        isCodexTaskRuntimeEvent,
+      );
+      NodeAssert.deepEqual(
+        taskEvents.map((event) => event.type),
+        ["task.progress", "task.updated"],
+      );
+      NodeAssert.equal(taskEvents[0]?.threadId, firstThreadId);
+      NodeAssert.equal(
+        taskEvents[0]?.type === "task.progress" && taskEvents[0].payload.summary,
+        "new runtime",
+      );
+      NodeAssert.equal(
+        taskEvents[1]?.type === "task.updated" && taskEvents[1].payload.status,
+        "idle",
+      );
+    }),
+  );
+
+  it.effect.each([
+    ["turn/completed", "turn.completed"],
+    ["turn/aborted", "turn.aborted"],
+    ["session/exited", "session.exited"],
+    ["runtime-failure", "runtime.error"],
+    ["collabAgent/statusChanged", "task.updated"],
+    ["collabAgent/metadataUpdated", "task.updated"],
+  ] as const)("preserves child progress ordering before %s", ([method, boundaryType]) =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startLifecycleRuntime();
+      const observed = yield* adapter.streamEvents.pipe(
+        Stream.takeUntil((event) => event.type === boundaryType),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      const eventBase = {
+        kind: "notification" as const,
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("thread-1"),
+        turnId: asTurnId("turn-1"),
+        createdAt: "2026-01-01T00:00:00.000Z",
+      };
+      yield* runtime.emit({
+        ...eventBase,
+        id: asEventId("evt-item-before-root-boundary"),
+        method: "collabAgent/item",
+        payload: {
+          agentThreadId: "child-root-boundary",
+          nickname: "old-name",
+          item: { type: "webSearch", query: "latest child item" },
+        },
+      });
+      yield* runtime.emit({
+        ...eventBase,
+        id: asEventId("evt-usage-before-root-boundary"),
+        method: "collabAgent/tokenUsage",
+        payload: {
+          agentThreadId: "child-root-boundary",
+          nickname: "old-name",
+          tokenUsage: { total: { totalTokens: 123 } },
+        },
+      });
+      yield* runtime.emit(
+        method === "turn/completed"
+          ? codexTurnEvent(method, "turn-1")
+          : {
+              ...eventBase,
+              id: asEventId("evt-root-boundary"),
+              kind: method === "runtime-failure" ? "error" : "notification",
+              method,
+              message: "Owned boundary fixture",
+              ...(method.startsWith("collabAgent/")
+                ? {
+                    payload: {
+                      agentThreadId: "child-root-boundary",
+                      nickname: "current-name",
+                      status: { type: "active", activeFlags: ["waitingOnApproval"] },
+                    },
+                  }
+                : {}),
+            },
+      );
+      const events = Array.from(yield* Fiber.join(observed));
+      NodeAssert.deepEqual(
+        events.map((event) => event.type),
+        ["task.progress", "task.progress", boundaryType],
+      );
+      const boundary = events.at(-1);
+      if (boundary?.type === "task.updated") {
+        NodeAssert.equal(boundary.payload.title, "current-name");
+        if (method === "collabAgent/statusChanged") {
+          NodeAssert.equal(boundary.payload.status, "waiting");
+        }
+      }
+    }),
+  );
+
+  it.effect(
+    "flushes two children before root completion and leaves the root result unchanged",
+    () =>
+      Effect.gen(function* () {
+        const { adapter, runtime } = yield* startLifecycleRuntime();
+        const observed = yield* adapter.streamEvents.pipe(
+          Stream.takeUntil((event) => event.type === "turn.completed"),
+          Stream.runCollect,
+          Effect.forkChild,
+        );
+        const eventBase = {
+          kind: "notification" as const,
+          provider: ProviderDriverKind.make("codex"),
+          threadId: asThreadId("thread-1"),
+          turnId: asTurnId("turn-1"),
+          createdAt: "2026-01-01T00:00:00.000Z",
+        };
+        for (const childId of ["child-b", "child-a"]) {
+          yield* runtime.emit({
+            ...eventBase,
+            id: asEventId(`evt-${childId}-usage`),
+            method: "collabAgent/tokenUsage",
+            payload: { agentThreadId: childId, tokenUsage: { total: { totalTokens: 321 } } },
+          });
+          yield* runtime.emit({
+            ...eventBase,
+            id: asEventId(`evt-${childId}-item`),
+            method: "collabAgent/item",
+            payload: { agentThreadId: childId, item: { type: "webSearch", query: childId } },
+          });
+        }
+        yield* runtime.emit(codexTurnEvent("turn/completed", "turn-1"));
+        const events = Array.from(yield* Fiber.join(observed));
+        NodeAssert.deepEqual(
+          events.map((event) => event.type),
+          ["task.progress", "task.progress", "task.progress", "task.progress", "turn.completed"],
+        );
+        NodeAssert.deepEqual(
+          events.filter(isCodexTaskRuntimeEvent).map((event) => event.payload.taskId),
+          ["child-b", "child-b", "child-a", "child-a"],
+        );
+        const completion = events.at(-1);
+        NodeAssert.equal(
+          completion?.type === "turn.completed" && completion.payload.state,
+          "completed",
+        );
+        NodeAssert.equal(completion?.turnId, "turn-1");
+      }),
+  );
+
+  it.effect("flushes unexpected session exit and ignores later child progress", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startLifecycleRuntime();
+      const exitSeen = yield* Deferred.make<void>();
+      const lateInputSeen = yield* Deferred.make<void>();
+      const observed = yield* adapter.streamEvents.pipe(
+        Stream.tap((event) =>
+          event.type === "session.exited"
+            ? Deferred.succeed(exitSeen, undefined).pipe(Effect.asVoid)
+            : event.type === "thread.metadata.updated" &&
+                event.payload.name === "late-input-processed"
+              ? Deferred.succeed(lateInputSeen, undefined).pipe(Effect.asVoid)
+              : Effect.void,
+        ),
+        Stream.takeUntil(
+          (event) =>
+            event.type === "thread.metadata.updated" && event.payload.name === "after-clock",
+        ),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      const eventBase = {
+        kind: "notification" as const,
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("thread-1"),
+        createdAt: "2026-01-01T00:00:00.000Z",
+      };
+      for (const query of ["before-exit", "after-exit"]) {
+        yield* runtime.emit({
+          ...eventBase,
+          id: asEventId(`evt-${query}`),
+          method: "collabAgent/item",
+          payload: { agentThreadId: "exited-child", item: { type: "webSearch", query } },
+        });
+        if (query === "before-exit") {
+          yield* runtime.emit({
+            ...eventBase,
+            id: asEventId("evt-unexpected-exit"),
+            method: "session/exited",
+          });
+          yield* Deferred.await(exitSeen);
+        }
+      }
+      yield* runtime.emit({
+        ...eventBase,
+        id: asEventId("evt-late-input-processed"),
+        method: "thread/name/updated",
+        payload: { threadId: "provider-thread-1", threadName: "late-input-processed" },
+      });
+      yield* Deferred.await(lateInputSeen);
+      yield* TestClock.adjust("1 second");
+      yield* runtime.emit({
+        ...eventBase,
+        id: asEventId("evt-after-clock"),
+        method: "thread/name/updated",
+        payload: { threadId: "provider-thread-1", threadName: "after-clock" },
+      });
+      const events = Array.from(yield* Fiber.join(observed));
+      NodeAssert.deepEqual(
+        events.map((event) => event.type),
+        ["task.progress", "session.exited", "thread.metadata.updated", "thread.metadata.updated"],
+      );
+      NodeAssert.equal(
+        events[0]?.type === "task.progress" && events[0].payload.summary,
+        "before-exit",
+      );
     }),
   );
 
