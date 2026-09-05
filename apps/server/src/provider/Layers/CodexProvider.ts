@@ -9,8 +9,8 @@ import * as Scope from "effect/Scope";
 import * as Types from "effect/Types";
 import * as ChildProcess from "effect/unstable/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
-import * as CodexClient from "effect-codex-app-server/client";
-import * as CodexSchema from "effect-codex-app-server/schema";
+import type * as CodexClient from "effect-codex-app-server/client";
+import type * as CodexSchema from "effect-codex-app-server/schema";
 import * as CodexErrors from "effect-codex-app-server/errors";
 
 import type {
@@ -356,6 +356,18 @@ export const withCodexAppServerClient = Effect.fn("withCodexAppServerClient")(fu
   readonly cwd: string;
   readonly environment?: NodeJS.ProcessEnv | undefined;
 }) {
+  const codexClient = yield* Effect.tryPromise({
+    try: async (signal) => {
+      const client = await import("effect-codex-app-server/client");
+      signal.throwIfAborted();
+      return client;
+    },
+    catch: (cause) =>
+      new CodexErrors.CodexAppServerSpawnError({
+        command: `${input.binaryPath} app-server`,
+        cause,
+      }),
+  });
   // `~` is not shell-expanded when env vars are set via `child_process.spawn`,
   // so `CODEX_HOME=~/.codex_work` would reach codex verbatim and trip
   // "CODEX_HOME points to '~/.codex_work', but that path does not exist".
@@ -390,8 +402,8 @@ export const withCodexAppServerClient = Effect.fn("withCodexAppServerClient")(fu
           }),
       ),
     );
-  const clientContext = yield* Layer.build(CodexClient.layerChildProcess(child));
-  const client = yield* Effect.service(CodexClient.CodexAppServerClient).pipe(
+  const clientContext = yield* Layer.build(codexClient.layerChildProcess(child));
+  const client = yield* Effect.service(codexClient.CodexAppServerClient).pipe(
     Effect.provide(clientContext),
   );
   const initialize = yield* client.request("initialize", buildCodexInitializeParams());

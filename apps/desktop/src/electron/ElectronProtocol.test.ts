@@ -1,7 +1,12 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
+import * as Layer from "effect/Layer";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { beforeEach, vi } from "vite-plus/test";
+import * as NodeURL from "node:url";
 
 const { handleMock, netFetchMock, unhandleMock } = vi.hoisted(() => ({
   handleMock: vi.fn(),
@@ -15,6 +20,7 @@ vi.mock("electron", () => ({
 }));
 
 import * as ElectronProtocol from "./ElectronProtocol.ts";
+const protocolLayer = ElectronProtocol.layer.pipe(Layer.provideMerge(NodeServices.layer));
 
 describe("ElectronProtocol", () => {
   beforeEach(() => {
@@ -22,6 +28,55 @@ describe("ElectronProtocol", () => {
     netFetchMock.mockReset();
     unhandleMock.mockReset();
   });
+
+  it.effect("serves bundled renderer files before the backend and keeps API requests on HTTP", () =>
+    Effect.gen(function* () {
+      let handler: ((request: Request) => Promise<Response>) | undefined;
+      handleMock.mockImplementation((_scheme, nextHandler) => {
+        handler = nextHandler;
+      });
+      netFetchMock.mockImplementation(async () => new Response("ok"));
+      const path = yield* Path.Path;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const staticRoot = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-protocol-" });
+      yield* fileSystem.writeFileString(path.join(staticRoot, "index.html"), "app");
+      yield* fileSystem.makeDirectory(path.join(staticRoot, "assets"));
+      yield* fileSystem.writeFileString(path.join(staticRoot, "assets/main.js"), "app");
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const protocol = yield* ElectronProtocol.ElectronProtocol;
+          yield* protocol.registerDesktopProtocol({
+            scheme: "t3code",
+            targetOrigin: new URL("http://127.0.0.1:3773/"),
+            backendOrigin: new URL("http://127.0.0.1:3773/"),
+            clerkFrontendApiHostname: undefined,
+            staticRoot,
+          });
+          const response = yield* Effect.promise(() => handler!(new Request("t3code://app/")));
+          assert.equal(
+            netFetchMock.mock.calls[0]?.[0],
+            NodeURL.pathToFileURL(path.join(staticRoot, "index.html")).href,
+          );
+          assert.include(
+            response.headers.get("content-security-policy") ?? "",
+            "default-src 'self'",
+          );
+          yield* Effect.promise(() => handler!(new Request("t3code://app/assets/main.js")));
+          assert.equal(
+            netFetchMock.mock.calls[1]?.[0],
+            NodeURL.pathToFileURL(path.join(staticRoot, "assets/main.js")).href,
+          );
+          yield* Effect.promise(() => handler!(new Request("t3code://app/api/health")));
+          assert.equal(netFetchMock.mock.calls[2]?.[0], "http://127.0.0.1:3773/api/health");
+          const escaped = yield* Effect.promise(() =>
+            handler!(new Request("t3code://app/%2e%2e%2fsecret")),
+          );
+          assert.equal(escaped.status, 403);
+          assert.equal(netFetchMock.mock.calls.length, 3);
+        }),
+      );
+    }).pipe(Effect.scoped, Effect.provide(protocolLayer)),
+  );
 
   it.effect("proxies the stable renderer origin to the current app server", () =>
     Effect.gen(function* () {
@@ -85,7 +140,7 @@ describe("ElectronProtocol", () => {
       assert.isNull(forwardedHeaders.get("referer"));
       assert.isNull(forwardedHeaders.get("sec-fetch-site"));
       assert.deepEqual(unhandleMock.mock.calls, [["t3code-dev"]]);
-    }).pipe(Effect.provide(ElectronProtocol.layer)),
+    }).pipe(Effect.provide(protocolLayer)),
   );
 
   it.effect("rejects custom protocol requests for another host", () =>
@@ -110,7 +165,7 @@ describe("ElectronProtocol", () => {
 
       assert.equal(response.status, 404);
       assert.equal(netFetchMock.mock.calls.length, 0);
-    }).pipe(Effect.provide(ElectronProtocol.layer)),
+    }).pipe(Effect.provide(protocolLayer)),
   );
 
   it.effect("retries transient renderer target failures", () =>
@@ -138,7 +193,7 @@ describe("ElectronProtocol", () => {
 
       assert.equal(yield* Effect.promise(() => response.text()), "ready");
       assert.equal(netFetchMock.mock.calls.length, 2);
-    }).pipe(Effect.provide(ElectronProtocol.layer)),
+    }).pipe(Effect.provide(protocolLayer)),
   );
 
   it.effect("preserves protocol registration failures", () =>
@@ -162,7 +217,7 @@ describe("ElectronProtocol", () => {
       assert.equal(error.scheme, "t3code-dev");
       assert.strictEqual(error.cause, cause);
       assert.equal(error.message, 'Failed to register Electron protocol scheme "t3code-dev".');
-    }).pipe(Effect.provide(ElectronProtocol.layer)),
+    }).pipe(Effect.provide(protocolLayer)),
   );
 
   it.effect("preserves protocol unregistration failures", () =>
@@ -192,7 +247,7 @@ describe("ElectronProtocol", () => {
         assert.strictEqual(error.cause, cause);
         assert.equal(error.message, 'Failed to unregister Electron protocol scheme "t3code".');
       }
-    }).pipe(Effect.provide(ElectronProtocol.layer)),
+    }).pipe(Effect.provide(protocolLayer)),
   );
 
   it("keeps executable sources host-restricted while allowing runtime network resources", () => {

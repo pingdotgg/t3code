@@ -253,7 +253,7 @@ function failingSpawnerLayer(description: string) {
   );
 }
 
-function hangingScopedSpawnerLayer(killCalls: Ref.Ref<number>) {
+function hangingScopedSpawnerLayer(killCalls: Ref.Ref<number>, started: Deferred.Deferred<void>) {
   return Layer.succeed(
     ChildProcessSpawner.ChildProcessSpawner,
     ChildProcessSpawner.make(() =>
@@ -272,6 +272,7 @@ function hangingScopedSpawnerLayer(killCalls: Ref.Ref<number>) {
           getOutputFd: () => Stream.empty,
         });
         yield* Effect.addFinalizer(() => handle.kill().pipe(Effect.ignore));
+        yield* Deferred.succeed(started, undefined);
         return handle;
       }),
     ),
@@ -533,12 +534,13 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
       it.effect("closes the app-server probe scope when provider status times out", () =>
         Effect.gen(function* () {
           const killCalls = yield* Ref.make(0);
+          const started = yield* Deferred.make<void>();
           const statusFiber = yield* checkCodexProviderStatus(defaultCodexSettings).pipe(
-            Effect.provide(hangingScopedSpawnerLayer(killCalls)),
+            Effect.provide(hangingScopedSpawnerLayer(killCalls, started)),
             Effect.forkChild,
           );
 
-          yield* Effect.yieldNow;
+          yield* Deferred.await(started);
           yield* TestClock.adjust("11 seconds");
           yield* Effect.yieldNow;
 
@@ -2197,15 +2199,22 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
 
           yield* Effect.gen(function* () {
             const registry = yield* ProviderRegistry.ProviderRegistry;
+            const failedProbe = yield* Stream.toPull(
+              registry.streamChanges.pipe(
+                Stream.filter((providers) =>
+                  providers.some(
+                    (provider) =>
+                      provider.instanceId === "codex_personal" && provider.status === "error",
+                  ),
+                ),
+              ),
+            );
             let providers = yield* registry.getProviders;
-            for (
-              let attempts = 0;
-              attempts < 50 &&
+            if (
               providers.find((provider) => provider.instanceId === "codex_personal")?.status !==
-                "error";
-              attempts += 1
+              "error"
             ) {
-              yield* Effect.yieldNow;
+              yield* failedProbe;
               providers = yield* registry.getProviders;
             }
             const codexPersonal = providers.find(

@@ -51,6 +51,12 @@ const managedAuthShellModule =
       : import("./components/clerk/BrowserManagedAuthShell")
     : null;
 
+// The desktop landing opens a draft after the first environment snapshot.
+// Load its editor while authentication and backend startup are still pending.
+if (isElectron && history.location.pathname === "/") {
+  void import("./components/ChatView").catch(() => {});
+}
+
 // The index.html boot splash lives inside #root, and React's first commit
 // clears it. Resolve everything that first commit needs, the selected
 // managed-auth runtime and the initial route's split chunks, before

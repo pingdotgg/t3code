@@ -63,9 +63,9 @@ function makeThreadOpenResponse(
 }
 
 describe("buildTurnStartParams", () => {
-  it("keeps invalid turn values only in the schema cause", () => {
+  it("keeps invalid turn values only in the schema cause", async () => {
     const secret = "codex-turn-input-secret-sentinel";
-    const error = Effect.runSync(
+    const error = await Effect.runPromise(
       buildTurnStartParams({
         threadId: "provider-thread-1",
         runtimeMode: "full-access",
@@ -89,8 +89,8 @@ describe("buildTurnStartParams", () => {
     NodeAssert.doesNotMatch(JSON.stringify(directDiagnostics), new RegExp(secret));
   });
 
-  it("includes plan collaboration mode when requested", () => {
-    const params = Effect.runSync(
+  it("includes plan collaboration mode when requested", async () => {
+    const params = await Effect.runPromise(
       buildTurnStartParams({
         threadId: "provider-thread-1",
         runtimeMode: "full-access",
@@ -130,8 +130,8 @@ describe("buildTurnStartParams", () => {
     });
   });
 
-  it("includes default collaboration mode and image attachments", () => {
-    const params = Effect.runSync(
+  it("includes default collaboration mode and image attachments", async () => {
+    const params = await Effect.runPromise(
       buildTurnStartParams({
         threadId: "provider-thread-1",
         runtimeMode: "auto-accept-edits",
@@ -179,8 +179,8 @@ describe("buildTurnStartParams", () => {
     });
   });
 
-  it("reports the same fallback model and effort in settings and instructions", () => {
-    const params = Effect.runSync(
+  it("reports the same fallback model and effort in settings and instructions", async () => {
+    const params = await Effect.runPromise(
       buildTurnStartParams({
         threadId: "provider-thread-1",
         runtimeMode: "full-access",
@@ -220,8 +220,8 @@ describe("buildTurnStartParams", () => {
     }),
   );
 
-  it("omits collaboration mode when interaction mode is absent", () => {
-    const params = Effect.runSync(
+  it("omits collaboration mode when interaction mode is absent", async () => {
+    const params = await Effect.runPromise(
       buildTurnStartParams({
         threadId: "provider-thread-1",
         runtimeMode: "approval-required",

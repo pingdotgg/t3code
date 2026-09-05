@@ -6,19 +6,18 @@
  *
  * @module ClaudeAdapterLive
  */
-import {
-  type CanUseTool,
-  query,
-  type Options as ClaudeQueryOptions,
-  type PermissionMode,
-  type PermissionResult,
-  type PermissionUpdate,
-  type SDKMessage,
-  type SDKRateLimitInfo,
-  type SDKResultMessage,
-  type SettingSource,
-  type SDKUserMessage,
-  type ModelUsage,
+import type {
+  CanUseTool,
+  Options as ClaudeQueryOptions,
+  PermissionMode,
+  PermissionResult,
+  PermissionUpdate,
+  SDKMessage,
+  SDKRateLimitInfo,
+  SDKResultMessage,
+  SettingSource,
+  SDKUserMessage,
+  ModelUsage,
 } from "@anthropic-ai/claude-agent-sdk";
 import { parseCliArgs } from "@t3tools/shared/cliArgs";
 import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
@@ -1960,17 +1959,6 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       : undefined);
   const managedNativeEventLogger =
     options?.nativeEventLogger === undefined ? nativeEventLogger : undefined;
-
-  const createQuery =
-    options?.createQuery ??
-    ((input: {
-      readonly prompt: AsyncIterable<SDKUserMessage>;
-      readonly options: ClaudeQueryOptions;
-    }) =>
-      query({
-        prompt: input.prompt,
-        options: input.options,
-      }) as ClaudeQueryRuntime);
 
   const sessions = new Map<ThreadId, ClaudeSessionContext>();
   const runtimeEventQueue = yield* Queue.unbounded<ProviderRuntimeEvent>();
@@ -4724,12 +4712,24 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         "claude.query.path_to_executable": claudeBinaryPath,
       });
 
+      const createQuery =
+        options?.createQuery ??
+        (yield* Effect.tryPromise({
+          try: () => import("@anthropic-ai/claude-agent-sdk").then((sdk) => sdk.query),
+          catch: (cause) =>
+            new ProviderAdapterProcessError({
+              provider: PROVIDER,
+              threadId,
+              detail: "Failed to load Claude runtime SDK.",
+              cause,
+            }),
+        }));
       const queryRuntime = yield* Effect.try({
         try: () =>
           createQuery({
             prompt,
             options: queryOptions,
-          }),
+          }) as ClaudeQueryRuntime,
         catch: (cause) =>
           new ProviderAdapterProcessError({
             provider: PROVIDER,

@@ -31,16 +31,14 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
-import * as CodexClient from "effect-codex-app-server/client";
 import * as CodexErrors from "effect-codex-app-server/errors";
-import * as CodexRpc from "effect-codex-app-server/rpc";
-import * as EffectCodexSchema from "effect-codex-app-server/schema";
+import type * as CodexRpc from "effect-codex-app-server/rpc";
+import type * as EffectCodexSchema from "effect-codex-app-server/schema";
 
 import { buildCodexInitializeParams } from "./CodexProvider.ts";
 import { codexSessionAppServerArgs } from "./codexLaunchArgs.ts";
 import { expandHomePath } from "../../pathExpansion.ts";
 import { buildCodexDeveloperInstructions } from "../CodexDeveloperInstructions.ts";
-const decodeV2TurnStartResponse = Schema.decodeUnknownEffect(EffectCodexSchema.V2TurnStartResponse);
 
 const PROVIDER = ProviderDriverKind.make("codex");
 
@@ -127,16 +125,6 @@ const McpElicitationForm = Schema.Struct({
 const isMcpElicitationMetadata = Schema.is(McpElicitationMetadata);
 const isMcpElicitationForm = Schema.is(McpElicitationForm);
 
-// TODO: Verify `packages/effect-codex-app-server/scripts/generate.ts` so the generated
-// `V2TurnStartParams` schema includes `collaborationMode` directly.
-const CodexTurnStartParamsWithCollaborationMode = EffectCodexSchema.V2TurnStartParams.pipe(
-  Schema.fieldsAssign({
-    collaborationMode: Schema.optionalKey(EffectCodexSchema.V2TurnStartParams__CollaborationMode),
-  }),
-);
-const decodeCodexTurnStartParamsWithCollaborationMode = Schema.decodeUnknownEffect(
-  CodexTurnStartParamsWithCollaborationMode,
-);
 const CodexChildResumeMetadata = Schema.Struct({
   thread: Schema.Struct({ id: Schema.String }),
   model: Schema.String,
@@ -144,8 +132,12 @@ const CodexChildResumeMetadata = Schema.Struct({
 });
 const decodeCodexChildResumeMetadata = Schema.decodeUnknownEffect(CodexChildResumeMetadata);
 
-export type CodexTurnStartParamsWithCollaborationMode =
-  typeof CodexTurnStartParamsWithCollaborationMode.Type;
+export type CodexTurnStartParamsWithCollaborationMode = Omit<
+  EffectCodexSchema.V2TurnStartParams,
+  "collaborationMode"
+> & {
+  readonly collaborationMode?: EffectCodexSchema.V2TurnStartParams__CollaborationMode;
+};
 
 export type CodexResumeCursor = typeof CodexResumeCursorSchema.Type;
 type CodexServiceTier = NonNullable<EffectCodexSchema.V2ThreadStartParams["serviceTier"]>;
@@ -627,7 +619,7 @@ export function buildTurnStartParams(input: {
     browserToolsAvailable: input.browserToolsAvailable ?? true,
   });
 
-  return decodeCodexTurnStartParamsWithCollaborationMode({
+  const params = {
     threadId: input.threadId,
     input: turnInput,
     approvalPolicy: config.approvalPolicy,
@@ -637,15 +629,37 @@ export function buildTurnStartParams(input: {
     ...(input.serviceTier ? { serviceTier: input.serviceTier } : {}),
     ...(input.effort ? { effort: input.effort } : {}),
     ...(collaborationMode ? { collaborationMode } : {}),
-  }).pipe(
-    Effect.mapError((cause) =>
-      CodexErrors.CodexAppServerProtocolParseError.fromSchemaError(
-        "decode-request-payload",
-        cause,
-        { method: "turn/start" },
+  };
+  return Effect.gen(function* () {
+    const codexSchema = yield* Effect.tryPromise({
+      try: async (signal) => {
+        const schema = await import("effect-codex-app-server/schema");
+        signal.throwIfAborted();
+        return schema;
+      },
+      catch: (cause) =>
+        new CodexErrors.CodexAppServerProtocolParseError({
+          operation: "decode-request-payload",
+          method: "turn/start",
+          cause,
+        }),
+    });
+    // The generated turn schema does not yet include collaborationMode.
+    const turnSchema = codexSchema.V2TurnStartParams.pipe(
+      Schema.fieldsAssign({
+        collaborationMode: Schema.optionalKey(codexSchema.V2TurnStartParams__CollaborationMode),
+      }),
+    );
+    return yield* Schema.decodeUnknownEffect(turnSchema)(params).pipe(
+      Effect.mapError((cause) =>
+        CodexErrors.CodexAppServerProtocolParseError.fromSchemaError(
+          "decode-request-payload",
+          cause,
+          { method: "turn/start" },
+        ),
       ),
-    ),
-  );
+    );
+  });
 }
 
 function classifyCodexStderrLine(rawLine: string): { readonly message: string } | null {
@@ -1158,6 +1172,23 @@ export const makeCodexSessionRuntime = (
   ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto | Scope.Scope
 > =>
   Effect.gen(function* () {
+    const [codexClient, codexRpc, codexSchema] = yield* Effect.tryPromise({
+      try: async (signal) => {
+        const modules = await Promise.all([
+          import("effect-codex-app-server/client"),
+          import("effect-codex-app-server/rpc"),
+          import("effect-codex-app-server/schema"),
+        ]);
+        signal.throwIfAborted();
+        return modules;
+      },
+      catch: (cause) =>
+        new CodexErrors.CodexAppServerSpawnError({
+          command: `${options.binaryPath} app-server`,
+          cause,
+        }),
+    });
+    const decodeV2TurnStartResponse = Schema.decodeUnknownEffect(codexSchema.V2TurnStartResponse);
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const runtimeScope = yield* Scope.Scope;
     const crypto = yield* Crypto.Crypto;
@@ -1208,11 +1239,10 @@ export const makeCodexSessionRuntime = (
         ),
       );
 
-    const clientContext = yield* CodexClient.layerChildProcess(child).pipe(
-      Layer.build,
-      Effect.provideService(Scope.Scope, runtimeScope),
-    );
-    const client = yield* Effect.service(CodexClient.CodexAppServerClient).pipe(
+    const clientContext = yield* codexClient
+      .layerChildProcess(child)
+      .pipe(Layer.build, Effect.provideService(Scope.Scope, runtimeScope));
+    const client = yield* Effect.service(codexClient.CodexAppServerClient).pipe(
       Effect.provide(clientContext),
     );
     const serverNotifications = yield* Queue.unbounded<CodexServerNotification>();
@@ -2158,7 +2188,7 @@ export const makeCodexSessionRuntime = (
 
     yield* Effect.forEach(
       Object.values(
-        CodexRpc.SERVER_NOTIFICATION_METHODS,
+        codexRpc.SERVER_NOTIFICATION_METHODS,
       ) as ReadonlyArray<CodexRpc.ServerNotificationMethod>,
       registerServerNotification,
       { concurrency: 1, discard: true },

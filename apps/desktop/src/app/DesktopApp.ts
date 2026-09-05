@@ -1,5 +1,6 @@
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -178,6 +179,15 @@ const bootstrap = Effect.gen(function* () {
   const serverExposureState = yield* serverExposure.configureFromSettings({ port: backendPort });
   const backendConfig = yield* serverExposure.backendConfig;
   const electronProtocol = yield* ElectronProtocol.ElectronProtocol;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const bundledStaticRoot = environment.path.join(
+    environment.serverRoot,
+    "apps/server/dist/client",
+  );
+  const loadRendererWhileStarting =
+    !environment.isDevelopment &&
+    !(settings.wslOnly === true && settings.wslBackendEnabled === true) &&
+    (yield* fileSystem.exists(environment.path.join(bundledStaticRoot, "index.html")));
   const rendererTarget = environment.isDevelopment
     ? Option.getOrThrow(environment.devServerUrl)
     : backendConfig.httpBaseUrl;
@@ -186,6 +196,7 @@ const bootstrap = Effect.gen(function* () {
     targetOrigin: rendererTarget,
     backendOrigin: backendConfig.httpBaseUrl,
     clerkFrontendApiHostname: DesktopClerk.desktopClerkFrontendApiHostname,
+    ...(loadRendererWhileStarting ? { staticRoot: bundledStaticRoot } : {}),
   });
   yield* logBootstrapInfo("bootstrap resolved backend endpoint", {
     baseUrl: backendConfig.httpBaseUrl.href,
@@ -216,6 +227,11 @@ const bootstrap = Effect.gen(function* () {
     }
     yield* primaryBackend.start;
     yield* logBootstrapInfo("bootstrap backend start requested");
+    if (loadRendererWhileStarting) {
+      yield* desktopWindow.ensureMain.pipe(
+        Effect.catch((error) => logStartupError("early renderer creation failed", { error })),
+      );
+    }
     yield* appActivation.start.pipe(
       Effect.tap(() => logBootstrapInfo("desktop app control socket ready")),
       Effect.catch((error) => logStartupError("desktop app control socket unavailable", { error })),
@@ -297,7 +313,7 @@ const startup = Effect.gen(function* () {
   yield* applicationMenu.configure;
   yield* updates.configure;
   yield* DesktopRemoteUpdates.listen;
-  yield* linuxUrlHandler.register;
+  yield* Effect.forkScoped(linuxUrlHandler.register);
   yield* bootstrap.pipe(Effect.catchCause((cause) => fatalStartupCause("bootstrap", cause)));
 }).pipe(Effect.withSpan("desktop.startup"));
 

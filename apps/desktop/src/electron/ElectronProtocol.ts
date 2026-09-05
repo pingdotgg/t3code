@@ -2,6 +2,9 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as NodeTimersPromises from "node:timers/promises";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
+import * as NodeURL from "node:url";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
@@ -53,6 +56,7 @@ export interface DesktopProtocolRegistrationInput {
   readonly targetOrigin: URL;
   readonly backendOrigin: URL;
   readonly clerkFrontendApiHostname: string | undefined;
+  readonly staticRoot?: string;
 }
 
 export class ElectronProtocol extends Context.Service<
@@ -185,6 +189,41 @@ async function proxyRequest(
   return withContentSecurityPolicy(response, contentSecurityPolicy);
 }
 
+async function serveRendererRequest(
+  request: Request,
+  input: DesktopProtocolRegistrationInput,
+  contentSecurityPolicy: string,
+  path: Path.Path,
+  isFile: (filePath: string) => Promise<boolean>,
+): Promise<Response> {
+  const url = new URL(request.url);
+  if (url.host !== DESKTOP_HOST) return new Response(null, { status: 404 });
+
+  if (input.staticRoot && (request.method === "GET" || request.method === "HEAD")) {
+    let pathname: string;
+    try {
+      pathname = decodeURIComponent(url.pathname);
+    } catch {
+      return new Response(null, { status: 400 });
+    }
+    const root = path.resolve(input.staticRoot);
+    const filePath = path.resolve(root, `.${pathname === "/" ? "/index.html" : pathname}`);
+    const relative = path.relative(root, filePath);
+    if (relative.startsWith("..") || path.isAbsolute(relative) || pathname.includes("\\")) {
+      return new Response(null, { status: 403 });
+    }
+    if (await isFile(filePath)) {
+      const response = await Electron.net.fetch(NodeURL.pathToFileURL(filePath).href, {
+        method: request.method,
+        headers: request.headers,
+      });
+      return withContentSecurityPolicy(response, contentSecurityPolicy);
+    }
+  }
+
+  return proxyRequest(request, input.targetOrigin, contentSecurityPolicy);
+}
+
 const TRANSIENT_FETCH_RETRY_DELAYS_MS = [0, 50, 150] as const;
 
 async function fetchWithTransientRetry(url: string, init: RequestInit): Promise<Response> {
@@ -206,6 +245,16 @@ async function fetchWithTransientRetry(url: string, init: RequestInit): Promise<
 }
 
 export const make = Effect.gen(function* () {
+  const path = yield* Path.Path;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const runPromise = Effect.runPromiseWith(yield* Effect.context<never>());
+  const isFile = (filePath: string) =>
+    runPromise(
+      fileSystem.stat(filePath).pipe(
+        Effect.map((stat) => stat.type === "File"),
+        Effect.orElseSucceed(() => false),
+      ),
+    );
   const registered = yield* Ref.make(false);
 
   const registerDesktopProtocol = Effect.fn("desktop.electron.protocol.registerDesktopProtocol")(
@@ -218,7 +267,7 @@ export const make = Effect.gen(function* () {
         Effect.try({
           try: () => {
             Electron.protocol.handle(input.scheme, (request) =>
-              proxyRequest(request, input.targetOrigin, contentSecurityPolicy),
+              serveRendererRequest(request, input, contentSecurityPolicy, path, isFile),
             );
           },
           catch: (cause) => new ElectronProtocolRegistrationError({ scheme: input.scheme, cause }),

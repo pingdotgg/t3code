@@ -18,6 +18,7 @@ import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
 
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
+import { ServerActivation } from "../serverActivation.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import { makeManagedServerProvider } from "./makeManagedServerProvider.ts";
 
@@ -150,6 +151,41 @@ const enrichedSnapshotSecond: ServerProvider = {
 };
 
 describe("makeManagedServerProvider", () => {
+  it.effect("parks background provider checks until server activation", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const activation = yield* Deferred.make<void>();
+        const checkCalls = yield* Ref.make(0);
+        const provider = yield* makeManagedServerProvider<TestSettings>({
+          resolveMaintenance: () => Effect.succeed(maintenanceCapabilities),
+          getSettings: Effect.succeed({ enabled: true }),
+          streamSettings: Stream.empty,
+          haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
+          initialSnapshot: () => Effect.succeed(initialSnapshot),
+          checkProvider: Ref.update(checkCalls, (count) => count + 1).pipe(
+            Effect.as(refreshedSnapshot),
+          ),
+          refreshInterval: "1 second",
+        }).pipe(Effect.provideService(ServerActivation, Deferred.await(activation)));
+
+        yield* TestClock.adjust("10 seconds");
+        assert.strictEqual(yield* Ref.get(checkCalls), 0);
+        assert.deepStrictEqual(yield* provider.getSnapshot, initialSnapshot);
+
+        const updatesFiber = yield* Stream.take(provider.streamChanges, 1).pipe(
+          Stream.runCollect,
+          Effect.forkChild,
+        );
+        yield* Effect.yieldNow;
+        yield* Deferred.succeed(activation, undefined);
+
+        assert.deepStrictEqual(Array.from(yield* Fiber.join(updatesFiber)), [refreshedSnapshot]);
+        assert.strictEqual(yield* Ref.get(checkCalls), 1);
+        assert.deepStrictEqual(yield* provider.getSnapshot, refreshedSnapshot);
+      }),
+    ).pipe(Effect.provide(AlwaysRunTestLayer)),
+  );
+
   it.effect(
     "runs the initial provider check in the background and streams the refreshed snapshot",
     () =>

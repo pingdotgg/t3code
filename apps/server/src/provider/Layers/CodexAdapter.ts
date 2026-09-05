@@ -43,7 +43,7 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import * as CodexErrors from "effect-codex-app-server/errors";
-import * as EffectCodexSchema from "effect-codex-app-server/schema";
+import type * as EffectCodexSchema from "effect-codex-app-server/schema";
 
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { getCodexServiceTierOptionValue } from "../../codexModelOptions.ts";
@@ -986,13 +986,14 @@ function runtimeEventBase(
 }
 
 function mapItemLifecycle(
+  codexSchema: typeof EffectCodexSchema,
   event: ProviderEvent,
   canonicalThreadId: ThreadId,
   lifecycle: "item.started" | "item.updated" | "item.completed",
 ): ProviderRuntimeEvent | undefined {
   const payload =
-    readPayload(EffectCodexSchema.V2ItemStartedNotification, event.payload) ??
-    readPayload(EffectCodexSchema.V2ItemCompletedNotification, event.payload);
+    readPayload(codexSchema.V2ItemStartedNotification, event.payload) ??
+    readPayload(codexSchema.V2ItemCompletedNotification, event.payload);
   const item = payload?.item;
   if (!item) {
     return undefined;
@@ -1293,6 +1294,7 @@ function mapCollabAgentEvent(
 }
 
 function mapToRuntimeEvents(
+  codexSchema: typeof EffectCodexSchema,
   event: ProviderEvent,
   canonicalThreadId: ThreadId,
 ): ReadonlyArray<ProviderRuntimeEvent> {
@@ -1319,8 +1321,8 @@ function mapToRuntimeEvents(
   if (event.kind === "request") {
     if (event.method === "item/tool/requestUserInput") {
       const payload =
-        readPayload(EffectCodexSchema.ServerRequest__ToolRequestUserInputParams, event.payload) ??
-        readPayload(EffectCodexSchema.ToolRequestUserInputParams, event.payload);
+        readPayload(codexSchema.ServerRequest__ToolRequestUserInputParams, event.payload) ??
+        readPayload(codexSchema.ToolRequestUserInputParams, event.payload);
       const questions = payload ? toUserInputQuestions(payload.questions) : undefined;
       if (!questions) {
         return [];
@@ -1338,21 +1340,21 @@ function mapToRuntimeEvents(
 
     const elicitation =
       event.method === "mcpServer/elicitation/request"
-        ? readPayload(EffectCodexSchema.McpServerElicitationRequestParams, event.payload)
+        ? readPayload(codexSchema.McpServerElicitationRequestParams, event.payload)
         : undefined;
     const elicitationApproval = elicitation ? describeMcpElicitation(elicitation) : undefined;
     const detail = (() => {
       switch (event.method) {
         case "item/commandExecution/requestApproval": {
           const payload = readPayload(
-            EffectCodexSchema.ServerRequest__CommandExecutionRequestApprovalParams,
+            codexSchema.ServerRequest__CommandExecutionRequestApprovalParams,
             event.payload,
           );
           return payload?.command ?? payload?.reason ?? undefined;
         }
         case "item/fileChange/requestApproval": {
           const payload = readPayload(
-            EffectCodexSchema.ServerRequest__FileChangeRequestApprovalParams,
+            codexSchema.ServerRequest__FileChangeRequestApprovalParams,
             event.payload,
           );
           // These params carry no path of their own, only the root the agent
@@ -1363,7 +1365,7 @@ function mapToRuntimeEvents(
           return elicitation?.message;
         case "applyPatchApproval": {
           const payload = readPayload(
-            EffectCodexSchema.ServerRequest__ApplyPatchApprovalParams,
+            codexSchema.ServerRequest__ApplyPatchApprovalParams,
             event.payload,
           );
           return (
@@ -1374,14 +1376,14 @@ function mapToRuntimeEvents(
         }
         case "execCommandApproval": {
           const payload = readPayload(
-            EffectCodexSchema.ServerRequest__ExecCommandApprovalParams,
+            codexSchema.ServerRequest__ExecCommandApprovalParams,
             event.payload,
           );
           return payload?.reason ?? payload?.command.join(" ");
         }
         case "item/tool/call": {
           const payload = readPayload(
-            EffectCodexSchema.ServerRequest__DynamicToolCallParams,
+            codexSchema.ServerRequest__DynamicToolCallParams,
             event.payload,
           );
           return payload?.tool ?? undefined;
@@ -1482,7 +1484,7 @@ function mapToRuntimeEvents(
   }
 
   if (event.method === "thread/started") {
-    const payload = readPayload(EffectCodexSchema.V2ThreadStartedNotification, event.payload);
+    const payload = readPayload(codexSchema.V2ThreadStartedNotification, event.payload);
     if (!payload) {
       return [];
     }
@@ -1506,7 +1508,7 @@ function mapToRuntimeEvents(
   ) {
     const payload =
       event.method === "thread/status/changed"
-        ? readPayload(EffectCodexSchema.V2ThreadStatusChangedNotification, event.payload)
+        ? readPayload(codexSchema.V2ThreadStatusChangedNotification, event.payload)
         : undefined;
     return [
       {
@@ -1530,7 +1532,7 @@ function mapToRuntimeEvents(
   }
 
   if (event.method === "thread/name/updated") {
-    const payload = readPayload(EffectCodexSchema.V2ThreadNameUpdatedNotification, event.payload);
+    const payload = readPayload(codexSchema.V2ThreadNameUpdatedNotification, event.payload);
     return [
       {
         type: "thread.metadata.updated",
@@ -1553,10 +1555,7 @@ function mapToRuntimeEvents(
   }
 
   if (event.method === "thread/tokenUsage/updated") {
-    const payload = readPayload(
-      EffectCodexSchema.V2ThreadTokenUsageUpdatedNotification,
-      event.payload,
-    );
+    const payload = readPayload(codexSchema.V2ThreadTokenUsageUpdatedNotification, event.payload);
     const normalizedUsage = payload ? normalizeCodexTokenUsage(payload.tokenUsage) : undefined;
     if (!normalizedUsage) {
       return [];
@@ -1588,7 +1587,7 @@ function mapToRuntimeEvents(
   }
 
   if (event.method === "turn/completed") {
-    const payload = readPayload(EffectCodexSchema.V2TurnCompletedNotification, event.payload);
+    const payload = readPayload(codexSchema.V2TurnCompletedNotification, event.payload);
     if (!payload) {
       return [];
     }
@@ -1618,7 +1617,7 @@ function mapToRuntimeEvents(
   }
 
   if (event.method === "turn/plan/updated") {
-    const payload = readPayload(EffectCodexSchema.V2TurnPlanUpdatedNotification, event.payload);
+    const payload = readPayload(codexSchema.V2TurnPlanUpdatedNotification, event.payload);
     if (!payload) {
       return [];
     }
@@ -1639,7 +1638,7 @@ function mapToRuntimeEvents(
   }
 
   if (event.method === "turn/diff/updated") {
-    const payload = readPayload(EffectCodexSchema.V2TurnDiffUpdatedNotification, event.payload);
+    const payload = readPayload(codexSchema.V2TurnDiffUpdatedNotification, event.payload);
     if (!payload) {
       return [];
     }
@@ -1655,12 +1654,12 @@ function mapToRuntimeEvents(
   }
 
   if (event.method === "item/started") {
-    const started = mapItemLifecycle(event, canonicalThreadId, "item.started");
+    const started = mapItemLifecycle(codexSchema, event, canonicalThreadId, "item.started");
     return started ? [started] : [];
   }
 
   if (event.method === "item/completed") {
-    const payload = readPayload(EffectCodexSchema.V2ItemCompletedNotification, event.payload);
+    const payload = readPayload(codexSchema.V2ItemCompletedNotification, event.payload);
     const item = payload?.item;
     if (!item) {
       return [];
@@ -1702,7 +1701,7 @@ function mapToRuntimeEvents(
         },
       ];
     }
-    const completed = mapItemLifecycle(event, canonicalThreadId, "item.completed");
+    const completed = mapItemLifecycle(codexSchema, event, canonicalThreadId, "item.completed");
     if (!completed || itemType !== "context_compaction") {
       return completed ? [completed] : [];
     }
@@ -1735,7 +1734,7 @@ function mapToRuntimeEvents(
   }
 
   if (event.method === "item/plan/delta") {
-    const payload = readPayload(EffectCodexSchema.V2PlanDeltaNotification, event.payload);
+    const payload = readPayload(codexSchema.V2PlanDeltaNotification, event.payload);
     const delta = event.textDelta ?? payload?.delta;
     if (!delta || delta.length === 0) {
       return [];
@@ -1752,7 +1751,7 @@ function mapToRuntimeEvents(
   }
 
   if (event.method === "item/agentMessage/delta") {
-    const payload = readPayload(EffectCodexSchema.V2AgentMessageDeltaNotification, event.payload);
+    const payload = readPayload(codexSchema.V2AgentMessageDeltaNotification, event.payload);
     const delta = event.textDelta ?? payload?.delta;
     if (!delta || delta.length === 0) {
       return [];
@@ -1771,7 +1770,7 @@ function mapToRuntimeEvents(
 
   if (event.method === "item/commandExecution/outputDelta") {
     const payload = readPayload(
-      EffectCodexSchema.V2CommandExecutionOutputDeltaNotification,
+      codexSchema.V2CommandExecutionOutputDeltaNotification,
       event.payload,
     );
     const delta = event.textDelta ?? payload?.delta;
@@ -1791,10 +1790,7 @@ function mapToRuntimeEvents(
   }
 
   if (event.method === "item/fileChange/outputDelta") {
-    const payload = readPayload(
-      EffectCodexSchema.V2FileChangeOutputDeltaNotification,
-      event.payload,
-    );
+    const payload = readPayload(codexSchema.V2FileChangeOutputDeltaNotification, event.payload);
     const delta = event.textDelta ?? payload?.delta;
     if (!delta || delta.length === 0) {
       return [];
@@ -1812,10 +1808,7 @@ function mapToRuntimeEvents(
   }
 
   if (event.method === "item/reasoning/summaryTextDelta") {
-    const payload = readPayload(
-      EffectCodexSchema.V2ReasoningSummaryTextDeltaNotification,
-      event.payload,
-    );
+    const payload = readPayload(codexSchema.V2ReasoningSummaryTextDeltaNotification, event.payload);
     const delta = event.textDelta ?? payload?.delta;
     if (!delta || delta.length === 0) {
       return [];
@@ -1834,7 +1827,7 @@ function mapToRuntimeEvents(
   }
 
   if (event.method === "item/reasoning/textDelta") {
-    const payload = readPayload(EffectCodexSchema.V2ReasoningTextDeltaNotification, event.payload);
+    const payload = readPayload(codexSchema.V2ReasoningTextDeltaNotification, event.payload);
     const delta = event.textDelta ?? payload?.delta;
     if (!delta || delta.length === 0) {
       return [];
@@ -1853,7 +1846,7 @@ function mapToRuntimeEvents(
   }
 
   if (event.method === "item/mcpToolCall/progress") {
-    const payload = readPayload(EffectCodexSchema.V2McpToolCallProgressNotification, event.payload);
+    const payload = readPayload(codexSchema.V2McpToolCallProgressNotification, event.payload);
     if (!payload) {
       return [];
     }
@@ -1869,10 +1862,7 @@ function mapToRuntimeEvents(
   }
 
   if (event.method === "serverRequest/resolved") {
-    const payload = readPayload(
-      EffectCodexSchema.V2ServerRequestResolvedNotification,
-      event.payload,
-    );
+    const payload = readPayload(codexSchema.V2ServerRequestResolvedNotification, event.payload);
     if (!payload) {
       return [];
     }
@@ -1890,7 +1880,7 @@ function mapToRuntimeEvents(
   }
 
   if (event.method === "item/tool/requestUserInput/answered") {
-    const payload = readPayload(EffectCodexSchema.ToolRequestUserInputResponse, event.payload);
+    const payload = readPayload(codexSchema.ToolRequestUserInputResponse, event.payload);
     if (!payload) {
       return [];
     }
@@ -1906,7 +1896,7 @@ function mapToRuntimeEvents(
   }
 
   if (event.method === "model/rerouted") {
-    const payload = readPayload(EffectCodexSchema.V2ModelReroutedNotification, event.payload);
+    const payload = readPayload(codexSchema.V2ModelReroutedNotification, event.payload);
     if (!payload) {
       return [];
     }
@@ -1924,7 +1914,7 @@ function mapToRuntimeEvents(
   }
 
   if (event.method === "deprecationNotice") {
-    const payload = readPayload(EffectCodexSchema.V2DeprecationNoticeNotification, event.payload);
+    const payload = readPayload(codexSchema.V2DeprecationNoticeNotification, event.payload);
     if (!payload) {
       return [];
     }
@@ -1941,7 +1931,7 @@ function mapToRuntimeEvents(
   }
 
   if (event.method === "configWarning") {
-    const payload = readPayload(EffectCodexSchema.V2ConfigWarningNotification, event.payload);
+    const payload = readPayload(codexSchema.V2ConfigWarningNotification, event.payload);
     if (!payload) {
       return [];
     }
@@ -1962,7 +1952,7 @@ function mapToRuntimeEvents(
   }
 
   if (event.method === "account/updated") {
-    if (!readPayload(EffectCodexSchema.V2AccountUpdatedNotification, event.payload)) {
+    if (!readPayload(codexSchema.V2AccountUpdatedNotification, event.payload)) {
       return [];
     }
     return [
@@ -1977,10 +1967,7 @@ function mapToRuntimeEvents(
   }
 
   if (event.method === "account/rateLimits/updated") {
-    const payload = readPayload(
-      EffectCodexSchema.V2AccountRateLimitsUpdatedNotification,
-      event.payload,
-    );
+    const payload = readPayload(codexSchema.V2AccountRateLimitsUpdatedNotification, event.payload);
     const limits = payload ? codexRateLimitsToUpdate(payload.rateLimits) : undefined;
     if (!limits) {
       return [];
@@ -1996,7 +1983,7 @@ function mapToRuntimeEvents(
 
   if (event.method === "mcpServer/oauthLogin/completed") {
     const payload = readPayload(
-      EffectCodexSchema.V2McpServerOauthLoginCompletedNotification,
+      codexSchema.V2McpServerOauthLoginCompletedNotification,
       event.payload,
     );
     if (!payload) {
@@ -2016,10 +2003,7 @@ function mapToRuntimeEvents(
   }
 
   if (event.method === "thread/realtime/started") {
-    const payload = readPayload(
-      EffectCodexSchema.V2ThreadRealtimeStartedNotification,
-      event.payload,
-    );
+    const payload = readPayload(codexSchema.V2ThreadRealtimeStartedNotification, event.payload);
     if (!payload) {
       return [];
     }
@@ -2035,10 +2019,7 @@ function mapToRuntimeEvents(
   }
 
   if (event.method === "thread/realtime/itemAdded") {
-    const payload = readPayload(
-      EffectCodexSchema.V2ThreadRealtimeItemAddedNotification,
-      event.payload,
-    );
+    const payload = readPayload(codexSchema.V2ThreadRealtimeItemAddedNotification, event.payload);
     if (!payload) {
       return [];
     }
@@ -2055,7 +2036,7 @@ function mapToRuntimeEvents(
 
   if (event.method === "thread/realtime/outputAudio/delta") {
     const payload = readPayload(
-      EffectCodexSchema.V2ThreadRealtimeOutputAudioDeltaNotification,
+      codexSchema.V2ThreadRealtimeOutputAudioDeltaNotification,
       event.payload,
     );
     if (!payload) {
@@ -2073,7 +2054,7 @@ function mapToRuntimeEvents(
   }
 
   if (event.method === "thread/realtime/error") {
-    const payload = readPayload(EffectCodexSchema.V2ThreadRealtimeErrorNotification, event.payload);
+    const payload = readPayload(codexSchema.V2ThreadRealtimeErrorNotification, event.payload);
     const message = payload?.message ?? event.message ?? "Realtime error";
     return [
       {
@@ -2087,10 +2068,7 @@ function mapToRuntimeEvents(
   }
 
   if (event.method === "thread/realtime/closed") {
-    const payload = readPayload(
-      EffectCodexSchema.V2ThreadRealtimeClosedNotification,
-      event.payload,
-    );
+    const payload = readPayload(codexSchema.V2ThreadRealtimeClosedNotification, event.payload);
     return [
       {
         type: "thread.realtime.closed",
@@ -2103,7 +2081,7 @@ function mapToRuntimeEvents(
   }
 
   if (event.method === "error") {
-    const payload = readPayload(EffectCodexSchema.V2ErrorNotification, event.payload);
+    const payload = readPayload(codexSchema.V2ErrorNotification, event.payload);
     const message = payload?.error.message ?? event.message ?? "Provider runtime error";
     const willRetry = payload?.willRetry === true;
     return [
@@ -2145,7 +2123,7 @@ function mapToRuntimeEvents(
   }
 
   if (event.method === "windows/worldWritableWarning") {
-    if (!readPayload(EffectCodexSchema.V2WindowsWorldWritableWarningNotification, event.payload)) {
+    if (!readPayload(codexSchema.V2WindowsWorldWritableWarningNotification, event.payload)) {
       return [];
     }
     return [
@@ -2162,7 +2140,7 @@ function mapToRuntimeEvents(
 
   if (event.method === "windowsSandbox/setupCompleted") {
     const payload = readPayload(
-      EffectCodexSchema.V2WindowsSandboxSetupCompletedNotification,
+      codexSchema.V2WindowsSandboxSetupCompletedNotification,
       event.payload,
     );
     if (!payload) {
@@ -2240,6 +2218,20 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           });
         }
 
+        const codexSchema = yield* Effect.tryPromise({
+          try: async (signal) => {
+            const schema = await import("effect-codex-app-server/schema");
+            signal.throwIfAborted();
+            return schema;
+          },
+          catch: (cause) =>
+            new ProviderAdapterProcessError({
+              provider: PROVIDER,
+              threadId: input.threadId,
+              detail: "Failed to load the Codex protocol schema.",
+              cause,
+            }),
+        });
         const existing = sessions.get(input.threadId);
         if (existing && !existing.stopped) {
           yield* Effect.suspend(() => stopSessionInternal(existing));
@@ -2318,7 +2310,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
               }
             } else if (event.method === "thread/tokenUsage/updated") {
               const payload = readPayload(
-                EffectCodexSchema.V2ThreadTokenUsageUpdatedNotification,
+                codexSchema.V2ThreadTokenUsageUpdatedNotification,
                 event.payload,
               );
               if (payload) {
@@ -2339,35 +2331,37 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
               }
             }
 
-            const runtimeEvents = mapToRuntimeEvents(event, event.threadId).map((runtimeEvent) => {
-              if (runtimeEvent.type === "turn.completed" && runtimeEvent.turnId) {
-                return {
-                  ...runtimeEvent,
-                  payload: {
-                    ...runtimeEvent.payload,
-                    tokenUsage: completeCodexTurnTokenUsage(
-                      turnTokenUsage,
-                      String(runtimeEvent.turnId),
-                      runtimeEvent.payload.state === "completed",
-                    ),
-                  },
-                } satisfies ProviderRuntimeEvent;
-              }
-              if (runtimeEvent.type === "turn.aborted" && runtimeEvent.turnId) {
-                return {
-                  ...runtimeEvent,
-                  payload: {
-                    ...runtimeEvent.payload,
-                    tokenUsage: completeCodexTurnTokenUsage(
-                      turnTokenUsage,
-                      String(runtimeEvent.turnId),
-                      false,
-                    ),
-                  },
-                } satisfies ProviderRuntimeEvent;
-              }
-              return runtimeEvent;
-            });
+            const runtimeEvents = mapToRuntimeEvents(codexSchema, event, event.threadId).map(
+              (runtimeEvent) => {
+                if (runtimeEvent.type === "turn.completed" && runtimeEvent.turnId) {
+                  return {
+                    ...runtimeEvent,
+                    payload: {
+                      ...runtimeEvent.payload,
+                      tokenUsage: completeCodexTurnTokenUsage(
+                        turnTokenUsage,
+                        String(runtimeEvent.turnId),
+                        runtimeEvent.payload.state === "completed",
+                      ),
+                    },
+                  } satisfies ProviderRuntimeEvent;
+                }
+                if (runtimeEvent.type === "turn.aborted" && runtimeEvent.turnId) {
+                  return {
+                    ...runtimeEvent,
+                    payload: {
+                      ...runtimeEvent.payload,
+                      tokenUsage: completeCodexTurnTokenUsage(
+                        turnTokenUsage,
+                        String(runtimeEvent.turnId),
+                        false,
+                      ),
+                    },
+                  } satisfies ProviderRuntimeEvent;
+                }
+                return runtimeEvent;
+              },
+            );
             if (runtimeEvents.length === 0) {
               yield* Effect.logDebug("ignoring unhandled Codex provider event", {
                 method: event.method,

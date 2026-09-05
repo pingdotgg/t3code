@@ -1,5 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
@@ -100,6 +101,38 @@ function runShellEnvironment(input: {
 }
 
 describe("DesktopShellEnvironment", () => {
+  it.effect.skipIf(HostProcessPlatform.defaultValue() === "win32")(
+    "captures exported POSIX values literally and excludes unexported shell variables",
+    () =>
+      Effect.gen(function* () {
+        let capture = "";
+        yield* runShellEnvironment({
+          env: { SHELL: "/bin/sh", PATH: "/usr/bin" },
+          platform: "linux",
+          handler: (command) => {
+            if (command._tag === "StandardCommand") capture = command.args[1] ?? "";
+            return envOutput({ PATH: "/usr/bin" });
+          },
+        });
+        assert.notEqual(capture, "");
+        const values = {
+          PATH: "/a path:/usr/bin",
+          SSH_AUTH_SOCK: "quote'\" $HOME `literal`\\socket\nsecond line\n",
+        };
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const output = yield* spawner.string(
+          ChildProcess.make("/bin/sh", ["-c", `LANG=unexported; ${capture}`], {
+            env: values,
+            extendEnv: false,
+          }),
+        );
+        for (const [name, value] of Object.entries(values)) {
+          assert.include(output, envOutput({ [name]: value }));
+        }
+        assert.include(output, envOutput({ LANG: "" }));
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("hydrates PATH and missing SSH_AUTH_SOCK from the login shell on macOS", () =>
     Effect.gen(function* () {
       const env: NodeJS.ProcessEnv = {

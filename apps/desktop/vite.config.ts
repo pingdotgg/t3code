@@ -1,6 +1,7 @@
 import "vite-plus/test/config";
 import { defineConfig } from "vite-plus";
 
+import { isExternalCliDependency } from "../../scripts/lib/cli-external-packages.ts";
 import { loadRepoEnv } from "../../scripts/lib/public-config.ts";
 
 const repoEnv = loadRepoEnv();
@@ -45,10 +46,21 @@ export default defineConfig({
       sourcemap: true,
       outExtensions: () => ({ js: ".cjs" }),
       define: publicConfigDefine,
-      entry: ["src/main.ts"],
+      entry: { main: "src/bootstrap.ts", runtime: "src/main.ts" },
       clean: true,
       deps: {
-        alwaysBundle: (id) => id.startsWith("@t3tools/"),
+        // Avoid loading the Effect module graph from disk before Electron can start.
+        alwaysBundle: (id) =>
+          id.startsWith("@t3tools/") ||
+          id === "effect" ||
+          id.startsWith("effect/") ||
+          id === "@effect/platform-node" ||
+          id.startsWith("@effect/platform-node/") ||
+          id === "@effect/platform-node-shared" ||
+          id.startsWith("@effect/platform-node-shared/") ||
+          id === "electron-updater" ||
+          id.startsWith("electron-updater/"),
+        neverBundle: isExternalCliDependency,
       },
       ...(shouldLaunchElectronAfterPack ? { onSuccess: "node scripts/dev-electron.mjs" } : {}),
     },

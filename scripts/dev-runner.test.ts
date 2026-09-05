@@ -217,6 +217,10 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
         });
 
         assert.equal(env.T3CODE_HOME, path.resolve("/tmp/custom-t3"));
+        assert.equal(
+          env.NODE_COMPILE_CACHE,
+          path.resolve("/tmp/custom-t3", "cache", "node-compile"),
+        );
         assert.equal(env.T3CODE_PORT, "4222");
         assert.equal(env.VITE_HTTP_URL, "http://localhost:4222");
         assert.equal(env.VITE_WS_URL, "ws://localhost:4222");
@@ -225,6 +229,29 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
         assert.equal(env.T3CODE_LOG_WS_EVENTS, "1");
         assert.equal(env.T3CODE_HOST, "0.0.0.0");
         assert.equal(env.VITE_DEV_SERVER_URL, "http://localhost:7331/");
+      }),
+    );
+
+    it.effect("preserves Node compile-cache overrides and its disable flag", () =>
+      Effect.gen(function* () {
+        for (const cache of ["/tmp/custom-compile-cache", ""]) {
+          const env = yield* createDevRunnerEnv({
+            mode: "dev",
+            baseEnv: { NODE_COMPILE_CACHE: cache, NODE_DISABLE_COMPILE_CACHE: "1" },
+            serverOffset: 0,
+            webOffset: 0,
+            t3Home: "/tmp/custom-t3",
+            browser: undefined,
+            autoBootstrapProjectFromCwd: undefined,
+            logWebSocketEvents: undefined,
+            host: undefined,
+            port: undefined,
+            devUrl: undefined,
+          });
+
+          assert.equal(env.NODE_COMPILE_CACHE, cache);
+          assert.equal(env.NODE_DISABLE_COMPILE_CACHE, "1");
+        }
       }),
     );
 

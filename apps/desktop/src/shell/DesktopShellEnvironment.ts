@@ -235,16 +235,14 @@ const logShellEnvironmentCommandError = (
     }),
   );
 
-const capturePosixEnvironmentCommand = (names: ReadonlyArray<string>) =>
-  names
-    .map((name) => {
-      return [
-        `printf '%s\\n' '${startMarker(name)}'`,
-        `printenv ${name} || true`,
-        `printf '%s\\n' '${endMarker(name)}'`,
-      ].join("; ");
-    })
+const capturePosixEnvironmentCommand = (names: ReadonlyArray<string>) => {
+  // One POSIX child reads the exported environment, including when the login
+  // shell is fish. Spawning printenv for every variable adds up at launch.
+  const capture = names
+    .map((name) => `printf "%s\\n" "${startMarker(name)}" "\${${name}-}" "${endMarker(name)}"`)
     .join("; ");
+  return `/bin/sh -c '${capture}'`;
+};
 
 const captureWindowsEnvironmentCommand = (names: ReadonlyArray<string>) =>
   [

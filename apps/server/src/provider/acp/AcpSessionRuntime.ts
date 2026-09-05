@@ -16,7 +16,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/unstable/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
-import * as EffectAcpClient from "effect-acp/client";
+import type * as EffectAcpClient from "effect-acp/client";
 import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/schema";
 import type * as EffectAcpProtocol from "effect-acp/protocol";
@@ -327,6 +327,18 @@ export const make = (
   ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto | Scope.Scope
 > =>
   Effect.gen(function* () {
+    const acpClient = yield* Effect.tryPromise({
+      try: async (signal) => {
+        const client = await import("effect-acp/client");
+        signal.throwIfAborted();
+        return client;
+      },
+      catch: (cause) =>
+        new EffectAcpErrors.AcpTransportError({
+          detail: "Failed to load the ACP client runtime.",
+          cause,
+        }),
+    });
     const crypto = yield* Crypto.Crypto;
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const runtimeScope = yield* Scope.Scope;
@@ -470,7 +482,7 @@ export const make = (
     );
 
     const acpContext = yield* Layer.build(
-      EffectAcpClient.layerChildProcess(child, {
+      acpClient.layerChildProcess(child, {
         ...(options.transformStdout ? { transformStdout: options.transformStdout } : {}),
         ...(options.transformSessionUpdate
           ? { transformSessionUpdate: options.transformSessionUpdate }
@@ -486,7 +498,7 @@ export const make = (
       }),
     ).pipe(Effect.provideService(Scope.Scope, runtimeScope));
 
-    const acp = yield* Effect.service(EffectAcpClient.AcpClient).pipe(Effect.provide(acpContext));
+    const acp = yield* Effect.service(acpClient.AcpClient).pipe(Effect.provide(acpContext));
 
     const processSessionUpdate = (notification: EffectAcpSchema.SessionNotification) =>
       handleSessionUpdate({

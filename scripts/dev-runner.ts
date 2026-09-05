@@ -324,10 +324,15 @@ export function createDevRunnerEnv({
     // by the caller; an unset t3Home here genuinely means "use the default".
     const configuredBaseDir = t3Home?.trim() || undefined;
     const resolvedBaseDir = yield* resolveBaseDir(configuredBaseDir);
+    const path = yield* Path.Path;
     const isDesktopMode = mode === "dev:desktop";
 
     const output: NodeJS.ProcessEnv = {
       ...baseEnv,
+      // Reuse compiled modules across dev launches. Node handles invalidation
+      // and still honors an inherited NODE_DISABLE_COMPILE_CACHE.
+      NODE_COMPILE_CACHE:
+        baseEnv.NODE_COMPILE_CACHE ?? path.join(resolvedBaseDir, "cache", "node-compile"),
       PORT: String(webPort),
       VITE_DEV_SERVER_URL:
         devUrl?.toString() ??

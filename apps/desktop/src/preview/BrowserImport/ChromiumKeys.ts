@@ -17,7 +17,6 @@
  *
  * @module ChromiumKeys
  */
-import * as Keyring from "@napi-rs/keyring";
 import * as NodeCrypto from "node:crypto";
 
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
@@ -105,6 +104,10 @@ const readKeychainSecret = Effect.fn("ChromiumKeys.readKeychainSecret")(function
   service: string,
   account: string,
 ) {
+  const Keyring = yield* Effect.tryPromise({
+    try: () => import("@napi-rs/keyring"),
+    catch: (cause) => new ChromiumKeyError({ reason: "keychainUnavailable", cause }),
+  });
   const secret = yield* Effect.try({
     try: () => new Keyring.Entry(service, account).getPassword(),
     catch: (cause) => {

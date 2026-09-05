@@ -2,6 +2,7 @@ import { bootstrapRemoteBearerSession } from "@t3tools/client-runtime/authorizat
 import { PRIMARY_LOCAL_ENVIRONMENT_ID } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Duration from "effect/Duration";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
@@ -20,6 +21,15 @@ export class DesktopLocalEnvironmentAuthBackendNotConfiguredError extends Schema
   }
 }
 
+export class DesktopLocalEnvironmentAuthBackendStoppedError extends Schema.TaggedErrorClass<DesktopLocalEnvironmentAuthBackendStoppedError>()(
+  "DesktopLocalEnvironmentAuthBackendStoppedError",
+  {},
+) {
+  override get message(): string {
+    return "Local backend stopped before authentication was ready.";
+  }
+}
+
 export class DesktopLocalEnvironmentAuthSessionBootstrapError extends Schema.TaggedErrorClass<DesktopLocalEnvironmentAuthSessionBootstrapError>()(
   "DesktopLocalEnvironmentAuthSessionBootstrapError",
   { cause: Schema.Defect() },
@@ -31,6 +41,7 @@ export class DesktopLocalEnvironmentAuthSessionBootstrapError extends Schema.Tag
 
 export const DesktopLocalEnvironmentAuthError = Schema.Union([
   DesktopLocalEnvironmentAuthBackendNotConfiguredError,
+  DesktopLocalEnvironmentAuthBackendStoppedError,
   DesktopLocalEnvironmentAuthSessionBootstrapError,
 ]);
 export type DesktopLocalEnvironmentAuthError = typeof DesktopLocalEnvironmentAuthError.Type;
@@ -66,6 +77,11 @@ export const make = Effect.gen(function* () {
         const credential = config.bootstrap.desktopBootstrapToken;
         if (!credential) {
           return yield* new DesktopLocalEnvironmentAuthBackendNotConfiguredError();
+        }
+        // Renderer assets can load while the local server starts. Every primary
+        // HTTP request already awaits this token, so gate the exchange here.
+        if (primary === undefined || !(yield* primary.waitForReady(Duration.infinity))) {
+          return yield* new DesktopLocalEnvironmentAuthBackendStoppedError();
         }
         const session = yield* bootstrapRemoteBearerSession({
           httpBaseUrl: config.httpBaseUrl.href,
