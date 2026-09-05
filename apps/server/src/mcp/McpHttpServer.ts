@@ -11,6 +11,7 @@ import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstab
 
 import packageJson from "../../package.json" with { type: "json" };
 import * as McpInvocationContext from "./McpInvocationContext.ts";
+import * as ConversationTransferMcpService from "./ConversationTransferMcpService.ts";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
@@ -223,6 +224,7 @@ export const PreviewToolkitRegistrationLive = Layer.mergeAll(
 
 export const OrchestratorToolkitRegistrationLive = McpServer.toolkit(OrchestratorToolkit).pipe(
   Layer.provide(OrchestratorToolkitHandlersLive),
+  Layer.provide(ConversationTransferMcpService.layer),
   Layer.provide(OrchestratorMcpService.layer),
 );
 
