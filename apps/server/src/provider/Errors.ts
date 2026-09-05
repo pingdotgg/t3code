@@ -39,3 +39,19 @@ export class ProviderDriverError extends Schema.TaggedErrorClass<ProviderDriverE
     return `Provider driver '${this.driver}' failed to create instance '${this.instanceId}': ${this.detail}`;
   }
 }
+
+/**
+ * ProviderWorkspaceMissingError - The session's working directory no longer
+ * exists on disk, so no provider process can start in it.
+ */
+export class ProviderWorkspaceMissingError extends Schema.TaggedErrorClass<ProviderWorkspaceMissingError>()(
+  "ProviderWorkspaceMissingError",
+  {
+    threadId: Schema.String,
+    cwd: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `This thread's workspace folder no longer exists or is not a directory: ${this.cwd}. Restore the folder at this path before retrying.`;
+  }
+}

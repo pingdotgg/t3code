@@ -2922,6 +2922,31 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   ) =>
     Effect.gen(function* () {
       let projection = yield* getProjectionWithPendingEvents(command.threadId, events);
+      if (command.restartContinuationOfRunId !== undefined) {
+        const source = projection.runs.find((run) => run.id === command.restartContinuationOfRunId);
+        if (
+          !source ||
+          source.status !== "cancelled" ||
+          projection.thread.archivedAt !== null ||
+          projection.thread.deletedAt !== null ||
+          projection.thread.providerInstanceId !== source.providerInstanceId ||
+          projection.runs.some((run) => run.ordinal > source.ordinal)
+        ) {
+          // Preserve the current row so stale automatic deliveries receive an
+          // accepted receipt without changing work or repeatedly retrying.
+          yield* emit(
+            events,
+            command,
+          )({
+            type: "thread.metadata-updated",
+            threadId: command.threadId,
+            occurredAt: yield* DateTime.now,
+            payload: projection.thread,
+          });
+          return;
+        }
+      }
+
       if (projection.thread.settledOverride !== null) {
         const now = yield* DateTime.now;
         const thread: OrchestrationV2AppThread = {
@@ -3223,6 +3248,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           checkpointId: null,
           contextHandoffId: null,
           ...(command.sourcePlanRef === undefined ? {} : { sourcePlanRef: command.sourcePlanRef }),
+          ...(command.restartContinuationOfRunId === undefined
+            ? {}
+            : { restartContinuationOfRunId: command.restartContinuationOfRunId }),
         };
         const attempt: OrchestrationV2RunAttempt = {
           id: attemptId,
@@ -3476,6 +3504,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           checkpointId: null,
           contextHandoffId: legacyImportHandoff?.id ?? null,
           ...(command.sourcePlanRef === undefined ? {} : { sourcePlanRef: command.sourcePlanRef }),
+          ...(command.restartContinuationOfRunId === undefined
+            ? {}
+            : { restartContinuationOfRunId: command.restartContinuationOfRunId }),
         };
         const attempt: OrchestrationV2RunAttempt = {
           id: attemptId,
@@ -4135,6 +4166,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           legacyImportRecoveryHandoff?.id ??
           null,
         ...(command.sourcePlanRef === undefined ? {} : { sourcePlanRef: command.sourcePlanRef }),
+        ...(command.restartContinuationOfRunId === undefined
+          ? {}
+          : { restartContinuationOfRunId: command.restartContinuationOfRunId }),
       };
       const attempt: OrchestrationV2RunAttempt = {
         id: attemptId,

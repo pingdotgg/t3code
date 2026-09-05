@@ -13,6 +13,7 @@ import * as CheckpointStore from "../../checkpointing/CheckpointStore.ts";
 import { ServerConfig } from "../../config.ts";
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import { ThreadManagementService } from "../ThreadManagementService.ts";
 import { layer as mcpSessionRegistryTestLayer } from "../../mcp/McpSessionRegistry.testkit.ts";
 import * as VcsDriverRegistry from "../../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../../vcs/VcsProcess.ts";
@@ -371,6 +372,8 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
         providerTurnStartServiceProvided,
         runtimeRequestServiceProvided,
         threadTitleRegenerationTestLayer,
+        serverSettingsLayer,
+        Layer.mock(ThreadManagementService)({}),
       ),
     ),
   );
@@ -402,7 +405,7 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
   // orchestrator. Keeping this acquisition in the replay layer makes the
   // outbox lifecycle explicit and prevents test-only command-side draining.
   if (options.runEffectWorker === false) {
-    return orchestratorProvided;
+    return orchestratorProvided.pipe(Layer.provide(NodeServices.layer));
   }
   return Layer.effect(
     OrchestratorV2,

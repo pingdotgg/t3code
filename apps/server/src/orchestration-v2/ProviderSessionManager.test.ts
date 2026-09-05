@@ -17,6 +17,7 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
@@ -25,6 +26,7 @@ import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
 import { HttpServer } from "effect/unstable/http";
 
+import { ProviderWorkspaceMissingError } from "../provider/Errors.ts";
 import { ServerEnvironment } from "../environment/ServerEnvironment.ts";
 import * as McpProviderSession from "../mcp/McpProviderSession.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
@@ -378,7 +380,7 @@ function makeTestLayer(input: {
         ),
       ),
     ),
-  );
+  ).pipe(Layer.provide(NodeServices.layer));
 }
 
 const fakeHttpServer = HttpServer.HttpServer.of({
@@ -2344,4 +2346,103 @@ it.effect(
         ),
       );
     }),
+);
+
+for (const workspaceState of ["missing", "file"] as const) {
+  it.effect(`rejects a ${workspaceState} workspace before opening a provider session`, () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const root = yield* fileSystem.makeTempDirectoryScoped();
+      const cwd = `${root}/workspace`;
+      if (workspaceState === "file") yield* fileSystem.writeFileString(cwd, "not a directory");
+      const state = yield* Ref.make(emptyState);
+      yield* Effect.gen(function* () {
+        const manager = yield* ProviderSessionManagerV2;
+        const eventSink = yield* EventSinkV2;
+        const projectionStore = yield* ProjectionStoreV2;
+        const idAllocator = yield* IdAllocatorV2;
+        const threadId = ThreadId.make(`thread-${workspaceState}-workspace`);
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        yield* eventSink.write({
+          events: [
+            yield* makeThreadCreatedEvent({
+              idAllocator,
+              threadId,
+              now: yield* DateTime.now,
+            }),
+          ],
+        });
+        const error = yield* manager
+          .open({
+            threadId,
+            providerSessionId,
+            modelSelection,
+            runtimePolicy: { ...runtimePolicy, cwd },
+          })
+          .pipe(Effect.flip);
+        assert.instanceOf(error, ProviderWorkspaceMissingError);
+        assert.include(error.message, cwd);
+        assert.include(error.message, "Restore the folder at this path before retrying.");
+        assert.equal((yield* Ref.get(state)).openCount, 0);
+        assert.isTrue(Option.isNone(yield* manager.get(providerSessionId)));
+        assert.deepEqual(
+          (yield* projectionStore.getThreadProjection(threadId)).providerSessions,
+          [],
+        );
+      }).pipe(Effect.provide(makeTestLayer({ state, idleTimeoutMs: 60_000 })));
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+}
+
+it.effect(
+  "rejects a deleted workspace before reusing a live session without changing its state",
+  () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const root = yield* fileSystem.makeTempDirectoryScoped();
+      const cwd = `${root}/workspace`;
+      yield* fileSystem.makeDirectory(cwd);
+      const state = yield* Ref.make(emptyState);
+      yield* Effect.gen(function* () {
+        const manager = yield* ProviderSessionManagerV2;
+        const eventSink = yield* EventSinkV2;
+        const projectionStore = yield* ProjectionStoreV2;
+        const idAllocator = yield* IdAllocatorV2;
+        const threadId = ThreadId.make("thread-deleted-live-workspace");
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        yield* eventSink.write({
+          events: [
+            yield* makeThreadCreatedEvent({
+              idAllocator,
+              threadId,
+              now: yield* DateTime.now,
+            }),
+          ],
+        });
+        const input = {
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy: { ...runtimePolicy, cwd },
+        };
+        const runtime = yield* manager.open(input);
+        const before = yield* projectionStore.getThreadProjection(threadId);
+        yield* fileSystem.remove(cwd, { recursive: true });
+        const error = yield* manager.open(input).pipe(Effect.flip);
+        assert.instanceOf(error, ProviderWorkspaceMissingError);
+        assert.equal((yield* Ref.get(state)).openCount, 1);
+        assert.equal((yield* Ref.get(state)).closeCount, 0);
+        assert.strictEqual(Option.getOrThrow(yield* manager.get(providerSessionId)), runtime);
+        assert.deepEqual(
+          (yield* projectionStore.getThreadProjection(threadId)).providerSessions,
+          before.providerSessions,
+        );
+      }).pipe(Effect.provide(makeTestLayer({ state, idleTimeoutMs: 60_000 })));
+    }).pipe(Effect.provide(NodeServices.layer)),
 );

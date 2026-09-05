@@ -76,10 +76,7 @@ export const layer: Layer.Layer<
     return RuntimeRequestServiceV2.of({
       respond: (input) =>
         Effect.gen(function* () {
-          const projection = yield* projections.getThreadProjection(input.threadId);
-          const request = projection.runtimeRequests.find(
-            (candidate) => candidate.id === input.requestId,
-          );
+          const request = yield* projections.getRuntimeRequest(input.threadId, input.requestId);
           if (request === undefined) {
             return yield* new RuntimeRequestResponseExecutionError({
               reason: "request-missing",
