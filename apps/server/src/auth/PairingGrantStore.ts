@@ -220,6 +220,12 @@ export class PairingGrantStore extends Context.Service<
         readonly proofKeyThumbprint?: string;
       },
     ) => Effect.Effect<BootstrapGrant, BootstrapCredentialError>;
+    readonly validateAvailable: (
+      credential: string,
+      input?: {
+        readonly proofKeyThumbprint?: string;
+      },
+    ) => Effect.Effect<BootstrapGrant, BootstrapCredentialError>;
   }
 >()("t3/auth/PairingGrantStore") {}
 
@@ -431,6 +437,76 @@ export const make = Effect.gen(function* () {
     return issued;
   });
 
+  const toBootstrapGrant = (grant: BootstrapGrant): BootstrapGrant => ({
+    method: grant.method,
+    scopes: grant.scopes,
+    subject: grant.subject,
+    ...(grant.label ? { label: grant.label } : {}),
+    ...(grant.proofKeyThumbprint ? { proofKeyThumbprint: grant.proofKeyThumbprint } : {}),
+    expiresAt: grant.expiresAt,
+  });
+
+  const validateGrantDetails = (
+    grant: BootstrapGrant,
+    now: DateTime.DateTime,
+    input: { readonly proofKeyThumbprint?: string } | undefined,
+  ): BootstrapGrant | BootstrapCredentialInvalidError => {
+    if (DateTime.isGreaterThanOrEqualTo(now, grant.expiresAt)) {
+      return new ExpiredBootstrapCredentialError({});
+    }
+    if (grant.proofKeyThumbprint && grant.proofKeyThumbprint !== input?.proofKeyThumbprint) {
+      return new BootstrapCredentialProofKeyMismatchError({});
+    }
+    return toBootstrapGrant(grant);
+  };
+
+  const validateStoredGrant = (
+    grant: AuthPairingLinks.AuthPairingLinkRecord,
+    now: DateTime.DateTime,
+    input: { readonly proofKeyThumbprint?: string } | undefined,
+  ): BootstrapGrant | BootstrapCredentialInvalidError => {
+    if (grant.revokedAt !== null) {
+      return new UnavailableBootstrapCredentialError({});
+    }
+    if (grant.consumedAt !== null) {
+      return new UnknownBootstrapCredentialError({});
+    }
+    return validateGrantDetails(
+      {
+        method: grant.method,
+        scopes: grant.scopes,
+        subject: grant.subject,
+        ...(grant.label ? { label: grant.label } : {}),
+        ...(grant.proofKeyThumbprint ? { proofKeyThumbprint: grant.proofKeyThumbprint } : {}),
+        expiresAt: grant.expiresAt,
+      },
+      now,
+      input,
+    );
+  };
+
+  const validateAvailable: PairingGrantStore["Service"]["validateAvailable"] = Effect.fn(
+    "PairingGrantStore.validateAvailable",
+  )(function* (credential, input) {
+    const now = yield* DateTime.now;
+    const seededGrant = yield* Ref.get(seededGrantsRef).pipe(
+      Effect.map((grants) => grants.get(credential)),
+    );
+    if (seededGrant) {
+      const result = validateGrantDetails(seededGrant, now, input);
+      return isBootstrapCredentialInvalidError(result) ? yield* result : result;
+    }
+
+    const matching = yield* pairingLinks
+      .getByCredential({ credential })
+      .pipe(Effect.mapError((cause) => new BootstrapCredentialLookupError({ cause })));
+    if (Option.isNone(matching)) {
+      return yield* new UnknownBootstrapCredentialError({});
+    }
+    const result = validateStoredGrant(matching.value, now, input);
+    return isBootstrapCredentialInvalidError(result) ? yield* result : result;
+  });
+
   const consume: PairingGrantStore["Service"]["consume"] = Effect.fn("PairingGrantStore.consume")(
     function* (credential, input) {
       const now = yield* DateTime.now;
@@ -572,6 +648,7 @@ export const make = Effect.gen(function* () {
     },
     revoke,
     consume,
+    validateAvailable,
   });
 });
 
