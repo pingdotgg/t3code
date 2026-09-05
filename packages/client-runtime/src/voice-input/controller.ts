@@ -426,9 +426,8 @@ export class VoiceInputController {
     );
     try {
       await this.dependencies.recorder.stop();
-      this.rememberRecordingUri(this.dependencies.recorder.uri);
     } catch {
-      this.rememberRecordingUri(this.dependencies.recorder.uri);
+      // Unmounting may have already released the native recorder.
     } finally {
       await this.releaseResources();
     }
@@ -436,7 +435,12 @@ export class VoiceInputController {
 
   private async releaseResources(): Promise<void> {
     this.rememberRecordingUri(this.recordingUri);
-    this.rememberRecordingUri(this.dependencies.recorder.uri);
+    try {
+      this.rememberRecordingUri(this.dependencies.recorder.uri);
+    } catch {
+      // Expo releases the recorder on unmount. Clean up the captured URI and
+      // release the app-wide session even when native properties are gone.
+    }
     this.recordingUri = null;
     for (const uri of this.ownedRecordingUris) {
       try {

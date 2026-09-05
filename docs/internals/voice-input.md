@@ -40,6 +40,10 @@ only after their underlying work stops. The Apple binding checks cancellation be
 steps but cannot interrupt an in-flight native request. The controller retains its session until
 that work settles, ignores its result, and cleans up the recording.
 
+Expo can release the native recorder before the controller's asynchronous unmount cleanup finishes.
+Cleanup tolerates unavailable recorder properties, deletes the previously captured recording URI,
+and releases the audio session and app-wide recording lock so another composer can start voice input.
+
 ## Ownership decisions
 
 The extension boundary distinguishes transcription on the client device from transcription through
