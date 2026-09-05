@@ -6834,7 +6834,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               <div
                 className={cn(
                   "relative",
-                  !isComposerResting && "pr-14",
+                  !isComposerResting && "pr-28",
                   isComposerResting && "flex min-w-0 items-center gap-1",
                   isComposerResting &&
                     ((settings.contextWindowMeterEnabled && activeContextWindow) ||
@@ -6846,6 +6846,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 )}
               >
                 {!isComposerApprovalState &&
+                !isComposerResting &&
                 !projectSelectionRequired &&
                 pendingUserInputs.length === 0 &&
                 activePendingProgress === null &&
