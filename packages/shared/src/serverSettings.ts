@@ -69,14 +69,14 @@ export interface PersistedServerObservabilitySettings {
   readonly otlpMetricsUrl: string | undefined;
 }
 
-export function normalizePersistedServerSettingString(
+function normalizePersistedServerSettingString(
   value: string | null | undefined,
 ): string | undefined {
   const trimmed = value?.trim();
   return trimmed && trimmed.length > 0 ? trimmed : undefined;
 }
 
-export function extractPersistedServerObservabilitySettings(input: {
+function extractPersistedServerObservabilitySettings(input: {
   readonly observability?: {
     readonly otlpTracesUrl?: string;
     readonly otlpMetricsUrl?: string;
