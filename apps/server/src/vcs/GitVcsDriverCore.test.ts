@@ -1377,6 +1377,77 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         assert.equal(result.branch, current);
       }),
     );
+
+    it.effect("explains checkout failures caused by uncommitted changes", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        yield* git(cwd, ["checkout", "-b", "feature/target"]);
+        yield* writeTextFile(cwd, "README.md", "# target\n");
+        yield* git(cwd, ["add", "."]);
+        yield* git(cwd, ["commit", "-m", "target commit"]);
+        yield* git(cwd, ["checkout", initialBranch]);
+        yield* writeTextFile(cwd, "README.md", "# dirty\n");
+
+        const error = yield* driver.switchRef({ cwd, refName: "feature/target" }).pipe(Effect.flip);
+
+        assert.deepInclude(error, {
+          _tag: "GitCommandError",
+          operation: "GitVcsDriver.switchRef.checkout",
+          cwd,
+        });
+        assert.include(error.detail, "uncommitted changes would be overwritten");
+        assert.include(error.detail, "Commit, stash, or discard");
+        assert.notProperty(error, "stderr");
+      }),
+    );
+
+    it.effect("explains checkout failures when the branch is checked out in another worktree", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const worktreesRoot = yield* makeTmpDir("git-vcs-driver-worktrees-");
+        const fileSystem = yield* FileSystem.FileSystem;
+        const pathService = yield* Path.Path;
+        const worktreePath = pathService.join(worktreesRoot, "linked-worktree");
+        yield* fileSystem.makeDirectory(worktreesRoot, { recursive: true });
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        yield* git(cwd, ["worktree", "add", "-b", "feature/linked", worktreePath]);
+
+        const error = yield* driver.switchRef({ cwd, refName: "feature/linked" }).pipe(Effect.flip);
+
+        assert.deepInclude(error, {
+          _tag: "GitCommandError",
+          operation: "GitVcsDriver.switchRef.checkout",
+          cwd,
+        });
+        assert.include(error.detail, "already checked out in another worktree");
+        assert.notProperty(error, "stderr");
+      }),
+    );
+
+    it.effect("explains checkout failures for unknown refs", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        const error = yield* driver
+          .switchRef({ cwd, refName: "does/not-exist-xyz" })
+          .pipe(Effect.flip);
+
+        assert.deepInclude(error, {
+          _tag: "GitCommandError",
+          operation: "GitVcsDriver.switchRef.checkout",
+          cwd,
+        });
+        assert.include(error.detail, "not found locally or on remotes");
+        assert.notProperty(error, "stderr");
+      }),
+    );
   });
 
   describe("worktree operations", () => {

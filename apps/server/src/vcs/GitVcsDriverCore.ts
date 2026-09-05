@@ -448,6 +448,27 @@ function isMissingWorktreeStderr(stderr: string): boolean {
   );
 }
 
+// Classifies `git checkout` stderr into a closed set of static sentences.
+// Raw stderr never leaves the driver (it can carry remote URLs with embedded
+// credentials), so every branch returns a fixed string that names the cause
+// and the fix instead of echoing git's output.
+function classifySwitchRefCheckoutError(stderr: string): string {
+  const normalized = stderr.toLowerCase();
+  if (normalized.includes("used by worktree")) {
+    return "git checkout failed because the branch is already checked out in another worktree. Switch in that worktree or check out a different branch.";
+  }
+  if (
+    normalized.includes("would be overwritten by checkout") ||
+    normalized.includes("stash them before you switch")
+  ) {
+    return "git checkout failed because uncommitted changes would be overwritten. Commit, stash, or discard those changes, then try again.";
+  }
+  if (normalized.includes("did not match any file") || normalized.includes("pathspec")) {
+    return "git checkout failed because the ref was not found locally or on remotes. Fetch the latest refs and check the branch name, then try again.";
+  }
+  return "git checkout failed";
+}
+
 interface Trace2Monitor {
   readonly env: NodeJS.ProcessEnv;
   readonly flush: Effect.Effect<void, never>;
@@ -3221,10 +3242,33 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
               ? ["checkout", localTrackingBranch]
               : ["checkout", input.refName];
 
-      yield* executeGit("GitVcsDriver.switchRef.checkout", input.cwd, checkoutArgs, {
-        timeoutMs: 10_000,
-        fallbackErrorDetail: "git checkout failed",
-      });
+      const checkoutResult = yield* executeGit(
+        "GitVcsDriver.switchRef.checkout",
+        input.cwd,
+        checkoutArgs,
+        {
+          timeoutMs: 10_000,
+          allowNonZeroExit: true,
+        },
+      );
+      if (checkoutResult.exitCode !== 0) {
+        // Raw stderr stays out of the wire error (it can carry secrets); the
+        // classified detail names the cause and the fix instead.
+        yield* Effect.logWarning(
+          `GitVcsDriver.switchRef: git checkout exited with code ${checkoutResult.exitCode} (stderr length ${checkoutResult.stderr.length}).`,
+        );
+        return yield* new GitCommandError({
+          ...gitCommandContext({
+            operation: "GitVcsDriver.switchRef.checkout",
+            cwd: input.cwd,
+            args: checkoutArgs,
+          }),
+          detail: classifySwitchRefCheckoutError(checkoutResult.stderr),
+          ...(checkoutResult.exitCode === null ? {} : { exitCode: checkoutResult.exitCode }),
+          stdoutLength: checkoutResult.stdout.length,
+          stderrLength: checkoutResult.stderr.length,
+        });
+      }
 
       const refName = yield* runGitStdout("GitVcsDriver.switchRef.currentBranch", input.cwd, [
         "branch",
