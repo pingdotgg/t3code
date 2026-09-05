@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 import { CheckpointRef, MessageId, TurnId } from "@t3tools/contracts";
 import {
+  createTimelineMinimapProjector,
   computeStableMessagesTimelineRows,
   computeMessageDurationStart,
   deriveMessagesTimelineRows,
@@ -11,6 +12,7 @@ import {
   resolveWorkGroupScrollIndex,
   shouldFollowWorkGroupAppend,
   shouldPreserveAssistantLineBreaks,
+  updateTimelineMinimapMarkers,
   type MessagesTimelineRow,
   workEntryDisplayLabel,
 } from "./MessagesTimeline.logic";
@@ -22,6 +24,95 @@ import {
 } from "../../session-logic";
 import { buildRevertTurnCountByUserMessageId } from "../ChatView.logic";
 import { isImageAttachment, type ChatMessage, type TurnDiffSummary } from "../../types";
+
+describe("minimap marker updates", () => {
+  const items = Array.from({ length: 6 }, (_, index) => ({
+    id: `marker-${index}`,
+    rowIndex: index,
+    userText: "User message",
+    assistantText: null,
+  }));
+  const state = {
+    scroll: 10,
+    scrollLength: 20,
+    positionAtIndex: (index: number) => index * 10,
+    sizeAtIndex: () => 10,
+  };
+
+  function strip(initial: string | undefined) {
+    let value = initial;
+    let writes = 0;
+    return {
+      dataset: {
+        get inView() {
+          return value;
+        },
+        set inView(next: string | undefined) {
+          value = next;
+          writes += 1;
+        },
+      },
+      get writes() {
+        return writes;
+      },
+    };
+  }
+
+  it("writes only markers whose visible state changes", () => {
+    const nodes = new Map(items.map((item) => [item.id, strip("false")]));
+    const writes = () => [...nodes.values()].reduce((total, node) => total + node.writes, 0);
+    updateTimelineMinimapMarkers(state, items, nodes);
+    expect([...nodes.values()].map((node) => node.dataset.inView)).toEqual([
+      "false",
+      "true",
+      "true",
+      "false",
+      "false",
+      "false",
+    ]);
+    expect(writes()).toBe(2);
+    updateTimelineMinimapMarkers(state, items, nodes);
+    expect(writes()).toBe(2);
+
+    updateTimelineMinimapMarkers({ ...state, scroll: 20 }, items, nodes);
+    expect([...nodes.values()].map((node) => node.dataset.inView)).toEqual([
+      "false",
+      "false",
+      "true",
+      "true",
+      "false",
+      "false",
+    ]);
+    expect(writes()).toBe(4);
+
+    updateTimelineMinimapMarkers({ ...state, positionAtIndex: () => Number.NaN }, items, nodes);
+    expect([...nodes.values()].every((node) => node.dataset.inView === "false")).toBe(true);
+    expect(writes()).toBe(6);
+  });
+
+  it("initializes replacement refs and corrects recycled nodes without touching removed refs", () => {
+    const nodes = new Map(items.map((item) => [item.id, strip("false")]));
+    updateTimelineMinimapMarkers(state, items, nodes);
+    const removed = nodes.get("marker-1")!;
+    const replacement = strip(undefined);
+    nodes.set("marker-1", replacement);
+    updateTimelineMinimapMarkers(state, items, nodes);
+    expect(replacement.dataset.inView).toBe("true");
+    expect(replacement.writes).toBe(1);
+
+    nodes.delete("marker-1");
+    nodes.set("marker-5", replacement);
+    const mounted = strip("false");
+    nodes.set("marker-1", mounted);
+    updateTimelineMinimapMarkers(state, items, nodes);
+    expect(replacement.dataset.inView).toBe("false");
+    expect(replacement.writes).toBe(2);
+    expect(mounted.dataset.inView).toBe("true");
+    expect(mounted.writes).toBe(1);
+    expect(removed.dataset.inView).toBe("true");
+    expect(removed.writes).toBe(1);
+  });
+});
 
 describe("streaming row projection", () => {
   function fixture(text = "") {
@@ -102,6 +193,133 @@ describe("streaming row projection", () => {
     } satisfies Parameters<typeof deriveMessagesTimelineRows>[0];
     return { messages, work, timeline, input, time, turnId, historyTurnId };
   }
+
+  it("keeps full minimap previews and row indexes when turns are reordered", () => {
+    const initial = fixture();
+    const source = deriveMessagesTimelineRowsWithState(initial.input).rows;
+    const messageRows = source.filter((row) => row.kind === "message");
+    const user = messageRows.find((row) => row.message.role === "user")!;
+    const assistant = messageRows.find((row) => row.message.role === "assistant")!;
+    const work = source.find((row) => row.kind !== "message")!;
+    const userRow = (id: string, text: string) => ({
+      ...user,
+      id,
+      message: { ...user.message, id: MessageId.make(id), text },
+    });
+    const assistantRow = (id: string, text: string) => ({
+      ...assistant,
+      id,
+      message: { ...assistant.message, id: MessageId.make(id), text },
+    });
+    const longText = "\nall\ttext\u00a0".repeat(600) + "end";
+    const rows = Object.freeze([
+      assistantRow("leading", "Ignore this earlier response"),
+      userRow("user-a", " \tPrompt\u00a0A\n"),
+      assistantRow("earlier-a", "Not the final response"),
+      work,
+      assistantRow("final-a", " \n\t"),
+      userRow("user-b", "Keep the full text"),
+      assistantRow("final-b", longText),
+      userRow("user-c", "Unanswered"),
+    ]);
+    const project = createTimelineMinimapProjector();
+    const first = project(rows);
+    expect(first).toEqual([
+      { id: "user-a", rowIndex: 1, userText: "Prompt A", assistantText: null },
+      {
+        id: "user-b",
+        rowIndex: 5,
+        userText: "Keep the full text",
+        assistantText: "all text ".repeat(600) + "end",
+      },
+      { id: "user-c", rowIndex: 7, userText: "Unanswered", assistantText: null },
+    ]);
+    Object.freeze(first);
+    for (const item of first) Object.freeze(item);
+    expect(project([rows[5]!, rows[6]!, rows[1]!, rows[4]!, rows[7]!])).toEqual([
+      { ...first[1]!, rowIndex: 0 },
+      { ...first[0]!, rowIndex: 2 },
+      { ...first[2]!, rowIndex: 4 },
+    ]);
+    expect(first.map((item) => item.rowIndex)).toEqual([1, 5, 7]);
+  });
+
+  it("reuses unchanged minimap text and refreshes a new message version with the same ID", () => {
+    const initial = fixture("First  part\n");
+    let reads = 0;
+    const countTextReads = (message: ChatMessage): ChatMessage => {
+      const text = message.text;
+      return {
+        ...message,
+        get text() {
+          reads += 1;
+          return text;
+        },
+      };
+    };
+    const rows = deriveMessagesTimelineRowsWithState(initial.input).rows.map((row) =>
+      row.kind === "message" ? { ...row, message: countTextReads(row.message) } : row,
+    );
+    const live = rows.filter((row) => row.kind === "message").find((row) => row.message.streaming)!;
+    const project = createTimelineMinimapProjector();
+    const first = project(rows);
+    expect(reads).toBe(4);
+    expect(project(rows)).toEqual(first);
+    expect(reads).toBe(4);
+
+    const changedMessage = countTextReads({ ...initial.messages.at(-1)!, text: "Next\tpart" });
+    const changed = rows.map((row) => (row === live ? { ...live, message: changedMessage } : row));
+    expect(project(changed).at(-1)?.assistantText).toBe("Next part");
+    expect(reads).toBe(5);
+    expect(first.at(-1)?.assistantText).toBe("First part");
+
+    const blankMessage = countTextReads({ ...initial.messages.at(-1)!, text: " \n" });
+    const blank = rows.map((row) => (row === live ? { ...live, message: blankMessage } : row));
+    expect(project(blank).at(-1)?.assistantText).toBeNull();
+    expect(project(blank).at(-1)?.assistantText).toBeNull();
+    expect(reads).toBe(6);
+  });
+
+  it("drops an unused preview even when its completed reply remains in raw history", () => {
+    const initial = fixture("Earlier final");
+    const rows = deriveMessagesTimelineRowsWithState(initial.input).rows;
+    const live = rows.filter((row) => row.kind === "message").find((row) => row.message.streaming)!;
+    let earlierReads = 0;
+    const earlierMessage = {
+      ...initial.messages.at(-1)!,
+      streaming: false,
+      get text() {
+        earlierReads += 1;
+        return "Earlier final";
+      },
+    };
+    const earlierRows = rows.map((row) =>
+      row === live ? { ...live, message: earlierMessage } : row,
+    );
+    const project = createTimelineMinimapProjector();
+    expect(project(earlierRows).at(-1)?.assistantText).toBe("Earlier final");
+    expect(earlierReads).toBe(1);
+
+    const retainedHistory = [
+      ...earlierRows,
+      {
+        ...live,
+        id: "later-final",
+        message: {
+          ...initial.messages.at(-1)!,
+          id: MessageId.make("later-final"),
+          text: "Later final",
+          streaming: false,
+        },
+      },
+    ];
+    expect(project(retainedHistory).at(-1)?.assistantText).toBe("Later final");
+    expect(earlierReads).toBe(1);
+
+    // Returning to the earlier reply must rebuild the preview that was evicted.
+    expect(project(earlierRows).at(-1)?.assistantText).toBe("Earlier final");
+    expect(earlierReads).toBe(2);
+  });
 
   it.each([
     ["", "Now visible"],

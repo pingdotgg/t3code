@@ -169,6 +169,94 @@ export function shouldPreserveAssistantLineBreaks(text: string): boolean {
   return /^★ Insight(?:\s|─)/mu.test(text);
 }
 
+export interface TimelineMinimapItem {
+  readonly id: string;
+  readonly rowIndex: number;
+  readonly userText: string | null;
+  readonly assistantText: string | null;
+}
+
+interface TimelinePositionState {
+  readonly contentLength?: number;
+  readonly scroll?: number;
+  readonly scrollLength?: number;
+  readonly positionAtIndex?: (index: number) => number | undefined;
+  readonly sizeAtIndex?: (index: number) => number | undefined;
+}
+
+/** Reuse immutable message previews, retaining only the latest projection. */
+export function createTimelineMinimapProjector() {
+  let previews = new Map<ChatMessage, string | null>();
+
+  return (rows: ReadonlyArray<MessagesTimelineRow>): TimelineMinimapItem[] => {
+    const nextPreviews = new Map<ChatMessage, string | null>();
+    const preview = (message: ChatMessage | null) => {
+      if (message === null) return null;
+      const current = nextPreviews.get(message);
+      if (current !== undefined) return current;
+      const cached = previews.get(message);
+      const value = cached === undefined ? compactMinimapPreview(message.text) : cached;
+      nextPreviews.set(message, value);
+      return value;
+    };
+    const items: TimelineMinimapItem[] = [];
+    let finalAssistant: ChatMessage | null = null;
+    // Read backward so the first assistant found is the turn's final message.
+    for (let index = rows.length - 1; index >= 0; index -= 1) {
+      const row = rows[index];
+      if (row?.kind !== "message") continue;
+      if (row.message.role === "assistant") {
+        finalAssistant ??= row.message;
+      } else if (row.message.role === "user") {
+        items.push({
+          id: row.id,
+          rowIndex: index,
+          userText: preview(row.message),
+          assistantText: preview(finalAssistant),
+        });
+        finalAssistant = null;
+      }
+    }
+    previews = nextPreviews;
+    return items.toReversed();
+  };
+}
+
+function compactMinimapPreview(text: string | null | undefined) {
+  const compact = text?.replace(/\s+/g, " ").trim() ?? "";
+  return compact.length > 0 ? compact : null;
+}
+
+function resolveTimelineRowTop(state: TimelinePositionState, rowIndex: number) {
+  const top = state.positionAtIndex?.(rowIndex);
+  return typeof top === "number" && Number.isFinite(top) ? top : null;
+}
+
+function resolveTimelineRowHeight(state: TimelinePositionState, rowIndex: number) {
+  const height = state.sizeAtIndex?.(rowIndex);
+  return typeof height === "number" && Number.isFinite(height) ? height : null;
+}
+
+/** Read each current node so mounted or recycled refs always get the right marker state. */
+export function updateTimelineMinimapMarkers(
+  state: TimelinePositionState,
+  minimapItems: ReadonlyArray<TimelineMinimapItem>,
+  minimapStripMap: ReadonlyMap<string, Pick<HTMLSpanElement, "dataset">>,
+): void {
+  const scrollTop = state.scroll ?? 0;
+  const scrollBottom = scrollTop + (state.scrollLength ?? 0);
+  for (const item of minimapItems) {
+    const strip = minimapStripMap.get(item.id);
+    if (!strip) continue;
+    const rowTop = resolveTimelineRowTop(state, item.rowIndex);
+    const rowHeight = resolveTimelineRowHeight(state, item.rowIndex);
+    const inView =
+      rowTop !== null && rowTop < scrollBottom && rowTop + Math.max(1, rowHeight ?? 1) > scrollTop;
+    const next = inView ? "true" : "false";
+    if (strip.dataset.inView !== next) strip.dataset.inView = next;
+  }
+}
+
 export function resolveTimelineMinimapHeightStyle(itemCount: number): string {
   const naturalHeight = Math.max(1, (itemCount - 1) * TIMELINE_MINIMAP_ITEM_SPACING);
   return `min(${naturalHeight}px, ${TIMELINE_MINIMAP_MAX_HEIGHT_CSS})`;
