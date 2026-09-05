@@ -10,7 +10,7 @@ import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
-import { collectSources, runCommand } from "./mobile-native-static-check.ts";
+import { collectSources, requireKotlinTools, runCommand } from "./mobile-native-static-check.ts";
 
 const processHandle = (
   exitCode: Effect.Effect<ChildProcessSpawner.ExitCode, PlatformError.PlatformError>,
@@ -138,5 +138,33 @@ it.effect("reports non-zero exits without manufacturing a cause", () =>
     assert.equal(error.exitCode, 2);
     assert.notProperty(error, "cause");
     assert.notProperty(error, "args");
+  }),
+);
+
+it.effect("allows Kotlin checks when ktlint and detekt are on PATH", () =>
+  requireKotlinTools({ ktlint: true, detekt: true }),
+);
+
+it.effect("fails when ktlint or detekt is missing instead of skipping", () =>
+  Effect.gen(function* () {
+    const ktlintError = yield* requireKotlinTools({ ktlint: false, detekt: true }).pipe(Effect.flip);
+    if (ktlintError._tag !== "NativeStaticCheckMissingToolError") {
+      return assert.fail(`Unexpected error: ${ktlintError._tag}`);
+    }
+    assert.deepEqual(ktlintError.commands, ["ktlint"]);
+    assert.equal(
+      ktlintError.message,
+      "ktlint is not installed; cannot run Kotlin static analysis. Install via `brew bundle install --file apps/mobile/Brewfile` or put the JVM tools on PATH.",
+    );
+
+    const bothError = yield* requireKotlinTools({ ktlint: false, detekt: false }).pipe(Effect.flip);
+    if (bothError._tag !== "NativeStaticCheckMissingToolError") {
+      return assert.fail(`Unexpected error: ${bothError._tag}`);
+    }
+    assert.deepEqual(bothError.commands, ["ktlint", "detekt"]);
+    assert.equal(
+      bothError.message,
+      "ktlint and detekt are not installed; cannot run Kotlin static analysis. Install via `brew bundle install --file apps/mobile/Brewfile` or put the JVM tools on PATH.",
+    );
   }),
 );
