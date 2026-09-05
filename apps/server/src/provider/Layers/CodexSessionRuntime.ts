@@ -25,6 +25,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -491,13 +492,15 @@ function readResumeCursorThreadId(
   return isCodexResumeCursorSchema(resumeCursor) ? resumeCursor.threadId : undefined;
 }
 
-function runtimeModeToThreadConfig(input: RuntimeMode): {
+interface CodexThreadConfig {
   readonly approvalPolicy: EffectCodexSchema.V2ThreadStartParams__AskForApproval;
   readonly sandbox: EffectCodexSchema.V2ThreadStartParams__SandboxMode;
   // Always explicit: omitting the field on resume keeps the thread's previous
   // reviewer, which would leave auto_review sticky after switching modes.
   readonly approvalsReviewer: EffectCodexSchema.V2ThreadStartParams__ApprovalsReviewer;
-} {
+}
+
+function runtimeModeToThreadConfig(input: RuntimeMode): CodexThreadConfig {
   switch (input) {
     case "approval-required":
       return {
@@ -527,13 +530,151 @@ function runtimeModeToThreadConfig(input: RuntimeMode): {
   }
 }
 
+export type CodexManagedRequirements = Pick<
+  EffectCodexSchema.V2ConfigRequirementsReadResponse__ConfigRequirements,
+  "allowedApprovalPolicies" | "allowedSandboxModes"
+>;
+
+export interface CodexThreadSettingDowngrade {
+  readonly setting: "sandbox" | "approvalPolicy";
+  readonly requested: string;
+  readonly applied: string;
+}
+
+export interface CodexResolvedThreadConfig {
+  readonly config: CodexThreadConfig;
+  readonly downgrades: ReadonlyArray<CodexThreadSettingDowngrade>;
+}
+
+const SANDBOX_MODES_MOST_PERMISSIVE_FIRST: ReadonlyArray<EffectCodexSchema.V2ThreadStartParams__SandboxMode> =
+  ["danger-full-access", "workspace-write", "read-only"];
+
+const APPROVAL_POLICIES_MOST_PERMISSIVE_FIRST: ReadonlyArray<"never" | "on-request" | "untrusted"> =
+  ["never", "on-request", "untrusted"];
+
+function mostPermissiveAllowedAtOrBelow<T extends string>(
+  requested: T,
+  order: ReadonlyArray<T>,
+  allowed: ReadonlyArray<unknown> | null | undefined,
+): T {
+  if (!allowed || allowed.includes(requested)) {
+    return requested;
+  }
+  const requestedIndex = order.indexOf(requested);
+  if (requestedIndex < 0) {
+    return requested;
+  }
+  return (
+    order.slice(requestedIndex + 1).find((candidate) => allowed.includes(candidate)) ?? requested
+  );
+}
+
+// Codex rejects the whole thread when a setting falls outside its managed requirements.
+export function resolveCodexThreadConfig(
+  runtimeMode: RuntimeMode,
+  requirements: CodexManagedRequirements | undefined,
+): CodexResolvedThreadConfig {
+  const requested = runtimeModeToThreadConfig(runtimeMode);
+  if (!requirements) {
+    return { config: requested, downgrades: [] };
+  }
+  const downgrades: Array<CodexThreadSettingDowngrade> = [];
+
+  const sandbox = mostPermissiveAllowedAtOrBelow(
+    requested.sandbox,
+    SANDBOX_MODES_MOST_PERMISSIVE_FIRST,
+    requirements.allowedSandboxModes,
+  );
+  if (sandbox !== requested.sandbox) {
+    downgrades.push({ setting: "sandbox", requested: requested.sandbox, applied: sandbox });
+  }
+
+  const approvalPolicy = resolveAllowedApprovalPolicy(
+    requested.approvalPolicy,
+    requirements.allowedApprovalPolicies,
+  );
+  if (approvalPolicy !== requested.approvalPolicy) {
+    downgrades.push({
+      setting: "approvalPolicy",
+      requested: describeApprovalPolicy(requested.approvalPolicy),
+      applied: describeApprovalPolicy(approvalPolicy),
+    });
+  }
+
+  return { config: { ...requested, sandbox, approvalPolicy }, downgrades };
+}
+
+type CodexApprovalPolicy = EffectCodexSchema.V2ThreadStartParams__AskForApproval;
+
+function describeApprovalPolicy(policy: CodexApprovalPolicy): string {
+  return typeof policy === "string" ? policy : "granular";
+}
+
+// When no allowed string is at or below the request, a granular entry is the only
+// value Codex will accept without escalating past what the runtime mode asked for.
+function resolveAllowedApprovalPolicy(
+  requested: CodexApprovalPolicy,
+  allowed: ReadonlyArray<CodexApprovalPolicy> | null | undefined,
+): CodexApprovalPolicy {
+  if (!allowed || typeof requested !== "string") {
+    return requested;
+  }
+  const lowered = mostPermissiveAllowedAtOrBelow(
+    requested,
+    APPROVAL_POLICIES_MOST_PERMISSIVE_FIRST,
+    allowed,
+  );
+  if (allowed.includes(lowered)) {
+    return lowered;
+  }
+  return allowed.find((policy) => typeof policy !== "string") ?? requested;
+}
+
+export function describeCodexThreadSettingDowngrades(
+  downgrades: ReadonlyArray<CodexThreadSettingDowngrade>,
+): string | undefined {
+  if (downgrades.length === 0) {
+    return undefined;
+  }
+  const changes = downgrades
+    .map((downgrade) => `${downgrade.setting} ${downgrade.requested} -> ${downgrade.applied}`)
+    .join(", ");
+  return `Managed Codex policy lowered thread settings: ${changes}.`;
+}
+
+const CODEX_REQUIREMENTS_READ_TIMEOUT_MS = 5_000;
+
+export const readCodexManagedRequirements = (client: {
+  readonly request: (
+    method: "configRequirements/read",
+    payload: CodexRpc.ClientRequestParamsByMethod["configRequirements/read"],
+  ) => Effect.Effect<
+    CodexRpc.ClientRequestResponsesByMethod["configRequirements/read"],
+    CodexErrors.CodexAppServerError
+  >;
+}): Effect.Effect<CodexManagedRequirements | undefined> =>
+  client.request("configRequirements/read", undefined).pipe(
+    Effect.timeoutOption(CODEX_REQUIREMENTS_READ_TIMEOUT_MS),
+    Effect.map(
+      Option.match({
+        onNone: () => undefined,
+        onSome: (response) => response.requirements ?? undefined,
+      }),
+    ),
+    Effect.catch((cause) =>
+      Effect.logDebug("Codex App Server did not report config requirements.", { cause }).pipe(
+        Effect.as(undefined),
+      ),
+    ),
+  );
+
 function buildThreadStartParams(input: {
   readonly cwd: string;
-  readonly runtimeMode: RuntimeMode;
+  readonly config: CodexThreadConfig;
   readonly model: string | undefined;
   readonly serviceTier: CodexServiceTier | undefined;
 }): EffectCodexSchema.V2ThreadStartParams {
-  const config = runtimeModeToThreadConfig(input.runtimeMode);
+  const config = input.config;
   return {
     cwd: input.cwd,
     approvalPolicy: config.approvalPolicy,
@@ -544,21 +685,19 @@ function buildThreadStartParams(input: {
   };
 }
 
-function runtimeModeToTurnSandboxPolicy(
-  input: RuntimeMode,
+function sandboxModeToTurnSandboxPolicy(
+  sandbox: EffectCodexSchema.V2ThreadStartParams__SandboxMode,
 ): EffectCodexSchema.V2TurnStartParams__SandboxPolicy {
-  switch (input) {
-    case "approval-required":
+  switch (sandbox) {
+    case "read-only":
       return {
         type: "readOnly",
       };
-    case "auto-accept-edits":
-    case "auto":
+    case "workspace-write":
       return {
         type: "workspaceWrite",
       };
-    case "full-access":
-    default:
+    case "danger-full-access":
       return {
         type: "dangerFullAccess",
       };
@@ -604,6 +743,7 @@ export function buildTurnStartParams(input: {
   readonly interactionMode?: ProviderInteractionMode;
   /** Defaults to true so callers that predate the agent-access gate are unchanged. */
   readonly browserToolsAvailable?: boolean;
+  readonly requirements?: CodexManagedRequirements;
 }): Effect.Effect<
   CodexTurnStartParamsWithCollaborationMode,
   CodexErrors.CodexAppServerProtocolParseError
@@ -619,7 +759,7 @@ export function buildTurnStartParams(input: {
     turnInput.push(attachment);
   }
 
-  const config = runtimeModeToThreadConfig(input.runtimeMode);
+  const { config } = resolveCodexThreadConfig(input.runtimeMode, input.requirements);
   const collaborationMode = buildCodexCollaborationMode({
     ...(input.interactionMode ? { interactionMode: input.interactionMode } : {}),
     ...(input.model ? { model: input.model } : {}),
@@ -632,7 +772,7 @@ export function buildTurnStartParams(input: {
     input: turnInput,
     approvalPolicy: config.approvalPolicy,
     approvalsReviewer: config.approvalsReviewer,
-    sandboxPolicy: runtimeModeToTurnSandboxPolicy(input.runtimeMode),
+    sandboxPolicy: sandboxModeToTurnSandboxPolicy(config.sandbox),
     ...(input.model ? { model: input.model } : {}),
     ...(input.serviceTier ? { serviceTier: input.serviceTier } : {}),
     ...(input.effort ? { effort: input.effort } : {}),
@@ -697,20 +837,32 @@ export const openCodexThread = (input: {
   readonly requestedModel: string | undefined;
   readonly serviceTier: CodexServiceTier | undefined;
   readonly resumeThreadId: string | undefined;
+  readonly requirements?: CodexManagedRequirements;
 }): Effect.Effect<CodexThreadOpenResponse, CodexErrors.CodexAppServerError> => {
   const resumeThreadId = input.resumeThreadId;
+  const resolved = resolveCodexThreadConfig(input.runtimeMode, input.requirements);
   const startParams = buildThreadStartParams({
     cwd: input.cwd,
-    runtimeMode: input.runtimeMode,
+    config: resolved.config,
     model: input.requestedModel,
     serviceTier: input.serviceTier,
   });
+  const warnAboutDowngrades =
+    resolved.downgrades.length === 0
+      ? Effect.void
+      : Effect.logWarning("codex managed requirements lowered thread settings", {
+          threadId: input.threadId,
+          requestedRuntimeMode: input.runtimeMode,
+          downgrades: resolved.downgrades,
+        });
 
   if (resumeThreadId === undefined) {
-    return input.client.request("thread/start", startParams);
+    return warnAboutDowngrades.pipe(
+      Effect.andThen(input.client.request("thread/start", startParams)),
+    );
   }
 
-  return input.client
+  const resumed = input.client
     .request("thread/resume", {
       threadId: resumeThreadId,
       ...startParams,
@@ -726,6 +878,7 @@ export const openCodexThread = (input: {
         }).pipe(Effect.andThen(input.client.request("thread/start", startParams))),
       ),
     );
+  return warnAboutDowngrades.pipe(Effect.andThen(resumed));
 };
 
 function readNotificationThreadId(notification: CodexServerNotification): string | undefined {
@@ -1170,6 +1323,7 @@ export const makeCodexSessionRuntime = (
     const collabChildMetadataRef = yield* Ref.make(new Map<string, CollabChildMetadataState>());
     /** Child provider-thread id → its currently running provider turn id. */
     const collabChildLiveTurnsRef = yield* Ref.make(new Map<string, string>());
+    const managedRequirementsRef = yield* Ref.make<CodexManagedRequirements | undefined>(undefined);
     const suppressMemoryConsolidationNotification = makeMemoryConsolidationNotificationFilter();
     const closedRef = yield* Ref.make(false);
 
@@ -2235,6 +2389,8 @@ export const makeCodexSessionRuntime = (
       yield* client.notify("initialized", undefined);
 
       const requestedModel = normalizeCodexModelSlug(options.model);
+      const managedRequirements = yield* readCodexManagedRequirements(client);
+      yield* Ref.set(managedRequirementsRef, managedRequirements);
 
       const opened = yield* openCodexThread({
         client,
@@ -2244,6 +2400,7 @@ export const makeCodexSessionRuntime = (
         requestedModel,
         serviceTier: options.serviceTier,
         resumeThreadId: readResumeCursorThreadId(options.resumeCursor),
+        ...(managedRequirements ? { requirements: managedRequirements } : {}),
       });
 
       const providerThreadId = opened.thread.id;
@@ -2256,7 +2413,15 @@ export const makeCodexSessionRuntime = (
         updatedAt: yield* nowIso,
       } satisfies ProviderSession;
       yield* Ref.set(sessionRef, session);
-      yield* emitSessionEvent("session/ready", "Codex App Server session ready.");
+      const downgradeNotice = describeCodexThreadSettingDowngrades(
+        resolveCodexThreadConfig(options.runtimeMode, managedRequirements).downgrades,
+      );
+      yield* emitSessionEvent(
+        "session/ready",
+        downgradeNotice
+          ? `Codex App Server session ready. ${downgradeNotice}`
+          : "Codex App Server session ready.",
+      );
       return session;
     });
 
@@ -2313,9 +2478,11 @@ export const makeCodexSessionRuntime = (
           const normalizedModel = normalizeCodexModelSlug(
             input.model ?? (yield* Ref.get(sessionRef)).model,
           );
+          const managedRequirements = yield* Ref.get(managedRequirementsRef);
           const params = yield* buildTurnStartParams({
             threadId: providerThreadId,
             runtimeMode: options.runtimeMode,
+            ...(managedRequirements ? { requirements: managedRequirements } : {}),
             ...(input.input ? { prompt: input.input } : {}),
             ...(input.attachments ? { attachments: input.attachments } : {}),
             ...(normalizedModel ? { model: normalizedModel } : {}),
