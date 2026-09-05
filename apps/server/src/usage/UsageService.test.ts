@@ -7,7 +7,7 @@ import * as NodePath from "node:path";
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
-import { UsageDay, type UsageSummaryInput } from "@t3tools/contracts";
+import { ThreadId, UsageDay, type UsageSummaryInput } from "@t3tools/contracts";
 import * as Duration from "effect/Duration";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -15,6 +15,7 @@ import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Scheduler from "effect/Scheduler";
+import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 
@@ -38,6 +39,31 @@ function claudeLine(id: number, outputTokens: number, model = "claude-fable-5"):
       usage: { input_tokens: 10, output_tokens: outputTokens },
     },
   })}\n`;
+}
+
+function codexRollout(sessionId: string, cwd: string, outputTokens: number): string {
+  return [
+    {
+      type: "session_meta",
+      timestamp: "2026-08-01T10:00:00Z",
+      payload: { type: "session_meta", id: sessionId, cwd },
+    },
+    {
+      type: "turn_context",
+      timestamp: "2026-08-01T10:00:01Z",
+      payload: { type: "turn_context", model: "gpt-5.2-codex" },
+    },
+    {
+      type: "event_msg",
+      timestamp: "2026-08-01T10:00:05Z",
+      payload: {
+        type: "token_count",
+        info: { last_token_usage: { input_tokens: 100, output_tokens: outputTokens } },
+      },
+    },
+  ]
+    .map((line) => JSON.stringify(line))
+    .join("\n");
 }
 
 const WINDOW: UsageSummaryInput = {
@@ -115,6 +141,66 @@ function totalOutputTokens(summary: { buckets: readonly { totals: { outputTokens
 }
 
 describe("UsageService", () => {
+  it.live("does not parse unrelated Codex token content for a targeted thread read", () =>
+    Effect.gen(function* () {
+      const { settings, home } = yield* setup;
+      const sessionsDir = NodePath.join(home, "codex", "sessions", "2026", "08", "01");
+      yield* Effect.promise(() => NodeFSP.mkdir(sessionsDir, { recursive: true }));
+      const targetPath = NodePath.join(
+        sessionsDir,
+        "rollout-2026-08-01T10-00-00-target-session.jsonl",
+      );
+      const unrelatedPath = NodePath.join(
+        sessionsDir,
+        "rollout-2026-08-01T10-00-00-unrelated-session.jsonl",
+      );
+      yield* Effect.promise(() =>
+        Promise.all([
+          NodeFSP.writeFile(targetPath, codexRollout("target-session", "/work/target", 7)),
+          NodeFSP.writeFile(unrelatedPath, codexRollout("unrelated-session", "/work/other", 999)),
+        ]),
+      );
+
+      yield* Effect.gen(function* () {
+        const config = yield* ServerConfig.ServerConfig;
+        const runtimeRepository = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
+        yield* runtimeRepository.upsert({
+          threadId: ThreadId.make("target-thread"),
+          providerName: "codex",
+          providerInstanceId: null,
+          adapterKey: "codex",
+          runtimeMode: "full-access",
+          status: "running",
+          lastSeenAt: "2026-08-01T10:00:00.000Z",
+          resumeCursor: { threadId: "target-session" },
+          runtimePayload: null,
+        });
+        const service = yield* UsageService.make;
+        const breakdown = yield* service.readThreadBreakdown({
+          ...WINDOW,
+          threadId: ThreadId.make("target-thread"),
+        });
+        assert.strictEqual(breakdown.rows.length, 1);
+        assert.strictEqual(breakdown.rows[0]?.totals.outputTokens, 7);
+
+        const persisted = (yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown))(
+          yield* Effect.promise(() =>
+            NodeFSP.readFile(NodePath.join(config.stateDir, "usage-scan-cache.json"), "utf8"),
+          ),
+        )) as { files: Record<string, unknown>; identities: Record<string, unknown> };
+        assert.deepStrictEqual(Object.keys(persisted.files), [targetPath]);
+        assert.deepStrictEqual(
+          Object.keys(persisted.identities).sort(),
+          [targetPath, unrelatedPath].sort(),
+        );
+      }).pipe(
+        Effect.provide(
+          serviceLayers({ prefix: "usage-service-target-prefilter-test", home, settings }),
+        ),
+      );
+    }).pipe(Effect.scoped),
+  );
+
   it.live("reprices unchanged transcripts when custom prices are added, edited, or removed", () =>
     Effect.gen(function* () {
       const { transcript, settings, home } = yield* setup;
@@ -534,7 +620,10 @@ describe("transcriptFileMayMatchThread", () => {
     provider: "claude" | "codex" | "grok",
     filePath: string,
     root: string,
-    cached?: { readonly size: number; readonly mtimeMs: number },
+    options?: {
+      readonly cached?: { readonly size: number; readonly mtimeMs: number };
+      readonly identity?: { readonly sessionId: string; readonly cwd: string };
+    },
   ) =>
     UsageService.transcriptFileMayMatchThread({
       path: NodePath,
@@ -542,9 +631,10 @@ describe("transcriptFileMayMatchThread", () => {
       filePath,
       root,
       target,
-      size: 10,
-      mtimeMs: 20,
-      ...(cached === undefined ? {} : { cached: { ...cached, records: [], tailRecords: [] } }),
+      ...(options?.cached === undefined
+        ? {}
+        : { cached: { ...options.cached, records: [], tailRecords: [] } }),
+      ...(options?.identity === undefined ? {} : { identity: options.identity }),
     });
 
   it("selects provider files from current and historic session ids", () => {
@@ -568,10 +658,18 @@ describe("transcriptFileMayMatchThread", () => {
     );
   });
 
-  it("parses an unknown or rewritten Codex rollout once for worktree attribution", () => {
+  it("selects Codex rollouts from their bounded session metadata", () => {
     const path = "/codex/2026/09/rollout-2026-09-05T12-00-00-other-session.jsonl";
-    assert.isTrue(matches("codex", path, "/codex"));
-    assert.isFalse(matches("codex", path, "/codex", { size: 10, mtimeMs: 20 }));
-    assert.isTrue(matches("codex", path, "/codex", { size: 9, mtimeMs: 19 }));
+    assert.isFalse(matches("codex", path, "/codex"));
+    assert.isTrue(
+      matches("codex", path, "/codex", {
+        identity: { sessionId: "other-session", cwd: "/work/app/.wt/thread-1" },
+      }),
+    );
+    assert.isFalse(
+      matches("codex", path, "/codex", {
+        identity: { sessionId: "other-session", cwd: "/work/app/.wt/thread-2" },
+      }),
+    );
   });
 });

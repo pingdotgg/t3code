@@ -58,6 +58,7 @@ import { dedicatedUsageWorktreePath, normalizeUsagePath } from "./usagePaths.ts"
 import { createOverrideRateTable, parseRateTable, type RateTable } from "./usagePricing.ts";
 import {
   listTranscriptFiles,
+  readCodexTranscriptIdentity,
   readDirectoryVolumeId,
   readTranscriptRecords,
   readTranscriptTitle,
@@ -65,10 +66,13 @@ import {
 import { foldThreadRows, ThreadUsageAccumulator, type ThreadRef } from "./usageThreads.ts";
 import {
   decodeScanCache,
+  decodeScanIdentityCache,
   dedupeWithinFile,
   encodeScanCache,
+  pruneScanIdentityCache,
   pruneScanCache,
   type ScanCache,
+  type ScanIdentityCache,
 } from "./usageScanCache.ts";
 import type { UsageRecord } from "./usageTranscripts.ts";
 
@@ -184,6 +188,7 @@ export const make = Effect.gen(function* () {
   const runtimeRepository = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
 
   const fileCache: ScanCache = new Map();
+  const fileIdentityCache: ScanIdentityCache = new Map();
   let cacheRevision = 0;
   let persistedCacheRevision = 0;
   const cachePersistSemaphore = yield* Semaphore.make(1);
@@ -367,13 +372,16 @@ export const make = Effect.gen(function* () {
       );
       if (document === null) return;
       for (const [path, entry] of decodeScanCache(document)) fileCache.set(path, entry);
+      for (const [path, entry] of decodeScanIdentityCache(document)) {
+        fileIdentityCache.set(path, entry);
+      }
     }),
   );
 
   const persistScanCacheUnlocked = Effect.fn("UsageService.persistScanCacheUnlocked")(function* () {
     if (cacheRevision === persistedCacheRevision) return;
     const revision = cacheRevision;
-    yield* encodeScanCacheFile(encodeScanCache(fileCache)).pipe(
+    yield* encodeScanCacheFile(encodeScanCache(fileCache, fileIdentityCache)).pipe(
       Effect.flatMap((serialized) => fileSystem.writeFileString(scanCachePath, serialized)),
       Effect.map(() => {
         persistedCacheRevision = revision;
@@ -442,15 +450,63 @@ export const make = Effect.gen(function* () {
         tailRecords,
         position: parsed.position,
       });
+      if (provider === "codex") {
+        const state = parsed.position.codexState;
+        fileIdentityCache.set(filePath, {
+          size,
+          mtimeMs,
+          provider,
+          sessionId: state?.sessionId ?? "",
+          cwd: state?.cwd ?? "",
+        });
+      }
       cacheRevision += 1;
       return tailRecords.length === 0 ? records : dedupeWithinFile([...records, ...tailRecords]);
     });
+
+  /** Reads and caches the bounded Codex preamble used for thread prefiltering. */
+  const readFileIdentity = Effect.fn("UsageService.readFileIdentity")(function* (
+    filePath: string,
+    size: number,
+    mtimeMs: number,
+    provider: UsageProviderKind,
+  ) {
+    const cached = fileIdentityCache.get(filePath);
+    if (
+      cached !== undefined &&
+      cached.size === size &&
+      cached.mtimeMs === mtimeMs &&
+      cached.provider === provider
+    ) {
+      return cached;
+    }
+    if (provider !== "codex") return null;
+
+    // I/O failures are not negative identities. Skip this read without
+    // caching it so the next request can retry an otherwise valid rollout.
+    const read = yield* Effect.tryPromise(() => readCodexTranscriptIdentity(filePath)).pipe(
+      Effect.option,
+    );
+    if (Option.isNone(read)) return null;
+
+    const identity = {
+      size,
+      mtimeMs,
+      provider,
+      sessionId: read.value?.sessionId ?? "",
+      cwd: read.value?.cwd ?? "",
+    } as const;
+    fileIdentityCache.set(filePath, identity);
+    cacheRevision += 1;
+    return identity;
+  });
 
   /** One provider directory's walk and parse, before rates are involved. */
   interface ScannedDir {
     readonly provider: UsageProviderKind;
     readonly dir: string;
     readonly volumeId: string;
+    readonly allPaths: ReadonlySet<string>;
     /** Parsed records per file, or `null` when the directory does not exist. */
     readonly files:
       | readonly { readonly path: string; readonly records: readonly UsageRecord[] }[]
@@ -484,18 +540,22 @@ export const make = Effect.gen(function* () {
         .exists(dir)
         .pipe(Effect.catchCause(() => Effect.succeed(false)));
       if (!exists) {
-        scanned.push({ provider, dir, volumeId, files: null });
+        scanned.push({ provider, dir, volumeId, allPaths: new Set(), files: null });
         continue;
       }
+      const allPaths = new Set<string>();
       const files = yield* Effect.promise(() =>
-        listTranscriptFiles(dir, windowStartMs, fileName === undefined ? undefined : { fileName }),
+        listTranscriptFiles(dir, windowStartMs, {
+          ...(fileName === undefined ? {} : { fileName }),
+          onFile: (filePath) => allPaths.add(filePath),
+        }),
       );
       const parsedFiles: { path: string; records: readonly UsageRecord[] }[] = [];
       for (const file of files) {
         const records = yield* readFileRecords(file.path, file.size, file.mtimeMs, provider);
         parsedFiles.push({ path: file.path, records });
       }
-      scanned.push({ provider, dir, volumeId, files: parsedFiles });
+      scanned.push({ provider, dir, volumeId, allPaths, files: parsedFiles });
     }
     return scanned;
   });
@@ -628,9 +688,10 @@ export const make = Effect.gen(function* () {
 
     const sources: UsageSource[] = [];
     const livePaths = new Set<string>();
+    const allPaths = new Set<string>();
     const walkedRoots: string[] = [];
 
-    for (const { provider, dir, volumeId, files } of scannedDirs) {
+    for (const { provider, dir, volumeId, allPaths: dirPaths, files } of scannedDirs) {
       if (files === null) {
         sources.push({
           fingerprint: { hostId, provider, resolvedHomePath: dir, volumeId },
@@ -645,6 +706,7 @@ export const make = Effect.gen(function* () {
       }
 
       walkedRoots.push(dir);
+      for (const filePath of dirPaths) allPaths.add(filePath);
       let scannedFiles = 0;
       let skippedFiles = 0;
       for (const file of files) {
@@ -679,6 +741,11 @@ export const make = Effect.gen(function* () {
       retentionCutoffMs: startedAtMs - CACHE_RETENTION_DAYS * 24 * 60 * 60 * 1000,
     });
     if (pruned > 0) cacheRevision += 1;
+    const prunedIdentities = pruneScanIdentityCache(fileIdentityCache, {
+      livePaths: allPaths,
+      walkedRoots,
+    });
+    if (prunedIdentities > 0) cacheRevision += 1;
     yield* persistScanCache();
 
     const aggregated = aggregator.finish();
@@ -890,6 +957,7 @@ export const make = Effect.gen(function* () {
       { readonly path: string; readonly provider: UsageProviderKind }
     >();
     const livePaths = new Set<string>();
+    const allPaths = new Set<string>();
     const walkedRoots: string[] = [];
 
     for (const { provider, dir, fileName } of dirs) {
@@ -901,10 +969,17 @@ export const make = Effect.gen(function* () {
       walkedRoots.push(dir);
 
       const files = yield* Effect.promise(() =>
-        listTranscriptFiles(dir, windowStartMs, fileName === undefined ? undefined : { fileName }),
+        listTranscriptFiles(dir, windowStartMs, {
+          ...(fileName === undefined ? {} : { fileName }),
+          onFile: (filePath) => allPaths.add(filePath),
+        }),
       );
       for (const file of files) {
         const cached = fileCache.get(file.path);
+        const identity =
+          target !== null && provider === "codex"
+            ? yield* readFileIdentity(file.path, file.size, file.mtimeMs, provider)
+            : null;
         if (
           target !== null &&
           !transcriptFileMayMatchThread({
@@ -914,8 +989,7 @@ export const make = Effect.gen(function* () {
             provider,
             target,
             ...(cached === undefined ? {} : { cached }),
-            size: file.size,
-            mtimeMs: file.mtimeMs,
+            ...(identity === null ? {} : { identity }),
           })
         ) {
           continue;
@@ -951,6 +1025,11 @@ export const make = Effect.gen(function* () {
       });
       if (pruned > 0) cacheRevision += 1;
     }
+    const prunedIdentities = pruneScanIdentityCache(fileIdentityCache, {
+      livePaths: allPaths,
+      walkedRoots,
+    });
+    if (prunedIdentities > 0) cacheRevision += 1;
     // Persist selected lifetime records so a restart does not cold-parse the
     // same old thread again. Unfiltered reads retain the normal bounded cache.
     yield* persistScanCache();
@@ -1142,8 +1221,10 @@ export function transcriptFileMayMatchThread(input: {
     readonly records: readonly UsageRecord[];
     readonly tailRecords: readonly UsageRecord[];
   };
-  readonly size: number;
-  readonly mtimeMs: number;
+  readonly identity?: {
+    readonly sessionId: string;
+    readonly cwd: string;
+  };
 }): boolean {
   const sessionIds = input.target.sessionIds.get(input.provider) ?? new Set<string>();
   if (pathMatchesSession(input.path, input.filePath, input.provider, sessionIds)) return true;
@@ -1168,15 +1249,10 @@ export function transcriptFileMayMatchThread(input: {
   ) {
     return true;
   }
-  // Codex paths carry the session id but not the cwd. An unseen or rewritten
-  // rollout may belong to a dedicated worktree and needs one parse to decide;
-  // unchanged cached non-matches stay skipped on later filtered reads.
   return (
-    input.provider === "codex" &&
-    input.target.worktrees.size > 0 &&
-    (input.cached === undefined ||
-      input.cached.size !== input.size ||
-      input.cached.mtimeMs !== input.mtimeMs)
+    input.identity !== undefined &&
+    (sessionIds.has(input.identity.sessionId) ||
+      cwdMatchesTarget(input.identity.cwd, input.target.worktrees))
   );
 }
 

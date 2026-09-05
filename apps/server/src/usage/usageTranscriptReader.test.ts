@@ -7,7 +7,11 @@ import * as NodePath from "node:path";
 
 import { afterEach, assert, beforeEach, describe, it } from "@effect/vitest";
 
-import { readTranscriptRecords, readTranscriptTitle } from "./usageTranscriptReader.ts";
+import {
+  readCodexTranscriptIdentity,
+  readTranscriptRecords,
+  readTranscriptTitle,
+} from "./usageTranscriptReader.ts";
 
 let dir: string;
 
@@ -40,6 +44,31 @@ function codexMetaLine(): string {
     payload: { type: "session_meta", id: "codex-session-1" },
   })}\n`;
 }
+
+describe("readCodexTranscriptIdentity", () => {
+  it("reads session and cwd from the bounded rollout preamble", async () => {
+    const path = NodePath.join(dir, "rollout.jsonl");
+    await NodeFSP.writeFile(
+      path,
+      `${JSON.stringify({
+        type: "session_meta",
+        payload: { id: "codex-session-1", cwd: "/work/app/.wt/thread-1" },
+      })}\n${"not valid usage json\n".repeat(1_000)}`,
+    );
+
+    assert.deepStrictEqual(await readCodexTranscriptIdentity(path), {
+      sessionId: "codex-session-1",
+      cwd: "/work/app/.wt/thread-1",
+    });
+  });
+
+  it("stops after the bounded preamble when metadata is absent", async () => {
+    const path = NodePath.join(dir, "rollout.jsonl");
+    await NodeFSP.writeFile(path, `${JSON.stringify({ type: "other" })}\n`.repeat(101));
+
+    assert.isNull(await readCodexTranscriptIdentity(path));
+  });
+});
 
 function codexModelLine(model: string): string {
   return `${JSON.stringify({

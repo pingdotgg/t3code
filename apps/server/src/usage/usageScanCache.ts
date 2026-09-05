@@ -30,7 +30,8 @@ import type { CodexScanState, UsageRecord } from "./usageTranscripts.ts";
 // would pin every cached file to "no project" forever.
 // v5: Claude records retain cache TTLs and expanded fallback iterations.
 // v6: Claude iterations without their own model inherit the serving model.
-export const USAGE_SCAN_CACHE_VERSION = 6 as const;
+// v7: a compact file identity index survives record-retention pruning.
+export const USAGE_SCAN_CACHE_VERSION = 7 as const;
 
 export interface CachedFile {
   readonly size: number;
@@ -48,6 +49,16 @@ export interface CachedFile {
 }
 
 export type ScanCache = Map<string, CachedFile>;
+
+export interface CachedFileIdentity {
+  readonly size: number;
+  readonly mtimeMs: number;
+  readonly provider: UsageProviderKind;
+  readonly sessionId: string;
+  readonly cwd: string;
+}
+
+export type ScanIdentityCache = Map<string, CachedFileIdentity>;
 
 /**
  * Row layout for the serialised form. Positional and interned rather than
@@ -91,10 +102,25 @@ interface SerializedCache {
   readonly sessions: readonly string[];
   readonly cwds: readonly string[];
   readonly files: Readonly<Record<string, SerializedFile>>;
+  readonly identities: Readonly<
+    Record<
+      string,
+      readonly [
+        size: number,
+        mtimeMs: number,
+        provider: UsageProviderKind,
+        sessionIndex: number,
+        cwdIndex: number,
+      ]
+    >
+  >;
 }
 
 /** Serialises the cache, interning the repeated model, session and cwd strings. */
-export function encodeScanCache(cache: ScanCache): SerializedCache {
+export function encodeScanCache(
+  cache: ScanCache,
+  identityCache: ScanIdentityCache = new Map(),
+): SerializedCache {
   const models: string[] = [];
   const sessions: string[] = [];
   const cwds: string[] = [];
@@ -152,7 +178,18 @@ export function encodeScanCache(cache: ScanCache): SerializedCache {
     };
   }
 
-  return { version: USAGE_SCAN_CACHE_VERSION, models, sessions, cwds, files };
+  const identities: Record<string, SerializedCache["identities"][string]> = {};
+  for (const [path, identity] of identityCache) {
+    identities[path] = [
+      identity.size,
+      identity.mtimeMs,
+      identity.provider,
+      intern(sessions, sessionIndex, identity.sessionId),
+      intern(cwds, cwdIndex, identity.cwd),
+    ];
+  }
+
+  return { version: USAGE_SCAN_CACHE_VERSION, models, sessions, cwds, files, identities };
 }
 
 function isRecordArray(value: unknown): value is readonly unknown[] {
@@ -310,6 +347,71 @@ export function decodeScanCache(document: unknown): ScanCache {
   }
 
   return cache;
+}
+
+/** Restores the compact identities used to prefilter targeted thread reads. */
+export function decodeScanIdentityCache(document: unknown): ScanIdentityCache {
+  const cache: ScanIdentityCache = new Map();
+  if (typeof document !== "object" || document === null) return cache;
+  const root = document as Partial<SerializedCache>;
+  if (
+    root.version !== USAGE_SCAN_CACHE_VERSION ||
+    !isRecordArray(root.sessions) ||
+    !root.sessions.every((value) => typeof value === "string") ||
+    !isRecordArray(root.cwds) ||
+    !root.cwds.every((value) => typeof value === "string") ||
+    typeof root.identities !== "object" ||
+    root.identities === null
+  ) {
+    return cache;
+  }
+  const sessions = root.sessions as readonly string[];
+  const cwds = root.cwds as readonly string[];
+  for (const [path, value] of Object.entries(root.identities)) {
+    if (!isRecordArray(value) || value.length !== 5) continue;
+    const [size, mtimeMs, provider, sessionIndex, cwdIndex] = value;
+    const sessionId = typeof sessionIndex === "number" ? sessions[sessionIndex] : undefined;
+    const cwd = typeof cwdIndex === "number" ? cwds[cwdIndex] : undefined;
+    if (
+      !Number.isSafeInteger(size) ||
+      (size as number) < 0 ||
+      typeof mtimeMs !== "number" ||
+      !Number.isFinite(mtimeMs) ||
+      (provider !== "claude" && provider !== "codex" && provider !== "grok") ||
+      !Number.isInteger(sessionIndex) ||
+      sessionId === undefined ||
+      !Number.isInteger(cwdIndex) ||
+      cwd === undefined
+    ) {
+      continue;
+    }
+    cache.set(path, { size: size as number, mtimeMs, provider, sessionId, cwd });
+  }
+  return cache;
+}
+
+/** Drops identity rows only when a complete directory walk proves deletion. */
+export function pruneScanIdentityCache(
+  cache: ScanIdentityCache,
+  options: { readonly livePaths: ReadonlySet<string>; readonly walkedRoots: readonly string[] },
+): number {
+  let removed = 0;
+  for (const path of cache.keys()) {
+    const underWalkedRoot = options.walkedRoots.some((root) => {
+      const relative = NodePath.relative(root, path);
+      return (
+        relative === "" ||
+        (relative !== ".." &&
+          !relative.startsWith(`..${NodePath.sep}`) &&
+          !NodePath.isAbsolute(relative))
+      );
+    });
+    if (underWalkedRoot && !options.livePaths.has(path)) {
+      cache.delete(path);
+      removed += 1;
+    }
+  }
+  return removed;
 }
 
 /**

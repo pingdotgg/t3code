@@ -2,12 +2,15 @@ import { describe, expect, it } from "@effect/vitest";
 
 import {
   decodeScanCache,
+  decodeScanIdentityCache,
   dedupeWithinFile,
   encodeScanCache,
+  pruneScanIdentityCache,
   pruneScanCache,
   USAGE_SCAN_CACHE_VERSION,
   type CachedFile,
   type ScanCache,
+  type ScanIdentityCache,
 } from "./usageScanCache.ts";
 import type { UsageRecord } from "./usageTranscripts.ts";
 
@@ -58,6 +61,28 @@ function cacheWith(entries: readonly [string, number, readonly UsageRecord[]][])
 }
 
 describe("scan cache round trip", () => {
+  it("restores positive and negative transcript identities", () => {
+    const identities: ScanIdentityCache = new Map([
+      [
+        "/target.jsonl",
+        {
+          size: 100,
+          mtimeMs: 200,
+          provider: "codex",
+          sessionId: "target-session",
+          cwd: "/work/target",
+        },
+      ],
+      ["/unknown.jsonl", { size: 10, mtimeMs: 20, provider: "codex", sessionId: "", cwd: "" }],
+    ]);
+
+    const restored = decodeScanIdentityCache(
+      JSON.parse(JSON.stringify(encodeScanCache(new Map(), identities))),
+    );
+
+    expect(restored).toEqual(identities);
+  });
+
   it("restores records unchanged", () => {
     const original = cacheWith([
       ["/a.jsonl", 100, [record(), record({ dedupeKey: "msg_2:", model: "claude-opus-5" })]],
@@ -244,6 +269,36 @@ describe("scan cache round trip", () => {
     };
 
     expect(decodeScanCache(JSON.parse(JSON.stringify(poisoned))).has("/a.jsonl")).toBe(false);
+  });
+});
+
+describe("pruneScanIdentityCache", () => {
+  it("keeps old live identities and removes only files proven deleted", () => {
+    const identities: ScanIdentityCache = new Map([
+      [
+        "/codex/sessions/live.jsonl",
+        { size: 10, mtimeMs: 1, provider: "codex", sessionId: "live", cwd: "/work/live" },
+      ],
+      [
+        "/codex/sessions/gone.jsonl",
+        { size: 10, mtimeMs: 1, provider: "codex", sessionId: "gone", cwd: "/work/gone" },
+      ],
+      [
+        "/other/sessions/unwalked.jsonl",
+        { size: 10, mtimeMs: 1, provider: "codex", sessionId: "other", cwd: "/work/other" },
+      ],
+    ]);
+
+    expect(
+      pruneScanIdentityCache(identities, {
+        livePaths: new Set(["/codex/sessions/live.jsonl"]),
+        walkedRoots: ["/codex/sessions"],
+      }),
+    ).toBe(1);
+    expect([...identities.keys()]).toEqual([
+      "/codex/sessions/live.jsonl",
+      "/other/sessions/unwalked.jsonl",
+    ]);
   });
 });
 
