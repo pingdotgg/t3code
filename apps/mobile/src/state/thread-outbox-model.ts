@@ -27,8 +27,8 @@ import type { DraftComposerAttachment } from "../lib/composerImages";
 import { scopedThreadKey } from "../lib/scopedEntities";
 import { resolveProviderInteractionMode } from "../features/threads/legacy-plan-mode";
 
-// Keep current writes until a compatible native baseline includes the v4 reader.
-const THREAD_OUTBOX_SCHEMA_VERSION = 3;
+// v4 stores image bytes in owned files instead of inline data URLs.
+const THREAD_OUTBOX_SCHEMA_VERSION = 4;
 const THREAD_OUTBOX_MAX_RETRY_DELAY_MS = 16_000;
 
 const QueuedThreadCreationSchema = Schema.Struct({
@@ -44,7 +44,7 @@ const QueuedThreadCreationSchema = Schema.Struct({
 });
 
 export const QueuedThreadMessageSchema = Schema.Struct({
-  schemaVersion: Schema.Literals([1, 2, THREAD_OUTBOX_SCHEMA_VERSION, 4]),
+  schemaVersion: Schema.Literals([1, 2, 3, THREAD_OUTBOX_SCHEMA_VERSION]),
   environmentId: EnvironmentId,
   threadId: ThreadId,
   messageId: MessageId,
