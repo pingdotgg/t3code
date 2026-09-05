@@ -12,6 +12,7 @@ import * as EffectCodexSchema from "effect-codex-app-server/schema";
 import { buildCodexDeveloperInstructions } from "../CodexDeveloperInstructions.ts";
 import { codexSessionAppServerArgs } from "./codexLaunchArgs.ts";
 import {
+  buildDirectComputerUseThreadConfig,
   buildTurnStartParams,
   describeMcpElicitation,
   hasConfiguredMcpServer,
@@ -243,6 +244,66 @@ describe("buildTurnStartParams", () => {
         },
       ],
     });
+  });
+});
+
+describe("buildDirectComputerUseThreadConfig", () => {
+  it("replaces the unavailable Desktop pipe with the T3 bridge", () => {
+    const config = {
+      mcp_servers: {
+        node_repl: {
+          command: "node_repl.exe",
+          env: {
+            NODE_REPL_NODE_MODULE_DIRS: "C:\\original\\node_modules",
+            NODE_REPL_TRUSTED_BROWSER_CLIENT_SHA256S: "existing-hash",
+            SKY_CUA_NATIVE_PIPE: "1",
+            SKY_CUA_NATIVE_PIPE_DIRECTORY: "desktop-owned-pipe",
+          },
+        },
+      },
+    };
+
+    NodeAssert.deepStrictEqual(
+      buildDirectComputerUseThreadConfig(config, "win32", {
+        nodeModulesRoot: "C:\\shim\\node_modules",
+        pipePath: "\\\\.\\pipe\\t3code-cua-test",
+        trustedModuleSha256: "shim-hash",
+      }),
+      {
+        "mcp_servers.node_repl": {
+          command: "node_repl.exe",
+          env: {
+            NODE_REPL_NODE_MODULE_DIRS: "C:\\shim\\node_modules;C:\\original\\node_modules",
+            NODE_REPL_TRUSTED_BROWSER_CLIENT_SHA256S: "existing-hash,shim-hash",
+            T3_CODEX_COMPUTER_USE_PIPE_PATH: "\\\\.\\pipe\\t3code-cua-test",
+          },
+        },
+      },
+    );
+  });
+
+  it("removes stale Desktop pipe settings when no T3 helper is available", () => {
+    const config = {
+      mcp_servers: {
+        node_repl: {
+          command: "node_repl.exe",
+          env: {
+            NODE_REPL_NODE_PATH: "node.exe",
+            SKY_CUA_NATIVE_PIPE: "1",
+            SKY_CUA_NATIVE_PIPE_DIRECTORY: "desktop-owned-pipe",
+          },
+        },
+      },
+    };
+
+    NodeAssert.deepStrictEqual(buildDirectComputerUseThreadConfig(config, "win32"), {
+      "mcp_servers.node_repl": {
+        command: "node_repl.exe",
+        env: { NODE_REPL_NODE_PATH: "node.exe" },
+      },
+    });
+    NodeAssert.equal(buildDirectComputerUseThreadConfig(config, "linux"), undefined);
+    NodeAssert.equal(buildDirectComputerUseThreadConfig({}, "win32"), undefined);
   });
 });
 
@@ -811,6 +872,12 @@ describe("openCodexThread", () => {
         requestedModel: "gpt-5.3-codex",
         serviceTier: undefined,
         resumeThreadId: "stale-thread",
+        config: {
+          "mcp_servers.node_repl": {
+            command: "node_repl.exe",
+            env: { T3_CODEX_COMPUTER_USE_PIPE_PATH: "\\\\.\\pipe\\t3code-cua-test" },
+          },
+        },
       });
 
       NodeAssert.equal(opened.thread.id, "fresh-thread");
@@ -818,6 +885,14 @@ describe("openCodexThread", () => {
         calls.map((call) => call.method),
         ["thread/resume", "thread/start"],
       );
+      for (const call of calls) {
+        NodeAssert.deepStrictEqual((call.payload as { config?: unknown }).config, {
+          "mcp_servers.node_repl": {
+            command: "node_repl.exe",
+            env: { T3_CODEX_COMPUTER_USE_PIPE_PATH: "\\\\.\\pipe\\t3code-cua-test" },
+          },
+        });
+      }
     }),
   );
 
