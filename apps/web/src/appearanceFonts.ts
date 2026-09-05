@@ -169,7 +169,10 @@ function probeWidth(fontList: string): number | null {
  */
 export function isFontFamilyAvailable(family: string): boolean {
   const families = cssFontFamilies(family);
-  if (families === null) return false;
+  return families !== null && familiesResolve(families);
+}
+
+function familiesResolve(families: string): boolean {
   if (/^(system-ui|sans-serif|serif|monospace|ui-monospace)$/i.test(families)) return true;
   try {
     for (const generic of ["monospace", "serif", "sans-serif"]) {
@@ -201,17 +204,32 @@ export function areFontAdvancesMonospace(advances: readonly number[]): boolean {
 }
 
 /**
- * Whether a family renders every character on the same advance. Cell-grid
- * surfaces (the terminal) require this: a proportional face draws its text
- * narrower than the lattice the cursor and selection are placed on, which
- * reads as ragged gaps and a cursor stranded to the right of the text.
- *
- * Unmeasurable environments answer true, so a missing canvas never blocks a
- * legitimate font.
+ * Probing a family is up to 32 measureText calls, and setting the canvas font
+ * to a new family string forces engine font matching on top, so verdicts are
+ * kept keyed by the normalized family list. Until every family in the list
+ * resolves, the verdict may be a fallback speaking for a face that has not
+ * loaded yet, so it is not kept and each call probes again. That is what lets
+ * the terminal revalidate after a late face loads and still reject a
+ * proportional one.
  */
-export function isMonospaceFamily(family: string): boolean {
-  const families = cssFontFamilies(family);
-  if (families === null) return true;
+export function createCachedFamilyProbe(
+  probe: (families: string) => boolean,
+  resolves: (family: string) => boolean,
+): (family: string) => boolean {
+  const verdicts = new Map<string, boolean>();
+  return (family) => {
+    const families = cssFontFamilies(family);
+    if (families === null) return true;
+    const cached = verdicts.get(families);
+    if (cached !== undefined) return cached;
+    const verdict = probe(families);
+    // Names never contain a comma (the input was split on it), so this is exact.
+    if (families.split(", ").every(resolves)) verdicts.set(families, verdict);
+    return verdict;
+  };
+}
+
+function measureMonospaceFamilies(families: string): boolean {
   try {
     if (fontProbeContext === undefined) {
       fontProbeContext = document.createElement("canvas").getContext("2d");
@@ -230,6 +248,17 @@ export function isMonospaceFamily(family: string): boolean {
     return true;
   }
 }
+
+/**
+ * Whether a family renders every character on the same advance. Cell-grid
+ * surfaces (the terminal) require this: a proportional face draws its text
+ * narrower than the lattice the cursor and selection are placed on, which
+ * reads as ragged gaps and a cursor stranded to the right of the text.
+ *
+ * Unmeasurable environments answer true, so a missing canvas never blocks a
+ * legitimate font.
+ */
+export const isMonospaceFamily = createCachedFamilyProbe(measureMonospaceFamilies, familiesResolve);
 
 // Nameable faces the platform generics commonly map to, likeliest first.
 // Pixel-comparing a generic against these names the actual face; Apple's own
