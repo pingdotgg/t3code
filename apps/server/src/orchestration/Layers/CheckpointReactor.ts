@@ -14,6 +14,7 @@ import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import type * as PlatformError from "effect/PlatformError";
@@ -91,6 +92,14 @@ const make = Effect.gen(function* () {
   const pullRequests = yield* PullRequestService.PullRequestService;
   const startedTurns = new Map<ThreadId, TurnId>();
   const pending = new Set<ThreadId>();
+  const fileSystem = yield* FileSystem.FileSystem;
+
+  // Worktree paths are compared through this so that two spellings of the same
+  // directory (macOS `/tmp/foo` is a symlink to `/private/tmp/foo`) match. A
+  // path that cannot be resolved — the directory is gone — keeps its raw form,
+  // so resolution failures can only narrow matches back to string equality.
+  const canonicalWorktreePath = (worktreePath: string) =>
+    fileSystem.realPath(worktreePath).pipe(Effect.orElseSucceed(() => worktreePath));
 
   const appendRevertFailureActivity = (input: {
     readonly threadId: ThreadId;
@@ -570,10 +579,12 @@ const make = Effect.gen(function* () {
       }
 
       const shell = yield* projectionSnapshotQuery.getShellSnapshot();
-      const worktreeIsShared = shell.threads.some(
-        (other) => other.id !== thread.id && other.worktreePath === thread.worktreePath,
+      const otherWorktreePaths = shell.threads.flatMap((other) =>
+        other.id !== thread.id && other.worktreePath !== null ? [other.worktreePath] : [],
       );
-      if (worktreeIsShared) {
+      const canonicalWorktree = yield* canonicalWorktreePath(thread.worktreePath);
+      const canonicalOthers = yield* Effect.forEach(otherWorktreePaths, canonicalWorktreePath);
+      if (canonicalOthers.includes(canonicalWorktree)) {
         return;
       }
 
