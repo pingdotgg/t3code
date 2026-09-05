@@ -92,7 +92,6 @@ import {
   useVcsPullAction,
 } from "~/lib/sourceControlActions";
 import { useThreadShell } from "~/state/entities";
-import { useThread } from "~/state/entities";
 import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
 import { useEnvironmentQuery } from "~/state/query";
 import { serverEnvironment } from "~/state/server";
@@ -967,7 +966,8 @@ export default function GitActionsControl({
         : null,
   );
   const activeServerThread = useThreadShell(activeThreadRef);
-  const canChangeThreadBranch = canWriteSourceControl && (activeServerThread === null || canOperateThread);
+  const isLocalDraftThread = activeDraftThread !== null && activeServerThread === null;
+  const canChangeThreadBranch = canWriteSourceControl && (isLocalDraftThread || canOperateThread);
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
   const [isCommitDialogOpen, setIsCommitDialogOpen] = useState(false);
   const [dialogCommitMessage, setDialogCommitMessage] = useState("");
@@ -1237,7 +1237,7 @@ export default function GitActionsControl({
         activeEnvironmentId === null ||
         !readEnvironmentScope(activeEnvironmentId, AuthSourceControlWriteScope) ||
         (featureBranch &&
-          activeServerThread &&
+          !isLocalDraftThread &&
           !readEnvironmentScope(activeEnvironmentId, AuthOrchestrationOperateScope))
       )
         return;
