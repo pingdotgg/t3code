@@ -11,11 +11,15 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { expect, it } from "vite-plus/test";
 
 import { ProviderRegistry } from "../provider/Services/ProviderRegistry.ts";
+import * as ProjectService from "../project/ProjectService.ts";
 import { ScheduledTaskService } from "../scheduledTasks/ScheduledTaskService.ts";
+import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
+import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
 import { ThreadManagementService } from "../orchestration-v2/ThreadManagementService.ts";
 import type * as McpInvocationContext from "./McpInvocationContext.ts";
 import {
@@ -36,6 +40,12 @@ const codexDriver = ProviderDriverKind.make("codex");
 // Distinct from driver kind so a regression that re-derives from driver fails.
 const customCodexInstanceId = ProviderInstanceId.make("codex-custom-workspace");
 const parentInstanceId = ProviderInstanceId.make("codex");
+const additionalDependencies = Layer.mergeAll(
+  Layer.mock(ProjectService.ProjectService)({}),
+  Layer.mock(ThreadLaunch.ThreadLaunchService)({}),
+  Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({ detect: () => Effect.succeed(null) }),
+  NodeServices.layer,
+);
 
 const makeScope = (): McpInvocationContext.McpInvocationScope => ({
   environmentId,
@@ -135,6 +145,7 @@ it("readThread prefers activity-run status over a newer cancelled queued run", a
         Layer.mock(ScheduledTaskService)({
           list: () => Effect.succeed({ tasks: [] }),
         } satisfies Partial<ScheduledTaskService["Service"]>),
+        additionalDependencies,
         NodeCrypto.layer,
       ),
     ),
@@ -184,6 +195,7 @@ it("readThread prefers waiting activity status over a newer cancelled queued run
         Layer.mock(ScheduledTaskService)({
           list: () => Effect.succeed({ tasks: [] }),
         } satisfies Partial<ScheduledTaskService["Service"]>),
+        additionalDependencies,
         NodeCrypto.layer,
       ),
     ),
@@ -290,6 +302,7 @@ it("taskStatus returns task.providerInstanceId rather than the driver kind", asy
         Layer.mock(ScheduledTaskService)({
           list: () => Effect.succeed({ tasks: [] }),
         } satisfies Partial<ScheduledTaskService["Service"]>),
+        additionalDependencies,
         NodeCrypto.layer,
       ),
     ),

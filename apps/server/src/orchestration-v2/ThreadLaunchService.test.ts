@@ -73,12 +73,16 @@ interface HarnessOptions {
   readonly getProjectById?: ProjectService.ProjectService["Service"]["getById"];
   readonly createWorktree?: GitWorkflow.GitWorkflowService["Service"]["createWorktree"];
   readonly fetchRemote?: GitWorkflow.GitWorkflowService["Service"]["fetchRemote"];
+  readonly currentBranch?: GitWorkflow.GitWorkflowService["Service"]["currentBranch"];
   readonly renameBranch?: GitWorkflow.GitWorkflowService["Service"]["renameBranch"];
   readonly runSetup?: ProjectSetupScriptRunner.ProjectSetupScriptRunner["Service"]["runForThread"];
   readonly generateTitle?: TextGeneration.TextGeneration["Service"]["generateThreadTitle"];
   readonly generateBranchName?: TextGeneration.TextGeneration["Service"]["generateBranchName"];
   readonly serverSettings?: Parameters<typeof ServerSettings.layerTest>[0];
   readonly providers?: ReadonlyArray<ServerProvider>;
+  readonly mapCommandReceipts?: (
+    service: CommandReceiptStore.CommandReceiptStoreV2["Service"],
+  ) => CommandReceiptStore.CommandReceiptStoreV2["Service"];
 }
 
 function makeHarness(options: HarnessOptions = {}) {
@@ -90,7 +94,14 @@ function makeHarness(options: HarnessOptions = {}) {
     { databaseLayer: database, runEffectWorker: false },
   );
   const threadManagement = ThreadManagement.layer.pipe(Layer.provide(orchestrator));
-  const receipts = CommandReceiptStore.layer.pipe(Layer.provide(database));
+  const baseReceipts = CommandReceiptStore.layer.pipe(Layer.provide(database));
+  const receipts =
+    options.mapCommandReceipts === undefined
+      ? baseReceipts
+      : Layer.effect(
+          CommandReceiptStore.CommandReceiptStoreV2,
+          Effect.map(CommandReceiptStore.CommandReceiptStoreV2, options.mapCommandReceipts),
+        ).pipe(Layer.provide(baseReceipts));
   const outbox = EffectOutbox.layer.pipe(Layer.provide(database));
   const createWorktree = vi.fn(
     options.createWorktree ??
@@ -102,6 +113,7 @@ function makeHarness(options: HarnessOptions = {}) {
   const renameBranch = vi.fn(
     options.renameBranch ?? ((input) => Effect.succeed({ branch: input.newBranch })),
   );
+  const currentBranch = vi.fn(options.currentBranch ?? (() => Effect.succeed("main")));
   const runSetup = vi.fn(
     options.runSetup ?? (() => Effect.succeed({ status: "no-script" as const })),
   );
@@ -126,6 +138,7 @@ function makeHarness(options: HarnessOptions = {}) {
     }),
     Layer.mock(GitWorkflow.GitWorkflowService)({
       createWorktree,
+      currentBranch,
       renameBranch,
       fetchRemote: options.fetchRemote ?? (() => Effect.void),
       remoteExists: () => Effect.succeed(true),
@@ -172,12 +185,112 @@ function makeHarness(options: HarnessOptions = {}) {
   return {
     layer: Layer.mergeAll(launch, threadManagement, titleRegeneration, outbox, database),
     createWorktree,
+    currentBranch,
     renameBranch,
     generateBranchName,
     generateThreadTitle,
     runSetup,
   };
 }
+
+it.effect("rechecks an expected branch immediately before launch acceptance", () =>
+  Effect.gen(function* () {
+    const branch = yield* Ref.make<string | null>("main");
+    const branchReadEntered = yield* Deferred.make<void>();
+    const allowBranchRead = yield* Deferred.make<void>();
+    const harness = makeHarness({
+      currentBranch: () =>
+        Deferred.succeed(branchReadEntered, undefined).pipe(
+          Effect.andThen(Deferred.await(allowBranchRead)),
+          Effect.andThen(Ref.get(branch)),
+        ),
+    });
+
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const input = launchInput({
+        command: "command:launch:expected-branch-race",
+        thread: "thread:launch:expected-branch-race",
+        workspace: { type: "root", branch: "main", expectedBranch: "main" },
+      });
+      const launchFiber = yield* Effect.forkChild(launches.launch(input));
+
+      yield* Deferred.await(branchReadEntered);
+      yield* Ref.set(branch, "feature");
+      yield* Deferred.succeed(allowBranchRead, undefined);
+
+      const error = yield* Fiber.join(launchFiber).pipe(Effect.flip);
+      assert.equal(error.operation, "validate-workspace");
+      assert.match(String(error.cause), /branch 'feature'.*requested branch 'main'/u);
+      assert.isTrue(
+        Exit.isFailure(yield* threads.getThreadProjection(input.threadId).pipe(Effect.exit)),
+      );
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
+it.effect("rechecks a detached HEAD snapshot immediately before launch acceptance", () =>
+  Effect.gen(function* () {
+    const branch = yield* Ref.make<string | null>(null);
+    const branchReadEntered = yield* Deferred.make<void>();
+    const allowBranchRead = yield* Deferred.make<void>();
+    const harness = makeHarness({
+      currentBranch: () =>
+        Deferred.succeed(branchReadEntered, undefined).pipe(
+          Effect.andThen(Deferred.await(allowBranchRead)),
+          Effect.andThen(Ref.get(branch)),
+        ),
+    });
+
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const input = launchInput({
+        command: "command:launch:expected-detached-race",
+        thread: "thread:launch:expected-detached-race",
+        workspace: { type: "root", expectedBranch: null },
+      });
+      const launchFiber = yield* Effect.forkChild(launches.launch(input));
+
+      yield* Deferred.await(branchReadEntered);
+      yield* Ref.set(branch, "main");
+      yield* Deferred.succeed(allowBranchRead, undefined);
+
+      const error = yield* Fiber.join(launchFiber).pipe(Effect.flip);
+      assert.equal(error.operation, "validate-workspace");
+      assert.match(String(error.cause), /branch 'main'.*expected a detached HEAD/u);
+      assert.isTrue(
+        Exit.isFailure(yield* threads.getThreadProjection(input.threadId).pipe(Effect.exit)),
+      );
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
+it.effect("replays an accepted launch before rechecking mutable branch state", () =>
+  Effect.gen(function* () {
+    const branch = yield* Ref.make<string | null>("main");
+    const harness = makeHarness({ currentBranch: () => Ref.get(branch) });
+
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const input = launchInput({
+        command: "command:launch:expected-branch-replay",
+        thread: "thread:launch:expected-branch-replay",
+        workspace: { type: "root", branch: "main", expectedBranch: "main" },
+      });
+
+      const first = yield* launches.launch(input);
+      yield* Ref.set(branch, "feature");
+      const replay = yield* launches.launch(input);
+
+      assert.isFalse(first.resumed);
+      assert.isTrue(replay.resumed);
+      assert.equal(replay.threadId, first.threadId);
+      assert.equal(harness.currentBranch.mock.calls.length, 1);
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
 
 function launchInput(input: {
   readonly command: string;
@@ -426,6 +539,66 @@ it.effect("provisions independent launches concurrently instead of behind a glob
       yield* Deferred.await(bothEntered);
       assert.equal(yield* Ref.get(setupCount), 2);
       yield* Deferred.succeed(allowSetup, undefined);
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
+it.effect("keeps the initial run identity when replay resumes after a later run", () =>
+  Effect.gen(function* () {
+    const receiptLookupCompleted = yield* Deferred.make<void>();
+    const allowReceiptLookup = yield* Deferred.make<void>();
+    const messageCommandId = CommandId.make("command:launch:message-replay:initial-message");
+    let gated = false;
+    const harness = makeHarness({
+      mapCommandReceipts: (service) => ({
+        ...service,
+        getByCommandId: (commandId) =>
+          service.getByCommandId(commandId).pipe(
+            Effect.flatMap((receipt) => {
+              if (gated || commandId !== messageCommandId || Option.isSome(receipt)) {
+                return Effect.succeed(receipt);
+              }
+              gated = true;
+              return Deferred.succeed(receiptLookupCompleted, undefined).pipe(
+                Effect.andThen(Deferred.await(allowReceiptLookup)),
+                Effect.as(receipt),
+              );
+            }),
+          ),
+      }),
+    });
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const input = launchInput({
+        command: "command:launch:message-replay",
+        thread: "thread:launch:message-replay",
+        message: "Use the durable message once",
+      });
+
+      const delayedReplay = yield* launches.launch(input).pipe(Effect.forkChild);
+      yield* Deferred.await(receiptLookupCompleted);
+      const accepted = yield* launches.launch(input);
+      const acceptedRunId = accepted.initialMessageRunId;
+      assert.isNotNull(acceptedRunId);
+      yield* threads.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make("command:launch:message-replay:later-message"),
+        threadId: accepted.threadId,
+        messageId: MessageId.make("message:launch:message-replay:later-message"),
+        text: "A later queued message",
+        attachments: [],
+        modelSelection,
+        dispatchMode: { type: "queue_after_active" },
+        createdBy: "user",
+        creationSource: "web",
+      });
+      yield* Deferred.succeed(allowReceiptLookup, undefined);
+      const replayed = yield* Fiber.join(delayedReplay);
+
+      assert.equal(replayed.initialMessageRunId, acceptedRunId);
+      assert.lengthOf(replayed.projection.runs, 2);
+      assert.notEqual(replayed.projection.runs.at(-1)?.id, replayed.initialMessageRunId);
     }).pipe(Effect.provide(harness.layer));
   }),
 );

@@ -24,7 +24,10 @@ import {
   type OrchestrationV2Subagent,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2TurnItem,
+  ProviderInteractionMode,
+  type ProjectId,
   ProviderInstanceId,
+  RuntimeMode,
   type ProviderSessionId,
   RunId,
   ThreadId,
@@ -82,6 +85,47 @@ export class OrchestratorDispatchError extends Schema.TaggedErrorClass<Orchestra
 ) {
   override get message(): string {
     return `Failed to dispatch orchestration command ${this.commandType} (${this.commandId}).`;
+  }
+}
+
+export class OrchestratorRuntimeModeCeilingError extends Schema.TaggedErrorClass<OrchestratorRuntimeModeCeilingError>()(
+  "OrchestratorRuntimeModeCeilingError",
+  {
+    callerThreadId: ThreadId,
+    targetMode: RuntimeMode,
+    capturedCallerMode: RuntimeMode,
+    currentCallerMode: RuntimeMode,
+  },
+) {
+  override get message(): string {
+    return `Target runtime mode ${this.targetMode} exceeds the caller runtime-mode ceiling.`;
+  }
+}
+
+export class OrchestratorInteractionModeCeilingError extends Schema.TaggedErrorClass<OrchestratorInteractionModeCeilingError>()(
+  "OrchestratorInteractionModeCeilingError",
+  {
+    callerThreadId: ThreadId,
+    targetMode: ProviderInteractionMode,
+    capturedCallerMode: ProviderInteractionMode,
+    currentCallerMode: ProviderInteractionMode,
+  },
+) {
+  override get message(): string {
+    return `Target interaction mode ${this.targetMode} exceeds the caller interaction-mode ceiling.`;
+  }
+}
+
+export class OrchestratorCallerRunCeilingError extends Schema.TaggedErrorClass<OrchestratorCallerRunCeilingError>()(
+  "OrchestratorCallerRunCeilingError",
+  {
+    callerThreadId: ThreadId,
+    callerRunId: RunId,
+    callerProviderInstanceId: ProviderInstanceId,
+  },
+) {
+  override get message(): string {
+    return `Caller run ${this.callerRunId} is no longer active for provider ${this.callerProviderInstanceId}.`;
   }
 }
 
@@ -176,12 +220,26 @@ export interface OrchestratorV2DispatchResult {
   readonly storedEvents: ReadonlyArray<OrchestrationV2StoredEvent>;
 }
 
+export type OrchestratorV2CreatedThreadRecordCommand = Extract<
+  OrchestrationV2Command,
+  { readonly type: "thread.created.record" }
+>;
+
+export interface OrchestratorV2ServerCreatedThreadRecordInput {
+  readonly command: OrchestratorV2CreatedThreadRecordCommand;
+  readonly targetProjectId: ProjectId;
+}
+
 export interface OrchestratorV2Shape {
   readonly resumeQueuedRuns: Effect.Effect<number, OrchestratorV2Error>;
   readonly dispatch: (
     command: OrchestrationV2Command,
   ) => Effect.Effect<OrchestratorV2DispatchResult, OrchestratorV2Error>;
   readonly getCommandReceipt: CommandReceiptStoreV2["Service"]["getByCommandId"];
+  /** Records a cross-project MCP launch through a server-owned authorization boundary. */
+  readonly recordServerCreatedThread: (
+    input: OrchestratorV2ServerCreatedThreadRecordInput,
+  ) => Effect.Effect<OrchestratorV2DispatchResult, OrchestratorV2Error>;
   readonly getThreadProjection: (
     threadId: ThreadId,
   ) => Effect.Effect<OrchestrationV2ThreadProjection, OrchestratorV2Error>;
@@ -240,6 +298,23 @@ function isNativeMaintenanceCommand(message: {
     message.attachments.length === 0 &&
     ["/compact", "/logout"].includes(message.text.trim().toLowerCase())
   );
+}
+
+function runtimeModeRank(mode: OrchestrationV2AppThread["runtimeMode"]): number {
+  switch (mode) {
+    case "approval-required":
+      return 0;
+    case "auto-accept-edits":
+      return 1;
+    case "auto":
+      return 2;
+    case "full-access":
+      return 3;
+  }
+}
+
+function interactionModeRank(mode: OrchestrationV2AppThread["interactionMode"]): number {
+  return mode === "plan" ? 0 : 1;
 }
 
 function commandThreadId(command: OrchestrationV2Command): ThreadId {
@@ -639,6 +714,95 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         yield* Ref.update(events, (existing) => [...existing, withId]);
         return withId;
       });
+
+  const enforcePolicyCeiling = Effect.fn("orchestrationV2.enforcePolicyCeiling")(function* (input: {
+    readonly command: Extract<
+      OrchestrationV2Command,
+      { readonly type: "thread.create" | "message.dispatch" }
+    >;
+    readonly runtimeMode: OrchestrationV2AppThread["runtimeMode"];
+    readonly interactionMode: OrchestrationV2AppThread["interactionMode"];
+  }) {
+    // Project selection is authorized by the caller-facing service before it
+    // constructs this command. This shared boundary owns only lifecycle and
+    // permission ceilings so an authorized cross-project launch remains valid.
+    const ceiling = input.command.policyCeiling;
+    if (ceiling === undefined) return;
+    const caller = yield* projectionStore.getThreadProjection(ceiling.callerThreadId).pipe(
+      Effect.mapError(
+        (cause) =>
+          new OrchestratorProjectionError({
+            threadId: ceiling.callerThreadId,
+            cause,
+          }),
+      ),
+    );
+    if (caller.thread.deletedAt !== null || caller.thread.archivedAt !== null) {
+      const cause =
+        ceiling.callerRunId !== undefined && ceiling.callerProviderInstanceId !== undefined
+          ? new OrchestratorCallerRunCeilingError({
+              callerThreadId: ceiling.callerThreadId,
+              callerRunId: ceiling.callerRunId,
+              callerProviderInstanceId: ceiling.callerProviderInstanceId,
+            })
+          : `Caller thread ${ceiling.callerThreadId} is not active.`;
+      return yield* new OrchestratorDispatchError({
+        commandId: input.command.commandId,
+        commandType: input.command.type,
+        cause,
+      });
+    }
+    if (ceiling.callerRunId !== undefined && ceiling.callerProviderInstanceId !== undefined) {
+      const callerRun = caller.runs.find((candidate) => candidate.id === ceiling.callerRunId);
+      if (
+        callerRun === undefined ||
+        !isBlockingRun(callerRun) ||
+        callerRun.rootNodeId === null ||
+        callerRun.providerInstanceId !== ceiling.callerProviderInstanceId
+      ) {
+        return yield* new OrchestratorDispatchError({
+          commandId: input.command.commandId,
+          commandType: input.command.type,
+          cause: new OrchestratorCallerRunCeilingError({
+            callerThreadId: ceiling.callerThreadId,
+            callerRunId: ceiling.callerRunId,
+            callerProviderInstanceId: ceiling.callerProviderInstanceId,
+          }),
+        });
+      }
+    }
+    if (
+      runtimeModeRank(input.runtimeMode) > runtimeModeRank(ceiling.runtimeMode) ||
+      runtimeModeRank(input.runtimeMode) > runtimeModeRank(caller.thread.runtimeMode)
+    ) {
+      return yield* new OrchestratorDispatchError({
+        commandId: input.command.commandId,
+        commandType: input.command.type,
+        cause: new OrchestratorRuntimeModeCeilingError({
+          callerThreadId: ceiling.callerThreadId,
+          targetMode: input.runtimeMode,
+          capturedCallerMode: ceiling.runtimeMode,
+          currentCallerMode: caller.thread.runtimeMode,
+        }),
+      });
+    }
+    if (
+      interactionModeRank(input.interactionMode) > interactionModeRank(ceiling.interactionMode) ||
+      interactionModeRank(input.interactionMode) >
+        interactionModeRank(caller.thread.interactionMode)
+    ) {
+      return yield* new OrchestratorDispatchError({
+        commandId: input.command.commandId,
+        commandType: input.command.type,
+        cause: new OrchestratorInteractionModeCeilingError({
+          callerThreadId: ceiling.callerThreadId,
+          targetMode: input.interactionMode,
+          capturedCallerMode: ceiling.interactionMode,
+          currentCallerMode: caller.thread.interactionMode,
+        }),
+      });
+    }
+  });
 
   const getProjectionWithPendingEvents = (
     threadId: ThreadId,
@@ -1348,6 +1512,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       "orchestration_v2.command_type": command.type,
       "orchestration_v2.thread_id": command.threadId,
       "orchestration_v2.driver": command.modelSelection.instanceId,
+    });
+
+    yield* enforcePolicyCeiling({
+      command,
+      runtimeMode: command.runtimeMode,
+      interactionMode: command.interactionMode,
     });
 
     const now = yield* DateTime.now;
@@ -2893,6 +3063,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         }
       }
 
+      if (projection.thread.deletedAt !== null || projection.thread.archivedAt !== null) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Thread ${command.threadId} is ${projection.thread.deletedAt !== null ? "deleted" : "archived"}.`,
+        });
+      }
+      yield* enforcePolicyCeiling({
+        command,
+        runtimeMode: projection.thread.runtimeMode,
+        interactionMode: projection.thread.interactionMode,
+      });
       if (projection.thread.settledOverride !== null) {
         const now = yield* DateTime.now;
         const thread: OrchestrationV2AppThread = {
@@ -4919,8 +5101,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
   const dispatchCreatedThreadRecord = Effect.fn("orchestrationV2.dispatch.createdThreadRecord")(
     function* (
-      command: Extract<OrchestrationV2Command, { readonly type: "thread.created.record" }>,
+      command: OrchestratorV2CreatedThreadRecordCommand,
       events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+      authorizedTargetProjectId: ProjectId | undefined,
     ) {
       const parentProjection = yield* projectionStore
         .getThreadProjection(command.parentThreadId)
@@ -4962,11 +5145,24 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           cause: `Parent node ${command.parentNodeId} is not the root of run ${command.parentRunId}.`,
         });
       }
-      if (parentProjection.thread.projectId !== targetProjection.thread.projectId) {
+      if (
+        authorizedTargetProjectId === undefined &&
+        parentProjection.thread.projectId !== targetProjection.thread.projectId
+      ) {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
           commandType: command.type,
           cause: `Target thread ${command.targetThreadId} belongs to another project.`,
+        });
+      }
+      if (
+        authorizedTargetProjectId !== undefined &&
+        authorizedTargetProjectId !== targetProjection.thread.projectId
+      ) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Target thread ${command.targetThreadId} does not belong to authorized project ${authorizedTargetProjectId}.`,
         });
       }
       if (
@@ -4999,6 +5195,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         updatedAt: now,
         type: "thread_created",
         targetThreadId: command.targetThreadId,
+        targetProjectId: targetProjection.thread.projectId,
         targetRunId: command.targetRunId,
         targetProviderInstanceId: targetProjection.thread.modelSelection.instanceId,
         targetModel: targetProjection.thread.modelSelection.model,
@@ -6896,6 +7093,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
   const dispatchOnce = Effect.fn("orchestrationV2.dispatch.once")(function* (
     command: OrchestrationV2Command,
+    options?: { readonly authorizedCreatedThreadProjectId?: ProjectId },
   ): Effect.fn.Return<
     {
       readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
@@ -7045,7 +7243,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         yield* dispatchDelegatedTaskCompletionDeliveryResolution(command, events);
         break;
       case "thread.created.record":
-        yield* dispatchCreatedThreadRecord(command, events);
+        yield* dispatchCreatedThreadRecord(
+          command,
+          events,
+          options?.authorizedCreatedThreadProjectId,
+        );
         break;
       default:
         return yield* dispatchUnsupported(command);
@@ -7059,6 +7261,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
   const dispatchWithReceiptEffect = Effect.fn("orchestrationV2.dispatch.withReceipt")(function* (
     command: OrchestrationV2Command,
+    options?: { readonly authorizedCreatedThreadProjectId?: ProjectId },
   ): Effect.fn.Return<OrchestratorV2DispatchResult, OrchestratorV2Error> {
     yield* Effect.annotateCurrentSpan({
       "orchestration_v2.command_id": command.commandId,
@@ -7116,7 +7319,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       } satisfies OrchestratorV2DispatchResult;
     }
 
-    const plan = yield* dispatchOnce(command).pipe(
+    const plan = yield* dispatchOnce(command, options).pipe(
       Effect.flatMap((planned) =>
         planned.events.length > 0
           ? Effect.succeed(planned)
@@ -7195,8 +7398,36 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     } satisfies OrchestratorV2DispatchResult;
   });
 
+  const dispatchLockKeys = (command: OrchestrationV2Command): ReadonlyArray<ThreadId> => {
+    const targetThreadId = commandThreadId(command);
+    const keys =
+      (command.type === "thread.create" || command.type === "message.dispatch") &&
+      command.policyCeiling !== undefined
+        ? [targetThreadId, command.policyCeiling.callerThreadId]
+        : [targetThreadId];
+    return [...new Set(keys)].toSorted((left, right) => (left < right ? -1 : left > right ? 1 : 0));
+  };
+
+  const withDispatchLocks = <A, E, R>(
+    keys: ReadonlyArray<ThreadId>,
+    effect: Effect.Effect<A, E, R>,
+  ): Effect.Effect<A, E, R> => {
+    const [key, ...remaining] = keys;
+    return key === undefined
+      ? effect
+      : threadDispatch.withLock(key, withDispatchLocks(remaining, effect));
+  };
+
   const dispatchWithReceipt = (command: OrchestrationV2Command) =>
-    threadDispatch.withLock(commandThreadId(command), dispatchWithReceiptEffect(command));
+    withDispatchLocks(dispatchLockKeys(command), dispatchWithReceiptEffect(command));
+
+  const recordServerCreatedThread = (input: OrchestratorV2ServerCreatedThreadRecordInput) =>
+    threadDispatch.withLock(
+      commandThreadId(input.command),
+      dispatchWithReceiptEffect(input.command, {
+        authorizedCreatedThreadProjectId: input.targetProjectId,
+      }),
+    );
 
   const handleTerminalRun = (stored: OrchestrationV2StoredEvent) =>
     Effect.gen(function* () {
@@ -7348,6 +7579,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     resumeQueuedRuns,
     dispatch: dispatchWithReceipt,
     getCommandReceipt: commandReceipts.getByCommandId,
+    recordServerCreatedThread,
     getThreadProjection: (threadId) =>
       projectionStore
         .getThreadProjection(threadId)
@@ -7460,6 +7692,14 @@ export const layerUnavailable: Layer.Layer<OrchestratorV2> = Layer.succeed(
       Effect.fail(
         new CommandReceiptStoreReadError({
           commandId,
+          cause: "Orchestration V2 live runtime is not configured.",
+        }),
+      ),
+    recordServerCreatedThread: ({ command }) =>
+      Effect.fail(
+        new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
           cause: "Orchestration V2 live runtime is not configured.",
         }),
       ),

@@ -30,6 +30,7 @@ import {
   OrchestratorV2,
   type OrchestratorV2DispatchResult,
   type OrchestratorV2Error,
+  type OrchestratorV2ServerCreatedThreadRecordInput,
 } from "./Orchestrator.ts";
 import {
   LegacyV1ThreadImporter,
@@ -284,6 +285,9 @@ export interface ThreadManagementServiceShape {
   readonly dispatch: (
     command: OrchestrationV2Command,
   ) => Effect.Effect<OrchestratorV2DispatchResult, OrchestratorV2Error>;
+  readonly recordServerCreatedThread: (
+    input: OrchestratorV2ServerCreatedThreadRecordInput,
+  ) => Effect.Effect<OrchestratorV2DispatchResult, OrchestratorV2Error>;
   readonly getThreadProjection: (
     threadId: ThreadId,
   ) => Effect.Effect<OrchestrationV2ThreadProjection, OrchestratorV2Error>;
@@ -477,6 +481,13 @@ const make = Effect.gen(function* () {
       ),
     );
   };
+
+  const recordServerCreatedThread: ThreadManagementServiceShape["recordServerCreatedThread"] = (
+    input,
+  ) =>
+    ensureCommandTranscripts(input.command).pipe(
+      Effect.andThen(orchestrator.recordServerCreatedThread(input)),
+    );
 
   const getProjectThread: ThreadManagementServiceShape["getProjectThread"] = (input) =>
     getThreadProjection(input.threadId).pipe(
@@ -708,6 +719,7 @@ const make = Effect.gen(function* () {
     withProjectMutationLock: threadCommands.withProjectLock,
     ensureLegacyTranscript,
     dispatch,
+    recordServerCreatedThread,
     getThreadProjection,
     getCheckpointContext,
     getThreadSnapshot,

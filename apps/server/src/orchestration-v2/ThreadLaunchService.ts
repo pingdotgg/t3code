@@ -5,6 +5,7 @@ import {
   type ModelSelection,
   type OrchestrationV2Actor,
   type OrchestrationV2CreationSource,
+  type OrchestrationV2PolicyCeiling,
   type OrchestrationV2ThreadProjection,
   type ProviderInteractionMode,
   ProjectId,
@@ -36,11 +37,16 @@ import { randomUuidV4 } from "./RandomUuid.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 
 export type ThreadLaunchWorkspaceStrategy =
-  | { readonly type: "root"; readonly branch?: string | undefined }
+  | {
+      readonly type: "root";
+      readonly branch?: string | undefined;
+      readonly expectedBranch?: string | null | undefined;
+    }
   | {
       readonly type: "existing_worktree";
       readonly worktreePath: string;
       readonly branch?: string | undefined;
+      readonly expectedBranch?: string | null | undefined;
     }
   | {
       readonly type: "worktree";
@@ -65,6 +71,7 @@ export interface ThreadLaunchInput {
   readonly modelSelection: ModelSelection;
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
+  readonly policyCeiling?: OrchestrationV2PolicyCeiling;
   readonly workspaceStrategy: ThreadLaunchWorkspaceStrategy;
   readonly initialMessage?: ThreadLaunchInitialMessage;
   readonly createdBy: OrchestrationV2Actor;
@@ -75,6 +82,8 @@ export interface ThreadLaunchResult {
   readonly threadId: ThreadId;
   readonly projection: OrchestrationV2ThreadProjection;
   readonly resumed: boolean;
+  /** The durable run created for `initialMessage`, or null when no initial message was requested. */
+  readonly initialMessageRunId: RunId | null;
 }
 
 export class ThreadLaunchError extends Schema.TaggedErrorClass<ThreadLaunchError>()(
@@ -86,6 +95,7 @@ export class ThreadLaunchError extends Schema.TaggedErrorClass<ThreadLaunchError
       "generate-metadata",
       "provision-worktree",
       "run-setup-script",
+      "validate-workspace",
       "create-thread",
       "update-thread",
       "dispatch-message",
@@ -456,24 +466,52 @@ export const make = Effect.gen(function* () {
                       .thread({ projectId: input.projectId })
                       .pipe(Effect.mapError(mapError(input, "create-thread"))));
 
+              let initialBranch = input.workspaceStrategy.branch ?? null;
               if (Option.isNone(launchReceipt)) {
-                yield* projects.getById(input.projectId).pipe(
+                const project = yield* projects.getById(input.projectId).pipe(
                   Effect.mapError(mapError(input, "resolve-project")),
                   Effect.flatMap(
                     Option.match({
                       onNone: () =>
                         Effect.fail(mapError(input, "resolve-project")("Project not found.")),
-                      onSome: () => Effect.void,
+                      onSome: Effect.succeed,
                     }),
                   ),
                 );
+                if (
+                  input.workspaceStrategy.type !== "worktree" &&
+                  input.workspaceStrategy.expectedBranch !== undefined
+                ) {
+                  const cwd =
+                    input.workspaceStrategy.type === "existing_worktree"
+                      ? input.workspaceStrategy.worktreePath
+                      : project.workspaceRoot;
+                  const currentBranch = yield* git
+                    .currentBranch(cwd)
+                    .pipe(
+                      Effect.mapError(mapError(input, "validate-workspace", candidateThreadId)),
+                    );
+                  if (currentBranch !== input.workspaceStrategy.expectedBranch) {
+                    const expectedBranch =
+                      input.workspaceStrategy.expectedBranch === null
+                        ? "expected a detached HEAD"
+                        : `requested branch '${input.workspaceStrategy.expectedBranch}'`;
+                    return yield* mapError(
+                      input,
+                      "validate-workspace",
+                      candidateThreadId,
+                    )(
+                      `Workspace '${cwd}' is on ${currentBranch === null ? "a detached HEAD" : `branch '${currentBranch}'`}, not ${expectedBranch}.`,
+                    );
+                  }
+                  initialBranch = currentBranch;
+                }
               }
 
               if (input.reuseExistingThread === true && Option.isNone(launchReceipt)) {
                 yield* validateReusableThread(input, candidateThreadId);
               }
 
-              const initialBranch = input.workspaceStrategy.branch ?? null;
               const initialWorktreePath =
                 input.workspaceStrategy.type === "existing_worktree"
                   ? input.workspaceStrategy.worktreePath
@@ -494,6 +532,9 @@ export const make = Effect.gen(function* () {
                       modelSelection: input.modelSelection,
                       runtimeMode: input.runtimeMode,
                       interactionMode: input.interactionMode,
+                      ...(input.policyCeiling === undefined
+                        ? {}
+                        : { policyCeiling: input.policyCeiling }),
                       branch: initialBranch,
                       worktreePath: initialWorktreePath,
                       createdBy: input.createdBy,
@@ -543,6 +584,7 @@ export const make = Effect.gen(function* () {
               attachments: input.initialMessage.attachments,
               ...(input.generateTitle === true ? { titleSeed: input.title } : {}),
               modelSelection: input.modelSelection,
+              ...(input.policyCeiling === undefined ? {} : { policyCeiling: input.policyCeiling }),
               dispatchMode: { type: "defer_start" },
               createdBy: input.createdBy,
               creationSource: input.creationSource,
@@ -594,6 +636,7 @@ export const make = Effect.gen(function* () {
           threadId,
           projection,
           resumed: Option.isSome(launchReceipt) || messageWasAlreadyAccepted,
+          initialMessageRunId: runId,
         };
       });
     },

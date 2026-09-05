@@ -66,6 +66,7 @@ export class GitWorkflowService extends Context.Service<
       input: VcsCreateWorktreeInput,
     ) => Effect.Effect<VcsCreateWorktreeResult, GitCommandError>;
     readonly listLocalBranchNames: (cwd: string) => Effect.Effect<string[], GitCommandError>;
+    readonly currentBranch: (cwd: string) => Effect.Effect<string | null, GitCommandError>;
     readonly fetchRemote: (input: {
       readonly cwd: string;
       readonly remoteName: string;
@@ -318,6 +319,24 @@ export const make = Effect.gen(function* () {
     listLocalBranchNames: (cwd) =>
       ensureGitCommand("GitWorkflowService.listLocalBranchNames", cwd).pipe(
         Effect.andThen(git.listLocalBranchNames(cwd)),
+      ),
+    currentBranch: (cwd) =>
+      ensureGitCommand("GitWorkflowService.currentBranch", cwd).pipe(
+        Effect.andThen(
+          git.execute({
+            operation: "GitWorkflowService.currentBranch",
+            cwd,
+            args: ["symbolic-ref", "--quiet", "--short", "HEAD"],
+          }),
+        ),
+        Effect.map((result) => {
+          const branch = result.stdout.trim();
+          return branch.length > 0 ? branch : null;
+        }),
+        Effect.catchTags({
+          GitCommandError: (error) =>
+            error.exitCode === 1 ? Effect.succeed(null) : Effect.fail(error),
+        }),
       ),
     fetchRemote: (input) =>
       ensureGitCommand("GitWorkflowService.fetchRemote", input.cwd).pipe(

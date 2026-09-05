@@ -50,11 +50,14 @@ import { ClaudeProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/Claud
 import { CodexProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import { CodexOrchestratorReplayHarness } from "../orchestration-v2/Adapters/CodexAdapterV2.testkit.ts";
 import * as ClientCommandDispatch from "../orchestration-v2/ClientCommandDispatch.ts";
+import * as CommandReceiptStore from "../orchestration-v2/CommandReceiptStore.ts";
+import * as IdAllocator from "../orchestration-v2/IdAllocator.ts";
 import {
   ThreadCommandExecutor,
   layer as threadCommandExecutorLayer,
 } from "../orchestration-v2/ThreadCommandExecutor.ts";
 import { OrchestratorV2, type OrchestratorV2Shape } from "../orchestration-v2/Orchestrator.ts";
+import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import {
   type ProviderAdapterV2Event,
@@ -76,11 +79,17 @@ import {
   decodeProviderReplayNdjson,
   materializeReplayTranscriptWorkspace,
 } from "../orchestration-v2/testkit/ReplayTranscriptNdjson.ts";
+import * as GitWorkflow from "../git/GitWorkflowService.ts";
+import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import { makeProviderRegistryLayer } from "../provider/testUtils/providerRegistryMock.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import { ScheduledTaskService } from "../scheduledTasks/ScheduledTaskService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as SourceControlRepositoryService from "../sourceControl/SourceControlRepositoryService.ts";
+import * as TextGeneration from "../textGeneration/TextGeneration.ts";
+import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
+import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as McpHttpServer from "./McpHttpServer.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import { delegatedTaskRun, hasPendingChildRuns } from "./OrchestratorMcpService.ts";
@@ -89,6 +98,12 @@ const parentThreadId = ThreadId.make("thread:mcp-orchestrator-parent");
 const projectId = ProjectId.make("project:mcp-orchestrator");
 const deletionRaceProjectId = ProjectId.make("project:mcp-orchestrator-delete-race");
 const deletionRaceParentThreadId = ThreadId.make("thread:mcp-orchestrator-delete-race-parent");
+const ownershipRaceParentThreadId = ThreadId.make("thread:mcp-orchestrator-ownership-race-parent");
+const lifecycleRaceParentThreadId = ThreadId.make("thread:mcp-orchestrator-lifecycle-race-parent");
+const missingRootReplayThreadId = ThreadId.make(
+  "thread:mcp:mcp-provider-session-parent:create-root-replay-after-removal:0",
+);
+const targetProjectId = ProjectId.make("project:mcp-orchestrator-target");
 const codexInstanceId = ProviderInstanceId.make("codex");
 const claudeInstanceId = ProviderInstanceId.make("claudeAgent");
 const codexModel = "gpt-5.4";
@@ -505,13 +520,24 @@ describe("orchestrator MCP toolkit", () => {
           const deletionRaceProjectState = yield* Ref.make<Project>(deletionRaceProject);
           const creationAdmissionEntered = yield* Deferred.make<void>();
           const allowCreationAdmission = yield* Deferred.make<void>();
+          const deletionRaceAdmissionReads = yield* Ref.make(0);
           const deletionLockAttemptSettled = yield* Deferred.make<void>();
           const deletionLockAcquired = yield* Deferred.make<void>();
           const allowDeletion = yield* Deferred.make<void>();
           const deletionRaceProviderStarted = yield* Deferred.make<ProviderAdapterV2TurnInput>();
+          const ownershipRaceProviderStarted = yield* Deferred.make<ProviderAdapterV2TurnInput>();
+          const lifecycleRaceProviderStarted = yield* Deferred.make<ProviderAdapterV2TurnInput>();
           const deletionRaceCommandId = CommandId.make(
             "command:mcp:mcp-provider-session-delete-race:create-thread:delete-create-race:0",
           );
+          const missingWorkspaceReplayThreadId = ThreadId.make(
+            "thread:mcp:mcp-provider-session-parent:create-existing-worktree-replay-after-removal:0",
+          );
+          const missingWorkspaceSetupEntered = yield* Deferred.make<void>();
+          const allowMissingWorkspaceSetup = yield* Deferred.make<void>();
+          const missingRootSetupEntered = yield* Deferred.make<void>();
+          const allowMissingRootSetup = yield* Deferred.make<void>();
+          const targetWorkspace = yield* checkpointWorkspace("orchestrator-mcp-target");
           const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
           const parentTerminalGates = new Map<ThreadId, Deferred.Deferred<void>>();
           const deliveryTerminalGates = new Map<ThreadId, Deferred.Deferred<void>>();
@@ -524,11 +550,17 @@ describe("orchestrator MCP toolkit", () => {
               shouldComplete: (turn) =>
                 turn.threadId !== parentThreadId &&
                 turn.threadId !== deletionRaceParentThreadId &&
+                turn.threadId !== ownershipRaceParentThreadId &&
+                turn.threadId !== lifecycleRaceParentThreadId &&
                 turn.message.text !== cancellationPrompt,
               startedSignal: (turn) =>
                 turn.threadId === deletionRaceParentThreadId
                   ? deletionRaceProviderStarted
-                  : undefined,
+                  : turn.threadId === ownershipRaceParentThreadId
+                    ? ownershipRaceProviderStarted
+                    : turn.threadId === lifecycleRaceParentThreadId
+                      ? lifecycleRaceProviderStarted
+                      : undefined,
               terminalGate: (turn) =>
                 turn.message.text.startsWith("Delegated task") ||
                 turn.message.text.startsWith("Delegated tasks")
@@ -563,6 +595,16 @@ describe("orchestrator MCP toolkit", () => {
               Ref.update(continuationOffers, (existing) => [...existing, request]),
             take: Effect.never,
           });
+          const launchReceiptReadGates = new Map<
+            CommandId,
+            {
+              readonly entered: Deferred.Deferred<void>;
+              readonly release: Deferred.Deferred<void>;
+            }
+          >();
+          const currentLaunchBranches = yield* Ref.make<ReadonlyMap<string, string | null>>(
+            new Map(),
+          );
           // Offers land after the finalize projection writes, so poll briefly
           // instead of asserting counts immediately.
           const waitForContinuationOffers = (count: number) =>
@@ -585,6 +627,7 @@ describe("orchestrator MCP toolkit", () => {
                 expect(yield* Ref.get(continuationOffers)).toHaveLength(count);
               }
             });
+          const databaseLayer = SqlitePersistenceMemory;
           const orchestratorLayer = makeOrchestratorV2ReplayLayerWithRegistry(
             {
               name: "orchestrator-mcp-toolkit",
@@ -599,6 +642,7 @@ describe("orchestrator MCP toolkit", () => {
               },
             },
             registryLayer,
+            { databaseLayer },
           ).pipe(Layer.provide(continuationProbeLayer));
           const threadManagementLayer = ThreadManagement.layer.pipe(
             Layer.provide(orchestratorLayer),
@@ -611,12 +655,26 @@ describe("orchestrator MCP toolkit", () => {
                 ...actual,
                 withProjectCreationAdmission: (input, effect) =>
                   actual.withProjectCreationAdmission(input, (receipt) =>
-                    input.commandId === deletionRaceCommandId && Option.isNone(receipt)
-                      ? Deferred.succeed(creationAdmissionEntered, undefined).pipe(
-                          Effect.andThen(Deferred.await(allowCreationAdmission)),
-                          Effect.andThen(effect(receipt)),
-                        )
-                      : effect(receipt),
+                    Effect.gen(function* () {
+                      const deletionRaceRead =
+                        input.commandId === deletionRaceCommandId
+                          ? yield* Ref.modify(deletionRaceAdmissionReads, (count) => [
+                              count + 1,
+                              count + 1,
+                            ])
+                          : 0;
+                      if (deletionRaceRead === 2 && Option.isNone(receipt)) {
+                        yield* Deferred.succeed(creationAdmissionEntered, undefined);
+                        yield* Deferred.await(allowCreationAdmission);
+                      }
+                      const gate = launchReceiptReadGates.get(input.commandId);
+                      if (gate !== undefined) {
+                        yield* Deferred.succeed(gate.entered, undefined);
+                        yield* Deferred.await(gate.release);
+                        launchReceiptReadGates.delete(input.commandId);
+                      }
+                      return yield* effect(receipt);
+                    }),
                   ),
               });
             }),
@@ -686,7 +744,14 @@ describe("orchestrator MCP toolkit", () => {
                 create: () => Effect.die("unused"),
                 bootstrap: () => Effect.die("unused"),
                 update: () => Effect.die("unused"),
-                delete: () => Effect.die("unused"),
+                delete: ({ projectId: deletedProjectId }) =>
+                  deletedProjectId === deletionRaceProjectId
+                    ? Ref.updateAndGet(deletionRaceProjectState, (project) => ({
+                        ...project,
+                        deletedAt: "2026-08-30T00:01:00.000Z",
+                        updatedAt: "2026-08-30T00:01:00.000Z",
+                      }))
+                    : Effect.die(`Unexpected project deletion: ${deletedProjectId}`),
                 deleteDetailed: ({ commandId, projectId: deletedProjectId }) =>
                   Effect.gen(function* () {
                     if (deletedProjectId !== deletionRaceProjectId) {
@@ -736,22 +801,97 @@ describe("orchestrator MCP toolkit", () => {
                     yield* Deferred.succeed(deletionLockAttemptSettled, undefined);
                     return yield* Fiber.join(deletion);
                   }).pipe(Effect.orDie),
-                getById: (requestedProjectId, options) =>
-                  requestedProjectId === deletionRaceProjectId
-                    ? Ref.get(deletionRaceProjectState).pipe(
-                        Effect.map((project) =>
-                          project.deletedAt === null || options?.includeDeleted === true
-                            ? Option.some(project)
-                            : Option.none(),
-                        ),
-                      )
-                    : Effect.succeed(Option.none()),
+                getById: (requestedProjectId, options) => {
+                  if (requestedProjectId === deletionRaceProjectId) {
+                    return Ref.get(deletionRaceProjectState).pipe(
+                      Effect.map((project) =>
+                        project.deletedAt === null || options?.includeDeleted === true
+                          ? Option.some(project)
+                          : Option.none(),
+                      ),
+                    );
+                  }
+                  return Effect.succeed(
+                    requestedProjectId === projectId || requestedProjectId === targetProjectId
+                      ? Option.some({
+                          id: requestedProjectId,
+                          title:
+                            requestedProjectId === projectId ? "MCP project" : "MCP target project",
+                          workspaceRoot: requestedProjectId === projectId ? cwd : targetWorkspace,
+                          repositoryIdentity: null,
+                          faviconPath: null,
+                          defaultModelSelection: codexSelection,
+                          defaultThreadEnvMode: "worktree",
+                          scripts: [],
+                          createdAt: "2026-08-29T12:00:00.000Z",
+                          updatedAt: "2026-08-29T12:00:00.000Z",
+                          deletedAt: null,
+                        })
+                      : Option.none(),
+                  );
+                },
                 getByWorkspaceRoot: () => Effect.die("unused"),
                 snapshot: Effect.die("unused"),
               });
             }),
           ).pipe(
             Layer.provide(Layer.merge(threadCommandExecutorLayer, gatedThreadManagementLayer)),
+          );
+          const receiptLayer = CommandReceiptStore.layer.pipe(Layer.provide(databaseLayer));
+          const launchReceiptLayer = Layer.effect(
+            CommandReceiptStore.CommandReceiptStoreV2,
+            Effect.map(CommandReceiptStore.CommandReceiptStoreV2, (receipts) =>
+              CommandReceiptStore.CommandReceiptStoreV2.of({
+                ...receipts,
+                getByCommandId: (commandId) =>
+                  Effect.gen(function* () {
+                    const gate = launchReceiptReadGates.get(commandId);
+                    if (gate !== undefined) {
+                      yield* Deferred.succeed(gate.entered, undefined);
+                      yield* Deferred.await(gate.release);
+                      launchReceiptReadGates.delete(commandId);
+                    }
+                    return yield* receipts.getByCommandId(commandId);
+                  }),
+              }),
+            ),
+          ).pipe(Layer.provide(receiptLayer));
+          const threadLaunchLayer = ThreadLaunch.layer.pipe(
+            Layer.provide(
+              Layer.mergeAll(
+                projectLayer,
+                Layer.mock(GitWorkflow.GitWorkflowService)({
+                  currentBranch: (workspaceRoot) =>
+                    Ref.get(currentLaunchBranches).pipe(
+                      Effect.map((branches) => branches.get(workspaceRoot) ?? null),
+                    ),
+                }),
+                Layer.mock(ProjectSetupScriptRunner.ProjectSetupScriptRunner)({
+                  runForThread: (input) =>
+                    input.threadId === missingWorkspaceReplayThreadId
+                      ? Deferred.succeed(missingWorkspaceSetupEntered, undefined).pipe(
+                          Effect.andThen(Deferred.await(allowMissingWorkspaceSetup)),
+                          Effect.as({ status: "no-script" } as const),
+                        )
+                      : input.threadId === missingRootReplayThreadId
+                        ? Deferred.succeed(missingRootSetupEntered, undefined).pipe(
+                            Effect.andThen(Deferred.await(allowMissingRootSetup)),
+                            Effect.as({ status: "no-script" } as const),
+                          )
+                        : Effect.succeed({ status: "no-script" }),
+                }),
+                Layer.mock(TextGeneration.TextGeneration)({}),
+                ServerSettings.layerTest({}),
+                providerRegistryLayer,
+                orchestrationLayer,
+                launchReceiptLayer,
+                IdAllocator.layer,
+              ),
+            ),
+          );
+          const vcsProcessLayer = VcsProcess.layer.pipe(Layer.provide(NodeServices.layer));
+          const vcsDriverRegistryLayer = VcsDriverRegistry.layer.pipe(
+            Layer.provide(vcsProcessLayer),
           );
           const toolkitRegistrationLayer = Layer.merge(
             McpHttpServer.OrchestratorToolkitRegistrationLive,
@@ -767,10 +907,14 @@ describe("orchestrator MCP toolkit", () => {
               Layer.mock(SourceControlRepositoryService.SourceControlRepositoryService)({}),
             ),
             Layer.provide(ServerSettings.layerTest({})),
-            Layer.provide(NodeServices.layer),
+            Layer.provide(threadLaunchLayer),
+            Layer.provide(vcsDriverRegistryLayer),
+            Layer.provideMerge(vcsProcessLayer),
+            Layer.provideMerge(NodeServices.layer),
           );
 
           yield* Effect.gen(function* () {
+            const fileSystem = yield* FileSystem.FileSystem;
             const orchestrator = yield* OrchestratorV2;
             const server = yield* McpServer.McpServer;
             yield* orchestrator.dispatch({
@@ -825,6 +969,18 @@ describe("orchestrator MCP toolkit", () => {
                   Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
                   Effect.provideService(McpSchema.McpServerClient, client),
                 );
+            const launchCommandId = (
+              requestKey: string,
+              providerSessionId = "mcp-provider-session-parent",
+            ) => CommandId.make(`command:mcp:${providerSessionId}:create-thread:${requestKey}:0`);
+            const gateLaunchReceipt = Effect.fn("test.gateLaunchReceipt")(function* (
+              commandId: CommandId,
+            ) {
+              const entered = yield* Deferred.make<void>();
+              const release = yield* Deferred.make<void>();
+              launchReceiptReadGates.set(commandId, { entered, release });
+              return { entered, release } as const;
+            });
 
             if (parentRun === undefined || parentRun.rootNodeId === null) {
               return yield* Effect.die(new Error("Parent run missing."));
@@ -1831,6 +1987,22 @@ describe("orchestrator MCP toolkit", () => {
             ).toMatchObject({ state: "disposed" });
             yield* expectOffersToStay(0);
 
+            const vcsProcess = yield* VcsProcess.VcsProcess;
+            const currentBranch = (yield* vcsProcess.run({
+              operation: "OrchestratorMcpToolkit.integration.currentBranch",
+              command: "git",
+              cwd,
+              args: ["symbolic-ref", "--quiet", "--short", "HEAD"],
+              timeoutMs: 10_000,
+            })).stdout.trim();
+            const canonicalCwd = yield* fileSystem.realPath(cwd);
+            yield* Ref.set(
+              currentLaunchBranches,
+              new Map([
+                [cwd, currentBranch],
+                [canonicalCwd, currentBranch],
+              ]),
+            );
             const createInput = {
               clientRequestId: "create-thread-batch-1",
               threads: [
@@ -1848,6 +2020,7 @@ describe("orchestrator MCP toolkit", () => {
             };
             const createCall = yield* invoke("create_threads", createInput);
             expect(createCall.isError).toBe(false);
+            expect(createCall.structuredContent).toHaveProperty("threads");
             const created = yield* decodeCreateThreadsResult(createCall.structuredContent).pipe(
               Effect.orDie,
             );
@@ -1898,6 +2071,7 @@ describe("orchestrator MCP toolkit", () => {
             expect(
               createdThreadItems.map((item) => ({
                 targetThreadId: item.targetThreadId,
+                targetProjectId: item.targetProjectId,
                 targetRunId: item.targetRunId,
                 title: item.title,
                 providerInstanceId: item.targetProviderInstanceId,
@@ -1906,6 +2080,7 @@ describe("orchestrator MCP toolkit", () => {
             ).toEqual([
               {
                 targetThreadId: emptyThread.threadId,
+                targetProjectId: projectId,
                 targetRunId: null,
                 title: emptyThread.title,
                 providerInstanceId: codexInstanceId,
@@ -1913,12 +2088,427 @@ describe("orchestrator MCP toolkit", () => {
               },
               {
                 targetThreadId: promptedThread.threadId,
+                targetProjectId: projectId,
                 targetRunId: promptedThread.runId,
                 title: promptedThread.title,
                 providerInstanceId: claudeInstanceId,
                 model: claudeModel,
               },
             ]);
+
+            const targetBranch = (yield* vcsProcess.run({
+              operation: "OrchestratorMcpToolkit.integration.currentBranch",
+              command: "git",
+              cwd: targetWorkspace,
+              args: ["symbolic-ref", "--quiet", "--short", "HEAD"],
+              timeoutMs: 10_000,
+            })).stdout.trim();
+            const canonicalTargetWorkspace = yield* fileSystem.realPath(targetWorkspace);
+            const setTargetLaunchBranch = (branch: string) =>
+              Ref.update(currentLaunchBranches, (branches) => {
+                const updated = new Map(branches);
+                updated.set(targetWorkspace, branch);
+                updated.set(canonicalTargetWorkspace, branch);
+                return updated;
+              });
+            yield* setTargetLaunchBranch(targetBranch);
+            const crossProjectInput = {
+              clientRequestId: "create-cross-project-thread-1",
+              threads: [
+                {
+                  projectId: targetProjectId,
+                  title: "Cross-project ordinary thread",
+                  prompt: "Run in the explicitly selected project.",
+                  runtimeMode: "full-access",
+                  interactionMode: "default",
+                  workspaceStrategy: { type: "root", branch: targetBranch },
+                },
+              ],
+            } as const;
+            const crossProjectCall = yield* invoke("create_threads", crossProjectInput);
+            expect(crossProjectCall.isError).toBe(false);
+            expect(crossProjectCall.structuredContent).toHaveProperty("threads");
+            const crossProjectCreated = yield* decodeCreateThreadsResult(
+              crossProjectCall.structuredContent,
+            ).pipe(Effect.orDie);
+            const crossProjectThread = crossProjectCreated.threads[0]!;
+            expect(crossProjectThread.projectId).toBe(targetProjectId);
+            expect(
+              (yield* orchestrator.getThreadProjection(crossProjectThread.threadId)).thread
+                .projectId,
+            ).toBe(targetProjectId);
+            const crossProjectProjection = yield* orchestrator.getThreadProjection(
+              crossProjectThread.threadId,
+            );
+            expect(crossProjectProjection.messages.map((message) => message.text)).toEqual([
+              "Run in the explicitly selected project.",
+            ]);
+            const crossProjectItem = (yield* orchestrator.getThreadProjection(
+              parentThreadId,
+            )).visibleTurnItems
+              .map((row) => row.item)
+              .find(
+                (item) =>
+                  item.type === "thread_created" &&
+                  item.targetThreadId === crossProjectThread.threadId,
+              );
+            expect(crossProjectItem).toMatchObject({
+              type: "thread_created",
+              targetThreadId: crossProjectThread.threadId,
+              targetProjectId,
+              targetRunId: crossProjectThread.runId,
+            });
+            yield* vcsProcess.run({
+              operation: "OrchestratorMcpToolkit.integration.changeBranch",
+              command: "git",
+              cwd: targetWorkspace,
+              args: ["switch", "-c", "mcp-accepted-replay-branch"],
+              timeoutMs: 10_000,
+            });
+            yield* setTargetLaunchBranch("mcp-accepted-replay-branch");
+            const untrustedCrossProjectRecord = yield* orchestrator
+              .dispatch({
+                type: "thread.created.record",
+                commandId: CommandId.make("command:mcp-parent:untrusted-cross-project-record"),
+                parentThreadId,
+                parentRunId: parentRun.id,
+                parentNodeId: parentRootNodeId,
+                targetThreadId: crossProjectThread.threadId,
+                targetRunId: null,
+              })
+              .pipe(Effect.flip);
+            expect(untrustedCrossProjectRecord._tag).toBe("OrchestratorDispatchError");
+
+            const preCreateKey = "cross-project-policy-before-create";
+            const preCreateGate = yield* gateLaunchReceipt(launchCommandId(preCreateKey));
+            const preCreateFiber = yield* Effect.forkChild(
+              invoke("create_threads", {
+                clientRequestId: preCreateKey,
+                threads: [
+                  {
+                    projectId: targetProjectId,
+                    prompt: "Do not accept after the caller narrows to plan mode.",
+                    interactionMode: "default",
+                  },
+                ],
+              }),
+              { startImmediately: true },
+            );
+            yield* Deferred.await(preCreateGate.entered);
+            yield* orchestrator.dispatch({
+              type: "thread.interaction-mode.set",
+              commandId: CommandId.make("command:mcp-parent:interaction-plan-before-create"),
+              threadId: parentThreadId,
+              interactionMode: "plan",
+            });
+            expect(
+              (yield* orchestrator.getThreadProjection(parentThreadId)).thread.interactionMode,
+            ).toBe("plan");
+            yield* Deferred.succeed(preCreateGate.release, undefined);
+            const preCreateCall = yield* Fiber.join(preCreateFiber);
+            expect(preCreateCall.structuredContent).toMatchObject({
+              code: "interaction_mode_escalation_denied",
+              message:
+                "Child interaction mode default exceeds the caller ceiling (captured default; current plan).",
+            });
+            const preCreateThreadId = ThreadId.make(
+              `thread:mcp:mcp-provider-session-parent:${preCreateKey}:0`,
+            );
+            expect(
+              Option.isNone(
+                yield* Effect.option(orchestrator.getThreadProjection(preCreateThreadId)),
+              ),
+            ).toBe(true);
+            yield* orchestrator.dispatch({
+              type: "thread.interaction-mode.set",
+              commandId: CommandId.make("command:mcp-parent:interaction-default-after-create-race"),
+              threadId: parentThreadId,
+              interactionMode: "default",
+            });
+
+            const betweenCreateAndMessageKey = "cross-project-policy-before-message";
+            const messageReceiptId = CommandId.make(
+              `${launchCommandId(betweenCreateAndMessageKey)}:initial-message`,
+            );
+            const messageGate = yield* gateLaunchReceipt(messageReceiptId);
+            const betweenCreateAndMessageFiber = yield* Effect.forkChild(
+              invoke("create_threads", {
+                clientRequestId: betweenCreateAndMessageKey,
+                threads: [
+                  {
+                    projectId: targetProjectId,
+                    prompt: "Do not accept this message after the caller runtime narrows.",
+                    runtimeMode: "full-access",
+                  },
+                ],
+              }),
+              { startImmediately: true },
+            );
+            yield* Deferred.await(messageGate.entered);
+            const betweenCreateAndMessageThreadId = ThreadId.make(
+              `thread:mcp:mcp-provider-session-parent:${betweenCreateAndMessageKey}:0`,
+            );
+            expect(
+              (yield* orchestrator.getThreadProjection(betweenCreateAndMessageThreadId)).thread
+                .projectId,
+            ).toBe(targetProjectId);
+            yield* orchestrator.dispatch({
+              type: "thread.runtime-mode.set",
+              commandId: CommandId.make("command:mcp-parent:runtime-narrow-before-message"),
+              threadId: parentThreadId,
+              runtimeMode: "approval-required",
+            });
+            yield* Deferred.succeed(messageGate.release, undefined);
+            const betweenCreateAndMessageCall = yield* Fiber.join(betweenCreateAndMessageFiber);
+            expect(betweenCreateAndMessageCall.structuredContent).toMatchObject({
+              code: "runtime_mode_escalation_denied",
+              message:
+                "Child runtime mode full-access exceeds the caller ceiling (captured full-access; current approval-required).",
+            });
+            const partialProjection = yield* orchestrator.getThreadProjection(
+              betweenCreateAndMessageThreadId,
+            );
+            expect(partialProjection.messages).toEqual([]);
+            expect(partialProjection.runs).toEqual([]);
+            yield* orchestrator.dispatch({
+              type: "thread.runtime-mode.set",
+              commandId: CommandId.make("command:mcp-parent:runtime-restore-after-message-race"),
+              threadId: parentThreadId,
+              runtimeMode: "full-access",
+            });
+
+            yield* orchestrator.dispatch({
+              type: "thread.runtime-mode.set",
+              commandId: CommandId.make("command:mcp-parent:runtime-narrow-before-replay"),
+              threadId: parentThreadId,
+              runtimeMode: "approval-required",
+            });
+            yield* orchestrator.dispatch({
+              type: "thread.interaction-mode.set",
+              commandId: CommandId.make("command:mcp-parent:interaction-plan-before-replay"),
+              threadId: parentThreadId,
+              interactionMode: "plan",
+            });
+            const laterCrossProjectDispatch = yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              commandId: CommandId.make("command:mcp-cross-project:later-run"),
+              threadId: crossProjectThread.threadId,
+              messageId: MessageId.make("message:mcp-cross-project:later-run"),
+              text: "A later run must not replace the launch receipt result.",
+              attachments: [],
+              modelSelection: codexSelection,
+              dispatchMode: { type: "defer_start" },
+              createdBy: "user",
+              creationSource: "web",
+            });
+            const laterCrossProjectRun = laterCrossProjectDispatch.storedEvents.find(
+              (stored) => stored.event.type === "run.created",
+            );
+            expect(laterCrossProjectRun?.event.type).toBe("run.created");
+            const replayedCrossProjectCall = yield* invoke("create_threads", crossProjectInput);
+            expect(replayedCrossProjectCall.isError).toBe(false);
+            expect(replayedCrossProjectCall.structuredContent).toHaveProperty("threads");
+            const replayedCrossProject = yield* decodeCreateThreadsResult(
+              replayedCrossProjectCall.structuredContent,
+            ).pipe(Effect.orDie);
+            expect(replayedCrossProject.threads[0]?.threadId).toBe(crossProjectThread.threadId);
+            expect(replayedCrossProject.threads[0]?.runId).toBe(crossProjectThread.runId);
+            const replayedCrossProjectProjection = yield* orchestrator.getThreadProjection(
+              crossProjectThread.threadId,
+            );
+            expect(replayedCrossProjectProjection.messages).toHaveLength(2);
+            expect(replayedCrossProjectProjection.runs).toHaveLength(2);
+            expect(
+              (yield* orchestrator.getThreadProjection(parentThreadId)).visibleTurnItems
+                .map((row) => row.item)
+                .find(
+                  (item) =>
+                    item.type === "thread_created" &&
+                    item.targetThreadId === crossProjectThread.threadId,
+                ),
+            ).toMatchObject({ targetRunId: crossProjectThread.runId });
+            yield* orchestrator.dispatch({
+              type: "thread.runtime-mode.set",
+              commandId: CommandId.make("command:mcp-parent:runtime-restore-after-replay"),
+              threadId: parentThreadId,
+              runtimeMode: "full-access",
+            });
+            yield* orchestrator.dispatch({
+              type: "thread.interaction-mode.set",
+              commandId: CommandId.make("command:mcp-parent:interaction-default-after-replay"),
+              threadId: parentThreadId,
+              interactionMode: "default",
+            });
+            const freshMismatchedKey = "create-cross-project-thread-fresh-mismatch";
+            const freshMismatchedCall = yield* invoke("create_threads", {
+              ...crossProjectInput,
+              clientRequestId: freshMismatchedKey,
+            });
+            expect(freshMismatchedCall.structuredContent).toMatchObject({
+              code: "orchestration_error",
+            });
+            const freshMismatchedThreadId = ThreadId.make(
+              `thread:mcp:mcp-provider-session-parent:${freshMismatchedKey}:0`,
+            );
+            expect(
+              Option.isNone(
+                yield* Effect.option(orchestrator.getThreadProjection(freshMismatchedThreadId)),
+              ),
+            ).toBe(true);
+
+            const freshObservedBranchKey = "create-cross-project-thread-observed-mismatch";
+            yield* Effect.gen(function* () {
+              yield* setTargetLaunchBranch("simulated-external-branch");
+              const freshObservedBranchCall = yield* invoke("create_threads", {
+                clientRequestId: freshObservedBranchKey,
+                threads: [
+                  {
+                    projectId: targetProjectId,
+                    title: "Reject an observed branch race",
+                    prompt: "Do not launch after the observed branch changes.",
+                    workspaceStrategy: { type: "root" },
+                  },
+                ],
+              });
+              expect(freshObservedBranchCall.structuredContent).toMatchObject({
+                code: "orchestration_error",
+              });
+              const freshObservedBranchThreadId = ThreadId.make(
+                `thread:mcp:mcp-provider-session-parent:${freshObservedBranchKey}:0`,
+              );
+              expect(
+                Option.isNone(
+                  yield* Effect.option(
+                    orchestrator.getThreadProjection(freshObservedBranchThreadId),
+                  ),
+                ),
+              ).toBe(true);
+            }).pipe(Effect.ensuring(setTargetLaunchBranch("mcp-accepted-replay-branch")));
+
+            const missingWorkspaceReplayKey = "create-existing-worktree-replay-after-removal";
+            const missingWorkspaceInput = {
+              clientRequestId: missingWorkspaceReplayKey,
+              threads: [
+                {
+                  projectId: targetProjectId,
+                  title: "Existing worktree replay",
+                  prompt: "Replay this accepted launch after its workspace disappears.",
+                  target: {
+                    providerInstanceId: codexInstanceId,
+                    model: codexModel,
+                  },
+                  workspaceStrategy: {
+                    type: "existing_worktree",
+                    worktreePath: targetWorkspace,
+                  },
+                },
+              ],
+            } as const;
+            const originalMissingWorkspaceThread = yield* Effect.gen(function* () {
+              const missingWorkspaceCreateCall = yield* invoke(
+                "create_threads",
+                missingWorkspaceInput,
+              );
+              expect(missingWorkspaceCreateCall.isError).toBe(false);
+              expect(missingWorkspaceCreateCall.structuredContent).toHaveProperty("threads");
+              const missingWorkspaceCreated = yield* decodeCreateThreadsResult(
+                missingWorkspaceCreateCall.structuredContent,
+              ).pipe(Effect.orDie);
+              const original = missingWorkspaceCreated.threads[0]!;
+              expect(original.threadId).toBe(missingWorkspaceReplayThreadId);
+              yield* Deferred.await(missingWorkspaceSetupEntered);
+              const movedTargetWorkspace = `${targetWorkspace}-temporarily-missing`;
+              yield* Effect.gen(function* () {
+                yield* fileSystem.rename(targetWorkspace, movedTargetWorkspace);
+                const replayCall = yield* invoke("create_threads", missingWorkspaceInput);
+                expect(replayCall.structuredContent).toHaveProperty("threads");
+                const replayed = yield* decodeCreateThreadsResult(
+                  replayCall.structuredContent,
+                ).pipe(Effect.orDie);
+                expect(replayed.threads[0]).toEqual(original);
+                const replayedProjection = yield* orchestrator.getThreadProjection(
+                  original.threadId,
+                );
+                expect(replayedProjection.messages).toHaveLength(1);
+                expect(replayedProjection.thread.worktreePath).toBe(canonicalTargetWorkspace);
+              }).pipe(
+                Effect.ensuring(
+                  fileSystem.rename(movedTargetWorkspace, targetWorkspace).pipe(Effect.orDie),
+                ),
+              );
+              return original;
+            }).pipe(Effect.ensuring(Deferred.succeed(allowMissingWorkspaceSetup, undefined)));
+
+            const missingRootReplayKey = "create-root-replay-after-removal";
+            const missingRootInput = {
+              clientRequestId: missingRootReplayKey,
+              threads: [
+                {
+                  projectId: targetProjectId,
+                  title: "Root replay",
+                  prompt: "Replay this accepted root launch after its workspace disappears.",
+                  workspaceStrategy: { type: "root" },
+                },
+              ],
+            } as const;
+            yield* Effect.gen(function* () {
+              const createCall = yield* invoke("create_threads", missingRootInput);
+              expect(createCall.isError).toBe(false);
+              const createdRootResult = yield* decodeCreateThreadsResult(
+                createCall.structuredContent,
+              ).pipe(Effect.orDie);
+              const createdRoot = createdRootResult.threads[0]!;
+              expect(createdRoot.threadId).toBe(missingRootReplayThreadId);
+              const acceptedRootProjection = yield* orchestrator.getThreadProjection(
+                createdRoot.threadId,
+              );
+              const acceptedRootBranch = acceptedRootProjection.thread.branch;
+              expect(acceptedRootBranch).not.toBeNull();
+              yield* Deferred.await(missingRootSetupEntered);
+              const movedTargetWorkspace = `${targetWorkspace}-root-temporarily-missing`;
+              yield* Effect.gen(function* () {
+                yield* fileSystem.rename(targetWorkspace, movedTargetWorkspace);
+                const replayCall = yield* invoke("create_threads", missingRootInput);
+                expect(replayCall.isError).toBe(false);
+                const replayedRootResult = yield* decodeCreateThreadsResult(
+                  replayCall.structuredContent,
+                ).pipe(Effect.orDie);
+                const replayedRoot = replayedRootResult.threads[0]!;
+                expect(replayedRoot).toEqual(createdRoot);
+                const projection = yield* orchestrator.getThreadProjection(createdRoot.threadId);
+                expect(projection.messages).toHaveLength(1);
+                expect(projection.thread.worktreePath).toBeNull();
+                expect(projection.thread.branch).toBe(acceptedRootBranch);
+              }).pipe(
+                Effect.ensuring(
+                  fileSystem.rename(movedTargetWorkspace, targetWorkspace).pipe(Effect.orDie),
+                ),
+              );
+            }).pipe(Effect.ensuring(Deferred.succeed(allowMissingRootSetup, undefined)));
+
+            const conflictingReplayCall = yield* invoke("create_threads", {
+              clientRequestId: missingWorkspaceReplayKey,
+              threads: [
+                {
+                  projectId,
+                  title: "Conflicting replay metadata",
+                  prompt: "Do not replace the accepted launch identity.",
+                  target: {
+                    providerInstanceId: claudeInstanceId,
+                    model: claudeModel,
+                  },
+                  workspaceStrategy: { type: "root" },
+                },
+              ],
+            });
+            expect(conflictingReplayCall.structuredContent).toMatchObject({
+              code: "invalid_request",
+              message: expect.stringContaining("different project"),
+            });
+            expect(
+              (yield* orchestrator.getThreadProjection(originalMissingWorkspaceThread.threadId))
+                .thread.projectId,
+            ).toBe(targetProjectId);
 
             const repeatedCreateCall = yield* invoke("create_threads", createInput);
             const repeatedCreated = yield* decodeCreateThreadsResult(
@@ -2366,22 +2956,72 @@ describe("orchestrator MCP toolkit", () => {
             }
             yield* Ref.set(continuationOffers, []);
 
-            const parentStop = yield* orchestrator.dispatch({
-              type: "run.interrupt",
-              commandId: CommandId.make("command:mcp-parent:interrupt-wake"),
-              threadId: parentThreadId,
-              runId: parentRun.id,
-              reason: "Settle the parent before the legacy child terminalizes.",
-            });
-            yield* waitForProjection(orchestrator, parentThreadId, (projection) =>
-              projection.runs.every(
-                (run) =>
-                  run.status !== "preparing" &&
-                  run.status !== "starting" &&
-                  run.status !== "running",
-              ),
+            const inactiveBeforeMessageKey = "create-before-parent-run-terminal";
+            const inactiveBeforeMessageThreadId = ThreadId.make(
+              `thread:mcp:mcp-provider-session-parent:${inactiveBeforeMessageKey}:0`,
             );
-            const stoppedParent = yield* orchestrator.getThreadProjection(parentThreadId);
+            const inactiveBeforeMessageGate = yield* gateLaunchReceipt(
+              CommandId.make(`${launchCommandId(inactiveBeforeMessageKey)}:initial-message`),
+            );
+            const { parentStop, stoppedParent } = yield* Effect.gen(function* () {
+              const creation = yield* Effect.forkChild(
+                invoke("create_threads", {
+                  clientRequestId: inactiveBeforeMessageKey,
+                  threads: [
+                    {
+                      title: "Created before its caller run terminalizes",
+                      prompt: "Do not start this child turn after its caller run terminalizes.",
+                    },
+                  ],
+                }),
+                { startImmediately: true },
+              );
+              yield* Deferred.await(inactiveBeforeMessageGate.entered);
+              expect(
+                (yield* orchestrator.getThreadProjection(inactiveBeforeMessageThreadId)).thread.id,
+              ).toBe(inactiveBeforeMessageThreadId);
+
+              const sequenceBeforeInterrupt =
+                yield* orchestrator.getThreadEventSequence(parentThreadId);
+              const parentStop = yield* orchestrator.dispatch({
+                type: "run.interrupt",
+                commandId: CommandId.make("command:mcp-parent:interrupt-wake"),
+                threadId: parentThreadId,
+                runId: parentRun.id,
+                reason: "Settle the parent before the legacy child terminalizes.",
+              });
+              const terminalEvent = yield* orchestrator
+                .streamStoredEventsFrom({
+                  threadId: parentThreadId,
+                  afterSequence: sequenceBeforeInterrupt,
+                })
+                .pipe(
+                  Stream.filter(
+                    (stored) =>
+                      stored.event.type === "run.updated" &&
+                      stored.event.payload.id === parentRun.id &&
+                      stored.event.payload.status === "interrupted",
+                  ),
+                  Stream.runHead,
+                );
+              expect(Option.isSome(terminalEvent)).toBe(true);
+              const stoppedParent = yield* orchestrator.getThreadProjection(parentThreadId);
+              yield* Deferred.succeed(inactiveBeforeMessageGate.release, undefined);
+              const creationCall = yield* Fiber.join(creation);
+              expect(creationCall.structuredContent).toMatchObject({
+                code: "parent_not_active",
+                message:
+                  "Thread creation requires an active run owned by this MCP provider session.",
+              });
+              const partialChild = yield* orchestrator.getThreadProjection(
+                inactiveBeforeMessageThreadId,
+              );
+              expect(partialChild.messages).toEqual([]);
+              expect(partialChild.runs).toEqual([]);
+              return { parentStop, stoppedParent };
+            }).pipe(
+              Effect.ensuring(Deferred.succeed(inactiveBeforeMessageGate.release, undefined)),
+            );
             expect(stoppedParent.runs.some((run) => run.id === parentRun.id)).toBe(true);
             expect(
               parentStop.storedEvents.some(
@@ -2888,6 +3528,206 @@ describe("orchestrator MCP toolkit", () => {
               type: "thread.create",
               createdBy: "user",
               creationSource: "web",
+              commandId: CommandId.make("command:mcp-ownership-race-parent:create"),
+              threadId: ownershipRaceParentThreadId,
+              projectId,
+              title: "MCP ownership race parent",
+              modelSelection: codexSelection,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              branch: null,
+              worktreePath: cwd,
+            });
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              createdBy: "user",
+              creationSource: "web",
+              commandId: CommandId.make("command:mcp-ownership-race-parent:start"),
+              threadId: ownershipRaceParentThreadId,
+              messageId: MessageId.make("message:mcp-ownership-race-parent:start"),
+              text: "Stay active until child launch admission is checked.",
+              attachments: [],
+              modelSelection: codexSelection,
+              dispatchMode: { type: "start_immediately" },
+            });
+            const startedOwnershipRaceTurn = yield* Deferred.await(ownershipRaceProviderStarted);
+            expect(startedOwnershipRaceTurn.threadId).toBe(ownershipRaceParentThreadId);
+            const ownershipRaceInvocation: McpInvocationContext.McpInvocationScope = {
+              ...invocation,
+              threadId: ownershipRaceParentThreadId,
+              providerSessionId: "mcp-provider-session-ownership-race",
+            };
+            const invokeOwnershipRace = (name: string, args: Record<string, unknown>) =>
+              server
+                .callTool({ name, arguments: args })
+                .pipe(
+                  Effect.provideService(
+                    McpInvocationContext.McpInvocationContext,
+                    ownershipRaceInvocation,
+                  ),
+                  Effect.provideService(McpSchema.McpServerClient, client),
+                );
+            const ownershipRaceParent = yield* orchestrator.getThreadProjection(
+              ownershipRaceParentThreadId,
+            );
+            const ownershipRaceParentRun = ownershipRaceParent.runs.find(
+              (run) => run.status === "running",
+            );
+            if (ownershipRaceParentRun === undefined) {
+              return yield* Effect.die(new Error("Ownership-race parent run did not start."));
+            }
+            const inactiveParentKey = "create-after-parent-run-terminal";
+            const inactiveParentGate = yield* gateLaunchReceipt(
+              launchCommandId(inactiveParentKey, ownershipRaceInvocation.providerSessionId),
+            );
+            yield* Effect.gen(function* () {
+              const creation = yield* Effect.forkChild(
+                invokeOwnershipRace("create_threads", {
+                  clientRequestId: inactiveParentKey,
+                  threads: [
+                    {
+                      projectId: targetProjectId,
+                      title: "Must not outlive its caller run",
+                      prompt: "Do not launch after the caller run terminalizes.",
+                    },
+                  ],
+                }),
+                { startImmediately: true },
+              );
+              yield* Deferred.await(inactiveParentGate.entered);
+              const sequenceBeforeInterrupt = yield* orchestrator.getThreadEventSequence(
+                ownershipRaceParentThreadId,
+              );
+              yield* orchestrator.dispatch({
+                type: "run.interrupt",
+                commandId: CommandId.make(
+                  "command:mcp-ownership-race-parent:terminal-before-child-launch",
+                ),
+                threadId: ownershipRaceParentThreadId,
+                runId: ownershipRaceParentRun.id,
+                reason: "Prove child launch revalidates its caller run.",
+              });
+              const terminalEvent = yield* orchestrator
+                .streamStoredEventsFrom({
+                  threadId: ownershipRaceParentThreadId,
+                  afterSequence: sequenceBeforeInterrupt,
+                })
+                .pipe(
+                  Stream.filter(
+                    (stored) =>
+                      stored.event.type === "run.updated" &&
+                      stored.event.payload.id === ownershipRaceParentRun.id &&
+                      stored.event.payload.status === "interrupted",
+                  ),
+                  Stream.runHead,
+                );
+              expect(Option.isSome(terminalEvent)).toBe(true);
+
+              yield* Deferred.succeed(inactiveParentGate.release, undefined);
+              const creationCall = yield* Fiber.join(creation);
+              expect(creationCall.structuredContent).toMatchObject({
+                code: "parent_not_active",
+                message:
+                  "Thread creation requires an active run owned by this MCP provider session.",
+              });
+              const childThreadId = ThreadId.make(
+                `thread:mcp:${ownershipRaceInvocation.providerSessionId}:${inactiveParentKey}:0`,
+              );
+              expect(
+                Option.isNone(
+                  yield* Effect.option(orchestrator.getThreadProjection(childThreadId)),
+                ),
+              ).toBe(true);
+            }).pipe(Effect.ensuring(Deferred.succeed(inactiveParentGate.release, undefined)));
+
+            yield* orchestrator.dispatch({
+              type: "thread.create",
+              createdBy: "user",
+              creationSource: "web",
+              commandId: CommandId.make("command:mcp-lifecycle-race-parent:create"),
+              threadId: lifecycleRaceParentThreadId,
+              projectId,
+              title: "MCP lifecycle race parent",
+              modelSelection: codexSelection,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              branch: null,
+              worktreePath: cwd,
+            });
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              createdBy: "user",
+              creationSource: "web",
+              commandId: CommandId.make("command:mcp-lifecycle-race-parent:start"),
+              threadId: lifecycleRaceParentThreadId,
+              messageId: MessageId.make("message:mcp-lifecycle-race-parent:start"),
+              text: "Stay active until the caller lifecycle is rechecked.",
+              attachments: [],
+              modelSelection: codexSelection,
+              dispatchMode: { type: "start_immediately" },
+            });
+            const startedLifecycleRaceTurn = yield* Deferred.await(lifecycleRaceProviderStarted);
+            expect(startedLifecycleRaceTurn.threadId).toBe(lifecycleRaceParentThreadId);
+            const lifecycleRaceInvocation: McpInvocationContext.McpInvocationScope = {
+              ...invocation,
+              threadId: lifecycleRaceParentThreadId,
+              providerSessionId: "mcp-provider-session-lifecycle-race",
+            };
+            const invokeLifecycleRace = (name: string, args: Record<string, unknown>) =>
+              server
+                .callTool({ name, arguments: args })
+                .pipe(
+                  Effect.provideService(
+                    McpInvocationContext.McpInvocationContext,
+                    lifecycleRaceInvocation,
+                  ),
+                  Effect.provideService(McpSchema.McpServerClient, client),
+                );
+            const archivedParentKey = "create-after-parent-archived";
+            const archivedParentGate = yield* gateLaunchReceipt(
+              launchCommandId(archivedParentKey, lifecycleRaceInvocation.providerSessionId),
+            );
+            yield* Effect.gen(function* () {
+              const creation = yield* Effect.forkChild(
+                invokeLifecycleRace("create_threads", {
+                  clientRequestId: archivedParentKey,
+                  threads: [
+                    {
+                      projectId: targetProjectId,
+                      title: "Must not outlive its archived caller",
+                      prompt: "Do not launch after the caller is archived.",
+                    },
+                  ],
+                }),
+                { startImmediately: true },
+              );
+              yield* Deferred.await(archivedParentGate.entered);
+              yield* orchestrator.dispatch({
+                type: "thread.archive",
+                commandId: CommandId.make("command:mcp-lifecycle-race-parent:archive"),
+                threadId: lifecycleRaceParentThreadId,
+              });
+              yield* Deferred.succeed(archivedParentGate.release, undefined);
+              const creationCall = yield* Fiber.join(creation);
+              expect(creationCall.structuredContent).toMatchObject({
+                code: "parent_not_active",
+                message:
+                  "Thread creation requires an active run owned by this MCP provider session.",
+              });
+              const childThreadId = ThreadId.make(
+                `thread:mcp:${lifecycleRaceInvocation.providerSessionId}:${archivedParentKey}:0`,
+              );
+              expect(
+                Option.isNone(
+                  yield* Effect.option(orchestrator.getThreadProjection(childThreadId)),
+                ),
+              ).toBe(true);
+            }).pipe(Effect.ensuring(Deferred.succeed(archivedParentGate.release, undefined)));
+
+            yield* orchestrator.dispatch({
+              type: "thread.create",
+              createdBy: "user",
+              creationSource: "web",
               commandId: CommandId.make("command:mcp-delete-race-parent:create"),
               threadId: deletionRaceParentThreadId,
               projectId: deletionRaceProjectId,
@@ -3072,6 +3912,9 @@ describe("orchestrator MCP toolkit", () => {
           Layer.provideMerge(orchestrationLayer),
           Layer.provide(providerRegistryLayer),
           Layer.provide(unusedScheduledTaskStubLayer),
+          Layer.provide(Layer.mock(ProjectService.ProjectService)({})),
+          Layer.provide(Layer.mock(ThreadLaunch.ThreadLaunchService)({})),
+          Layer.provide(Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({})),
           Layer.provide(NodeServices.layer),
         );
 
