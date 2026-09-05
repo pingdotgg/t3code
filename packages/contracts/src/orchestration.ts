@@ -128,23 +128,37 @@ export const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
 export const ProviderInteractionMode = Schema.Literals(["default", "plan"]);
 export type ProviderInteractionMode = typeof ProviderInteractionMode.Type;
 export const DEFAULT_PROVIDER_INTERACTION_MODE: ProviderInteractionMode = "default";
-export const ProviderRequestKind = Schema.Literals(["command", "file-read", "file-change"]);
+export const ProviderRequestKind = Schema.Literals([
+  "command",
+  "file-read",
+  "file-change",
+  "mcp-elicitation",
+]);
 export type ProviderRequestKind = typeof ProviderRequestKind.Type;
 export const AssistantDeliveryMode = Schema.Literals(["buffered", "streaming"]);
 export type AssistantDeliveryMode = typeof AssistantDeliveryMode.Type;
 export const ProviderApprovalDecision = Schema.Literals([
   "accept",
   "acceptForSession",
+  "acceptAlways",
   "decline",
   "cancel",
 ]);
 export type ProviderApprovalDecision = typeof ProviderApprovalDecision.Type;
+export const ProviderApprovalOption = Schema.Struct({
+  decision: ProviderApprovalDecision,
+  label: TrimmedNonEmptyString,
+  /** Provider-supplied caution shown next to the option, such as a prompt injection warning. */
+  warning: Schema.optional(TrimmedNonEmptyString),
+});
+export type ProviderApprovalOption = typeof ProviderApprovalOption.Type;
 export const ProviderUserInputAnswers = Schema.Record(Schema.String, Schema.Unknown);
 export type ProviderUserInputAnswers = typeof ProviderUserInputAnswers.Type;
 
 export const PROVIDER_SEND_TURN_MAX_INPUT_CHARS = 120_000;
 export const PROVIDER_SEND_TURN_MAX_ATTACHMENTS = 8;
 export const PROVIDER_SEND_TURN_MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+export const PROVIDER_SEND_TURN_MAX_FILE_BYTES = 50 * 1024 * 1024;
 export const PROVIDER_SEND_TURN_SUPPORTED_IMAGE_MIME_TYPES = [
   "image/gif",
   "image/jpeg",
@@ -180,6 +194,40 @@ export const ChatImageAttachment = Schema.Struct({
 });
 export type ChatImageAttachment = typeof ChatImageAttachment.Type;
 
+export const ChatFileAttachment = Schema.Struct({
+  type: Schema.Literal("file"),
+  id: ChatAttachmentId,
+  name: TrimmedNonEmptyString.check(Schema.isMaxLength(255)),
+  mimeType: TrimmedNonEmptyString.check(Schema.isMaxLength(100)),
+  sizeBytes: NonNegativeInt.check(
+    Schema.isGreaterThanOrEqualTo(1),
+    Schema.isLessThanOrEqualTo(PROVIDER_SEND_TURN_MAX_FILE_BYTES),
+  ),
+});
+export type ChatFileAttachment = typeof ChatFileAttachment.Type;
+
+/**
+ * Catch-all for attachment types this build does not know. Attachments ride on
+ * persisted events and thread streams, so a newer server or client must be able
+ * to introduce a type without making older readers fail to decode the whole
+ * message. Decoders keep the shared base fields; consumers skip these or render
+ * them as unsupported. Mirrors how `OrchestrationThreadActivity` keeps `kind`
+ * open. The known discriminators are excluded so a malformed image or file
+ * attachment fails its own schema instead of sliding through here with its
+ * size and mime constraints unchecked.
+ */
+export const ChatUnknownAttachment = Schema.Struct({
+  type: TrimmedNonEmptyString.check(
+    Schema.isMaxLength(50),
+    Schema.isPattern(/^(?!(?:image|file)$)/),
+  ),
+  id: ChatAttachmentId,
+  name: TrimmedNonEmptyString.check(Schema.isMaxLength(255)),
+  mimeType: TrimmedNonEmptyString.check(Schema.isMaxLength(100)),
+  sizeBytes: NonNegativeInt,
+});
+export type ChatUnknownAttachment = typeof ChatUnknownAttachment.Type;
+
 const UploadChatImageAttachment = Schema.Struct({
   type: Schema.Literal("image"),
   name: TrimmedNonEmptyString.check(Schema.isMaxLength(255)),
@@ -191,7 +239,11 @@ const UploadChatImageAttachment = Schema.Struct({
 });
 export type UploadChatImageAttachment = typeof UploadChatImageAttachment.Type;
 
-export const ChatAttachment = Schema.Union([ChatImageAttachment]);
+export const ChatAttachment = Schema.Union([
+  ChatImageAttachment,
+  ChatFileAttachment,
+  ChatUnknownAttachment,
+]);
 export type ChatAttachment = typeof ChatAttachment.Type;
 const UploadChatAttachment = Schema.Union([UploadChatImageAttachment]);
 export type UploadChatAttachment = typeof UploadChatAttachment.Type;
@@ -232,6 +284,48 @@ export const ProjectFaviconPath = TrimmedNonEmptyString.check(
 );
 export type ProjectFaviconPath = typeof ProjectFaviconPath.Type;
 
+export const ProjectIconColor = Schema.Literals([
+  "gray",
+  "red",
+  "orange",
+  "amber",
+  "yellow",
+  "lime",
+  "green",
+  "emerald",
+  "teal",
+  "cyan",
+  "sky",
+  "blue",
+  "indigo",
+  "violet",
+  "purple",
+  "fuchsia",
+  "pink",
+  "rose",
+]);
+export type ProjectIconColor = typeof ProjectIconColor.Type;
+
+const ProjectLucideIconName = TrimmedNonEmptyString.check(
+  Schema.isMaxLength(64),
+  Schema.isPattern(/^[a-z0-9]+(?:-[a-z0-9]+)*$/),
+);
+
+const ProjectEmoji = TrimmedNonEmptyString.check(Schema.isMaxLength(32));
+
+export const ProjectIconOverride = Schema.Union([
+  Schema.Struct({
+    kind: Schema.Literal("lucide"),
+    name: ProjectLucideIconName,
+    color: ProjectIconColor,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("emoji"),
+    emoji: ProjectEmoji,
+  }),
+]);
+export type ProjectIconOverride = typeof ProjectIconOverride.Type;
+
 export const OrchestrationProject = Schema.Struct({
   id: ProjectId,
   title: TrimmedNonEmptyString,
@@ -241,8 +335,12 @@ export const OrchestrationProject = Schema.Struct({
   // Per-project override for where new threads start. Null/absent means
   // "no override": clients fall back to t3.json, then the global setting.
   defaultThreadEnvMode: Schema.optional(Schema.NullOr(ThreadEnvMode)),
+  // Opt-in because background sync performs network I/O and may move the checkout.
+  // Optional on the wire so cached snapshots from older servers still decode.
+  autoPull: Schema.optional(Schema.Boolean),
   // Optional on the wire so cached snapshots from older servers still decode.
   faviconPath: Schema.optional(Schema.NullOr(ProjectFaviconPath)),
+  projectIcon: Schema.optional(Schema.NullOr(ProjectIconOverride)),
   scripts: Schema.Array(ProjectScript),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -376,6 +474,14 @@ export const ThreadTitleRegeneration = Schema.Struct({
 });
 export type ThreadTitleRegeneration = typeof ThreadTitleRegeneration.Type;
 
+export const ThreadLinkedPullRequest = Schema.Struct({
+  projectId: ProjectId,
+  repository: TrimmedNonEmptyString,
+  number: PositiveInt,
+  url: TrimmedNonEmptyString,
+});
+export type ThreadLinkedPullRequest = typeof ThreadLinkedPullRequest.Type;
+
 export const OrchestrationThread = Schema.Struct({
   id: ThreadId,
   projectId: ProjectId,
@@ -387,6 +493,7 @@ export const OrchestrationThread = Schema.Struct({
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  linkedPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
   latestTurn: Schema.NullOr(OrchestrationLatestTurn),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -395,6 +502,11 @@ export const OrchestrationThread = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
   settledAt: Schema.NullOr(IsoDateTime).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  // When the thread last re-entered the active list (any thread.unsettled).
+  // Anchors the active-list sort so an unsettled thread surfaces at the top
+  // instead of sinking back to its creation-order slot. Cleared on settle.
+  // Optional so payloads from pre-stamp servers still decode.
+  unsettledAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   // Snooze is an overlay on the active lifecycle, not a fourth destination:
   // a snoozed thread stays "active" in the model and is only suppressed from
   // the inbox until snoozedUntil passes (or the thread raises its hand).
@@ -438,8 +550,10 @@ export const OrchestrationProjectShell = Schema.Struct({
   repositoryIdentity: Schema.optional(Schema.NullOr(RepositoryIdentity)),
   defaultModelSelection: Schema.NullOr(ModelSelection),
   defaultThreadEnvMode: Schema.optional(Schema.NullOr(ThreadEnvMode)),
+  autoPull: Schema.optional(Schema.Boolean),
   // Optional on the wire so cached snapshots from older servers still decode.
   faviconPath: Schema.optional(Schema.NullOr(ProjectFaviconPath)),
+  projectIcon: Schema.optional(Schema.NullOr(ProjectIconOverride)),
   scripts: Schema.Array(ProjectScript),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -457,6 +571,7 @@ export const OrchestrationThreadShell = Schema.Struct({
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  linkedPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
   latestTurn: Schema.NullOr(OrchestrationLatestTurn),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -465,6 +580,8 @@ export const OrchestrationThreadShell = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
   settledAt: Schema.NullOr(IsoDateTime).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  // See OrchestrationThread.unsettledAt: last re-entry into the active list.
+  unsettledAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   snoozedUntil: Schema.optional(Schema.NullOr(IsoDateTime)),
   snoozedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   pinnedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
@@ -641,6 +758,8 @@ export const ProjectCreateCommand = Schema.Struct({
   title: TrimmedNonEmptyString,
   workspaceRoot: TrimmedNonEmptyString,
   createWorkspaceRootIfMissing: Schema.optional(Schema.Boolean),
+  // Retained for older clients that sent an automatic create-time seed. The
+  // server ignores it; explicit project defaults use project.meta.update.
   defaultModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
   createdAt: IsoDateTime,
 });
@@ -654,7 +773,9 @@ const ProjectMetaUpdateCommand = Schema.Struct({
   defaultModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
   // Absent = leave unchanged; null = clear the override.
   defaultThreadEnvMode: Schema.optional(Schema.NullOr(ThreadEnvMode)),
+  autoPull: Schema.optional(Schema.Boolean),
   faviconPath: Schema.optional(Schema.NullOr(ProjectFaviconPath)),
+  projectIcon: Schema.optional(Schema.NullOr(ProjectIconOverride)),
   scripts: Schema.optional(Schema.Array(ProjectScript)),
 });
 
@@ -703,6 +824,14 @@ const ThreadSettleCommand = Schema.Struct({
   type: Schema.Literal("thread.settle"),
   commandId: CommandId,
   threadId: ThreadId,
+});
+
+const ThreadAutoSettleCommand = Schema.Struct({
+  type: Schema.Literal("thread.auto-settle"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  snapshotSequence: NonNegativeInt,
+  settledAt: IsoDateTime,
 });
 
 const ThreadUnsettleCommand = Schema.Struct({
@@ -773,6 +902,7 @@ const ThreadMetaUpdateCommand = Schema.Struct({
   branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   expectedBranch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  linkedPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
 }).check(
   Schema.makeFilter(
     (input) =>
@@ -852,7 +982,7 @@ const ClientThreadTurnStartCommand = Schema.Struct({
     messageId: MessageId,
     role: Schema.Literal("user"),
     text: Schema.String,
-    attachments: Schema.Array(UploadChatAttachment),
+    attachments: Schema.Array(Schema.Union([UploadChatAttachment, ChatAttachment])),
   }),
   modelSelection: Schema.optional(ModelSelection),
   titleSeed: Schema.optional(TrimmedNonEmptyString),
@@ -1039,6 +1169,7 @@ const ThreadTitleRegenerationCompleteCommand = Schema.Struct({
 });
 
 const InternalOrchestrationCommand = Schema.Union([
+  ThreadAutoSettleCommand,
   ThreadSessionSetCommand,
   ThreadMessageAssistantDeltaCommand,
   ThreadMessageAssistantCompleteCommand,
@@ -1101,6 +1232,7 @@ export const ProjectCreatedPayload = Schema.Struct({
   defaultModelSelection: Schema.NullOr(ModelSelection),
   // Optional so persisted events from older servers still decode.
   faviconPath: Schema.optional(Schema.NullOr(ProjectFaviconPath)),
+  projectIcon: Schema.optional(Schema.NullOr(ProjectIconOverride)),
   scripts: Schema.Array(ProjectScript),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -1113,7 +1245,9 @@ export const ProjectMetaUpdatedPayload = Schema.Struct({
   repositoryIdentity: Schema.optional(Schema.NullOr(RepositoryIdentity)),
   defaultModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
   defaultThreadEnvMode: Schema.optional(Schema.NullOr(ThreadEnvMode)),
+  autoPull: Schema.optional(Schema.Boolean),
   faviconPath: Schema.optional(Schema.NullOr(ProjectFaviconPath)),
+  projectIcon: Schema.optional(Schema.NullOr(ProjectIconOverride)),
   scripts: Schema.optional(Schema.Array(ProjectScript)),
   updatedAt: IsoDateTime,
 });
@@ -1216,6 +1350,7 @@ export const ThreadMetaUpdatedPayload = Schema.Struct({
   modelSelection: Schema.optional(ModelSelection),
   branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  linkedPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
   updatedAt: IsoDateTime,
 });
 
