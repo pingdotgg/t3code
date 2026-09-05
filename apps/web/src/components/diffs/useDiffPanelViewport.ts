@@ -1,10 +1,19 @@
 import type { CodeViewScrollTarget } from "@pierre/diffs";
 import { useCallback, useEffect, useRef } from "react";
 
-import { type DiffPanelSelection, useDiffPanelStore } from "../../diffPanelStore";
+import {
+  type DiffPanelSelection,
+  type DiffPanelViewport,
+  useDiffPanelStore,
+} from "../../diffPanelStore";
+
+interface DiffViewportInstance {
+  getRenderedItems(): ReadonlyArray<{ id: string }>;
+  getTopForItem(id: string): number | undefined;
+}
 
 interface DiffViewportHandle {
-  getInstance(): object | undefined;
+  getInstance(): DiffViewportInstance | undefined;
   scrollTo(target: CodeViewScrollTarget): void;
 }
 
@@ -19,6 +28,7 @@ export function useDiffPanelViewport(
   const captureRef = useRef<{
     scopeKey: string | null;
     scrollTop: number;
+    fileAnchor: DiffPanelViewport["fileAnchor"];
     revealSelection: DiffPanelSelection | null;
     restoredInstance: object | undefined;
   } | null>(null);
@@ -29,6 +39,7 @@ export function useDiffPanelViewport(
     const capture = {
       scopeKey,
       scrollTop: saved?.scrollTop ?? 0,
+      fileAnchor: saved?.fileAnchor,
       revealSelection: saved?.revealSelection ?? null,
       restoredInstance: undefined as object | undefined,
     };
@@ -45,6 +56,7 @@ export function useDiffPanelViewport(
       if (current.viewportByScopeKey[scopeKey] !== marker) return;
       current.setViewport(scopeKey, {
         scrollTop: capture.scrollTop,
+        ...(capture.fileAnchor ? { fileAnchor: capture.fileAnchor } : {}),
         revealSelection: capture.revealSelection,
       });
     };
@@ -61,14 +73,35 @@ export function useDiffPanelViewport(
       viewer.scrollTo({ type: "item", id: selectedFileKey, align: "start" });
     } else if (capture.restoredInstance !== instance) {
       capture.restoredInstance = instance;
-      viewer.scrollTo({ type: "position", position: capture.scrollTop, behavior: "instant" });
+      const anchor = capture.fileAnchor;
+      // Position targets subtract Pierre's sticky header, so restore relative to a file instead.
+      if (anchor && instance.getTopForItem(anchor.fileKey) !== undefined) {
+        viewer.scrollTo({
+          type: "item",
+          id: anchor.fileKey,
+          offset: anchor.offset,
+          align: "start",
+          behavior: "instant",
+        });
+      } else {
+        viewer.scrollTo({ type: "position", position: capture.scrollTop, behavior: "instant" });
+      }
     }
   }, [scopeKey, selectedFileKey, selection, viewer]);
 
   return useCallback(
-    (scrollTop: number) => {
+    (scrollTop: number, instance: DiffViewportInstance) => {
       const capture = captureRef.current;
-      if (capture?.scopeKey === scopeKey) capture.scrollTop = scrollTop;
+      if (capture?.scopeKey !== scopeKey) return;
+      capture.scrollTop = scrollTop;
+      capture.fileAnchor = undefined;
+      for (const item of instance.getRenderedItems()) {
+        const top = instance.getTopForItem(item.id);
+        if (top === undefined) continue;
+        if (top > scrollTop && capture.fileAnchor) break;
+        capture.fileAnchor = { fileKey: item.id, offset: top - scrollTop };
+        if (top > scrollTop) break;
+      }
     },
     [scopeKey],
   );

@@ -6,7 +6,7 @@ import type {
   FileDiffMetadata,
   SelectedLineRange,
 } from "@pierre/diffs";
-import type { CodeViewHandle } from "@pierre/diffs/react";
+import type { CodeViewHandle, CodeViewProps } from "@pierre/diffs/react";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { useCallback, useMemo, useState, type ReactNode, type Ref } from "react";
 
@@ -85,7 +85,7 @@ interface AnnotatableCodeViewProps {
   composerDraftTarget: ScopedThreadRef | DraftId;
   options: StyledDiffCodeViewOptions<DiffCommentAnnotationGroup>;
   viewerRef?: Ref<AnnotatableCodeViewHandle>;
-  onScroll?: (scrollTop: number) => void;
+  onScroll?: CodeViewProps<DiffCommentAnnotationGroup>["onScroll"];
   className?: string;
   renderHeaderFilenameSuffix: (fileDiff: FileDiffMetadata) => ReactNode;
   renderHeaderPrefix: (

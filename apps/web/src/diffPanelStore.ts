@@ -16,6 +16,7 @@ export const EMPTY_COLLAPSED_DIFF_FILE_KEYS: ReadonlySet<string> = new Set();
 
 export interface DiffPanelViewport {
   scrollTop: number;
+  fileAnchor?: { fileKey: string; offset: number };
   revealSelection: DiffPanelSelection | null;
 }
 

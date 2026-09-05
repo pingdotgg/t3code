@@ -27,19 +27,38 @@ class ViewerFixture {
   mounted = false;
   scrollTop = 0;
   targets: CodeViewScrollTarget[] = [];
+  items = [
+    { id: "first", top: 0 },
+    { id: "external", top: 200 },
+    { id: "tree", top: 800 },
+    { id: "anchor", top: 1132 },
+  ];
 
-  constructor(readonly onScroll: (scrollTop: number) => void) {}
+  constructor(readonly onScroll: (scrollTop: number, viewer: ViewerFixture) => void) {}
+
+  getRenderedItems() {
+    return this.items;
+  }
+
+  getTopForItem(id: string) {
+    return this.items.find((item) => item.id === id)?.top;
+  }
 
   userScroll(position: number) {
     this.scrollTop = position;
-    this.onScroll(position);
+    this.onScroll(position, this);
   }
 
   scrollTo(target: CodeViewScrollTarget) {
     if (!this.mounted) throw new Error("Cannot scroll an unmounted viewer");
     this.targets.push(target);
-    if (target.type === "position") this.userScroll(target.position);
-    if (target.type === "item") this.userScroll(target.id === "tree" ? 800 : 200);
+    // Pierre's position target subtracts the sticky header; item targets do not.
+    if (target.type === "position") this.userScroll(Math.max(0, target.position - 32));
+    if (target.type === "item") {
+      const top = this.getTopForItem(target.id);
+      if (top === undefined) throw new Error("Cannot reveal a missing item");
+      this.userScroll(Math.max(0, top - (target.offset ?? 0)));
+    }
   }
 }
 
@@ -48,7 +67,7 @@ function Viewer({
   onScroll,
 }: {
   viewerRef: Ref<ViewportHandle>;
-  onScroll: (scrollTop: number) => void;
+  onScroll: ReturnType<typeof useDiffPanelViewport>;
 }) {
   const instance = useRef<ViewerFixture | undefined>(undefined);
   useLayoutEffect(() => {
@@ -141,6 +160,10 @@ describe("diff panel viewport lifecycle", () => {
     expect(original.mounted).toBe(false);
     expect(original.scrollTop).toBe(0);
     expect(useDiffPanelStore.getState().viewportByScopeKey[SCOPE]?.scrollTop).toBe(1300);
+    expect(useDiffPanelStore.getState().viewportByScopeKey[SCOPE]?.fileAnchor).toEqual({
+      fileKey: "anchor",
+      offset: -168,
+    });
     await act(async () => renderer!.update(<Panel />));
     expect(currentViewer).not.toBe(original);
     expect(currentViewer!.scrollTop).toBe(1300);
@@ -197,7 +220,7 @@ describe("diff panel viewport lifecycle", () => {
     await act(async () => renderer!.update(<Panel selection={selection} fileKey="external" />));
     expect(currentViewer!.scrollTop).toBe(1300);
     expect(currentViewer!.targets).toEqual([
-      { type: "position", position: 1300, behavior: "instant" },
+      { type: "item", id: "anchor", offset: -168, align: "start", behavior: "instant" },
     ]);
     await act(async () => renderer!.update(<></>));
     await act(async () =>
@@ -224,6 +247,20 @@ describe("diff panel viewport lifecycle", () => {
     await act(async () => renderer!.update(<></>));
     await act(async () => renderer!.update(<Panel />));
     expect(currentViewer!.scrollTop).toBe(800);
+  });
+
+  it("falls back to the saved position when the anchored file was removed", async () => {
+    await act(async () => {
+      renderer = create(<Panel />);
+    });
+    currentViewer!.items[3] = { id: "removed", top: 1132 };
+    currentViewer!.userScroll(1300);
+    await act(async () => renderer!.update(<></>));
+    await act(async () => renderer!.update(<Panel />));
+    expect(currentViewer!.targets).toEqual([
+      { type: "position", position: 1300, behavior: "instant" },
+    ]);
+    expect(currentViewer!.scrollTop).toBe(1268);
   });
 
   it.each(["thread", "environment"])(
