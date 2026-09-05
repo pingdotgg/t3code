@@ -33,9 +33,11 @@ thread into the active list un-settles it. A snoozed thread can be dragged out o
 shelf, which wakes it, but threads cannot be dragged into the shelf because snoozing needs a wake
 time. Dragging a pinned thread out of the pinned section does not ask for unpin confirmation.
 Pinned and active boundary labels appear only while dragging, without moving the rows. The
-destination boundary highlights and the thread shows which section it will land in. When there
-are no pins, drag to the top edge to pin a thread. Drop instructions also appear for empty sections
-and a collapsed settled shelf.
+destination boundary highlights. When you cross into another section, the dragged thread shows
+its destination, such as **→ Active**. Its usual pin, status, and hover actions hide during the
+drag. Reordering within the same section does not show a destination badge. When there are no
+pins, drag to the top edge to pin a thread. Section labels also identify empty sections and a
+collapsed settled shelf.
 
 Drag within the pinned or active section to change its order. Other rows slide aside to show the
 spot where the thread will land. Drops into either section keep the position you choose. On
