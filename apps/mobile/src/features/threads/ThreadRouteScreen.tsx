@@ -20,6 +20,7 @@ import {
   ThreadId,
   type ProjectScript,
 } from "@t3tools/contracts";
+import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 import {
   projectScriptCwd,
   projectScriptRuntimeEnv,
@@ -333,6 +334,10 @@ function ThreadRouteContent(
     selectedThreadProject,
     selectedEnvironmentConnection,
   } = useThreadSelection();
+  const canOperateThread = useEnvironmentScope(
+    selectedThread?.environmentId ?? null,
+    AuthOrchestrationOperateScope,
+  );
   const selectedThreadDetailState = props.selectedThreadDetailState;
   const selectedThreadDetail = Option.getOrNull(selectedThreadDetailState.data);
   const { selectedThreadCwd } = useSelectedThreadWorktree();
@@ -673,7 +678,7 @@ function ThreadRouteContent(
     void navigation.navigate("Connections");
   }, [navigation]);
   const handleStopThread = useCallback(() => {
-    if (!selectedThread || composer.interruptibleRunId === null) {
+    if (!selectedThread || !readEnvironmentScope(selectedThread.environmentId, AuthOrchestrationOperateScope) || composer.interruptibleRunId === null) {
       return;
     }
     return interruptThreadTurn({
@@ -988,6 +993,7 @@ function ThreadRouteContent(
 
       <View className="flex-1 bg-screen android:overflow-hidden android:rounded-t-[28px] android:bg-thread-canvas">
         <ThreadDetailScreen
+          canOperateThread={canOperateThread}
           selectedThread={selectedThreadWithDraftSettings ?? selectedThread}
           contentPresentation={contentPresentation}
           screenTone={connectionTone(routeConnectionState)}

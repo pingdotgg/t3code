@@ -19,6 +19,7 @@ import {
   type PendingThreadRequests,
   type ThreadUserInputQuestion,
 } from "@t3tools/client-runtime/state/thread-requests";
+import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
 
 import { threadEnvironment } from "../state/threads";
@@ -33,6 +34,7 @@ import { appAtomRegistry } from "./atom-registry";
 import { useSelectedThreadPendingRequests } from "./use-thread-detail";
 import { useThreadSelection } from "./use-thread-selection";
 import { useAtomCommand } from "./use-atom-command";
+import { readEnvironmentScope } from "./session";
 
 const EMPTY_PENDING_REQUESTS: PendingThreadRequests = { approvals: [], userInputs: [] };
 
@@ -211,7 +213,7 @@ export function useSelectedThreadRequests() {
 
   const onRespondToApproval = useCallback(
     async (requestId: RuntimeRequestId, decision: ProviderApprovalDecision) => {
-      if (!selectedThreadShell) {
+      if (!selectedThreadShell || !readEnvironmentScope(selectedThreadShell.environmentId, AuthOrchestrationOperateScope)) {
         return;
       }
       if (
@@ -241,7 +243,8 @@ export function useSelectedThreadRequests() {
       !selectedThreadShell ||
       !activePendingUserInput ||
       activePendingUserInput.responseCapability === "not_resumable" ||
-      !activePendingUserInputAnswers
+      !activePendingUserInputAnswers ||
+      !readEnvironmentScope(selectedThreadShell.environmentId, AuthOrchestrationOperateScope)
     ) {
       return;
     }
