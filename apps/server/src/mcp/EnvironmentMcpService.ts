@@ -34,11 +34,10 @@ const unavailable = <A, E, R>(
   code: EnvironmentMcpFailure["code"],
 ): Effect.Effect<A, EnvironmentMcpFailure, R> =>
   effect.pipe(
-    Effect.catchCause(
-      (cause): Effect.Effect<never, EnvironmentMcpFailure> =>
-        Cause.hasInterrupts(cause)
-          ? Effect.failCause(cause).pipe(Effect.orDie)
-          : Effect.fail(new EnvironmentMcpFailure({ code })),
+    Effect.catchCause((cause): Effect.Effect<never, EnvironmentMcpFailure> =>
+      Cause.hasInterrupts(cause)
+        ? Effect.failCause(cause).pipe(Effect.orDie)
+        : Effect.fail(new EnvironmentMcpFailure({ code })),
     ),
   );
 
