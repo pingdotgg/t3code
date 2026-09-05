@@ -1041,6 +1041,37 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
+  it.effect("preserves inline sensitive provider environment values on a redacted save", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const instanceId = ProviderInstanceId.make("codex_personal");
+      yield* fileSystem.writeFileString(
+        serverConfig.settingsPath,
+        '{"providerInstances":{"codex_personal":{"driver":"codex","environment":[{"name":"OPENROUTER_API_KEY","value":"inline-secret","sensitive":true}],"config":{}}}}',
+      );
+      const clientSettings = ServerSettingsModule.redactServerSettingsForClient(
+        yield* serverSettings.getSettings,
+      );
+      assert.equal(clientSettings.providerInstances[instanceId]?.environment?.[0]?.value, "");
+
+      const saved = yield* serverSettings.updateSettings({
+        providerInstances: clientSettings.providerInstances,
+      });
+
+      assert.equal(saved.providerInstances[instanceId]?.environment?.[0]?.value, "inline-secret");
+      assert.notInclude(
+        yield* fileSystem.readFileString(serverConfig.settingsPath),
+        "inline-secret",
+      );
+      assert.equal(
+        (yield* serverSettings.getSettings).providerInstances[instanceId]?.environment?.[0]?.value,
+        "inline-secret",
+      );
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
   it.effect("stores sensitive provider instance environment values outside settings.json", () =>
     Effect.gen(function* () {
       const serverSettings = yield* ServerSettingsModule.ServerSettingsService;

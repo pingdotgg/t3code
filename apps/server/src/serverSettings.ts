@@ -609,9 +609,22 @@ const make = Effect.gen(function* () {
           }
 
           nextSecretKeys.add(secretName);
-          if (!variable.valueRedacted) {
-            if (variable.value.length > 0) {
-              yield* secretStore.set(secretName, textEncoder.encode(variable.value)).pipe(
+          let valueToPersist = variable.valueRedacted ? undefined : variable.value;
+          if (variable.valueRedacted) {
+            const currentVariable = current.providerInstances[
+              ProviderInstanceId.make(instanceId)
+            ]?.environment?.findLast((entry) => entry.name === variable.name);
+            if (
+              currentVariable?.sensitive &&
+              !currentVariable.valueRedacted &&
+              currentVariable.value.length > 0
+            ) {
+              valueToPersist = currentVariable.value;
+            }
+          }
+          if (valueToPersist !== undefined) {
+            if (valueToPersist.length > 0) {
+              yield* secretStore.set(secretName, textEncoder.encode(valueToPersist)).pipe(
                 Effect.mapError(
                   (cause) =>
                     new ServerSettingsError({
