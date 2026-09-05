@@ -6,6 +6,7 @@ import type {
   PermissionRuleset,
   QuestionRequest,
   Session as OpenCodeSession,
+  StepFinishPart,
   Todo as OpenCodeTodo,
   ToolPart,
 } from "@opencode-ai/sdk/v2";
@@ -37,6 +38,7 @@ import {
   type ProviderSessionId,
   type RuntimeRequestId,
   type ThreadId,
+  type TurnTokenUsage,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
@@ -260,6 +262,7 @@ interface ActiveOpenCodeTurn {
   readonly partIdsByMessage: Map<string, Set<string>>;
   readonly toolNamesByCallId: Map<string, string>;
   readonly providerTurn: OrchestrationV2ProviderTurn;
+  readonly usage: OpenCodeTurnUsageAccumulator;
   nextItemOrdinal: number;
   nativeUserMessageId: string | null;
   admissionMessageId: string | null;
@@ -274,6 +277,72 @@ interface ActiveOpenCodeTurn {
   idleDuringAdmission: boolean;
   admissionSettled: Deferred.Deferred<void>;
   admissionAbortController: AbortController | null;
+  hasSubagents: boolean;
+}
+
+interface OpenCodeTurnUsageAccumulator {
+  readonly stepIds: Set<string>;
+  inputTokens: number;
+  cachedInputTokens: number;
+  cacheCreationTokens: number;
+  outputTokens: number;
+  reasoningTokens: number;
+}
+
+function makeOpenCodeTurnUsageAccumulator(): OpenCodeTurnUsageAccumulator {
+  return {
+    stepIds: new Set(),
+    inputTokens: 0,
+    cachedInputTokens: 0,
+    cacheCreationTokens: 0,
+    outputTokens: 0,
+    reasoningTokens: 0,
+  };
+}
+
+function nonNegativeTokenCount(value: number): number {
+  return Number.isFinite(value) && value >= 0 ? Math.round(value) : 0;
+}
+
+function recordOpenCodeStepUsage(
+  usage: OpenCodeTurnUsageAccumulator,
+  part: StepFinishPart,
+): boolean {
+  if (usage.stepIds.has(part.id)) return false;
+  usage.stepIds.add(part.id);
+  const cachedInputTokens = nonNegativeTokenCount(part.tokens.cache.read);
+  const cacheCreationTokens = nonNegativeTokenCount(part.tokens.cache.write);
+  const reasoningTokens = nonNegativeTokenCount(part.tokens.reasoning);
+  usage.inputTokens +=
+    nonNegativeTokenCount(part.tokens.input) + cachedInputTokens + cacheCreationTokens;
+  usage.cachedInputTokens += cachedInputTokens;
+  usage.cacheCreationTokens += cacheCreationTokens;
+  usage.outputTokens += nonNegativeTokenCount(part.tokens.output) + reasoningTokens;
+  usage.reasoningTokens += reasoningTokens;
+  return true;
+}
+
+function openCodeTurnTokenUsage(
+  turn: ActiveOpenCodeTurn,
+  usageStatus: "complete" | "partial" | "unavailable",
+): TurnTokenUsage {
+  if (turn.usage.stepIds.size === 0) {
+    return {
+      usageStatus: "unavailable",
+      usageScope: "main_agent",
+      hasSubagents: turn.hasSubagents,
+    };
+  }
+  return {
+    usageStatus,
+    usageScope: "main_agent",
+    inputTokens: turn.usage.inputTokens,
+    cachedInputTokens: turn.usage.cachedInputTokens,
+    cacheCreationTokens: turn.usage.cacheCreationTokens,
+    outputTokens: turn.usage.outputTokens,
+    reasoningTokens: turn.usage.reasoningTokens,
+    hasSubagents: turn.hasSubagents,
+  };
 }
 
 type OpenCodeAdmissionSignal = "accepted" | "busy" | "idle" | "user-message";
@@ -1175,6 +1244,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
           turn: ActiveOpenCodeTurn,
           part: ToolPart,
         ) {
+          turn.hasSubagents = true;
           const now = yield* DateTime.now;
           const nativeItemRef = providerRef(part.id);
           const nodeId = idAllocator.derive.nodeFromProviderItem({
@@ -1947,6 +2017,12 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
               yield* resolveRuntimeRequest(pending.nativeRequestId, "cancelled");
             }
           }
+          Object.assign(turn.providerTurn, {
+            turnTokenUsage: openCodeTurnTokenUsage(
+              turn,
+              status === "completed" ? "complete" : "partial",
+            ),
+          });
           yield* emitProviderTurn(state, turn, status, completedAt);
           const threadDisposition = terminal?.threadDisposition ?? "reusable";
           yield* updateProviderThread(state, {
@@ -2140,6 +2216,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
             partIdsByMessage: new Map(),
             toolNamesByCallId: new Map(),
             providerTurn,
+            usage: makeOpenCodeTurnUsageAccumulator(),
             nextItemOrdinal: 1,
             nativeUserMessageId: message.id,
             admissionMessageId: null,
@@ -2154,6 +2231,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
             idleDuringAdmission: false,
             admissionSettled: Deferred.makeUnsafe<void>(),
             admissionAbortController: null,
+            hasSubagents: false,
           };
           state.activeTurn = turn;
           state.providerTurns.set(String(providerTurnId), providerTurn);
@@ -2321,7 +2399,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
           if (part.type === "tool") {
             // Approval routing needs the tool name, without retaining its input and output.
             turn.toolNamesByCallId.set(part.callID, part.tool);
-          } else {
+          } else if (part.type !== "step-finish") {
             turn.parts.set(part.id, part);
             const ids = turn.partIdsByMessage.get(part.messageID) ?? new Set<string>();
             ids.add(part.id);
@@ -2334,6 +2412,14 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
               return;
             case "tool":
               yield* emitToolPart(state, turn, part);
+              return;
+            case "step-finish":
+              if (recordOpenCodeStepUsage(turn.usage, part)) {
+                Object.assign(turn.providerTurn, {
+                  turnTokenUsage: openCodeTurnTokenUsage(turn, "partial"),
+                });
+                yield* emitProviderTurn(state, turn, "running", null);
+              }
               return;
             default:
               return;
@@ -2843,6 +2929,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
                 partIdsByMessage: new Map(),
                 toolNamesByCallId: new Map(),
                 providerTurn,
+                usage: makeOpenCodeTurnUsageAccumulator(),
                 nextItemOrdinal: turnInput.providerTurnOrdinal * 100 + 1,
                 nativeUserMessageId: null,
                 admissionMessageId: yield* makeOpenCodeMessageId(),
@@ -2857,6 +2944,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
                 idleDuringAdmission: false,
                 admissionSettled: Deferred.makeUnsafe<void>(),
                 admissionAbortController: new AbortController(),
+                hasSubagents: false,
               };
               const admissionSettled = turn.admissionSettled;
               const admissionAbortController = turn.admissionAbortController;
