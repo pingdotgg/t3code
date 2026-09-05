@@ -25,6 +25,7 @@ import { UsageDailyChart } from "./UsageDailyChart";
 import { UsageLimitsSection, useRefreshLimits } from "./UsageLimitsSection";
 import type { UsageChartMetric } from "./usageChartData";
 import { PROVIDER_LABEL, useProviderColors } from "./usageProviders";
+import { isUsagePullRefreshPending, usagePullRefreshTargets } from "./usagePullRefresh";
 
 type UsageTab = "usage" | "limits";
 const TAB_OPTIONS = [
@@ -65,6 +66,7 @@ export function UsageRouteScreen() {
   const [metric, setMetric] = useState<UsageChartMetric>("cost");
   const [isPullRefreshing, setIsPullRefreshing] = useState(false);
   const refreshWasPending = useRef(false);
+  const refreshTargets = useRef<ReadonlySet<EnvironmentUsageStatus["environmentId"]>>(new Set());
   const refreshIndicatorTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { days: windowDays, window } = windowSelection;
   const isPast24Hours = windowDays === 1;
@@ -98,7 +100,7 @@ export function UsageRouteScreen() {
   // The pull spinner tracks re-scans of environments that have answered
   // before. The initial scan renders its own placeholder, and an unreachable
   // environment stays pending forever — neither may pin the spinner on.
-  const refreshPending = environments.some((entry) => entry.isPending && entry.summary !== null);
+  const refreshPending = isUsagePullRefreshPending(environments, refreshTargets.current);
   const refreshingUsage = isPullRefreshing && refreshPending;
   const showingLimits = tab === "limits";
   // One ScrollView serves both tabs, so the offset would otherwise carry over
@@ -112,6 +114,7 @@ export function UsageRouteScreen() {
   useEffect(() => {
     if (!isPullRefreshing) {
       refreshWasPending.current = false;
+      refreshTargets.current = new Set();
       return;
     }
     if (refreshPending) {
@@ -142,6 +145,7 @@ export function UsageRouteScreen() {
     });
   };
   const refreshWindow = () => {
+    refreshTargets.current = usagePullRefreshTargets(environments);
     setIsPullRefreshing(true);
     if (refreshIndicatorTimeout.current !== null) {
       clearTimeout(refreshIndicatorTimeout.current);
@@ -159,6 +163,8 @@ export function UsageRouteScreen() {
       nextWindow.untilTime !== window.untilTime
     ) {
       setWindowSelection({ days: windowDays, window: nextWindow });
+      refresh(nextWindow);
+      return;
     }
     refresh();
   };
