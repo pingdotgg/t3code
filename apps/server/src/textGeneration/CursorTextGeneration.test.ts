@@ -1,6 +1,8 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { CursorSettings, ProviderInstanceId } from "@t3tools/contracts";
-import { describe, expect, it } from "@effect/vitest";
+import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
 import { createModelSelection } from "@t3tools/shared/model";
 import { beforeEach, vi } from "vite-plus/test";
@@ -8,7 +10,7 @@ import { beforeEach, vi } from "vite-plus/test";
 import { makeCursorTextGeneration } from "./CursorTextGeneration.ts";
 
 const cursorSdkMock = vi.hoisted(() => ({
-  prompt: vi.fn(async () => ({
+  prompt: vi.fn(async (_prompt: string, _options: unknown) => ({
     id: "run-cursor-text-generation-test",
     status: "finished" as const,
     result:
@@ -35,9 +37,10 @@ beforeEach(() => {
   });
 });
 
-describe("CursorTextGeneration", () => {
-  it.effect("uses the Cursor SDK prompt API with model parameters and API key", () =>
+it.layer(NodeServices.layer)("CursorTextGeneration", (it) => {
+  it.effect("runs Cursor metadata generation in an isolated sandboxed workspace", () =>
     Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
       const textGeneration = yield* makeCursorTextGeneration(cursorSettings, {
         CURSOR_API_KEY: "test-cursor-key",
       });
@@ -62,10 +65,15 @@ describe("CursorTextGeneration", () => {
       const [prompt, options] = (
         cursorSdkMock.prompt.mock.calls as unknown as Array<[string, unknown]>
       )[0]!;
+      const metadataWorkspace = (options as { local: { cwd: string } }).local.cwd;
+      expect(prompt).toContain("Do not use tools, read or write files, run commands");
       expect(prompt).toContain("Staged patch:");
+      expect(metadataWorkspace).toContain("t3-cursor-metadata-");
+      expect(metadataWorkspace).not.toBe(process.cwd());
+      expect(yield* fileSystem.exists(metadataWorkspace)).toBe(false);
       expect(options).toEqual({
         apiKey: "test-cursor-key",
-        mode: "agent",
+        mode: "plan",
         model: {
           id: "gpt-5.4",
           params: [
@@ -75,12 +83,44 @@ describe("CursorTextGeneration", () => {
           ],
         },
         local: {
-          cwd: process.cwd(),
+          cwd: metadataWorkspace,
           autoReview: false,
-          sandboxOptions: { enabled: false },
+          settingSources: [],
+          sandboxOptions: { enabled: true },
           enableAgentRetries: true,
         },
       });
+    }),
+  );
+
+  it.effect("removes the isolated workspace when the Cursor SDK request fails", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      let metadataWorkspace: string | undefined;
+      cursorSdkMock.prompt.mockImplementationOnce(async (_prompt, options) => {
+        metadataWorkspace = (options as { local: { cwd: string } }).local.cwd;
+        throw new Error("cursor request failed");
+      });
+      const textGeneration = yield* makeCursorTextGeneration(cursorSettings, {
+        CURSOR_API_KEY: "test-cursor-key",
+      });
+
+      const error = yield* Effect.flip(
+        textGeneration.generateCommitMessage({
+          cwd: process.cwd(),
+          branch: "feature/cursor-cleanup",
+          stagedSummary: "M README.md",
+          stagedPatch: "diff --git a/README.md b/README.md",
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("cursor"),
+            model: "composer-2",
+          },
+        }),
+      );
+
+      expect(error.detail).toBe("Cursor SDK request failed.");
+      expect(metadataWorkspace).toBeDefined();
+      expect(yield* fileSystem.exists(metadataWorkspace!)).toBe(false);
     }),
   );
 

@@ -1,5 +1,6 @@
 import { Agent, type AgentOptions, type RunResult } from "@cursor/sdk";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
@@ -23,6 +24,7 @@ import {
 import { cursorSdkModelSelection } from "../provider/cursorSdkModel.ts";
 
 const CURSOR_TIMEOUT_MS = 180_000;
+const CURSOR_METADATA_WORKSPACE_PREFIX = "t3-cursor-metadata-";
 
 const isTextGenerationError = Schema.is(TextGenerationError);
 type CursorTextGenerationOperation =
@@ -46,10 +48,11 @@ function emptyCursorSdkResultDetail(result: RunResult): string {
  * Build a Cursor text-generation closure bound to a specific `CursorSettings`
  * payload. See `makeCodexAdapter` for the overall per-instance rationale.
  */
-export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")((
+export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(function* (
   cursorSettings: CursorSettings,
   environment?: NodeJS.ProcessEnv,
-) => {
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
   const resolvedEnvironment = environment ?? process.env;
 
   const resolveCursorApiKey = (operation: CursorTextGenerationOperation) =>
@@ -74,40 +77,70 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")((
 
   const runCursorJson = <S extends Schema.Top>({
     operation,
-    cwd,
     prompt,
     outputSchemaJson,
     modelSelection,
   }: {
     operation: CursorTextGenerationOperation;
-    cwd: string;
     prompt: string;
     outputSchemaJson: S;
     modelSelection: ModelSelection;
   }): Effect.Effect<S["Type"], TextGenerationError, S["DecodingServices"]> =>
     Effect.gen(function* () {
       const apiKey = yield* resolveCursorApiKey(operation);
-      const agentOptions = {
-        apiKey,
-        mode: "agent",
-        model: cursorSdkModelSelection(modelSelection),
-        local: {
-          cwd,
-          autoReview: false,
-          sandboxOptions: { enabled: false },
-          enableAgentRetries: true,
-        },
-      } satisfies AgentOptions;
+      const promptResult = yield* Effect.acquireUseRelease(
+        fileSystem.makeTempDirectory({ prefix: CURSOR_METADATA_WORKSPACE_PREFIX }).pipe(
+          Effect.mapError(
+            (cause) =>
+              new TextGenerationError({
+                operation,
+                detail: "Failed to create an isolated Cursor metadata workspace.",
+                cause,
+              }),
+          ),
+        ),
+        (metadataWorkspace) => {
+          const metadataPrompt = [
+            "Use only the input below. Do not use tools, read or write files, run commands, or ask questions.",
+            "Return only the requested JSON object.",
+            "",
+            prompt,
+          ].join("\n");
+          const agentOptions = {
+            apiKey,
+            mode: "plan",
+            model: cursorSdkModelSelection(modelSelection),
+            local: {
+              cwd: metadataWorkspace,
+              autoReview: false,
+              settingSources: [],
+              sandboxOptions: { enabled: true },
+              enableAgentRetries: true,
+            },
+          } satisfies AgentOptions;
 
-      const promptResult = yield* Effect.tryPromise({
-        try: () => Agent.prompt(prompt, agentOptions),
-        catch: (cause) =>
-          new TextGenerationError({
-            operation,
-            detail: "Cursor SDK request failed.",
-            cause,
-          }),
-      }).pipe(
+          return Effect.tryPromise({
+            try: () => Agent.prompt(metadataPrompt, agentOptions),
+            catch: (cause) =>
+              new TextGenerationError({
+                operation,
+                detail: "Cursor SDK request failed.",
+                cause,
+              }),
+          });
+        },
+        (metadataWorkspace) =>
+          fileSystem.remove(metadataWorkspace, { recursive: true, force: true }).pipe(
+            Effect.mapError(
+              (cause) =>
+                new TextGenerationError({
+                  operation,
+                  detail: "Failed to remove an isolated Cursor metadata workspace.",
+                  cause,
+                }),
+            ),
+          ),
+      ).pipe(
         Effect.timeoutOption(CURSOR_TIMEOUT_MS),
         Effect.flatMap(
           Option.match({
@@ -168,7 +201,6 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")((
 
       const generated = yield* runCursorJson({
         operation: "generateCommitMessage",
-        cwd: input.cwd,
         prompt,
         outputSchemaJson: outputSchema,
         modelSelection: input.modelSelection,
@@ -197,7 +229,6 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")((
 
       const generated = yield* runCursorJson({
         operation: "generatePrContent",
-        cwd: input.cwd,
         prompt,
         outputSchemaJson: outputSchema,
         modelSelection: input.modelSelection,
@@ -218,7 +249,6 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")((
 
       const generated = yield* runCursorJson({
         operation: "generateBranchName",
-        cwd: input.cwd,
         prompt,
         outputSchemaJson: outputSchema,
         modelSelection: input.modelSelection,
@@ -239,7 +269,6 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")((
 
       const generated = yield* runCursorJson({
         operation: "generateThreadTitle",
-        cwd: input.cwd,
         prompt,
         outputSchemaJson: outputSchema,
         modelSelection: input.modelSelection,
@@ -250,10 +279,10 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")((
       } satisfies TextGeneration.ThreadTitleGenerationResult;
     });
 
-  return Effect.succeed({
+  return {
     generateCommitMessage,
     generatePrContent,
     generateBranchName,
     generateThreadTitle,
-  } satisfies TextGeneration.TextGeneration["Service"]);
+  } satisfies TextGeneration.TextGeneration["Service"];
 });
