@@ -1,7 +1,10 @@
 import { ThreadId } from "@t3tools/contracts";
 import { beforeEach, describe, expect, it } from "vite-plus/test";
 
-import { useThreadSelectionStore } from "./threadSelectionStore";
+import {
+  getThreadKeysToDeselectAfterDelete,
+  useThreadSelectionStore,
+} from "./threadSelectionStore";
 
 const THREAD_A = ThreadId.make("thread-a");
 const THREAD_B = ThreadId.make("thread-b");
@@ -14,6 +17,59 @@ const ORDERED = [THREAD_A, THREAD_B, THREAD_C, THREAD_D, THREAD_E] as const;
 describe("threadSelectionStore", () => {
   beforeEach(() => {
     useThreadSelectionStore.getState().clearSelection();
+  });
+
+  describe("bulk deletion cleanup", () => {
+    it("clears missing selection rows and completed deletions while retaining a failed thread", () => {
+      const store = useThreadSelectionStore.getState();
+      store.toggleThread(THREAD_A);
+      store.toggleThread(THREAD_B);
+      store.toggleThread(THREAD_C);
+      const selected = [...useThreadSelectionStore.getState().selectedThreadKeys];
+      // A deleted successfully but its shell has not refreshed; B failed;
+      // C was deleted elsewhere and never entered this client's delete loop.
+      const existingThreads = new Set([THREAD_A, THREAD_B]);
+      store.removeFromSelection(
+        getThreadKeysToDeselectAfterDelete(selected, new Set([THREAD_A]), (key) =>
+          existingThreads.has(ThreadId.make(key)),
+        ),
+      );
+
+      expect([...useThreadSelectionStore.getState().selectedThreadKeys]).toEqual([THREAD_B]);
+      expect(useThreadSelectionStore.getState().anchorThreadKey).toBeNull();
+    });
+
+    it("exits selection mode when the last selected thread disappeared elsewhere", () => {
+      const store = useThreadSelectionStore.getState();
+      store.toggleThread(THREAD_A);
+      store.removeFromSelection(
+        getThreadKeysToDeselectAfterDelete([THREAD_A], new Set(), () => false),
+      );
+
+      expect(useThreadSelectionStore.getState().hasSelection()).toBe(false);
+      expect(useThreadSelectionStore.getState().anchorThreadKey).toBeNull();
+    });
+
+    it("keeps unprocessed and hidden live threads and selections added while deletion was pending", () => {
+      const store = useThreadSelectionStore.getState();
+      store.toggleThread(THREAD_A);
+      store.toggleThread(THREAD_B);
+      store.toggleThread(THREAD_C);
+      const selected = [...useThreadSelectionStore.getState().selectedThreadKeys];
+      store.toggleThread(THREAD_D);
+      // Only A completed before interruption. B is unprocessed; C still
+      // has a shell even though its row is outside the rendered page.
+      store.removeFromSelection(
+        getThreadKeysToDeselectAfterDelete(selected, new Set([THREAD_A]), () => true),
+      );
+
+      expect([...useThreadSelectionStore.getState().selectedThreadKeys]).toEqual([
+        THREAD_B,
+        THREAD_C,
+        THREAD_D,
+      ]);
+      expect(useThreadSelectionStore.getState().anchorThreadKey).toBe(THREAD_D);
+    });
   });
 
   describe("toggleThread", () => {
