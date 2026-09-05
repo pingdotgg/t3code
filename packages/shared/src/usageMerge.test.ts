@@ -4,11 +4,15 @@ import {
   type UsageBucket,
   type UsageDay,
   type UsageProviderKind,
-  type UsageSummary,
+  UsageSummary,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
+import * as Schema from "effect/Schema";
 
 import { mergeUsage, type EnvironmentUsage } from "./usageMerge.ts";
+
+const decodeSummary = Schema.decodeUnknownSync(UsageSummary);
+const encodeSummary = Schema.encodeSync(UsageSummary);
 
 function bucket(overrides: Partial<UsageBucket> = {}): UsageBucket {
   return {
@@ -193,6 +197,62 @@ describe("mergeUsage", () => {
 
     expect(merged.costUsd).toBe(14);
     expect(merged.staleEnvironments).toEqual([]);
+  });
+
+  it("keeps known usage when newer providers and bucket variants cannot be decoded", () => {
+    const known = summary([bucket()], [{ provider: "claude", hostId: "mac", homePath: "/a" }]);
+    const decoded = decodeSummary({
+      ...known,
+      buckets: [
+        ...known.buckets,
+        { ...bucket(), provider: "future-provider", costUsd: 100 },
+        { ...bucket(), costSource: "future-pricing", costUsd: 200 },
+      ],
+      sources: [
+        ...known.sources,
+        {
+          ...known.sources[0],
+          fingerprint: {
+            ...known.sources[0]?.fingerprint,
+            provider: "future-provider",
+          },
+        },
+      ],
+    });
+    expect(decoded).toEqual(known);
+    const merged = mergeUsage([environment("env-a", decoded)], USAGE_CONTRACT_VERSION);
+    expect(merged.costUsd).toBe(10);
+    expect(merged.totalTokens).toBe(1160);
+    expect(merged.staleEnvironments).toEqual([]);
+  });
+
+  it("keeps all supported providers when encoding a response", () => {
+    const current = summary(
+      [bucket(), bucket({ provider: "grok" })],
+      [
+        { provider: "claude", hostId: "mac", homePath: "/a" },
+        { provider: "grok", hostId: "mac", homePath: "/b" },
+      ],
+    );
+    expect(encodeSummary(current)).toEqual(current);
+    expect(decodeSummary(encodeSummary(current))).toEqual(current);
+  });
+
+  it("still rejects a malformed summary envelope", () => {
+    expect(() => decodeSummary({ ...summary([], []), buckets: null })).toThrow();
+  });
+
+  it("excludes a future incompatible contract even when its buckets still decode", () => {
+    const decoded = decodeSummary(
+      summary(
+        [bucket()],
+        [{ provider: "claude", hostId: "mac", homePath: "/a" }],
+        USAGE_CONTRACT_VERSION + 1,
+      ),
+    );
+    const merged = mergeUsage([environment("env-a", decoded)], USAGE_CONTRACT_VERSION);
+    expect(merged.costUsd).toBe(0);
+    expect(merged.staleEnvironments).toEqual(["env-a"]);
   });
 
   it("derives provider shares and cost quality", () => {
