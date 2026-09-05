@@ -3,10 +3,13 @@
 For PNG/GIF crops, follow Framing. For recordings, follow Recording. Both paths
 end at Inspect and deliver. For supplied media, start directly with that file.
 Only when fresh capture is part of the task, use
-[test-t3-app](../../test-t3-app/SKILL.md) for web/desktop or
+[test-t3-app](../../test-t3-app/SKILL.md) for web or
 [test-t3-mobile](../../test-t3-mobile/SKILL.md) for React Native mobile, following
 existing task authorization. Keep media-only work scoped to its requested
 artifact and destination.
+For Electron shell or IPC changes, use the actual desktop client. If an
+authorized desktop capture is unavailable, record that verification gap;
+the web preview only proves behavior shared with the web client.
 
 Locate the supplied source first. If it is missing or inaccessible, request the
 file or a reachable path and state what framing it needs. Pause dependent media
@@ -37,7 +40,7 @@ and framing; visual inspection establishes suitability.
 ## Recording
 
 Record the affected flow with the recorder owned by the current test surface.
-Use the attached preview's recording capability for web/desktop when exposed.
+Use the attached preview's recording capability for web when exposed.
 For iOS Simulator, use XcodeBuildMCP recording when available or
 `xcrun simctl io <verified-UDID> recordVideo <output.mp4>`; stop only the recorder
 process you started. For Android, target the verified emulator serial with
