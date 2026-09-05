@@ -173,6 +173,9 @@ export default defineConfig(() => {
       tailwindPlugins(bundledDev),
     ],
     optimizeDeps: {
+      // Prebundling the dynamic registry splits the static icon barrel into
+      // thousands of eager chunks. Its native ESM imports can stay lazy.
+      exclude: ["lucide-react/dynamic"],
       include: [
         "@clerk/clerk-js",
         "@clerk/react/internal",
