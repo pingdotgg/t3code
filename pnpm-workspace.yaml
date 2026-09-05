@@ -15,11 +15,13 @@ allowBuilds:
   electron: true
   electron-winstaller: false
   esbuild: true
+  get-windows: true
   msgpackr-extract: true
   msw: false
   node-pty: true
   sharp: true
   utf-8-validate: false
+  uiohook-napi: true
   workerd: false
 
 catalog:
@@ -90,9 +92,12 @@ minimumReleaseAgeExclude:
   - expo-updates@57.0.19
   - expo@57.0.18
   - expo-widgets@57.0.15
+  - electron@44.1.0
   - "@anthropic-ai/claude-agent-sdk@0.3.260"
 
 overrides:
+  # Window capture uses D-Bus messages/PNG bytes, not native Unix FD passing.
+  "dbus-next>usocket": "-"
   # The SDK always receives the user's Claude executable, so its bundled binaries are unused.
   "@anthropic-ai/claude-agent-sdk>@anthropic-ai/claude-agent-sdk-darwin-arm64": "-"
   "@anthropic-ai/claude-agent-sdk>@anthropic-ai/claude-agent-sdk-darwin-x64": "-"
@@ -137,6 +142,7 @@ overrides:
   expo-router: 57.0.17
   "expo-sharing>@expo/config-plugins": 57.0.9
   "expo-sharing>@expo/config-types": 57.0.2
+  node-abi: 4.33.0
   lightningcss: "catalog:"
   tailwindcss: "catalog:"
   vite: "catalog:"

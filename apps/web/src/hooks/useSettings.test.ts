@@ -159,6 +159,37 @@ describe("client settings hydration", () => {
   });
 });
 
+describe("persistClientSettingsPatch", () => {
+  it("waits for settings writes in request order", async () => {
+    __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
+    let finishFirst!: () => void;
+    let markFirstStarted!: () => void;
+    const firstStarted = new Promise<void>((resolve) => {
+      markFirstStarted = resolve;
+    });
+    persistenceMocks.setClientSettings.mockImplementationOnce(() => {
+      markFirstStarted();
+      return new Promise<void>((resolve) => {
+        finishFirst = resolve;
+      });
+    });
+
+    const firstSettings = { ...DEFAULT_CLIENT_SETTINGS, snapShotFlash: false };
+    const secondSettings = { ...firstSettings, snapShotPlaySound: false };
+    const first = persistClientSettingsPatch({ snapShotFlash: false });
+    await firstStarted;
+    const second = persistClientSettingsPatch({ snapShotPlaySound: false });
+
+    expect(persistenceMocks.setClientSettings).toHaveBeenCalledTimes(1);
+    expect(getClientSettings()).toEqual(secondSettings);
+    finishFirst();
+    await Promise.all([first, second]);
+
+    expect(persistenceMocks.setClientSettings).toHaveBeenNthCalledWith(1, firstSettings);
+    expect(persistenceMocks.setClientSettings).toHaveBeenNthCalledWith(2, secondSettings);
+  });
+});
+
 describe("persistClientSettingsUpdate", () => {
   it("publishes the update only after persistence succeeds", async () => {
     let finishPersistence!: () => void;
@@ -223,10 +254,9 @@ describe("persistClientSettingsUpdate", () => {
       persist,
     );
     await Promise.resolve();
-    persistClientSettingsPatch({ wordWrap: false }, persist);
+    const patch = persistClientSettingsPatch({ wordWrap: false }, persist);
     finishFirstPersistence();
-    await pending;
-    await Promise.resolve();
+    await Promise.all([pending, patch]);
 
     expect(persist).toHaveBeenCalledTimes(3);
     expect(persist.mock.calls[1]?.[0]).toMatchObject({
@@ -257,7 +287,7 @@ describe("persistClientSettingsUpdate", () => {
       });
     __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
 
-    persistClientSettingsPatch({ wordWrap: false }, persist);
+    void persistClientSettingsPatch({ wordWrap: false }, persist);
     const importedProfile = { id: "profile-import", name: "Imported", kind: "persistent" as const };
     const registration = persistClientSettingsUpdate(
       (current) => ({

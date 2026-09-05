@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import {
   compressImageForStash,
   compressImageToByteLimit,
+  dataUrlToFile,
   isHeicImageFile,
   MAX_COMPRESSIBLE_SOURCE_BYTES,
   MAX_STASH_IMAGE_DATA_URL_CHARS,
@@ -116,6 +117,16 @@ afterEach(() => {
   vi.unstubAllGlobals();
   globalThis.createImageBitmap = originalCreateImageBitmap;
   globalThis.OffscreenCanvas = originalOffscreenCanvas;
+});
+
+describe("dataUrlToFile", () => {
+  it("decodes a captured image without a fetch request", async () => {
+    const file = dataUrlToFile("data:image/png;base64,AAEC/w==", "window.png", "image/png");
+
+    expect(file.name).toBe("window.png");
+    expect(file.type).toBe("image/png");
+    expect([...new Uint8Array(await file.arrayBuffer())]).toEqual([0, 1, 2, 255]);
+  });
 });
 
 describe("compressImageForStash", () => {

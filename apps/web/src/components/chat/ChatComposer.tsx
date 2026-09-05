@@ -12,6 +12,7 @@ import type {
   ScopedThreadRef,
   ServerProvider,
   ThreadId,
+  SnapShotSource,
 } from "@t3tools/contracts";
 import {
   ProviderDriverKind,
@@ -25,6 +26,7 @@ import { createModelSelection, normalizeModelSlug } from "@t3tools/shared/model"
 import {
   Fragment,
   memo,
+  type ComponentProps,
   type ReactNode,
   useCallback,
   useEffect,
@@ -33,6 +35,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
 } from "react";
 import { createPortal } from "react-dom";
 import {
@@ -197,6 +200,18 @@ import {
   buildExpandedImagePreview,
   type ExpandedImagePreview,
 } from "./ExpandedImagePreview";
+import {
+  SNAP_SHOT_ATTACHMENT_FRAME_CLASS,
+  SnapShotAttachmentDetails,
+} from "./SnapShotAttachmentDetails";
+import {
+  getPendingSnapShotAnimations,
+  pendingSnapShotAnimationIdsForTarget,
+  scheduleSnapShotAnimationDestination,
+  setSnapShotAnimationDestination,
+  shouldAnimateSnapShotArrival,
+  subscribeToPendingSnapShotAnimations,
+} from "../../lib/snapShotAnimation";
 import { basenameOfPath } from "../../pierre-icons";
 import { cn, randomUUID } from "~/lib/utils";
 import {
@@ -242,6 +257,46 @@ type ComposerCommandMenuPosition = {
   maxHeight: number;
   width: number;
 };
+
+function SnapShotAttachmentFrame({
+  animationId,
+  animationSource,
+  arrival,
+  animateArrival,
+  className,
+  ...props
+}: ComponentProps<"div"> & {
+  readonly animationId?: string | undefined;
+  readonly animationSource?: SnapShotSource | undefined;
+  readonly arrival?: boolean | undefined;
+  readonly animateArrival?: boolean | undefined;
+}) {
+  const frameRef = useRef<HTMLDivElement>(null);
+
+  useLayoutEffect(() => {
+    const frame = frameRef.current;
+    if (!frame || (!animationId && !arrival)) return;
+    frame.scrollIntoView({ block: "nearest", inline: "nearest" });
+    if (!animationId) return;
+
+    return scheduleSnapShotAnimationDestination(animationId, () =>
+      setSnapShotAnimationDestination(animationId, frame, animationSource),
+    );
+  }, [animationId, animationSource, arrival]);
+
+  return (
+    <div
+      ref={frameRef}
+      className={cn(
+        animateArrival &&
+          !animationId &&
+          "origin-center transition-[opacity,scale] duration-300 ease-[cubic-bezier(.2,.8,.2,1)] starting:scale-95 starting:opacity-0 motion-reduce:transition-none motion-reduce:starting:scale-100 motion-reduce:starting:opacity-100",
+        className,
+      )}
+      {...props}
+    />
+  );
+}
 
 const COMPOSER_SCROLL_COLLAPSE_THRESHOLD_PX = 24;
 const COMPOSER_SCROLL_GESTURE_RESET_MS = 120;
@@ -1418,6 +1473,19 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const composerElementContexts = composerDraft.elementContexts;
   const composerPreviewAnnotations = composerDraft.previewAnnotations;
   const composerReviewComments = composerDraft.reviewComments;
+  const pendingSnapShotAnimations = useSyncExternalStore(
+    subscribeToPendingSnapShotAnimations,
+    getPendingSnapShotAnimations,
+    getPendingSnapShotAnimations,
+  );
+  const pendingSnapShotIds = useMemo(
+    () => pendingSnapShotAnimationIdsForTarget(pendingSnapShotAnimations, composerDraftTarget),
+    [composerDraftTarget, pendingSnapShotAnimations],
+  );
+  const pendingSnapShotIdSet = useMemo(() => new Set(pendingSnapShotIds), [pendingSnapShotIds]);
+  const uncommittedSnapShotIds = pendingSnapShotIds.filter(
+    (id) => !composerImages.some((image) => image.id === id),
+  );
   const standaloneComposerImages = useMemo(() => {
     const previewAnnotationIds = new Set(
       composerPreviewAnnotations.map((annotation) => annotation.id),
@@ -2470,6 +2538,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 mimeType: image.mimeType,
                 sizeBytes: image.sizeBytes,
                 dataUrl,
+                ...(image.source ? { source: image.source } : {}),
               });
             } catch {
               const existingPersisted = existingPersistedById.get(image.id);
@@ -3586,6 +3655,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           mimeType: result.image.mimeType,
           sizeBytes: result.image.sizeBytes,
           dataUrl: result.image.dataUrl,
+          ...(image.source ? { source: image.source } : {}),
         });
       }
       const { kept, droppedNames } = partitionStashAttachments(candidateAttachments);
@@ -3704,6 +3774,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     collapseOnBlur: settings.composerCollapseOnBlur,
     timelineOverflows,
   });
+  const expandedComposerImages = isComposerResting
+    ? standaloneComposerImages.filter((image) => pendingSnapShotIdSet.has(image.id))
+    : standaloneComposerImages;
   // The relocated controls live in the context strip whenever the composer is
   // collapsed for any reason, the desktop resting layout or the phone
   // collapse. Both leave the footer unrendered, so the strip is the only place
@@ -5172,19 +5245,49 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               {!isComposerCollapsedMobile &&
                 !isComposerApprovalState &&
                 pendingUserInputs.length === 0 &&
-                (composerVideos.length > 0 ||
-                  (!isComposerResting && standaloneComposerImages.length > 0)) && (
-                  <div className="mb-3 flex flex-wrap gap-2">
-                    {!isComposerResting &&
-                      standaloneComposerImages.map((image) => {
+                (uncommittedSnapShotIds.length > 0 ||
+                  composerVideos.length > 0 ||
+                  expandedComposerImages.length > 0) && (
+                  <div
+                    className={cn(
+                      "mb-3 flex max-w-full gap-2",
+                      pendingSnapShotIds.length > 0 ||
+                        expandedComposerImages.some((image) => image.source?.kind === "snap-shot")
+                        ? "snap-x snap-proximity overflow-x-auto overscroll-x-contain pb-1 [scrollbar-color:color-mix(in_srgb,var(--contrast-foreground)_18%,transparent)_transparent] [scrollbar-width:thin] [&::-webkit-scrollbar]:h-2.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:border-3 [&::-webkit-scrollbar-thumb]:border-transparent [&::-webkit-scrollbar-thumb]:bg-[color-mix(in_srgb,var(--contrast-foreground)_18%,transparent)] [&::-webkit-scrollbar-thumb]:bg-clip-content [&::-webkit-scrollbar-thumb:hover]:bg-[color-mix(in_srgb,var(--contrast-foreground)_28%,transparent)] [&::-webkit-scrollbar-track]:mx-1 [&::-webkit-scrollbar-track]:bg-transparent"
+                        : "flex-wrap",
+                    )}
+                  >
+                    {expandedComposerImages
+                      .map((image) => {
                         const upload = supportsAttachmentUploads
                           ? uploadsByImageId[image.id]
                           : undefined;
+                        const snapShotAnimationPending =
+                          image.source?.kind === "snap-shot" && pendingSnapShotIdSet.has(image.id);
+                        const snapShotArrival =
+                          image.source?.kind === "snap-shot" &&
+                          shouldAnimateSnapShotArrival(image.source.capturedAt);
                         return (
-                          <div
+                          <SnapShotAttachmentFrame
                             key={image.id}
                             data-chat-composer-expanded-image="true"
-                            className="relative h-16 w-16 overflow-hidden rounded-lg border border-border/80 bg-background"
+                            aria-hidden={snapShotAnimationPending || undefined}
+                            inert={snapShotAnimationPending || undefined}
+                            arrival={snapShotArrival}
+                            animateArrival={
+                              settings.snapShotAnimations &&
+                              !snapShotAnimationPending &&
+                              snapShotArrival
+                            }
+                            animationId={snapShotAnimationPending ? image.id : undefined}
+                            animationSource={snapShotAnimationPending ? image.source : undefined}
+                            className={cn(
+                              "group/attachment shrink-0 snap-start bg-background",
+                              image.source?.kind === "snap-shot"
+                                ? SNAP_SHOT_ATTACHMENT_FRAME_CLASS
+                                : "relative h-16 w-16 overflow-hidden rounded-lg border border-border/80",
+                              snapShotAnimationPending && "invisible",
+                            )}
                           >
                             {image.previewUrl ? (
                               <button
@@ -5211,6 +5314,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                                 {image.name}
                               </div>
                             )}
+                            {image.source?.kind === "snap-shot" ? (
+                              <SnapShotAttachmentDetails
+                                source={image.source}
+                                className={cn(
+                                  upload?.status === "uploading" && "bottom-4",
+                                  upload?.status === "failed" && "bottom-8",
+                                )}
+                              />
+                            ) : null}
                             {nonPersistedComposerImageIdSet.has(image.id) && (
                               <Tooltip>
                                 <TooltipTrigger
@@ -5270,15 +5382,36 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                             <Button
                               variant="ghost"
                               size="icon-xs"
-                              className="absolute right-1 top-1 bg-background/80 hover:bg-background/90"
+                              className={cn(
+                                "absolute right-1 top-1 bg-background/80 hover:bg-background/90",
+                                image.source?.kind === "snap-shot" &&
+                                  "opacity-0 transition-opacity pointer-coarse:opacity-100 focus-visible:opacity-100 group-hover/attachment:opacity-100 group-focus-within/attachment:opacity-100",
+                              )}
                               onClick={() => removeComposerImage(image.id)}
                               aria-label={`Remove ${image.name}`}
                             >
                               <XIcon />
                             </Button>
-                          </div>
+                          </SnapShotAttachmentFrame>
                         );
-                      })}
+                      })
+                      .concat(
+                        uncommittedSnapShotIds.map((captureId) => (
+                          <SnapShotAttachmentFrame
+                            key={captureId}
+                            aria-hidden="true"
+                            animationId={captureId}
+                            animationSource={
+                              pendingSnapShotAnimations.find((capture) => capture.id === captureId)
+                                ?.source
+                            }
+                            className={cn(
+                              SNAP_SHOT_ATTACHMENT_FRAME_CLASS,
+                              "invisible shrink-0 snap-start bg-background",
+                            )}
+                          />
+                        )),
+                      )}
                     {composerVideos.map((file) => {
                       const fileCanUpload =
                         supportsAttachmentUploads &&
@@ -5288,7 +5421,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       return (
                         <div
                           key={file.id}
-                          className="relative h-16 w-16 overflow-hidden rounded-lg border border-border/80 bg-black"
+                          className="relative h-16 w-16 shrink-0 snap-start overflow-hidden rounded-lg border border-border/80 bg-black"
                         >
                           <button
                             type="button"

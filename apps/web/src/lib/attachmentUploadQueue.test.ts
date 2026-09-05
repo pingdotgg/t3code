@@ -184,7 +184,15 @@ describe("attachmentUploadQueue", () => {
   });
 
   it("uploads images immediately and sends attachment references", async () => {
-    const image = makeImage("image-1");
+    const image = {
+      ...makeImage("image-1"),
+      source: {
+        kind: "snap-shot" as const,
+        capturedAt: "2026-08-24T11:00:00.000Z",
+        appName: "Terminal",
+        windowTitle: "Tests",
+      },
+    };
     startAttachmentUpload({ environmentId: firstEnvironment, image });
     await Promise.resolve();
 
@@ -207,6 +215,12 @@ describe("attachmentUploadQueue", () => {
         name: "image-1.png",
         mimeType: "image/png",
         sizeBytes: 3,
+        source: {
+          kind: "snap-shot",
+          capturedAt: "2026-08-24T11:00:00.000Z",
+          appName: "Terminal",
+          windowTitle: "Tests",
+        },
       },
     ]);
 

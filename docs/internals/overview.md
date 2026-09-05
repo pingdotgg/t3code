@@ -63,5 +63,16 @@ Runtime receipts mark specific test milestones. Their
 production behavior must use persisted state and events. These test signals are separate from the
 durable command receipts that make dispatch idempotent.
 
+The Electron shell acquires `DesktopPreReadyPlatform.layer` synchronously before asynchronous
+services. On Linux this sets the desktop-entry identity and global-shortcut portal flags before
+Chromium initializes its portal connection. Setting the identity later in `DesktopAppIdentity`
+is too late: Chromium caches the first registration, including failures. The identity must match
+the installed entry managed by `DesktopLinuxUrlHandler`. Pre-ready setup also refreshes that entry's
+`Exec` path before portal registration: AppImage updates can remove the previous executable, which
+makes the old entry invalid even though its filename is correct. The later URL handler avoids
+rewriting an identical entry while the portal may be reading it. On Wayland, Electron's synchronous
+shortcut-registration result only confirms submission; it does not confirm desktop consent or
+an active binding.
+
 See the [glossary](./glossary.md) for shared terms and the
 [development runbook](../operations/development.md) for setup and checks.
