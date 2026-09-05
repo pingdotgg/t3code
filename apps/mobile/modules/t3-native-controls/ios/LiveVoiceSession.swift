@@ -1,10 +1,6 @@
 import AVFoundation
 import Speech
 
-enum LiveVoiceError: Error {
-  case unavailable, busy, audioFormat
-}
-
 /// AVAudioConverter pulls each tap buffer synchronously, at most once.
 private final class VoiceConversionChunk: @unchecked Sendable {
   private var buffer: AVAudioPCMBuffer?
@@ -21,14 +17,11 @@ final class LiveVoiceSession {
   let id: String
   private let emit: ([String: Any]) -> Void
   private let engine = AVAudioEngine()
-  private var analyzer: SpeechAnalyzer?
+  private var transcription: VoiceTranscription?
   private var input: AsyncStream<AnalyzerInput>.Continuation?
-  private var resultsTask: Task<Void, Error>?
   private var observers: [NSObjectProtocol] = []
   private var tapInstalled = false
   private var ending = false
-  private var committed = ""
-  private var transcript = ""
   private var startedAt: TimeInterval = 0
   private var lastMeterAt: TimeInterval = 0
 
@@ -37,53 +30,25 @@ final class LiveVoiceSession {
     self.emit = emit
   }
 
-  // Progressive system dictation exposes word-by-word hypotheses and corrections.
-  private static func makeTranscriber(locale: Locale) -> DictationTranscriber {
-    DictationTranscriber(locale: locale, preset: .progressiveLongDictation)
-  }
-
   static func prepare(locale: String) async throws -> String? {
-    guard let supported = await DictationTranscriber.supportedLocale(
-      equivalentTo: Locale(identifier: locale)
-    ) else { return nil }
-    let transcriber = makeTranscriber(locale: supported)
-    if let install = try await AssetInventory.assetInstallationRequest(supporting: [transcriber]) {
-      try await install.downloadAndInstall()
-    }
-    return supported.identifier
+    try await VoiceTranscription.prepare(locale: locale)
   }
 
   func start(locale: String, limit: Double) async throws {
-    let transcriber = Self.makeTranscriber(locale: Locale(identifier: locale))
-    let analyzer = SpeechAnalyzer(modules: [transcriber])
-    self.analyzer = analyzer
-    guard let format = await SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith: [transcriber])
-    else { throw LiveVoiceError.audioFormat }
+    let (sequence, continuation) = AsyncStream<AnalyzerInput>.makeStream()
+    input = continuation
+    let transcription = VoiceTranscription(emit: { [weak self] text in
+      guard let self else { return }
+      emit(["sessionId": id, "transcript": text])
+    }, interrupted: { [weak self] in self?.interrupted() })
+    self.transcription = transcription
+    let format = try await transcription.start(input: sequence, locale: locale)
     let node = engine.inputNode
     let sourceFormat = node.outputFormat(forBus: 0)
     guard sourceFormat.sampleRate > 0, sourceFormat.channelCount > 0,
       let converter = AVAudioConverter(from: sourceFormat, to: format)
     else { throw LiveVoiceError.audioFormat }
     converter.primeMethod = .none
-    let (sequence, continuation) = AsyncStream<AnalyzerInput>.makeStream()
-    input = continuation
-    resultsTask = Task { @MainActor [weak self] in
-      do {
-        for try await result in transcriber.results {
-          guard let self else { return }
-          let text = String(result.text.characters)
-          // Apple revises the current segment; finalized segments become its prefix.
-          transcript = committed + text
-          if result.isFinal { committed = transcript }
-          emit(["sessionId": id, "transcript": transcript])
-        }
-      } catch {
-        if let self, !ending {
-          emit(["sessionId": id, "error": "Live dictation was interrupted."])
-        }
-        throw error
-      }
-    }
     let ratio = format.sampleRate / sourceFormat.sampleRate
     node.installTap(onBus: 0, bufferSize: 4096, format: sourceFormat) { [weak self] buffer, _ in
       let decibels = Self.decibels(for: buffer)
@@ -97,7 +62,6 @@ final class LiveVoiceSession {
       }
     }
     tapInstalled = true
-    try await analyzer.start(inputSequence: sequence)
     startedAt = ProcessInfo.processInfo.systemUptime
     engine.prepare()
     try engine.start()
@@ -165,10 +129,9 @@ final class LiveVoiceSession {
   func stop() async throws -> String {
     teardownCapture()
     do {
-      try await analyzer?.finalizeAndFinishThroughEndOfInput()
-      try await resultsTask?.value
-      analyzer = nil
-      resultsTask = nil
+      guard let transcription else { throw LiveVoiceError.unavailable }
+      let transcript = try await transcription.finish()
+      self.transcription = nil
       return transcript
     } catch {
       await cancel()
@@ -178,11 +141,8 @@ final class LiveVoiceSession {
 
   func cancel() async {
     teardownCapture()
-    await analyzer?.cancelAndFinishNow()
-    resultsTask?.cancel()
-    _ = try? await resultsTask?.value
-    analyzer = nil
-    resultsTask = nil
+    await transcription?.cancel()
+    transcription = nil
   }
 
   private func teardownCapture() {

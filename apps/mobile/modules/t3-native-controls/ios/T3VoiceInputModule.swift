@@ -10,7 +10,7 @@ public final class T3VoiceInputModule: Module {
     Events("onVoiceInput")
 
     Function("isAvailable") { () -> Bool in
-      if #available(iOS 26.0, *) { return true }
+      if #available(iOS 26.0, *) { return SpeechTranscriber.isAvailable }
       return false
     }
     AsyncFunction("prepare") { (locale: String) -> String? in

@@ -678,6 +678,39 @@ describe("streaming draft ownership", () => {
     expect(h.controller.currentState.phase).toBe("idle");
   });
 
+  it("keeps submission blocked until a correction replaces the whole provisional draft", async () => {
+    const h = createLiveHarness();
+    const correction = deferred<string>();
+    h.stop.mockReturnValue(correction.promise);
+    await h.controller.start();
+    h.emit("Please show that...");
+    const finishing = h.controller.stop();
+    expect(h.controller.currentState.phase).toBe("transcribing");
+    expect(voiceInputBlocksSubmission(h.controller.currentState)).toBe(true);
+    expect(h.text).toBe("hello Please show that...");
+    correction.resolve("Please show the words as I speak.");
+    await finishing;
+    expect(h.text).toBe("hello Please show the words as I speak.");
+    expect(voiceInputBlocksSubmission(h.controller.currentState)).toBe(false);
+  });
+
+  it("does not apply a delayed correction after a manual edit or owner change", async () => {
+    for (const change of ["edit", "owner"] as const) {
+      resetVoiceInputGlobalsForTests();
+      const h = createLiveHarness();
+      const correction = deferred<string>();
+      h.stop.mockReturnValue(correction.promise);
+      await h.controller.start();
+      h.emit("provisional...");
+      const finishing = h.controller.stop();
+      if (change === "edit") h.edit("my edit");
+      else h.changeOwner();
+      correction.resolve("corrected words");
+      await finishing;
+      expect(h.text).toBe(change === "edit" ? "my edit" : "hello world");
+    }
+  });
+
   it("restores the original selection on cancellation and ignores late speech", async () => {
     const h = createLiveHarness();
     await h.controller.start();

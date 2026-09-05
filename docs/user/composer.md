@@ -71,7 +71,8 @@ and use **Attach again** or remove the missing file before sending.
 
 On supported iPhones with iOS 26 or later, tap the composer's microphone and speak.
 Your words appear in the draft as you speak and may be corrected as recognition
-continues. Confirm to finish dictation, then review or edit the text before sending.
+continues. Confirm to finish dictation and apply the final corrections, then review
+or edit the text before sending.
 Text replaces the selection you had when dictation started.
 
 The first use may download Apple's speech model and needs a network connection.
