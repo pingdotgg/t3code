@@ -8,7 +8,12 @@ export function pendingProviderTurnUpdate(
     case "thread.turn-queued":
       return event.payload.turn;
     case "thread.turn-start-requested":
-      return null;
+      return event.payload.providerAvailabilityWait === true ? undefined : null;
+    case "thread.session-set":
+      return event.payload.session.status === "starting" ||
+        event.payload.session.status === "running"
+        ? null
+        : undefined;
     case "thread.turn-interrupt-requested":
     case "thread.session-stop-requested":
     case "thread.archived":

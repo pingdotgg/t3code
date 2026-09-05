@@ -691,6 +691,20 @@ describe("ProviderCommandReactor", () => {
           .text,
       ).toBe("Saved until capacity returns");
       expect(yield* Effect.promise(() => harness.readPendingTurnStarts())).toEqual([]);
+      // Capacity can disappear between admission and the provider worker's handoff.
+      yield* harness.engine.dispatch({
+        type: "thread.turn.release",
+        commandId: CommandId.make("raced-capacity-release"),
+        threadId,
+        messageId: MessageId.make("capacity-message"),
+        createdAt: checkedAt,
+      });
+      yield* Effect.promise(() => harness.drain());
+      expect(harness.sendTurn).not.toHaveBeenCalled();
+      expect(
+        (yield* Effect.promise(() => harness.readModel())).threads[0]?.pendingProviderTurn?.message
+          .text,
+      ).toBe("Saved until capacity returns");
       // Wait for a typed release receipt; no wall-clock sleep or polling.
       const released = yield* harness.engine.subscribeDomainEvents.pipe(Scope.provide(scope!));
       const receipt = yield* Effect.forkChild(

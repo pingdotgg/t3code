@@ -3676,7 +3676,56 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const toggleTasksDrawer = useCallback(() => {
     setIsTasksDrawerOpen((open) => !open);
   }, []);
-  const hasBannerItems = props.bannerItems.length > 0;
+  const providerWaitNotice: ComposerBannerStackItem | null =
+    queuedProviderTurn || quotaExhausted
+      ? {
+          id: "provider-availability",
+          variant: "warning",
+          icon: null,
+          title: queuedProviderTurn
+            ? `Waiting for provider capacity · ${queuedProviderTurn.modelSelection.model}`
+            : "Usage limit reached",
+          description: queuedProviderTurn ? (
+            <span className="line-clamp-2">
+              {queuedProviderTurn.message.text}
+              {queuedProviderTurn.message.attachments.length > 0
+                ? ` · ${queuedProviderTurn.message.attachments.length} attachments`
+                : ""}
+            </span>
+          ) : quota.resetsAt !== null ? (
+            `Resets ${new Date(quota.resetsAt).toLocaleString()}`
+          ) : undefined,
+          actions: queuedProviderTurn ? (
+            <Button type="button" variant="outline" size="sm" onClick={props.onCancelProviderWait}>
+              Cancel queued message
+            </Button>
+          ) : props.supportsProviderWait ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={
+                ordinarySendDisabledReason !== null ||
+                noProviderAvailable ||
+                isSendBusy ||
+                isConnecting ||
+                environmentUnavailable !== null ||
+                !composerSendState.hasSendableContent ||
+                phase === "running" ||
+                activePendingProgress !== null ||
+                activePendingApproval !== null
+              }
+              onClick={() => submitComposer(undefined, "when-available")}
+            >
+              Start when available
+            </Button>
+          ) : undefined,
+        }
+      : null;
+  const notices = providerWaitNotice
+    ? [providerWaitNotice, ...props.bannerItems]
+    : props.bannerItems;
+  const hasBannerItems = notices.length > 0;
   const hasBlockingComposerTopDrawer =
     activePendingApproval !== null || pendingUserInputs.length > 0;
   const showInlineTasksBadge =
@@ -4103,9 +4152,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         content: activityStackContent,
       }
     : null;
-  const bannerStackItems = activityStackItem
-    ? [activityStackItem, ...props.bannerItems]
-    : props.bannerItems;
+  const bannerStackItems = activityStackItem ? [activityStackItem, ...notices] : notices;
   useEffect(() => {
     if (activeTasksProgress === null || activeTaskSteps === null) {
       setIsTasksDrawerOpen(false);
@@ -4868,71 +4915,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         : null}
       <ComposerBanner.Dock>
         <ComposerBanner.Column>
-          {queuedProviderTurn || quotaExhausted ? (
-            <ComposerBanner.Attachment>
-              <ComposerBanner.Root variant="warning">
-                <ComposerBanner.Row layout="wrap-actions">
-                  <ComposerBanner.Icon />
-                  <ComposerBanner.Content className="flex-col items-start gap-0">
-                    {queuedProviderTurn ? (
-                      <>
-                        <span>
-                          Waiting for provider capacity · {queuedProviderTurn.modelSelection.model}
-                        </span>
-                        <span className="line-clamp-2 text-xs text-muted-foreground">
-                          {queuedProviderTurn.message.text}
-                          {queuedProviderTurn.message.attachments.length > 0
-                            ? ` · ${queuedProviderTurn.message.attachments.length} attachments`
-                            : ""}
-                        </span>
-                      </>
-                    ) : (
-                      <>
-                        <span>Usage limit reached</span>
-                        {quota.resetsAt !== null ? (
-                          <span className="text-xs text-muted-foreground">
-                            Resets {new Date(quota.resetsAt).toLocaleString()}
-                          </span>
-                        ) : null}
-                      </>
-                    )}
-                  </ComposerBanner.Content>
-                  <ComposerBanner.Actions>
-                    {queuedProviderTurn ? (
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        onClick={props.onCancelProviderWait}
-                      >
-                        Cancel queued message
-                      </Button>
-                    ) : props.supportsProviderWait ? (
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        disabled={
-                          ordinarySendDisabledReason !== null ||
-                          noProviderAvailable ||
-                          isSendBusy ||
-                          isConnecting ||
-                          environmentUnavailable !== null ||
-                          !composerSendState.hasSendableContent ||
-                          phase === "running" ||
-                          activePendingProgress !== null ||
-                          activePendingApproval !== null
-                        }
-                        onClick={() => submitComposer(undefined, "when-available")}
-                      >
-                        Start when available
-                      </Button>
-                    ) : null}
-                  </ComposerBanner.Actions>
-                </ComposerBanner.Row>
-              </ComposerBanner.Root>
-            </ComposerBanner.Attachment>
-          ) : null}
           <ComposerBannerStack
             key={activeThreadId}
             className="relative z-0"

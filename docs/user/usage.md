@@ -57,7 +57,8 @@ message and choose **Start when available** to save it for that provider account
 The environment keeps the exact message, attachments, model options, and permission mode.
 You can close the client or restart the environment while it waits. A waiting banner shows
 the saved message; choose **Cancel queued message** to remove it. Archiving or settling the
-thread also cancels the wait. Only one message can wait per thread.
+thread also cancels the wait. Cancel the wait before snoozing a thread. Only one message
+can wait per thread.
 
 The environment starts the message after a fresh quota check confirms capacity. A displayed
 reset time is an estimate, not a promise to start at that instant. The environment must be

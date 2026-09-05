@@ -1223,6 +1223,52 @@ it.layer(
       assert.isFalse(yield* exists(removePath));
       assert.isTrue(yield* exists(laterPath));
       assert.isTrue(yield* exists(otherThreadPath));
+      const queuedAttachmentId = "thread-revert-files-00000000-0000-4000-8000-000000000006";
+      const queuedPath = path.join(attachmentsDir, `${queuedAttachmentId}.png`);
+      yield* fileSystem.writeFileString(queuedPath, "queued attachment");
+      yield* appendAndProject({
+        ...revertedEvent,
+        type: "thread.turn-queued",
+        eventId: EventId.make("queued-attachment"),
+        payload: {
+          threadId,
+          turn: {
+            message: {
+              messageId: MessageId.make("queued-attachment-message"),
+              role: "user",
+              text: "Wait",
+              attachments: [
+                {
+                  type: "image",
+                  id: queuedAttachmentId,
+                  name: "queued.png",
+                  mimeType: "image/png",
+                  sizeBytes: 17,
+                },
+              ],
+            },
+            modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5-codex" },
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            createdAt: now,
+          },
+        },
+      });
+      assert.isTrue(yield* exists(queuedPath));
+      yield* appendAndProject({
+        ...revertedEvent,
+        type: "thread.turn-interrupt-requested",
+        eventId: EventId.make("cancel-queued-attachment"),
+        payload: {
+          threadId,
+          pendingMessageId: MessageId.make("queued-attachment-message"),
+          createdAt: now,
+        },
+      });
+      assert.isFalse(yield* exists(queuedPath));
+      assert.isTrue(yield* exists(keepPath));
+      assert.isTrue(yield* exists(laterPath));
+      assert.isTrue(yield* exists(otherThreadPath));
     }),
   );
 });

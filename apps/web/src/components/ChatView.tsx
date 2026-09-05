@@ -6858,17 +6858,21 @@ export default function ChatView(props: ChatViewProps) {
     }
   };
 
+  const providerWaitCancellation = useRef<string | null>(null);
   const onCancelProviderWait = async () => {
-    if (!activeThread?.pendingProviderTurn) return;
-    const result = await interruptThreadTurn({
-      environmentId,
-      input: {
-        threadId: activeThread.id,
-        pendingMessageId: activeThread.pendingProviderTurn.message.messageId,
-      },
-    });
-    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-      setThreadError(activeThread.id, chatActionErrorMessage(squashAtomCommandFailure(result)));
+    if (!activeThread?.pendingProviderTurn || providerWaitCancellation.current !== null) return;
+    const pendingMessageId = activeThread.pendingProviderTurn.message.messageId;
+    providerWaitCancellation.current = pendingMessageId;
+    try {
+      const result = await interruptThreadTurn({
+        environmentId,
+        input: { threadId: activeThread.id, pendingMessageId },
+      });
+      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+        setThreadError(activeThread.id, chatActionErrorMessage(squashAtomCommandFailure(result)));
+      }
+    } finally {
+      providerWaitCancellation.current = null;
     }
   };
 

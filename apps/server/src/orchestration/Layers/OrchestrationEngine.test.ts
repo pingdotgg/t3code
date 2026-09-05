@@ -1923,6 +1923,16 @@ it("persists a queued prompt without starting a turn, releases exactly once, and
     await expect(
       system.run(system.engine.dispatch({ ...queue, commandId: CommandId.make("wait-second") })),
     ).rejects.toThrow("pending work");
+    await expect(
+      system.run(
+        system.engine.dispatch({
+          type: "thread.snooze",
+          commandId: CommandId.make("wait-snooze"),
+          threadId,
+          snoozedUntil: "2099-01-02T00:00:00.000Z",
+        }),
+      ),
+    ).rejects.toThrow("queued turn start");
     await system.dispose();
     system = await createOrchestrationSystem(database);
     thread = (await system.readModel()).threads[0]!;
@@ -1939,7 +1949,27 @@ it("persists a queued prompt without starting a turn, releases exactly once, and
     thread = (await system.readModel()).threads[0]!;
     expect(thread.messages).toHaveLength(1);
     expect(thread.messages[0]?.text).toBe(message.text);
-    expect(thread.pendingProviderTurn).toBeNull();
+    expect(thread.pendingProviderTurn?.message).toEqual(message);
+    for (const status of ["starting", "ready"] as const) {
+      await system.run(
+        system.engine.dispatch({
+          type: "thread.session.set",
+          commandId: CommandId.make(`wait-session-${status}`),
+          threadId,
+          createdAt: release.createdAt,
+          session: {
+            threadId,
+            status,
+            providerName: "codex",
+            runtimeMode: "approval-required",
+            activeTurnId: null,
+            lastError: null,
+            updatedAt: release.createdAt,
+          },
+        }),
+      );
+    }
+    expect((await system.readModel()).threads[0]?.pendingProviderTurn).toBeNull();
     await system.run(
       system.engine.dispatch({
         ...queue,

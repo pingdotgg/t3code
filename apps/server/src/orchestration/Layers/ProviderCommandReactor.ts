@@ -1197,6 +1197,11 @@ const make = Effect.gen(function* () {
     if (!thread) {
       return;
     }
+    if (
+      event.payload.providerAvailabilityWait === true &&
+      thread.pendingProviderTurn?.message.messageId !== event.payload.messageId
+    )
+      return;
     const message = thread.messages.find((entry) => entry.id === event.payload.messageId);
     if (!message || message.role !== "user") {
       yield* appendProviderFailureActivity({
@@ -1252,13 +1257,14 @@ const make = Effect.gen(function* () {
     const providerSnapshot = (yield* providerRegistry.getProviders).find(
       (entry) => entry.instanceId === selection.instanceId,
     );
-    if (
-      modelUsageAvailability(
-        providerSnapshot?.usageLimits,
-        selection.model,
-        DateTime.toEpochMillis(yield* DateTime.now),
-      ).status === "exhausted"
-    ) {
+    const availability = modelUsageAvailability(
+      providerSnapshot?.usageLimits,
+      selection.model,
+      DateTime.toEpochMillis(yield* DateTime.now),
+    );
+    if (event.payload.providerAvailabilityWait === true && availability.status !== "available")
+      return;
+    if (availability.status === "exhausted") {
       const detail =
         "Usage limit reached. Queue a message with Start when available or choose another provider.";
       yield* setThreadSessionErrorOnTurnStartFailure({

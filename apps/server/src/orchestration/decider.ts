@@ -591,7 +591,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       // invisible pending work: no session, no pending flags. Snoozing in
       // that window would hide a just-requested turn exactly the way settle
       // would.
-      if (hasQueuedTurnStartForThread(thread, occurredAt)) {
+      if (thread.pendingProviderTurn != null || hasQueuedTurnStartForThread(thread, occurredAt)) {
         return yield* Effect.fail(
           new OrchestrationCommandInvariantError({
             commandType: command.type,
@@ -1077,7 +1077,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           detail: "The pending provider turn is no longer eligible to start.",
         });
       }
-      return yield* decideOrchestrationCommand({
+      const released = yield* decideOrchestrationCommand({
         command: {
           ...pending,
           type: "thread.turn.start",
@@ -1099,6 +1099,14 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           ),
         },
       });
+      const events: ReadonlyArray<PlannedOrchestrationEvent> = Array.isArray(released)
+        ? released
+        : [released as PlannedOrchestrationEvent];
+      return events.map((event) =>
+        event.type === "thread.turn-start-requested"
+          ? { ...event, payload: { ...event.payload, providerAvailabilityWait: true } }
+          : event,
+      );
     }
 
     case "thread.turn.interrupt": {
