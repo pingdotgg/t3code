@@ -195,7 +195,7 @@ function DetailChip({
         }}
         className={cn(
           "flex min-w-0 flex-1 touch-none items-center gap-1 rounded-sm outline-none select-none hover:bg-primary/10 focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring cursor-default",
-          placed ? "min-h-5" : "px-2 py-1.5",
+          placed ? "min-h-5 whitespace-nowrap" : "px-2 py-1.5",
         )}
       >
         <DetailFace component={component} placed={placed} />
