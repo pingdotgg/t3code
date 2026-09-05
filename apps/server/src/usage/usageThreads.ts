@@ -26,7 +26,6 @@ import { cacheWriteUsd, priceUsage, usageComponentCosts, type RateTable } from "
 import { addTotals, EMPTY_TOTALS, type UsageRecord } from "./usageTranscripts.ts";
 
 const MAX_DATE_TIMESTAMP_MS = 8_640_000_000_000_000;
-const UNKNOWN_PROJECT_KEY = "unknown:";
 
 /** How the caller identifies the transcript a record came from. */
 export interface ThreadRecordContext {
@@ -56,6 +55,7 @@ export interface SessionUsageGroup {
   readonly cwd: string;
   readonly projectId: ProjectId | null;
   readonly projectKey: string | null;
+  readonly projectAttribution: "project" | "outside" | "unknown";
   readonly project: string;
   readonly totals: UsageTokenTotals;
   readonly costUsd: number;
@@ -72,6 +72,7 @@ interface MutableSessionGroup {
   cwd: string;
   projectId: ProjectId | null;
   projectKey: string | null;
+  projectAttribution: "project" | "outside" | "unknown";
   project: string;
   totals: UsageTokenTotals;
   costUsd: number;
@@ -88,6 +89,7 @@ export interface ThreadUsageOptions {
   readonly sinceTimeMs?: number;
   readonly untilTimeMs?: number;
   readonly rates: RateTable;
+  readonly priceOverrides?: RateTable;
   /** Same stable project resolver the summary uses. */
   readonly resolveProject?: (cwd: string) => ProjectAttribution | null;
 }
@@ -161,12 +163,14 @@ export class ThreadUsageAccumulator {
   ): void {
     const day = this.#toDay(record.timestampMs);
     const resolvedProject = this.#options.resolveProject?.(record.cwd) ?? null;
-    const projectKey =
+    const projectAttribution =
       resolvedProject !== null
-        ? `id:${resolvedProject.projectId.replaceAll("\u0000", "")}`
+        ? "project"
         : this.#options.resolveProject === undefined || record.cwd.length === 0
-          ? UNKNOWN_PROJECT_KEY
-          : null;
+          ? "unknown"
+          : "outside";
+    const projectKey =
+      resolvedProject === null ? null : `id:${resolvedProject.projectId.replaceAll("\u0000", "")}`;
     const groupKey = JSON.stringify([context.sessionKey, record.cwd]);
     let group = groups.get(groupKey);
     if (group === undefined) {
@@ -177,6 +181,7 @@ export class ThreadUsageAccumulator {
         cwd: record.cwd,
         projectId: resolvedProject?.projectId ?? null,
         projectKey,
+        projectAttribution,
         project: resolvedProject?.title ?? "",
         totals: EMPTY_TOTALS,
         costUsd: 0,
@@ -193,12 +198,18 @@ export class ThreadUsageAccumulator {
       record.model,
       record.totals,
       record.reportedCostUsd,
+      this.#options.priceOverrides,
     );
     const cacheWriteComplete =
       priced.costSource === "modelPriced" || record.totals.cacheCreationTokens === 0;
     const writeUsd =
       priced.costSource === "modelPriced"
-        ? cacheWriteUsd(this.#options.rates, record.model, record.totals)
+        ? cacheWriteUsd(
+            this.#options.rates,
+            record.model,
+            record.totals,
+            this.#options.priceOverrides,
+          )
         : 0;
     group.totals = addTotals(group.totals, record.totals);
     group.costUsd += priced.costUsd;
@@ -206,7 +217,12 @@ export class ThreadUsageAccumulator {
     group.cacheWriteComplete &&= cacheWriteComplete;
 
     if (priced.costSource === "modelPriced") {
-      const components = usageComponentCosts(this.#options.rates, record.model, record.totals);
+      const components = usageComponentCosts(
+        this.#options.rates,
+        record.model,
+        record.totals,
+        this.#options.priceOverrides,
+      );
       let dayEntry = group.daily.get(day);
       if (dayEntry === undefined) {
         dayEntry = { cacheWriteUsd: 0, cacheReadUsd: 0, freshUsd: 0 };
@@ -250,6 +266,7 @@ export class ThreadUsageAccumulator {
       cwd: group.cwd,
       projectId: group.projectId,
       projectKey: group.projectKey,
+      projectAttribution: group.projectAttribution,
       project: group.project,
       totals: group.totals,
       costUsd: group.costUsd,
@@ -403,7 +420,13 @@ export function foldThreadRows(
   const byKey = new Map<string, MutableThreadRow>();
 
   for (const group of groups) {
-    if (options.projectFilter !== undefined && group.projectKey !== options.projectFilter) continue;
+    if (
+      options.projectFilter !== undefined &&
+      (options.projectFilter === null
+        ? group.projectAttribution !== "outside"
+        : group.projectKey !== options.projectFilter)
+    )
+      continue;
 
     const ref =
       attribution.sessionToThread.get(group.sessionKey) ??

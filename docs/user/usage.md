@@ -1,22 +1,22 @@
-# Review usage
+# Usage and limits
 
-The Usage page combines Codex, Claude Code, and Grok Build activity from your connected
-environments. It reads the providers' local session history and shows a public-list-rate estimate,
-processed tokens, cache savings, provider shares, and model breakdowns. Subscription billing is
-separate from this local estimate.
+## Understand your usage
+
+**Usage** combines Codex, Claude Code, and Grok Build session history from your connected
+environments. It shows token use, cache savings, model breakdowns, and estimated API-equivalent
+cost. These estimates are not your subscription bill.
 
 Claude Code accounting keeps the final progressive snapshot for each response and prices every
 attempt in a model-fallback sequence. Five-minute and one-hour cache writes use their distinct
-public rates when the transcript provides the TTL. Applicable long-context tiers use each
-request's recorded input-token total. Thinking tokens remain part of output rather than being
-charged twice.
-
-Grok Build totals come from persisted session updates. Interactive turns that never wrote a
-completed-turn record will not appear.
+public rates when the transcript provides the TTL. Thinking tokens remain part of output rather
+than being charged twice.
 
 Use **Past 24h** for an hourly chart covering the exact rolling 24-hour period. The **7 days**,
 **30 days**, and **90 days** ranges use daily resolution. Cost and token toggles update both the
-headline and chart, and refreshing rescans every connected environment.
+headline and chart. Changing dates reuses a source snapshot from the last minute when it already
+covers the requested range. An older snapshot, or a range that reaches farther back, updates the
+source data first. The Refresh action always requests an update. Updates parse only new or changed
+transcript content.
 
 Any daily chart zooms: drag across it to make the selection the new date window, and double-click
 to return to the preset. The date fields beside the presets accept custom ranges up to 90 days.
@@ -35,12 +35,50 @@ Rows that map to a thread carry a link that opens it.
 The **Cache writes, estimated** total prices cache-creation tokens at each model's cache-write rate.
 It only applies to model-priced records that report cache-creation tokens. Rows without cache
 writes show a dash; incomplete or unavailable pricing is labeled **Unavailable** instead of zero.
+Cache creation is a billing category, not evidence that a cache entry expired.
 When a Codex rollout reports `cache_write_input_tokens` as zero, T3 Code cannot reconstruct a
 separate write charge; those prompt tokens remain in **Fresh input + output**.
-Cache creation is a billing category, not evidence that a cache entry expired.
 
 Usage is attributed to the project whose folder a session ran in, including sessions driven
 outside T3 Code. The breakdown's **Project** view ranks projects by spend, and the project picker
 narrows the whole page to one project; work that ran outside every project is grouped under
 "Outside projects". Grok Build sessions record no folder, so they remain in overall totals but are
 omitted from the project breakdown and project filters.
+
+Totals depend on the history available on each server. Grok turns without a saved completed-turn
+record are missing from the totals.
+
+If recent work is missing or a new model shows no cost, refresh to rescan session history and
+update model pricing.
+
+## Set custom model prices
+
+On web or desktop, open **Usage → Model prices** to add, edit, or remove a model's estimated
+price. Choose the environment whose history you want to price, then enter the exact model ID and
+USD rates per million input and output tokens. You can enter any model ID, including models
+without public pricing.
+
+Cache read and cache write rates are optional and use the input rate when blank. Enter `0` for
+tokens that are free. Saved prices replace automatic pricing for all of that environment's
+history and are shared with clients connected to it. Set prices on each environment that needs
+them. Removing a price restores automatic pricing.
+
+## Track subscription limits
+
+**Usage → Limits** shows quota use and reset times for Codex and Claude subscriptions. It also
+compares quota consumed with time elapsed in each window, so you can judge your pace before the
+next reset.
+
+If a window looks stale, refresh Limits to re-check every provider and hub.
+
+API-key accounts may not report subscription limits. This also applies to Claude connections
+using a proxy through `ANTHROPIC_AUTH_TOKEN`.
+
+## Connect a CLIProxyAPI hub
+
+To see pooled accounts, open **Settings → Providers → Usage providers → Add hub**. Choose the
+environment that will connect to the hub and enter its URL and management key.
+
+The accounts appear under **Usage → Limits**. This connection supplies usage information; configure
+the provider separately to send agent requests through the hub. Remove the hub from the same
+settings section when you no longer need it.

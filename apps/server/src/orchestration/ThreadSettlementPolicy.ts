@@ -81,7 +81,6 @@ export function resolveAutoSettlementAt(input: {
     if (pullRequestSettles(thread, pullRequest, input.autoSettleOnMerge)) {
       return activityAt ?? thread.createdAt;
     }
-    if (pullRequest.state === "open") return null;
   }
   if (input.autoSettleAfterDays === null || activityAt === null) return null;
   return Date.parse(activityAt) < Date.parse(input.now) - input.autoSettleAfterDays * DAY_MS

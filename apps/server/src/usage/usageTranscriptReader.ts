@@ -367,7 +367,7 @@ function claudeTitleFromLine(line: string): string | null {
 
 function codexTitleFromLine(
   line: string,
-): { readonly title: string; readonly ordinal: number | null } | null {
+): { readonly title: string; readonly timestampMs: number | null } | null {
   let parsed: unknown;
   try {
     parsed = JSON.parse(line);
@@ -381,31 +381,15 @@ function codexTitleFromLine(
   if (record["type"] !== "message" || record["role"] !== "user") return null;
   const content = record["content"];
   if (!Array.isArray(content)) return null;
-  const ordinalValue = (parsed as Record<string, unknown>)["ordinal"];
-  const ordinal =
-    typeof ordinalValue === "number" && Number.isInteger(ordinalValue) ? ordinalValue : null;
+  const timestamp = (parsed as Record<string, unknown>)["timestamp"];
+  const parsedTimestamp = typeof timestamp === "string" ? Date.parse(timestamp) : Number.NaN;
+  const timestampMs = Number.isNaN(parsedTimestamp) ? null : parsedTimestamp;
   for (const block of content) {
     if (typeof block !== "object" || block === null) continue;
     const title = cleanTitle((block as Record<string, unknown>)["text"]);
-    if (title !== null) return { title, ordinal };
+    if (title !== null) return { title, timestampMs };
   }
   return null;
-}
-
-function codexForkHistoryEndOrdinal(line: string): number | null {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(line);
-  } catch {
-    return null;
-  }
-  if (typeof parsed !== "object" || parsed === null) return null;
-  const record = parsed as Record<string, unknown>;
-  if (record["type"] !== "session_meta") return null;
-  const payload = record["payload"];
-  if (typeof payload !== "object" || payload === null) return null;
-  const ordinal = (payload as Record<string, unknown>)["subagent_history_start_ordinal"];
-  return typeof ordinal === "number" && Number.isInteger(ordinal) ? ordinal : null;
 }
 
 /**
@@ -422,7 +406,6 @@ export async function readTranscriptTitle(
 ): Promise<string | null> {
   if (provider === "grok") return null;
   const codexState = provider === "codex" ? initialCodexScanState() : null;
-  let codexForkBoundary: number | null = null;
   let stream: NodeFS.ReadStream | null = null;
   try {
     stream = NodeFS.createReadStream(filePath, { encoding: "utf8" });
@@ -446,35 +429,26 @@ export async function readTranscriptTitle(
           if (title !== null) return title;
           continue;
         }
-        if (seen === 1) codexForkBoundary = codexForkHistoryEndOrdinal(line);
         const title = codexTitleFromLine(line);
         parseCodexLine(line, codexState!);
         if (title === null) continue;
         if (!codexState!.suppressingForkCopies) return title.title;
-        if (
-          codexForkBoundary !== null &&
-          title.ordinal !== null &&
-          title.ordinal >= codexForkBoundary
-        ) {
-          return title.title;
+        if (title.timestampMs !== null) {
+          if (title.timestampMs - codexState!.forkCopyAnchorMs >= 1000) return title.title;
+          codexState!.forkCopyAnchorMs = title.timestampMs;
         }
       }
       if (bytesRead >= TITLE_MAX_BYTES) return null;
     }
     if (pending.length > 0 && seen < TITLE_MAX_LINES) {
       if (provider === "claude") return claudeTitleFromLine(pending);
-      if (seen === 0) codexForkBoundary = codexForkHistoryEndOrdinal(pending);
       const title = codexTitleFromLine(pending);
       parseCodexLine(pending, codexState!);
       if (title === null) return null;
       if (!codexState!.suppressingForkCopies) return title.title;
-      if (
-        codexForkBoundary !== null &&
-        title.ordinal !== null &&
-        title.ordinal >= codexForkBoundary
-      ) {
-        return title.title;
-      }
+      if (title.timestampMs === null) return null;
+      if (title.timestampMs - codexState!.forkCopyAnchorMs >= 1000) return title.title;
+      codexState!.forkCopyAnchorMs = title.timestampMs;
       return null;
     }
   } catch {

@@ -1,14 +1,18 @@
 import { ProjectId, USAGE_CONTRACT_VERSION } from "@t3tools/contracts";
 import { mergeUsage } from "@t3tools/shared/usageMerge";
+import type { ComponentProps, ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const testState = vi.hoisted(() => ({
   useUsage: vi.fn(),
   usageThreadTable: vi.fn((_props: unknown) => null),
-  metric: "cost" as "cost" | "tokens",
+  metric: "cost" as "cost" | "tokens" | "limits",
   breakdown: "time" as "model" | "project" | "thread" | "time",
   projectFilter: undefined as string | null | undefined,
+  refresh: vi.fn(),
+  setWindowSelection: vi.fn(),
+  refreshWindow: undefined as (() => void) | undefined,
 }));
 
 vi.mock("react", async (importOriginal) => {
@@ -35,15 +39,31 @@ vi.mock("react", async (importOriginal) => {
             : initial === undefined
               ? testState.projectFilter
               : initial,
-      vi.fn(),
+      typeof initial === "function" ? testState.setWindowSelection : vi.fn(),
     ]),
   };
 });
 
 vi.mock("../../env", () => ({ isElectron: false }));
 vi.mock("../../state/usage", () => ({ useUsage: testState.useUsage }));
-vi.mock("../ui/button", () => ({ Button: "button" }));
-vi.mock("../ui/input", () => ({ Input: "input" }));
+vi.mock("../ui/button", () => ({
+  Button: (props: { "aria-label"?: string; children?: ReactNode; onClick?: () => void }) => {
+    if (props["aria-label"] === "Refresh usage") testState.refreshWindow = props.onClick;
+    return <button aria-label={props["aria-label"]}>{props.children}</button>;
+  },
+}));
+vi.mock("../ui/input", () => ({
+  Input: ({
+    nativeInput: _nativeInput,
+    size,
+    variant,
+    ...props
+  }: Omit<ComponentProps<"input">, "size"> & {
+    nativeInput?: boolean;
+    size?: string;
+    variant?: string;
+  }) => <input data-size={size} data-variant={variant} {...props} />,
+}));
 vi.mock("../ui/scroll-area", () => ({ ScrollArea: "div" }));
 vi.mock("../ui/select", () => ({
   Select: "div",
@@ -63,6 +83,7 @@ vi.mock("../WorkspacePageContainer", () => ({ WorkspacePageContainer: "main" }))
 vi.mock("../WorkspacePageHeader", () => ({ WorkspacePageHeader: "header" }));
 vi.mock("./UsageProviderChart", () => ({ UsageProviderChart: "div" }));
 vi.mock("./UsageThreadTable", () => ({ UsageThreadTable: testState.usageThreadTable }));
+vi.mock("./UsagePriceOverrides", () => ({ UsagePriceOverrides: () => null }));
 vi.mock("./usageProviders", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./usageProviders")>();
   return {
@@ -145,6 +166,9 @@ beforeEach(() => {
   testState.breakdown = "time";
   testState.projectFilter = undefined;
   testState.usageThreadTable.mockClear();
+  testState.refresh.mockReset();
+  testState.setWindowSelection.mockReset();
+  testState.refreshWindow = undefined;
   testState.useUsage.mockReturnValue({
     merged: {
       ...mergeUsage([], USAGE_CONTRACT_VERSION),
@@ -170,17 +194,28 @@ beforeEach(() => {
     environments: [],
     isPending: false,
     isPartial: false,
-    refresh: vi.fn(),
+    refresh: testState.refresh,
   });
 });
 
 describe("UsagePage hourly breakdown", () => {
+  it("refreshes after rebasing a rolling window", () => {
+    renderToStaticMarkup(<UsagePage />);
+
+    testState.refreshWindow?.();
+
+    expect(testState.setWindowSelection).toHaveBeenCalledOnce();
+    expect(testState.refresh).toHaveBeenCalledOnce();
+  });
+
   it("keeps custom date fields available in both desktop and compact layouts", () => {
     const markup = renderToStaticMarkup(<UsagePage />);
 
     expect(markup.match(/aria-label="From day"/g)).toHaveLength(2);
     expect(markup.match(/aria-label="To day"/g)).toHaveLength(2);
     expect(testState.useUsage).toHaveBeenLastCalledWith(expect.anything(), undefined, false);
+    expect(markup.match(/data-size="segmented"/g)).toHaveLength(4);
+    expect(markup.match(/data-variant="segmented"/g)).toHaveLength(4);
   });
 
   it("keeps recent activity visible first without empty hourly rows", () => {
@@ -204,6 +239,40 @@ describe("UsagePage hourly breakdown", () => {
 });
 
 describe("UsagePage project breakdown", () => {
+  it("offers a lone project filter when unknown attribution remains in the totals", () => {
+    const usage = testState.useUsage();
+    testState.useUsage.mockReturnValue({
+      ...usage,
+      merged: {
+        ...usage.merged,
+        costUsd: 10,
+        totalTokens: 300,
+        projects: [projectTotals[0]],
+      },
+    });
+
+    const markup = renderToStaticMarkup(<UsagePage />);
+
+    expect(markup.match(/aria-label="Project filter"/g)).toHaveLength(2);
+  });
+
+  it("hides a lone project filter when it would not narrow the totals", () => {
+    const usage = testState.useUsage();
+    testState.useUsage.mockReturnValue({
+      ...usage,
+      merged: {
+        ...usage.merged,
+        costUsd: 9,
+        totalTokens: 200,
+        projects: [projectTotals[0]],
+      },
+    });
+
+    const markup = renderToStaticMarkup(<UsagePage />);
+
+    expect(markup).not.toContain('aria-label="Project filter"');
+  });
+
   it("ranks projects by cost and labels unattributed work", () => {
     testState.breakdown = "project";
 

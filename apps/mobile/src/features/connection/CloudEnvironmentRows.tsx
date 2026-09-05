@@ -216,24 +216,26 @@ function ConnectedCloudEnvironmentRow(props: {
     serverEnvironment.configValueAtom(props.environment.environmentId),
   );
   return (
-    <CloudEnvironmentRowShell
-      borderTop={props.borderTop}
-      connectionError={props.environment.connectionError}
-      connectionErrorTraceId={props.environment.connectionErrorTraceId}
-      connectionState={props.environment.connectionState}
-      errorExpanded={props.errorExpanded}
-      label={props.environment.environmentLabel}
-      machine={resolveEnvironmentMachineKind(serverConfig)}
-      onValueChange={(enabled) => {
-        if (enabled) {
-          props.onConnect();
-          return;
-        }
-        props.onDisconnect();
-      }}
-      onToggleError={props.onToggleError}
-      value={props.environment.connectionState !== "available"}
-    />
+    <View>
+      <CloudEnvironmentRowShell
+        borderTop={props.borderTop}
+        connectionError={props.environment.connectionError}
+        connectionErrorTraceId={props.environment.connectionErrorTraceId}
+        connectionState={props.environment.connectionState}
+        errorExpanded={props.errorExpanded}
+        label={props.environment.environmentLabel}
+        machine={resolveEnvironmentMachineKind(serverConfig)}
+        onValueChange={(enabled) => {
+          if (enabled) {
+            props.onConnect();
+            return;
+          }
+          props.onDisconnect();
+        }}
+        onToggleError={props.onToggleError}
+        value={props.environment.connectionState !== "available"}
+      />
+    </View>
   );
 }
 

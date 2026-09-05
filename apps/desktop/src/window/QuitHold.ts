@@ -12,7 +12,8 @@ export const QUIT_DOUBLE_PRESS_MS = 500;
 // tap release can go completely unseen and a release-based timer would quit
 // anyway. Once held, quitting waits for Q keyUp or a quiet grace period after
 // repeats stop so they cannot reach the next app. Keyboards with
-// auto-repeat disabled fall back to the application menu Quit action.
+// auto-repeat disabled must use a double press or the application menu Quit action.
+// Supporting holds without repeats requires a native physical key-state check.
 export const QUIT_HOLD_RELEASE_GRACE_MS = 600;
 // A slow repeat rate can exceed the fixed grace. Waiting for two observed
 // cadences keeps the timer behind the next repeat without slowing normal rates.
@@ -52,8 +53,8 @@ export function makeQuitShortcutHandler(
   let lastRepeatAt = 0;
   let repeatCadenceMs = 0;
   // Incremented when a press is superseded or explicitly cancelled. A plain
-  // key release does not invalidate its pending mode read: direct mode and a
-  // completed second press must still be honored after that read settles.
+  // key release does not invalidate its pending mode read: a direct-mode
+  // press must still quit after that read settles.
   let generation = 0;
 
   const clearWatchdog = () => {
@@ -64,9 +65,9 @@ export function makeQuitShortcutHandler(
   };
 
   const release = (cancelPendingMode = true, keepDoublePressHint = false) => {
+    if (cancelPendingMode) generation += 1;
     if (!holding && !notified) return;
     const keepHint = keepDoublePressHint && mode === "double-click" && notified;
-    if (cancelPendingMode) generation += 1;
     holding = false;
     armed = false;
     quitOnRelease = false;
@@ -85,6 +86,7 @@ export function makeQuitShortcutHandler(
   // Dismisses any overlay first so a cancelled quit cannot leave a stale hint.
   const quitNow = () => {
     release();
+    lastPressAt = 0;
     options.quit();
   };
 
@@ -138,13 +140,10 @@ export function makeQuitShortcutHandler(
       // quit shortcut, so it must not cancel an active double-press window.
       if (key === modifierKey && !input.alt && !input.shift) return;
 
-      // Any other key (or an extra modifier) pressed mid-hold breaks the
-      // gesture; without this the hold timer keeps running through the
-      // interruption and the next qualifying repeat would quit early. The
-      // interrupted press also stops counting toward a double press, but only
-      // here, not in release(), which runs mid-restart on an unseen-release
-      // re-press and must not wipe that press's own tap timestamp.
-      if ((holding || notified) && !input.isAutoRepeat) {
+      // Other keys cancel the hold and the first tap, even after release.
+      // Keep this separate from release(), which also runs when a fresh Q
+      // keydown follows a keyUp that macOS did not deliver.
+      if (!input.isAutoRepeat) {
         lastPressAt = 0;
         release();
       }
@@ -171,6 +170,13 @@ export function makeQuitShortcutHandler(
     if (holding || notified) release();
 
     generation += 1;
+    // Every mode accepts two presses. Quit before reading settings so a slow
+    // read cannot delay the second press. Repeats never reach this branch.
+    if (previousPressAt !== 0 && now - previousPressAt <= QUIT_DOUBLE_PRESS_MS) {
+      quitNow();
+      return;
+    }
+
     const pressGeneration = generation;
     holding = true;
     heldSince = now;
@@ -181,15 +187,6 @@ export function makeQuitShortcutHandler(
           quitNow();
           return;
         }
-        if (
-          resolvedMode === "double-click" &&
-          previousPressAt !== 0 &&
-          now - previousPressAt <= QUIT_DOUBLE_PRESS_MS
-        ) {
-          quitNow();
-          return;
-        }
-
         if (resolvedMode === "double-click") {
           const remainingMs = QUIT_DOUBLE_PRESS_MS - (Date.now() - now);
           if (remainingMs <= 0) {

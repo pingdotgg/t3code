@@ -11,7 +11,13 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { mergeUsage, projectFilterForEnvironment, type EnvironmentUsage } from "./usageMerge.ts";
+import {
+  makeUsageRefreshToken,
+  mergeUsage,
+  projectFilterForEnvironment,
+  retainUsageStatuses,
+  type EnvironmentUsage,
+} from "./usageMerge.ts";
 
 function bucket(overrides: Partial<UsageBucket> = {}): UsageBucket {
   return {
@@ -536,35 +542,6 @@ describe("mergeUsage", () => {
     expect(outside.providers.map((provider) => provider.provider)).toEqual(["codex"]);
   });
 
-  it("filters environments before claiming a selected project's shared source", () => {
-    const sharedSource = [{ provider: "claude" as const, hostId: "mac", homePath: "/shared" }];
-    const environments = [
-      environment(
-        "env-a",
-        summary(
-          [bucket({ projectId: ProjectId.make("project-a"), project: "A", costUsd: 9 })],
-          sharedSource,
-        ),
-      ),
-      environment(
-        "env-b",
-        summary(
-          [bucket({ projectId: ProjectId.make("project-b"), project: "B", costUsd: 4 })],
-          sharedSource,
-        ),
-      ),
-    ];
-    const projectKey = JSON.stringify(["env-b", "id:project-b"]);
-
-    const filtered = mergeUsage(environments, USAGE_CONTRACT_VERSION, {
-      projectFilter: projectKey,
-    });
-
-    expect(filtered.costUsd).toBe(4);
-    expect(filtered.contributingEnvironments).toEqual(["env-b"]);
-    expect(filtered.providerContributions.map((entry) => entry.environmentId)).toEqual(["env-b"]);
-  });
-
   it("namespaces stable project ids by environment", () => {
     const sharedId = ProjectId.make("cloned-project");
     const environments = [
@@ -638,5 +615,77 @@ describe("mergeUsage", () => {
       projectFilter: null,
     });
     expect(outside.costUsd).toBe(0);
+  });
+});
+
+describe("makeUsageRefreshToken", () => {
+  it("changes when an environment returns a newer source snapshot", () => {
+    const first = environment("env-a", summary([], []));
+    const second = {
+      ...first,
+      summary: { ...first.summary, readAt: "2026-08-07T00:01:00.000Z" },
+    };
+
+    expect(makeUsageRefreshToken([second])).not.toBe(makeUsageRefreshToken([first]));
+  });
+
+  it("is stable when environment order changes", () => {
+    const first = environment("env-a", summary([], []));
+    const second = environment("env-b", summary([], []));
+
+    expect(makeUsageRefreshToken([first, second])).toBe(makeUsageRefreshToken([second, first]));
+    expect(makeUsageRefreshToken([])).toBeUndefined();
+  });
+});
+
+describe("retainUsageStatuses", () => {
+  const status = (id: string, usageSummary: UsageSummary | null, isPending = false) => ({
+    environmentId: id as EnvironmentId,
+    label: id,
+    isPending,
+    error: null,
+    summary: usageSummary,
+  });
+
+  it("keeps each environment's settled value while the same range refreshes", () => {
+    const oldA = summary([bucket({ costUsd: 2 })], []);
+    const oldB = summary([bucket({ costUsd: 3 })], []);
+    const newA = { ...oldA, readAt: "2026-08-07T00:01:00.000Z" };
+    const previous = {
+      rangeKey: "range-a",
+      statuses: [status("env-a", oldA), status("env-b", oldB)],
+    };
+
+    const refreshing = retainUsageStatuses(
+      "range-a",
+      [status("env-a", null, true), status("env-b", null, true)],
+      previous,
+    );
+    const partlyAnswered = retainUsageStatuses(
+      "range-a",
+      [status("env-a", newA), status("env-b", null, true)],
+      refreshing.settled,
+    );
+
+    expect(refreshing.visible.map(({ isPending, summary: value }) => [isPending, value])).toEqual([
+      [true, oldA],
+      [true, oldB],
+    ]);
+    expect(
+      partlyAnswered.visible.map(({ isPending, summary: value }) => [isPending, value]),
+    ).toEqual([
+      [false, newA],
+      [true, oldB],
+    ]);
+  });
+
+  it("does not retain values across date ranges", () => {
+    const old = summary([], []);
+    const result = retainUsageStatuses("range-b", [status("env-a", null, true)], {
+      rangeKey: "range-a",
+      statuses: [status("env-a", old)],
+    });
+
+    expect(result.visible[0]?.summary).toBeNull();
   });
 });

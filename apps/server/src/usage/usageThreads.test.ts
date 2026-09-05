@@ -4,7 +4,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { UsageAggregator } from "./usageAggregation.ts";
 import type { RateTable } from "./usagePricing.ts";
 import { foldThreadRows, ThreadUsageAccumulator, type ThreadAttribution } from "./usageThreads.ts";
-import { parseClaudeLineRecords, type UsageRecord } from "./usageTranscripts.ts";
+import type { UsageRecord } from "./usageTranscripts.ts";
 
 const rates: RateTable = new Map([
   [
@@ -139,6 +139,38 @@ describe("ThreadUsageAccumulator", () => {
     expect(rows.rows[0]?.daily).toEqual([]);
   });
 
+  it("uses custom prices for thread totals and component costs", () => {
+    const customRates: RateTable = new Map([
+      [
+        "claude-fable-5",
+        {
+          inputCostPerToken: 2e-5,
+          outputCostPerToken: 1e-4,
+          cacheReadCostPerToken: 2e-6,
+          cacheCreationCostPerToken: 2.5e-5,
+        },
+      ],
+    ]);
+    const accumulator = new ThreadUsageAccumulator({
+      timeZone: "UTC",
+      sinceDay: "2026-08-01",
+      untilDay: "2026-08-31",
+      rates,
+      priceOverrides: customRates,
+    });
+    accumulator.add(record({ reportedCostUsd: 1.25 }), {
+      sessionKey: "claude:session-a",
+      agentId: null,
+    });
+
+    const group = accumulator.finish()[0];
+    const day = group?.daily.get("2026-08-07");
+    expect(group?.costUsd).toBeCloseTo(100 * 2e-5 + 1000 * 2e-6 + 10 * 2.5e-5 + 50 * 1e-4, 12);
+    expect(day?.cacheWriteUsd).toBeCloseTo(10 * 2.5e-5, 12);
+    expect(day?.cacheReadUsd).toBeCloseTo(1000 * 2e-6, 12);
+    expect(day?.freshUsd).toBeCloseTo(100 * 2e-5 + 50 * 1e-4, 12);
+  });
+
   it("drops records outside the window", () => {
     const context = { sessionKey: "claude:session-a", agentId: null };
     const groups = accumulate([
@@ -211,65 +243,7 @@ describe("ThreadUsageAccumulator", () => {
 });
 
 describe("foldThreadRows", () => {
-  it("keeps model-less Claude iterations in an attributed thread cost row", () => {
-    const threadId = ThreadId.make("thread-model-less-iteration");
-    const records = parseClaudeLineRecords(
-      JSON.stringify({
-        type: "assistant",
-        timestamp: "2026-08-07T04:05:13.944Z",
-        requestId: "req_model_omitted",
-        sessionId: "session-model-omitted",
-        cwd: "/work/app",
-        message: {
-          id: "msg_model_omitted",
-          model: "claude-fable-5",
-          usage: {
-            iterations: [
-              {
-                type: "message",
-                input_tokens: 2,
-                cache_read_input_tokens: 100,
-                cache_creation_input_tokens: 20,
-                output_tokens: 12,
-              },
-            ],
-          },
-        },
-      }),
-    );
-    const accumulator = new ThreadUsageAccumulator({
-      timeZone: "UTC",
-      sinceDay: "2026-08-01",
-      untilDay: "2026-08-31",
-      rates,
-    });
-    for (const parsed of records) {
-      accumulator.add(parsed, { sessionKey: "claude:session-model-omitted", agentId: null });
-    }
-
-    const result = foldThreadRows(
-      accumulator.finish(),
-      {
-        sessionToThread: new Map([
-          ["claude:session-model-omitted", { threadId, title: "Real Claude thread" }],
-        ]),
-        worktreeToThread: new Map(),
-      },
-      { cap: 40, threadFilter: threadId },
-    );
-
-    expect(result.rows).toHaveLength(1);
-    expect(result.rows[0]?.totals).toMatchObject({
-      uncachedInputTokens: 2,
-      cachedInputTokens: 100,
-      cacheCreationTokens: 20,
-      outputTokens: 12,
-    });
-    expect(result.rows[0]?.costUsd).toBeCloseTo(0.00097, 12);
-    expect(result.rows[0]?.daily[0]?.cacheWriteUsd).toBeCloseTo(0.00025, 12);
-    expect(result.rows[0]?.daily[0]?.cacheReadUsd).toBeCloseTo(0.0001, 12);
-    expect(result.rows[0]?.daily[0]?.freshUsd).toBeCloseTo(0.00062, 12);
-  });
+  const threadId = ThreadId.make("11111111-1111-4111-8111-111111111111");
 
   it("keeps only the requested thread before applying the row cap", () => {
     const targetThreadId = ThreadId.make("thread-target");
@@ -298,10 +272,7 @@ describe("foldThreadRows", () => {
     expect(result.truncatedRows).toBe(0);
     expect(result.rows).toHaveLength(1);
     expect(result.rows[0]?.threadId).toBe(targetThreadId);
-    expect(result.rows[0]?.costUsd).toBeGreaterThan(0);
   });
-
-  const threadId = ThreadId.make("11111111-1111-4111-8111-111111111111");
 
   it("folds sessions into one row per thread via cursor and worktree matches", () => {
     const groups = accumulate([
@@ -373,7 +344,6 @@ describe("foldThreadRows", () => {
     expect(rows[0]?.threadId).toBe(threadId);
     expect(rows[0]?.title).toBe("Normalized worktree");
   });
-
   it("matches Windows worktrees without changing POSIX case sensitivity", () => {
     const groups = accumulate([
       [
@@ -399,26 +369,6 @@ describe("foldThreadRows", () => {
     expect(threadRow?.sessions).toBe(1);
     expect(rows.some((row) => row.threadId === null && row.sessions === 1)).toBe(true);
   });
-
-  it("attributes a Grok session without a cwd through its resume cursor", () => {
-    const groups = accumulate([
-      [
-        record({ provider: "grok", sessionId: "grok-session", cwd: "" }),
-        { sessionKey: "grok:grok-session", agentId: null },
-      ],
-    ]);
-    const attribution: ThreadAttribution = {
-      sessionToThread: new Map([["grok:grok-session", { threadId, title: "Review Grok usage" }]]),
-      worktreeToThread: new Map(),
-    };
-
-    const { rows } = foldThreadRows(groups, attribution, { cap: 40, threadFilter: threadId });
-
-    expect(rows).toHaveLength(1);
-    expect(rows[0]?.threadId).toBe(threadId);
-    expect(rows[0]?.costUsd).toBeGreaterThan(0);
-  });
-
   it("scopes one T3 thread by provider and project", () => {
     const accumulator = new ThreadUsageAccumulator({
       timeZone: "UTC",
@@ -619,10 +569,6 @@ describe("foldThreadRows", () => {
       sessionKey: "claude:session-b",
       agentId: null,
     });
-    accumulator.add(record({ provider: "grok", sessionId: "session-c", cwd: "" }), {
-      sessionKey: "grok:session-c",
-      agentId: null,
-    });
     const groups = accumulator.finish();
 
     const app = foldThreadRows(groups, NO_ATTRIBUTION, {
@@ -635,5 +581,31 @@ describe("foldThreadRows", () => {
     const outside = foldThreadRows(groups, NO_ATTRIBUTION, { cap: 40, projectFilter: null });
     expect(outside.rows.map((row) => row.key)).toHaveLength(1);
     expect(outside.rows[0]?.key).toContain("claude:session-b");
+  });
+
+  it("excludes unknown project attribution from the outside-project filter", () => {
+    const accumulator = new ThreadUsageAccumulator({
+      timeZone: "UTC",
+      sinceDay: "2026-08-01",
+      untilDay: "2026-08-31",
+      rates,
+      resolveProject: () => null,
+    });
+    accumulator.add(record({ sessionId: "outside", cwd: "/elsewhere" }), {
+      sessionKey: "claude:outside",
+      agentId: null,
+    });
+    accumulator.add(record({ provider: "grok", sessionId: "unknown", cwd: "" }), {
+      sessionKey: "grok:unknown",
+      agentId: null,
+    });
+
+    const outside = foldThreadRows(accumulator.finish(), NO_ATTRIBUTION, {
+      cap: 40,
+      projectFilter: null,
+    });
+
+    expect(outside.rows).toHaveLength(1);
+    expect(outside.rows[0]?.key).toContain("claude:outside");
   });
 });

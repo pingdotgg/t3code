@@ -165,6 +165,7 @@ export function parseClaudeLineRecords(line: string): readonly UsageRecord[] {
     const cacheCreation5mTokens = int(cacheCreation?.["ephemeral_5m_input_tokens"]);
     const cacheCreation1hTokens = int(cacheCreation?.["ephemeral_1h_input_tokens"]);
     const detailedCacheCreation = cacheCreation5mTokens + cacheCreation1hTokens;
+    const totalCacheCreation = int(attempt["cache_creation_input_tokens"]);
     const outputTokens = int(attempt["output_tokens"]);
     const isServingIteration = iterations.length === 0 || index === attempts.length - 1;
 
@@ -178,10 +179,10 @@ export function parseClaudeLineRecords(line: string): readonly UsageRecord[] {
         totals: {
           uncachedInputTokens: int(attempt["input_tokens"]),
           cachedInputTokens: int(attempt["cache_read_input_tokens"]),
-          cacheCreationTokens:
-            detailedCacheCreation > 0
-              ? detailedCacheCreation
-              : int(attempt["cache_creation_input_tokens"]),
+          // Some Claude records classify only part of the aggregate cache
+          // creation count by TTL. Preserve the larger aggregate so the
+          // unclassified remainder is still accounted for at the base rate.
+          cacheCreationTokens: Math.max(totalCacheCreation, detailedCacheCreation),
           ...(cacheCreation5mTokens === 0 ? {} : { cacheCreation5mTokens }),
           ...(cacheCreation1hTokens === 0 ? {} : { cacheCreation1hTokens }),
           outputTokens,
@@ -302,12 +303,7 @@ export function parseCodexLine(line: string, state: CodexScanState): UsageRecord
 
   if (record["type"] === "turn_context") {
     if (typeof payloadRecord["model"] === "string") state.model = payloadRecord["model"];
-    // A fork copies the parent's turn contexts after the child's session meta.
-    // Keep the child's cwd until the copied burst ends, or the first genuine
-    // token event can be attributed to the parent project.
-    if (!state.suppressingForkCopies && typeof payloadRecord["cwd"] === "string") {
-      state.cwd = payloadRecord["cwd"];
-    }
+    if (typeof payloadRecord["cwd"] === "string") state.cwd = payloadRecord["cwd"];
     return null;
   }
 

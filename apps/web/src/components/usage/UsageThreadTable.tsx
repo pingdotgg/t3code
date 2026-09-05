@@ -1,4 +1,8 @@
-import type { UsageThreadBreakdownInput, UsageThreadDayCost } from "@t3tools/contracts";
+import type {
+  UsageProviderKind,
+  UsageThreadBreakdownInput,
+  UsageThreadDayCost,
+} from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import { ArrowUpRightIcon, ChevronDownIcon, ChevronRightIcon } from "lucide-react";
 import { useMemo, useState } from "react";
@@ -18,8 +22,8 @@ import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Skeleton } from "../ui/skeleton";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { CacheWriteCell } from "./UsageTableCells";
-import { ProviderMark } from "./usageProviders";
+import { UsageCacheWriteCell } from "./UsageCacheWriteCell";
+import { PROVIDER_PRESENTATION } from "./usageProviders";
 
 /**
  * On-demand thread drill-down behind the summary. Mounted only while the
@@ -171,7 +175,7 @@ function ThreadRowGroup({
                 }
               >
                 <Chevron className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
-                <ProviderMark provider={row.provider} className="size-3.5" />
+                <ProviderMark provider={row.provider} />
                 <span className="truncate">{row.title}</span>
                 {row.agents.length > 0 ? (
                   <Badge
@@ -211,7 +215,7 @@ function ThreadRowGroup({
           </div>
         </td>
         <td className="py-2 text-right text-foreground tabular-nums">{formatUsd(row.costUsd)}</td>
-        <CacheWriteCell
+        <UsageCacheWriteCell
           cacheWriteTokens={row.totals.cacheCreationTokens}
           cacheWriteUsd={row.cacheWriteUsd}
         />
@@ -258,6 +262,89 @@ function ThreadRowGroup({
 
 const CHART_WIDTH = 760;
 const CHART_HEIGHT = 96;
+const CHART_TOP = 4;
+
+const EMPTY_DAY: Omit<UsageThreadDayCost, "day"> = {
+  cacheWriteUsd: 0,
+  cacheReadUsd: 0,
+  freshUsd: 0,
+};
+
+const CHART_BANDS = [
+  {
+    key: "freshUsd",
+    label: "fresh input + output",
+    className: "text-success",
+    lowerKeys: [],
+  },
+  {
+    key: "cacheReadUsd",
+    label: "cache reads",
+    className: "text-muted-foreground",
+    lowerKeys: ["freshUsd"],
+  },
+  {
+    key: "cacheWriteUsd",
+    label: "cache writes",
+    className: "text-info",
+    lowerKeys: ["freshUsd", "cacheReadUsd"],
+  },
+] as const;
+
+type ChartCostKey = (typeof CHART_BANDS)[number]["key"];
+
+function dayCost(entry: Omit<UsageThreadDayCost, "day">): number {
+  return entry.cacheWriteUsd + entry.cacheReadUsd + entry.freshUsd;
+}
+
+/** Rounds the ceiling up without leaving a compact thread chart mostly empty. */
+function chartCeiling(peak: number): number {
+  if (peak <= 0) return 0;
+  const magnitude = 10 ** Math.floor(Math.log10(peak));
+  const normalized = peak / magnitude;
+  const step = [1, 2, 2.5, 5, 10].find((candidate) => candidate >= normalized) ?? 10;
+  return step * magnitude;
+}
+
+function chartNumber(value: number): string {
+  return value.toFixed(2).replace(/\.00$/, "");
+}
+
+/** One filled band between two cumulative step boundaries. */
+function steppedAreaPath(
+  columns: readonly Omit<UsageThreadDayCost, "day">[],
+  key: ChartCostKey,
+  lowerKeys: readonly ChartCostKey[],
+  ceiling: number,
+): string {
+  if (columns.length === 0 || ceiling <= 0) return "";
+  if (columns.every((column) => column[key] === 0)) return "";
+
+  const width = CHART_WIDTH / columns.length;
+  const y = (value: number) =>
+    chartNumber(CHART_HEIGHT - (value / ceiling) * (CHART_HEIGHT - CHART_TOP));
+  const lower = columns.map((column) =>
+    lowerKeys.reduce((sum, lowerKey) => sum + column[lowerKey], 0),
+  );
+  const upper = columns.map((column, index) => (lower[index] ?? 0) + column[key]);
+  let path = `M0,${y(upper[0] ?? 0)}`;
+
+  for (let index = 0; index < columns.length; index += 1) {
+    const right = chartNumber((index + 1) * width);
+    path += ` H${right}`;
+    const next = upper[index + 1];
+    if (next !== undefined) path += ` V${y(next)}`;
+  }
+
+  path += ` L${CHART_WIDTH},${y(lower.at(-1) ?? 0)}`;
+  for (let index = columns.length - 1; index >= 0; index -= 1) {
+    const left = chartNumber(index * width);
+    path += ` H${left}`;
+    const previous = lower[index - 1];
+    if (previous !== undefined) path += ` V${y(previous)}`;
+  }
+  return `${path} Z`;
+}
 
 /**
  * One thread's daily model-priced cost stacked by component: cache writes,
@@ -278,27 +365,41 @@ export function UsageThreadDailyChart({
     () => new Map<string, UsageThreadDayCost>(daily.map((entry) => [entry.day, entry])),
     [daily],
   );
-  const peak = daily.reduce(
-    (max, entry) => Math.max(max, entry.cacheWriteUsd + entry.cacheReadUsd + entry.freshUsd),
-    0,
+  const columns = days.map((day) => byDay.get(day) ?? EMPTY_DAY);
+  const peakEntry = daily.reduce<UsageThreadDayCost | undefined>(
+    (largest, entry) =>
+      largest === undefined || dayCost(entry) > dayCost(largest) ? entry : largest,
+    undefined,
   );
 
-  if (peak === 0 || days.length === 0) {
+  if (peakEntry === undefined || dayCost(peakEntry) === 0 || days.length === 0) {
     return <p className="pb-2 text-xs text-muted-foreground">No priced usage in this window.</p>;
   }
 
+  const peak = dayCost(peakEntry);
+  const ceiling = chartCeiling(peak);
   const bandWidth = CHART_WIDTH / days.length;
-  const barWidth = bandWidth * 0.8;
+  const labelDays = [days[0], days[Math.floor((days.length - 1) / 2)], days.at(-1)].filter(
+    (day, index, labels): day is string => day !== undefined && labels.indexOf(day) === index,
+  );
 
   return (
     <div className="flex max-w-3xl flex-col gap-1 pb-2">
-      <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
+      <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
         <span>
           Daily cost, {formatDayShort(sinceDay)} to {formatDayShort(untilDay)}
         </span>
-        <LegendSwatch className="text-info" label="cache writes" />
-        <LegendSwatch className="text-muted-foreground" label="cache reads" />
-        <LegendSwatch className="text-success" label="fresh input + output" />
+        <span className="tabular-nums text-foreground">
+          Peak {formatUsd(peak)} · {formatDayShort(peakEntry.day)}
+        </span>
+      </div>
+      <div className="flex flex-wrap justify-end gap-x-3 gap-y-1 text-[10px] text-muted-foreground">
+        {CHART_BANDS.toReversed().map((band) => (
+          <span key={band.key} className="flex items-center gap-1">
+            <span aria-hidden className={`size-1.5 rounded-[2px] bg-current ${band.className}`} />
+            {band.label}
+          </span>
+        ))}
       </div>
       <svg
         viewBox={`0 0 ${CHART_WIDTH} ${CHART_HEIGHT}`}
@@ -306,41 +407,47 @@ export function UsageThreadDailyChart({
         preserveAspectRatio="none"
         role="img"
         aria-label="Daily model-priced cost for this thread by component"
+        shapeRendering="crispEdges"
       >
+        <line
+          x1={0}
+          y1={CHART_TOP}
+          x2={CHART_WIDTH}
+          y2={CHART_TOP}
+          stroke="currentColor"
+          className="text-border"
+          vectorEffect="non-scaling-stroke"
+        />
+        {CHART_BANDS.map((band) => (
+          <path
+            key={band.key}
+            d={steppedAreaPath(columns, band.key, band.lowerKeys, ceiling)}
+            fill="currentColor"
+            className={band.className}
+          />
+        ))}
         {days.map((day, index) => {
-          const entry = byDay.get(day);
-          if (entry === undefined) return null;
-          const x = index * bandWidth + (bandWidth - barWidth) / 2;
-          const segments = [
-            { value: entry.freshUsd, className: "text-success" },
-            { value: entry.cacheReadUsd, className: "text-muted-foreground" },
-            { value: entry.cacheWriteUsd, className: "text-info" },
-          ];
-          let y = CHART_HEIGHT;
-          const total = entry.cacheWriteUsd + entry.cacheReadUsd + entry.freshUsd;
+          const entry = byDay.get(day) ?? EMPTY_DAY;
+          const total = dayCost(entry);
           return (
-            <g key={day}>
+            <rect
+              key={day}
+              x={index * bandWidth}
+              y={0}
+              width={bandWidth}
+              height={CHART_HEIGHT}
+              fill="transparent"
+            >
               <title>{`${formatDayShort(day)}: ${formatUsd(total)}. Cache writes ${formatUsd(entry.cacheWriteUsd)}, cache reads ${formatUsd(entry.cacheReadUsd)}, fresh input and output ${formatUsd(entry.freshUsd)}`}</title>
-              {segments.map((segment) => {
-                if (segment.value <= 0) return null;
-                const height = (segment.value / peak) * (CHART_HEIGHT - 4);
-                y -= height;
-                return (
-                  <rect
-                    key={segment.className}
-                    x={x}
-                    y={y}
-                    width={barWidth}
-                    height={height}
-                    fill="currentColor"
-                    className={segment.className}
-                  />
-                );
-              })}
-            </g>
+            </rect>
           );
         })}
       </svg>
+      <div className="flex justify-between text-[10px] text-muted-foreground">
+        {labelDays.map((day) => (
+          <span key={day}>{formatDayShort(day)}</span>
+        ))}
+      </div>
     </div>
   );
 }
@@ -358,4 +465,9 @@ function LegendSwatch({
       {label}
     </span>
   );
+}
+
+function ProviderMark({ provider }: { readonly provider: UsageProviderKind }) {
+  const Mark = PROVIDER_PRESENTATION[provider].mark;
+  return <Mark className="size-3.5 shrink-0" aria-hidden />;
 }

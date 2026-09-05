@@ -4,6 +4,7 @@ import {
   animatePinnedLayoutChanges,
   archiveSelectedThreadEntries,
   buildBulkTitleRegenerationContextMenuItem,
+  buildBulkUnpinContextMenuItem,
   buildMultiSelectThreadContextMenuItems,
   createThreadJumpHintVisibilityController,
   filterSidebarProjectScopeItems,
@@ -28,6 +29,7 @@ import {
   formatWorkingDurationLabel,
   shouldNavigateAfterProjectRemoval,
   shouldClearThreadSelectionOnMouseDown,
+  shouldRecedeSidebarThread,
   sortLogicalProjectsForSidebar,
   sortSettledThreadsForSidebar,
   pinOrderKeyBetween,
@@ -185,6 +187,19 @@ describe("archiveSelectedThreadEntries", () => {
   });
 });
 
+describe("buildBulkUnpinContextMenuItem", () => {
+  it("counts only the pinned rows of a mixed selection", () => {
+    expect(buildBulkUnpinContextMenuItem({ pinnedCount: 2 })).toEqual({
+      id: "unpin",
+      label: "Unpin (2)",
+    });
+  });
+
+  it("omits the action when nothing selected is pinned", () => {
+    expect(buildBulkUnpinContextMenuItem({ pinnedCount: 0 })).toBeNull();
+  });
+});
+
 describe("buildBulkTitleRegenerationContextMenuItem", () => {
   it("counts only threads that can start a new regeneration", () => {
     expect(
@@ -278,6 +293,51 @@ describe("hasUnseenCompletion", () => {
         session: null,
       }),
     ).toBe(false);
+  });
+});
+
+describe("shouldRecedeSidebarThread", () => {
+  it.each(["working", "monitoring"] as const)(
+    "recedes an inactive %s thread even when it is unread and woke",
+    (status) => {
+      expect(
+        shouldRecedeSidebarThread({
+          status,
+          isUnread: true,
+          isWoke: true,
+          isActive: false,
+          isSelected: false,
+        }),
+      ).toBe(true);
+    },
+  );
+
+  it.each(["ready", "approval", "input"] as const)(
+    "keeps an unread %s thread prominent",
+    (status) => {
+      expect(
+        shouldRecedeSidebarThread({
+          status,
+          isUnread: true,
+          isWoke: false,
+          isActive: false,
+          isSelected: false,
+        }),
+      ).toBe(false);
+    },
+  );
+
+  it("keeps active and selected working threads prominent", () => {
+    const input = {
+      status: "working" as const,
+      isUnread: true,
+      isWoke: true,
+      isActive: false,
+      isSelected: false,
+    };
+
+    expect(shouldRecedeSidebarThread({ ...input, isActive: true })).toBe(false);
+    expect(shouldRecedeSidebarThread({ ...input, isSelected: true })).toBe(false);
   });
 });
 

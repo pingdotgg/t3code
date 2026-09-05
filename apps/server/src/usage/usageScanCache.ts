@@ -116,9 +116,10 @@ export function encodeScanCache(cache: ScanCache): SerializedCache {
       record.totals.cacheCreationTokens,
       Math.max(0, record.totals.cacheCreation1hTokens ?? 0),
     );
-    // Unclassified cache creation uses the five-minute price. Persist it in
-    // that bucket so the serialized TTL counters retain an exact sum.
-    const fiveMinute = record.totals.cacheCreationTokens - oneHour;
+    const fiveMinute = Math.min(
+      record.totals.cacheCreationTokens - oneHour,
+      Math.max(0, record.totals.cacheCreation5mTokens ?? 0),
+    );
     return [
       record.timestampMs,
       intern(models, modelIndex, record.model),
@@ -232,7 +233,7 @@ export function decodeScanCache(document: unknown): ScanCache {
         !isNonNegativeInteger(cacheCreation) ||
         !isNonNegativeInteger(cacheCreation5m) ||
         !isNonNegativeInteger(cacheCreation1h) ||
-        cacheCreation5m + cacheCreation1h !== cacheCreation ||
+        cacheCreation5m + cacheCreation1h > cacheCreation ||
         !isNonNegativeInteger(output) ||
         !isNonNegativeInteger(reasoning)
       ) {

@@ -74,6 +74,7 @@ import { PendingUserInputCard } from "./PendingUserInputCard";
 import {
   FLOATING_WORKING_CONTROL_COVERAGE,
   FloatingWorkingControl,
+  type FloatingWorkingStatus,
 } from "./floating-working-control";
 import {
   derivePendingUserInputMaxHeight,
@@ -99,6 +100,7 @@ export interface ThreadDetailScreenProps {
   readonly environmentLabel: string | null;
   readonly selectedThreadFeed: ReadonlyArray<ThreadFeedEntry>;
   readonly activeWorkStartedAt: string | null;
+  readonly isCompacting: boolean;
   readonly activePendingApproval: PendingApproval | null;
   readonly respondingApprovalId: ApprovalRequestId | null;
   readonly activePendingUserInput: PendingUserInput | null;
@@ -139,7 +141,7 @@ export interface ThreadDetailScreenProps {
   readonly onSelectUserInputOption: (
     requestId: ApprovalRequestId,
     question: UserInputQuestion,
-    label: string,
+    value: string,
   ) => void;
   readonly onChangeUserInputCustomAnswer: (
     requestId: ApprovalRequestId,
@@ -301,28 +303,51 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   // The raw sync status enters "synchronizing" on every full fetch, cached or
   // not. Whether messages are already on screen decides the pill label: no
   // data yet → "Loading messages", cached data reconciling → "Syncing".
-  const threadSyncPhase = (() => {
+  const threadSyncLabel = (() => {
     switch (props.threadSyncStatus) {
       case "empty":
       case "cached":
       case "synchronizing":
         if (contentPresentationKind === "ready") {
-          return "syncing" as const;
+          return "Syncing messages...";
         }
-        return contentPresentationKind === "loading" ? ("loading" as const) : null;
+        return contentPresentationKind === "loading" ? "Loading messages..." : null;
       default:
         return null;
     }
   })();
-  const showWorkingControl =
-    props.activeWorkStartedAt !== null &&
-    contentPresentationKind === "ready" &&
-    threadSyncPhase === null &&
-    props.connectionStateLabel === "connected" &&
-    props.activePendingApproval === null &&
-    props.activePendingUserInput === null;
-  const floatingWorkingStartedAt = showWorkingControl ? props.activeWorkStartedAt : null;
+  // One floating pill above the composer: it reads the sync state while
+  // messages load, then the working timer once the feed is settled.
+  const floatingStatus = ((): FloatingWorkingStatus | null => {
+    if (
+      props.connectionStateLabel !== "connected" ||
+      props.activePendingApproval !== null ||
+      props.activePendingUserInput !== null
+    ) {
+      return null;
+    }
+    if (threadSyncLabel !== null) {
+      return { kind: "syncing", label: threadSyncLabel };
+    }
+    if (props.isCompacting && contentPresentationKind === "ready") {
+      return { kind: "compacting" };
+    }
+    if (props.activeWorkStartedAt !== null && contentPresentationKind === "ready") {
+      return { kind: "working", startedAt: props.activeWorkStartedAt };
+    }
+    return null;
+  })();
+  const showWorkingControl = floatingStatus !== null;
   const selectedThreadFeed = props.selectedThreadFeed;
+  const hasCompactableConversation =
+    selectedThreadFeed.some(
+      (entry) =>
+        entry.type === "message" &&
+        entry.message.role === "user" &&
+        ((entry.message.attachments?.length ?? 0) > 0 ||
+          entry.message.text.trim().toLowerCase() !== "/compact"),
+    ) ||
+    (Boolean(props.loadEarlier) && props.selectedThread.latestUserMessageAt !== null);
   const composerChrome = composerExpanded ? COMPOSER_EXPANDED_CHROME : COMPOSER_COLLAPSED_CHROME;
   const composerOverlapHeight = composerChrome + composerBottomInset;
   // While a user-input request is pending, the questionnaire owns the
@@ -748,7 +773,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
             <View ref={composerOverlayRef} onLayout={onComposerLayout} className="w-full">
               <FloatingWorkingControl
                 colorScheme={isDarkMode ? "dark" : "light"}
-                startedAt={floatingWorkingStartedAt}
+                status={floatingStatus}
                 showScrollToEnd={showScrollToEndButton}
                 onScrollToEnd={handleScrollToEnd}
               />
@@ -807,8 +832,8 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                   connectionState={props.connectionStateLabel}
                   connectionError={props.connectionError}
                   environmentLabel={props.environmentLabel}
-                  threadSyncPhase={threadSyncPhase}
                   selectedThread={props.selectedThread}
+                  hasCompactableConversation={hasCompactableConversation && !props.isCompacting}
                   serverConfig={props.serverConfig}
                   queueCount={props.selectedThreadQueueCount}
                   environmentId={props.environmentId}

@@ -677,6 +677,67 @@ describe("PreviewManager", () => {
     ),
   );
 
+  effectIt.effect("detaches through the pinned debugger after the webview is destroyed", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        // Real Electron throws on any `wc.debugger` access once the
+        // WebContents is destroyed, so cleanup must go through the debugger
+        // reference captured at attach time (electron/electron#53376).
+        let destroyed = false;
+        let attached = false;
+        const debuggerOff = vi.fn();
+        const debuggerDetach = vi.fn(() => {
+          attached = false;
+        });
+        const wcDebugger = {
+          isAttached: () => attached,
+          attach: vi.fn(() => {
+            attached = true;
+          }),
+          detach: debuggerDetach,
+          sendCommand: vi.fn(async () => undefined),
+          on: vi.fn(),
+          off: debuggerOff,
+        };
+        fromId.mockReturnValue({
+          id: 42,
+          isDestroyed: () => destroyed,
+          getType: () => "webview",
+          getURL: () => "http://localhost:3200/",
+          getTitle: () => "Preview",
+          isLoading: () => false,
+          isDevToolsOpened: () => false,
+          getZoomFactor: () => 1,
+          setZoomFactor: vi.fn(),
+          setAudioMuted: vi.fn(),
+          isCurrentlyAudible: () => false,
+          reload: vi.fn(),
+          loadURL: vi.fn(async () => undefined),
+          on: vi.fn(),
+          off: vi.fn(),
+          ipc: { on: vi.fn(), off: vi.fn() },
+          send: webviewSend,
+          navigationHistory: { canGoBack: () => false, canGoForward: () => false },
+          setWindowOpenHandler: vi.fn(),
+          get debugger() {
+            if (destroyed) throw new Error("Object has been destroyed");
+            return wcDebugger;
+          },
+        } as never);
+        yield* manager.createTab("tab_pinned_debugger");
+        yield* manager.registerWebview("tab_pinned_debugger", 42);
+        yield* manager.setColorScheme("tab_pinned_debugger", "dark");
+        expect(attached).toBe(true);
+        destroyed = true;
+
+        yield* manager.navigate("tab_pinned_debugger", "https://example.com/");
+
+        expect(debuggerOff).toHaveBeenCalledWith("message", expect.any(Function));
+        expect(debuggerDetach).toHaveBeenCalledOnce();
+      }),
+    ),
+  );
+
   effectIt.effect("does not let destroyed-webview cleanup detach a same-id replacement", () =>
     withManager((manager) =>
       Effect.gen(function* () {
@@ -3133,6 +3194,164 @@ describe("PreviewManager", () => {
 
         listeners.get("did-start-navigation")?.({}, "https://example.com/next", false, true);
         expect(yield* Fiber.join(pick)).toBeNull();
+      }),
+    ),
+  );
+
+  effectIt.effect("settles the pick when the annotation screenshot never arrives", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        let onPicked: ((event: unknown, ...args: unknown[]) => void) | undefined;
+        fromId.mockReturnValue({
+          id: 42,
+          isDestroyed: () => false,
+          getType: () => "webview",
+          getURL: () => "https://example.com",
+          getTitle: () => "Example",
+          isLoading: () => false,
+          isFocused: () => true,
+          getZoomFactor: () => 1,
+          setZoomFactor: vi.fn(),
+          setAudioMuted: vi.fn(),
+          isCurrentlyAudible: () => false,
+          on: vi.fn(),
+          once: vi.fn(),
+          off: vi.fn(),
+          // A wedged compositor leaves `capturePage` pending forever.
+          capturePage: vi.fn(() => new Promise(() => {})),
+          ipc: {
+            on: vi.fn((channel: string, listener: typeof onPicked) => {
+              if (channel === "preview:element-picked") onPicked = listener;
+            }),
+            off: vi.fn(),
+            removeListener: vi.fn(),
+          },
+          send: webviewSend,
+          navigationHistory: { canGoBack: () => false, canGoForward: () => false },
+          setWindowOpenHandler: vi.fn(),
+          debugger: {
+            isAttached: () => false,
+            attach: vi.fn(),
+            sendCommand: vi.fn(async () => undefined),
+            on: vi.fn(),
+            off: vi.fn(),
+          },
+        } as never);
+
+        yield* manager.createTab("tab_1");
+        yield* manager.registerWebview("tab_1", 42);
+        const pick = yield* manager.pickElement("tab_1").pipe(Effect.forkChild);
+        yield* Effect.yieldNow;
+
+        onPicked?.(
+          {},
+          {
+            id: "annotation_1",
+            pageUrl: "https://example.com",
+            pageTitle: "Example",
+            comment: "Tighten this spacing",
+            elements: [],
+            regions: [{ id: "region_1", rect: { x: 5, y: 6, width: 20, height: 30 } }],
+            strokes: [],
+            styleChanges: [],
+            screenshot: null,
+            createdAt: "2026-06-11T00:00:00.000Z",
+          },
+          null,
+          "send",
+        );
+        yield* Effect.yieldNow;
+        expect(pick.pollUnsafe()).toBeUndefined();
+
+        yield* TestClock.adjust("6 seconds");
+        // The pick has to give up on the crop rather than strand the renderer,
+        // which would leave the composer stuck on "Capturing…".
+        const result = yield* Fiber.join(pick);
+        expect(result?.annotation.screenshot).toBeNull();
+        expect(result?.screenshotFailed).toBe(true);
+        expect(result?.submission).toBe("send");
+        expect(webviewSend).toHaveBeenCalledWith("preview:annotation-captured");
+      }),
+    ),
+  );
+
+  effectIt.effect("a stale capture from a replaced pick never touches the next pick", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        let onPicked: ((event: unknown, ...args: unknown[]) => void) | undefined;
+        fromId.mockReturnValue({
+          id: 42,
+          isDestroyed: () => false,
+          getType: () => "webview",
+          getURL: () => "https://example.com",
+          getTitle: () => "Example",
+          isLoading: () => false,
+          isFocused: () => true,
+          getZoomFactor: () => 1,
+          setZoomFactor: vi.fn(),
+          setAudioMuted: vi.fn(),
+          isCurrentlyAudible: () => false,
+          on: vi.fn(),
+          once: vi.fn(),
+          off: vi.fn(),
+          capturePage: vi.fn(() => new Promise(() => {})),
+          ipc: {
+            on: vi.fn((channel: string, listener: typeof onPicked) => {
+              if (channel === "preview:element-picked") onPicked = listener;
+            }),
+            off: vi.fn(),
+            removeListener: vi.fn(),
+          },
+          send: webviewSend,
+          navigationHistory: { canGoBack: () => false, canGoForward: () => false },
+          setWindowOpenHandler: vi.fn(),
+          debugger: {
+            isAttached: () => false,
+            attach: vi.fn(),
+            sendCommand: vi.fn(async () => undefined),
+            on: vi.fn(),
+            off: vi.fn(),
+          },
+        } as never);
+        const annotation = {
+          id: "annotation_1",
+          pageUrl: "https://example.com",
+          pageTitle: "Example",
+          comment: "Tighten this spacing",
+          elements: [],
+          regions: [{ id: "region_1", rect: { x: 5, y: 6, width: 20, height: 30 } }],
+          strokes: [],
+          styleChanges: [],
+          screenshot: null,
+          createdAt: "2026-06-11T00:00:00.000Z",
+        };
+
+        yield* manager.createTab("tab_1");
+        yield* manager.registerWebview("tab_1", 42);
+        const firstPick = yield* manager.pickElement("tab_1").pipe(Effect.forkChild);
+        yield* Effect.yieldNow;
+        // The first pick submits and its crop hangs.
+        onPicked?.({}, annotation, null, "send");
+        yield* Effect.yieldNow;
+
+        // A second pick on the same tab replaces the first, which resumes null.
+        const secondPick = yield* manager.pickElement("tab_1").pipe(Effect.forkChild);
+        yield* Effect.yieldNow;
+        expect(yield* Fiber.join(firstPick)).toBeNull();
+        webviewSend.mockClear();
+
+        // The first pick's crop times out while the second pick is live. It
+        // must not signal the overlay, which would tear down the second pick.
+        yield* TestClock.adjust("6 seconds");
+        yield* Effect.yieldNow;
+        expect(webviewSend).not.toHaveBeenCalledWith("preview:annotation-captured");
+        expect(secondPick.pollUnsafe()).toBeUndefined();
+
+        onPicked?.({}, { ...annotation, id: "annotation_2" }, null, "attach");
+        yield* TestClock.adjust("6 seconds");
+        const result = yield* Fiber.join(secondPick);
+        expect(result?.annotation.id).toBe("annotation_2");
+        expect(result?.submission).toBe("attach");
       }),
     ),
   );

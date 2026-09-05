@@ -124,6 +124,7 @@ export interface AggregateOptions {
   readonly sinceDay: string;
   readonly untilDay: string;
   readonly rates: RateTable;
+  readonly priceOverrides?: RateTable;
   readonly resolution?: UsageResolution;
   readonly sinceTimeMs?: number;
   readonly untilTimeMs?: number;
@@ -265,13 +266,24 @@ export class UsageAggregator {
       record.model,
       record.totals,
       record.reportedCostUsd,
+      this.#options.priceOverrides,
     );
 
     bucket.totals = addTotals(bucket.totals, record.totals);
     bucket.costUsd += priced.costUsd;
-    bucket.cacheSavingsUsd += cacheSavingsUsd(this.#options.rates, record.model, record.totals);
+    bucket.cacheSavingsUsd += cacheSavingsUsd(
+      this.#options.rates,
+      record.model,
+      record.totals,
+      this.#options.priceOverrides,
+    );
     if (priced.costSource === "modelPriced") {
-      bucket.cacheWriteUsd += cacheWriteUsd(this.#options.rates, record.model, record.totals);
+      bucket.cacheWriteUsd += cacheWriteUsd(
+        this.#options.rates,
+        record.model,
+        record.totals,
+        this.#options.priceOverrides,
+      );
     } else if (record.totals.cacheCreationTokens > 0) {
       bucket.cacheWriteComplete = false;
     }

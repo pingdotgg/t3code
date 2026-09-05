@@ -22,6 +22,66 @@ export interface EnvironmentUsage {
   readonly summary: UsageSummary;
 }
 
+export interface RetainableUsageStatus {
+  readonly environmentId: EnvironmentId;
+  readonly error: string | null;
+  readonly summary: UsageSummary | null;
+}
+
+export interface SettledUsageStatuses<T extends RetainableUsageStatus> {
+  readonly rangeKey: string;
+  readonly statuses: readonly T[];
+}
+
+/**
+ * Keeps each environment's last value visible while a token-bearing query for
+ * the same date range starts cold. New answers replace retained values one at
+ * a time; failures and date-range changes never inherit old data.
+ */
+export function retainUsageStatuses<T extends RetainableUsageStatus>(
+  rangeKey: string,
+  current: readonly T[],
+  previous: SettledUsageStatuses<T> | null,
+): {
+  readonly visible: readonly T[];
+  readonly settled: SettledUsageStatuses<T> | null;
+} {
+  const previousByEnvironment =
+    previous?.rangeKey === rangeKey
+      ? new Map(previous.statuses.map((status) => [status.environmentId, status] as const))
+      : null;
+  let retainedAny = false;
+  const withRetained = current.map((status) => {
+    if (status.summary !== null || status.error !== null) return status;
+    const settledStatus = previousByEnvironment?.get(status.environmentId);
+    if (settledStatus?.summary === null || settledStatus === undefined) return status;
+    retainedAny = true;
+    return Object.assign({}, status, { summary: settledStatus.summary });
+  });
+  const visible = retainedAny ? withRetained : current;
+  const settled = visible.some((status) => status.summary !== null)
+    ? { rangeKey, statuses: visible }
+    : previous;
+
+  return { visible, settled };
+}
+
+/**
+ * Identifies the exact per-environment snapshots currently visible to a
+ * client. Passing a changed value back to the server requests one source
+ * update without relying on clocks shared across environments.
+ */
+export function makeUsageRefreshToken(
+  environments: readonly EnvironmentUsage[],
+): string | undefined {
+  if (environments.length === 0) return undefined;
+  return JSON.stringify(
+    environments
+      .map(({ environmentId, summary }) => [environmentId, summary.readAt] as const)
+      .sort(([left], [right]) => left.localeCompare(right)),
+  );
+}
+
 export interface ProviderTotals {
   readonly provider: UsageProviderKind;
   readonly costUsd: number;
@@ -308,22 +368,7 @@ export function mergeUsage(
     }
   }
 
-  // A namespaced project belongs to one environment. Restrict ownership
-  // candidates before de-duplication so another environment cannot claim the
-  // shared transcript source and erase the selected project's buckets.
-  const ownershipEnvironments =
-    typeof projectFilter === "string"
-      ? current.filter(
-          (environment) =>
-            projectFilterForEnvironment(projectFilter, environment.environmentId) !==
-            "environment-mismatch:",
-        )
-      : current;
-  const unfilteredClaims = claimSources(current);
-  const selectedClaims =
-    typeof projectFilter === "string" ? claimSources(ownershipEnvironments) : unfilteredClaims;
-  const { ownerByFingerprint, duplicates } = selectedClaims;
-  const unfilteredOwnerByFingerprint = unfilteredClaims.ownerByFingerprint;
+  const { ownerByFingerprint, duplicates } = claimSources(current);
 
   let costUsd = 0;
   let uncachedInputTokens = 0;
@@ -372,45 +417,6 @@ export function mergeUsage(
     }
   >();
   let unfilteredCostUsd = 0;
-
-  // Keep the picker stable while a project is selected. Its rows come from
-  // the globally de-duplicated view, while the figures below use the selected
-  // environment's ownership map.
-  for (const environment of current) {
-    const { buckets } = ownedContribution(environment, unfilteredOwnerByFingerprint);
-    for (const bucket of buckets) {
-      const tokens = bucketTokens(bucket);
-      const bucketCacheWriteComplete =
-        bucket.totals.cacheCreationTokens === 0 || bucket.cacheWriteUsd !== undefined;
-      unfilteredCostUsd += bucket.costUsd;
-      const localProjectKey = localBucketProjectKey(bucket);
-      const projectKey =
-        typeof localProjectKey === "string"
-          ? namespacedProjectKey(environment.environmentId, localProjectKey)
-          : localProjectKey;
-      if (projectKey === undefined) continue;
-      const accumulatorKey = projectKey ?? "\0";
-      const project = projectAccumulator.get(accumulatorKey) ?? {
-        projectId: bucket.projectId ?? null,
-        projectKey,
-        project: bucket.project ?? null,
-        costUsd: 0,
-        totalTokens: 0,
-        cacheWriteTokens: 0,
-        cacheWriteUsd: 0,
-        cacheWriteComplete: true,
-        records: 0,
-      };
-      project.costUsd += bucket.costUsd;
-      project.totalTokens += tokens;
-      project.cacheWriteTokens += bucket.totals.cacheCreationTokens;
-      project.cacheWriteUsd += bucket.cacheWriteUsd ?? 0;
-      project.cacheWriteComplete &&= bucketCacheWriteComplete;
-      project.records += bucket.records;
-      projectAccumulator.set(accumulatorKey, project);
-    }
-  }
-
   const dailyAccumulator = new Map<
     string,
     {
@@ -465,6 +471,7 @@ export function mergeUsage(
       const bucketCacheWriteComplete =
         bucket.totals.cacheCreationTokens === 0 || bucket.cacheWriteUsd !== undefined;
 
+      unfilteredCostUsd += bucket.costUsd;
       const localProjectKey = localBucketProjectKey(bucket);
       const projectKey =
         typeof localProjectKey === "string"
@@ -474,7 +481,29 @@ export function mergeUsage(
       // part of the explicit Outside projects slice.
       if (projectKey === undefined) {
         if (projectFilter !== undefined) continue;
-      } else if (projectFilter !== undefined && projectKey !== projectFilter) continue;
+      } else {
+        const accumulatorKey = projectKey ?? "\0";
+        const project = projectAccumulator.get(accumulatorKey) ?? {
+          projectId: bucket.projectId ?? null,
+          projectKey,
+          project: bucket.project ?? null,
+          costUsd: 0,
+          totalTokens: 0,
+          cacheWriteTokens: 0,
+          cacheWriteUsd: 0,
+          cacheWriteComplete: true,
+          records: 0,
+        };
+        project.costUsd += bucket.costUsd;
+        project.totalTokens += tokens;
+        project.cacheWriteTokens += bucket.totals.cacheCreationTokens;
+        project.cacheWriteUsd += bucket.cacheWriteUsd ?? 0;
+        project.cacheWriteComplete &&= bucketCacheWriteComplete;
+        project.records += bucket.records;
+        projectAccumulator.set(accumulatorKey, project);
+
+        if (projectFilter !== undefined && projectKey !== projectFilter) continue;
+      }
 
       costUsd += bucket.costUsd;
       cacheSavingsUsd += bucket.cacheSavingsUsd;
