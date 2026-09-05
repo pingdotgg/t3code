@@ -64,7 +64,7 @@ vi.mock("../assets/assetUrls", () => ({
   },
 }));
 
-import { ProjectFavicon } from "./ProjectFavicon";
+import { extractProjectFaviconColor, ProjectFavicon } from "./ProjectFavicon";
 
 type ProjectFaviconImageProps = {
   readonly cacheKey: string;
@@ -217,5 +217,17 @@ describe("ProjectFavicon", () => {
       cwd: "/workspace-test",
       path: "brand/icon.svg",
     });
+  });
+
+  it("weights saturated pixels above neutral pixels and ignores transparent pixels", () => {
+    expect(
+      extractProjectFaviconColor(
+        new Uint8ClampedArray([255, 0, 0, 255, 100, 100, 100, 255, 0, 0, 255, 0]),
+      ),
+    ).toBe("rgb(229 17 17)");
+  });
+
+  it("returns no accent for a fully transparent icon", () => {
+    expect(extractProjectFaviconColor(new Uint8ClampedArray([0, 0, 0, 0]))).toBeNull();
   });
 });

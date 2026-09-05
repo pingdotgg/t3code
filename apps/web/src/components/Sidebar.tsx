@@ -69,6 +69,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
+  type CSSProperties,
 } from "react";
 import { useParams, useRouter } from "@tanstack/react-router";
 
@@ -179,7 +180,7 @@ import {
   snoozeWakeLabel,
   type SnoozePreset,
 } from "./Sidebar.snooze";
-import { ProjectFavicon } from "./ProjectFavicon";
+import { ProjectFavicon, useProjectFaviconColor } from "./ProjectFavicon";
 import { ProviderInstanceIcon } from "./chat/ProviderInstanceIcon";
 import { getTriggerDisplayModelLabel } from "./chat/providerIconUtils";
 import {
@@ -879,6 +880,12 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   // switching sidebars must not light up every historical thread as unread.
   const isUnread = hasUnseenCompletion({ ...thread, lastVisitedAt });
   const status = resolveSidebarThreadStatus(thread);
+  const projectFaviconColor = useProjectFaviconColor({
+    environmentId: thread.environmentId,
+    cwd: props.projectCwd ?? "",
+    faviconPath: props.projectFaviconPath,
+    enabled: props.projectIcon === null,
+  });
   const isInFlight =
     status === "working" || status === "monitoring" || status === "approval" || status === "input";
   // A woken thread reappears at its original position (the sort is
@@ -1194,6 +1201,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
       !isSelected &&
       "opacity-70 transition-opacity hover:opacity-100",
   );
+  const rowSurfaceStyle = projectFaviconColor
+    ? ({ "--sidebar-row-project-color": projectFaviconColor } as CSSProperties)
+    : undefined;
 
   const title = isRenaming ? (
     <input
@@ -1336,7 +1346,15 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                 tabIndex={0}
                 data-testid="sidebar-row-slim"
                 aria-busy={isRegeneratingTitle || undefined}
-                className={cn(rowSurfaceClassName, "flex h-9 items-center gap-2.5 px-2.5")}
+                className={cn(
+                  rowSurfaceClassName,
+                  "flex h-9 items-center gap-2.5 px-2.5",
+                  projectFaviconColor &&
+                    !props.isActive &&
+                    !isSelected &&
+                    "hover:bg-[color-mix(in_srgb,var(--sidebar-row-project-color)_14%,transparent)]",
+                )}
+                style={rowSurfaceStyle}
                 onClick={handleClick}
                 onDoubleClick={handleDoubleClick}
                 onKeyDown={handleKeyDown}
@@ -1500,7 +1518,14 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
               tabIndex={0}
               data-testid="sidebar-row-card"
               aria-busy={isRegeneratingTitle || undefined}
-              className={rowSurfaceClassName}
+              className={cn(
+                rowSurfaceClassName,
+                projectFaviconColor &&
+                  !props.isActive &&
+                  !isSelected &&
+                  "hover:bg-[color-mix(in_srgb,var(--sidebar-row-project-color)_14%,transparent)]",
+              )}
+              style={rowSurfaceStyle}
               onClick={handleClick}
               onDoubleClick={handleDoubleClick}
               onKeyDown={handleKeyDown}

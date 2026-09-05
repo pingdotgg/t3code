@@ -29,13 +29,14 @@ import {
 } from "lucide-react";
 import type { IconName } from "lucide-react/dynamic";
 import type { ComponentType } from "react";
-import { lazy, Suspense, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { useAssetUrlState } from "../assets/assetUrls";
 import { selectProjectIcon, type ProjectIconName } from "../projectIconModel";
 import { projectIconColorClassName } from "../projectIconColors";
 import { cn } from "~/lib/utils";
 
 const loadedProjectFaviconSrcs = new Map<string, string>();
+const projectFaviconColors = new Map<string, string | null | Promise<string | null>>();
 const DynamicIcon = lazy(() =>
   import("lucide-react/dynamic").then((module) => ({ default: module.DynamicIcon })),
 );
@@ -175,6 +176,107 @@ export function useProjectFaviconAsset(input: {
     cwd: input.cwd,
     ...(input.faviconPath ? { path: input.faviconPath } : {}),
   });
+}
+
+export function useProjectFaviconColor(input: {
+  readonly environmentId: EnvironmentId;
+  readonly cwd: string;
+  readonly faviconPath?: string | null | undefined;
+  readonly enabled?: boolean | undefined;
+}) {
+  const state = useProjectFaviconAsset(input);
+  const src =
+    input.enabled !== false && state._tag === "Success" && !isProjectFaviconFallbackUrl(state.url)
+      ? state.url
+      : null;
+  const cacheKey =
+    src === null ? null : getProjectFaviconCacheKey(input.environmentId, input.cwd, src);
+  const [sample, setSample] = useState<{ cacheKey: string; color: string | null } | null>(() => {
+    if (cacheKey === null) return null;
+    const cached = projectFaviconColors.get(cacheKey);
+    return typeof cached === "string" || cached === null ? { cacheKey, color: cached } : null;
+  });
+
+  useEffect(() => {
+    if (cacheKey === null || src === null) return;
+    let cancelled = false;
+    void loadProjectFaviconColor(cacheKey, src).then((color) => {
+      if (!cancelled) setSample({ cacheKey, color });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [cacheKey, src]);
+
+  return sample?.cacheKey === cacheKey ? sample.color : null;
+}
+
+function loadProjectFaviconColor(cacheKey: string, src: string): Promise<string | null> {
+  const cached = projectFaviconColors.get(cacheKey);
+  if (cached !== undefined) return Promise.resolve(cached);
+
+  const pending = new Promise<string | null>((resolve) => {
+    const image = new Image();
+    image.crossOrigin = "anonymous";
+    image.addEventListener("load", () => {
+      try {
+        const canvas = document.createElement("canvas");
+        canvas.width = 32;
+        canvas.height = 32;
+        const context = canvas.getContext("2d", { willReadFrequently: true });
+        if (context === null) {
+          resolve(null);
+          return;
+        }
+        context.drawImage(image, 0, 0, canvas.width, canvas.height);
+        resolve(
+          extractProjectFaviconColor(context.getImageData(0, 0, canvas.width, canvas.height).data),
+        );
+      } catch {
+        resolve(null);
+      }
+    });
+    image.addEventListener("error", () => resolve(null));
+    image.src = src;
+  });
+  projectFaviconColors.set(cacheKey, pending);
+  void pending.then((color) => {
+    if (projectFaviconColors.get(cacheKey) === pending) projectFaviconColors.set(cacheKey, color);
+  });
+  return pending;
+}
+
+export function extractProjectFaviconColor(data: Uint8ClampedArray): string | null {
+  let red = 0;
+  let green = 0;
+  let blue = 0;
+  let weight = 0;
+  for (let index = 0; index < data.length; index += 4) {
+    const pixelRed = data[index];
+    const pixelGreen = data[index + 1];
+    const pixelBlue = data[index + 2];
+    const pixelAlpha = data[index + 3];
+    if (
+      pixelRed === undefined ||
+      pixelGreen === undefined ||
+      pixelBlue === undefined ||
+      pixelAlpha === undefined
+    ) {
+      continue;
+    }
+    const alpha = pixelAlpha / 255;
+    if (alpha < 0.2) continue;
+    const maximum = Math.max(pixelRed, pixelGreen, pixelBlue);
+    const minimum = Math.min(pixelRed, pixelGreen, pixelBlue);
+    const saturation = maximum === 0 ? 0 : (maximum - minimum) / maximum;
+    const pixelWeight = alpha * (0.25 + saturation);
+    red += pixelRed * pixelWeight;
+    green += pixelGreen * pixelWeight;
+    blue += pixelBlue * pixelWeight;
+    weight += pixelWeight;
+  }
+  if (weight === 0) return null;
+  return `rgb(${Math.round(red / weight)} ${Math.round(green / weight)} ${Math.round(blue / weight)})`;
 }
 
 function ProjectFaviconFallback({
