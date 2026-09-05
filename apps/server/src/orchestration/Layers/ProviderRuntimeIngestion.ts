@@ -1313,7 +1313,7 @@ const make = Effect.gen(function* () {
     const planMarkdown =
       normalizeProposedPlanMarkdown(bufferedPlan?.text) ??
       normalizeProposedPlanMarkdown(input.fallbackMarkdown);
-    if (!planMarkdown) return;
+    if (!planMarkdown) return yield* clearBufferedProposedPlan(input.planId);
 
     const existingPlan = Option.getOrUndefined(
       yield* projectionThreadProposedPlans.getByPlanId({
@@ -1331,7 +1331,7 @@ const make = Effect.gen(function* () {
         planMarkdown,
         implementedAt: existingPlan?.implementedAt ?? null,
         implementationThreadId: existingPlan?.implementationThreadId ?? null,
-        createdAt: existingPlan?.createdAt ?? bufferedPlan?.createdAt ?? input.updatedAt,
+        createdAt: existingPlan?.createdAt ?? (bufferedPlan?.createdAt || input.updatedAt),
         updatedAt: input.updatedAt,
       },
       createdAt: input.updatedAt,

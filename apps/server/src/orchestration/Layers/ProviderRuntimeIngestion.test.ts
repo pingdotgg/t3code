@@ -2239,7 +2239,7 @@ describe("ProviderRuntimeIngestion", () => {
       type: "turn.proposed.delta",
       eventId: asEventId("evt-plan-delta-1"),
       provider: ProviderDriverKind.make("codex"),
-      createdAt: now,
+      createdAt: "",
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-plan-buffer"),
       payload: {
@@ -2250,7 +2250,7 @@ describe("ProviderRuntimeIngestion", () => {
       type: "turn.proposed.delta",
       eventId: asEventId("evt-plan-delta-2"),
       provider: ProviderDriverKind.make("codex"),
-      createdAt: now,
+      createdAt: "",
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-plan-buffer"),
       payload: {
@@ -2280,6 +2280,42 @@ describe("ProviderRuntimeIngestion", () => {
         entry.id === "plan:thread-1:turn:turn-plan-buffer",
     );
     expect(proposedPlan?.planMarkdown).toBe("## Buffered plan\n\n- first\n- second");
+    expect(proposedPlan?.createdAt).toBe(now);
+  });
+
+  it("releases a blank completed plan before a late replacement", async () => {
+    const harness = await createHarness();
+    const threadId = asThreadId("thread-1");
+    const turnId = asTurnId("blank-plan-turn");
+    const base = { provider: ProviderDriverKind.make("codex"), threadId, turnId };
+    const replacementTime = "2026-01-01T00:00:02.000Z";
+    await harness.emitAndDrain([
+      {
+        ...base,
+        type: "turn.proposed.delta",
+        eventId: asEventId("blank-plan-delta"),
+        createdAt: "2026-01-01T00:00:00.000Z",
+        payload: { delta: " \n " },
+      },
+      {
+        ...base,
+        type: "turn.completed",
+        eventId: asEventId("blank-plan-completed"),
+        createdAt: "2026-01-01T00:00:01.000Z",
+        payload: { state: "completed" },
+      },
+      {
+        ...base,
+        type: "turn.proposed.completed",
+        eventId: asEventId("late-plan-completed"),
+        createdAt: replacementTime,
+        payload: { planMarkdown: "# Replacement plan" },
+      },
+    ]);
+    const thread = (await harness.readModel()).threads.find((entry) => entry.id === threadId);
+    expect(thread?.proposedPlans).toEqual([
+      expect.objectContaining({ planMarkdown: "# Replacement plan", createdAt: replacementTime }),
+    ]);
   });
 
   it("buffers assistant deltas with one lifecycle query per event until completion", async () => {
