@@ -1,3 +1,4 @@
+import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import {
   CheckIcon,
@@ -148,9 +149,10 @@ import { readThreadShell, useProjects } from "../state/entities";
 import { serverEnvironment } from "../state/server";
 import { shellEnvironment } from "../state/shell";
 import { assetEnvironment } from "../state/assets";
-import { usePreparedConnection } from "../state/session";
+import { readEnvironmentScope, usePreparedConnection, useEnvironmentScope } from "../state/session";
 import { previewEnvironment } from "../state/preview";
 import { useAtomCommand } from "../state/use-atom-command";
+import { useOrchestrationCommand } from "../state/use-orchestration-command";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
 import { projectEnvironment } from "../state/projects";
 import { threadEnvironment } from "../state/threads";
@@ -2157,16 +2159,15 @@ function useChatMarkdownState({
   const openPreview = useAtomCommand(previewEnvironment.open, {
     reportFailure: false,
   });
-  const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
+  const updateThreadMetadata = useOrchestrationCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
   });
   const environmentId = threadRef?.environmentId ?? explicitEnvironmentId ?? null;
+  const canOperateHost = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
   const remoteOpen = useRemoteOpenResolution(environmentId);
-  const canUseShellActions = canUseMarkdownFileShellActions(
-    environmentId,
-    remoteOpen.state.mode,
-    remoteOpen.isResolved,
-  );
+  const canUseShellActions =
+    canOperateHost &&
+    canUseMarkdownFileShellActions(environmentId, remoteOpen.state.mode, remoteOpen.isResolved);
   const preparedConnection = usePreparedConnection(environmentId);
   const openMarkdownMedia = useCallback(
     (source: string, resolvedFilePath?: string) => {
@@ -2229,6 +2230,13 @@ function useChatMarkdownState({
         return Promise.resolve(
           AsyncResult.failure<void, PreferredEditorEnvironmentRequiredError>(
             Cause.fail(new PreferredEditorEnvironmentRequiredError({ targetPath: filePath })),
+          ),
+        );
+      }
+      if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) {
+        return Promise.resolve(
+          AsyncResult.failure<void, Error>(
+            Cause.fail(new Error("This connection cannot reveal files on this environment.")),
           ),
         );
       }
@@ -2536,6 +2544,7 @@ function useChatMarkdownState({
 
   const componentState = useMemo(
     () => ({
+      canOperateHost,
       cwd,
       diffThemeName,
       environmentId,
@@ -2562,6 +2571,7 @@ function useChatMarkdownState({
       updateThreadPullRequestLink,
     }),
     [
+      canOperateHost,
       cwd,
       diffThemeName,
       environmentId,
@@ -2685,6 +2695,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
   },
   a: function MarkdownAnchor({ node, href, children, title: _title, ...props }) {
     const {
+      canOperateHost,
       cwd,
       environmentId,
       imageBaseDir,
@@ -2822,8 +2833,9 @@ const CHAT_MARKDOWN_COMPONENTS = {
             const pullRequest = resolveThreadPullRequest(href);
             const currentPullRequest =
               threadRef === undefined ? null : readThreadShell(threadRef)?.linkedPullRequest;
-            const threadLinkAction =
-              currentPullRequest != null && matchesLinkedPullRequestUrl(currentPullRequest, href)
+            const threadLinkAction = !canOperateHost
+              ? undefined
+              : currentPullRequest != null && matchesLinkedPullRequestUrl(currentPullRequest, href)
                 ? "unlink-from-thread"
                 : pullRequest === null
                   ? undefined

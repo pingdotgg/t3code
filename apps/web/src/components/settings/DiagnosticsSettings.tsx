@@ -15,6 +15,7 @@ import {
 import { useCallback, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   AuthEnvironmentMaintainScope,
+  AuthOrchestrationOperateScope,
   type ServerProcessDiagnosticsEntry,
   type ServerProcessResourceHistorySummary,
   type ServerProcessSignal,
@@ -24,7 +25,7 @@ import * as Option from "effect/Option";
 
 import { cn } from "../../lib/utils";
 import { ensureLocalApi } from "../../localApi";
-import { resolveAndPersistPreferredEditor } from "../../editorPreferences";
+import { useOpenInPreferredEditor } from "../../editorPreferences";
 import { formatRelativeTimeLabel, getRelativeTimeState } from "../../timestampFormat";
 import { useEnvironmentQuery } from "../../state/query";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
@@ -33,7 +34,6 @@ import {
   primaryServerObservabilityAtom,
   serverEnvironment,
 } from "../../state/server";
-import { shellEnvironment } from "../../state/shell";
 import { usePrimaryEnvironment } from "../../state/environments";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { Button } from "../ui/button";
@@ -788,12 +788,11 @@ export function DiagnosticsSettingsPanel() {
   const primaryEnvironment = usePrimaryEnvironment();
   const environmentId = primaryEnvironment?.environmentId ?? null;
   const canMaintainEnvironment = useEnvironmentScope(environmentId, AuthEnvironmentMaintainScope);
+  const canOpenHostEditor = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
   const signalServerProcess = useAtomCommand(serverEnvironment.signalProcess, {
     reportFailure: false,
   });
-  const openInEditor = useAtomCommand(shellEnvironment.openInEditor, {
-    reportFailure: false,
-  });
+  const openInEditor = useOpenInPreferredEditor(environmentId, availableEditors ?? []);
   const [resourceWindowMs, setResourceWindowMs] = useState(15 * 60_000);
   const selectedResourceWindow =
     RESOURCE_HISTORY_WINDOWS.find((option) => option.windowMs === resourceWindowMs) ??
@@ -842,26 +841,17 @@ export function DiagnosticsSettingsPanel() {
     const logsDirectoryPath = observability?.logsDirectoryPath ?? null;
     if (!logsDirectoryPath) return;
 
-    const editor = resolveAndPersistPreferredEditor(availableEditors ?? []);
-    if (!editor) {
-      setOpenLogsDirectoryError("No available editors found.");
-      return;
-    }
-    if (environmentId === null) {
-      setOpenLogsDirectoryError("No environment is selected.");
+    if (
+      environmentId === null ||
+      !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)
+    ) {
       return;
     }
 
     setIsOpeningLogsDirectory(true);
     setOpenLogsDirectoryError(null);
     void (async () => {
-      const result = await openInEditor({
-        environmentId,
-        input: {
-          cwd: logsDirectoryPath,
-          editor,
-        },
-      });
+      const result = await openInEditor(logsDirectoryPath);
       setIsOpeningLogsDirectory(false);
       if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
         const error = squashAtomCommandFailure(result);
@@ -870,7 +860,7 @@ export function DiagnosticsSettingsPanel() {
         );
       }
     })();
-  }, [availableEditors, environmentId, observability?.logsDirectoryPath, openInEditor]);
+  }, [environmentId, observability?.logsDirectoryPath, openInEditor]);
 
   const isInitialLoading = isPending && data === null;
   const isProcessInitialLoading = isProcessPending && processData === null;
@@ -1117,7 +1107,11 @@ export function DiagnosticsSettingsPanel() {
                   <Button
                     size="icon-xs"
                     variant="ghost-muted"
-                    disabled={!observability?.logsDirectoryPath || isOpeningLogsDirectory}
+                    disabled={
+                      !canOpenHostEditor ||
+                      !observability?.logsDirectoryPath ||
+                      isOpeningLogsDirectory
+                    }
                     onClick={openLogsDirectory}
                     aria-label="Open logs folder"
                   >

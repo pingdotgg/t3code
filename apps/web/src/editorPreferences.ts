@@ -1,4 +1,9 @@
-import { EDITORS, EditorId, EnvironmentId } from "@t3tools/contracts";
+import {
+  AuthOrchestrationOperateScope,
+  EDITORS,
+  EditorId,
+  EnvironmentId,
+} from "@t3tools/contracts";
 import {
   mapAtomCommandResult,
   type AtomCommandFailure,
@@ -11,6 +16,7 @@ import { getLocalStorageItem, setLocalStorageItem, useLocalStorage } from "./hoo
 import { useCallback, useMemo } from "react";
 import { shellEnvironment } from "./state/shell";
 import { useAtomCommand } from "./state/use-atom-command";
+import { readEnvironmentScope } from "./state/session";
 
 const LAST_EDITOR_KEY = "t3code:last-editor";
 
@@ -78,6 +84,7 @@ export function useOpenInPreferredEditor(
         | OpenInEditorError
         | PreferredEditorEnvironmentRequiredError
         | PreferredEditorUnavailableError
+        | Error
       >
     > => {
       if (environmentId === null) {
@@ -87,6 +94,11 @@ export function useOpenInPreferredEditor(
               targetPath,
             }),
           ),
+        );
+      }
+      if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) {
+        return AsyncResult.failure(
+          Cause.fail(new Error("This connection cannot open an editor on this environment.")),
         );
       }
       const editor = resolveAndPersistPreferredEditor(availableEditors);
