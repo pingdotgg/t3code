@@ -29,6 +29,13 @@ export const ListProjectionThreadProposedPlansInput = Schema.Struct({
 export type ListProjectionThreadProposedPlansInput =
   typeof ListProjectionThreadProposedPlansInput.Type;
 
+export const HasActionableProjectionThreadProposedPlanInput = Schema.Struct({
+  threadId: ThreadId,
+  latestTurnId: Schema.NullOr(TurnId),
+});
+export type HasActionableProjectionThreadProposedPlanInput =
+  typeof HasActionableProjectionThreadProposedPlanInput.Type;
+
 export const DeleteProjectionThreadProposedPlansInput = Schema.Struct({
   threadId: ThreadId,
 });
@@ -42,6 +49,9 @@ export interface ProjectionThreadProposedPlanRepositoryShape {
   readonly listByThreadId: (
     input: ListProjectionThreadProposedPlansInput,
   ) => Effect.Effect<ReadonlyArray<ProjectionThreadProposedPlan>, ProjectionRepositoryError>;
+  readonly hasActionableByThreadId: (
+    input: HasActionableProjectionThreadProposedPlanInput,
+  ) => Effect.Effect<boolean, ProjectionRepositoryError>;
   readonly deleteByThreadId: (
     input: DeleteProjectionThreadProposedPlansInput,
   ) => Effect.Effect<void, ProjectionRepositoryError>;
