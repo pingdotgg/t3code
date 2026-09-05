@@ -21,6 +21,11 @@ import {
   WORKSPACE_BROWSER_PREVIEW_EXTENSIONS,
   WORKSPACE_IMAGE_PREVIEW_EXTENSIONS,
 } from "@t3tools/shared/filePreview";
+import {
+  IMAGE_DIMENSIONS_HEADER_BYTES,
+  readImageDimensions,
+  type ImageDimensions,
+} from "@t3tools/shared/imageDimensions";
 import { PROJECT_FAVICON_FALLBACK_MARKER } from "@t3tools/shared/projectFavicon";
 import * as Clock from "effect/Clock";
 import * as Crypto from "effect/Crypto";
@@ -224,6 +229,24 @@ const resolveCanonicalWorkspaceFileForRequest = (input: {
     Effect.orElseSucceed(() => null),
   );
 
+/**
+ * Reads pixel dimensions from an image's header so clients can reserve the
+ * exact box before the bytes arrive. Best effort: an unreadable or unsupported
+ * file just leaves the field out, and the client measures after decode.
+ */
+const readImageDimensionsFromHeader = Effect.fn("AssetAccess.readImageDimensionsFromHeader")(
+  function* (filePath: string) {
+    const fileSystem = yield* FileSystem.FileSystem;
+    return yield* Effect.scoped(
+      Effect.gen(function* () {
+        const file = yield* fileSystem.open(filePath, { flag: "r" });
+        const header = yield* file.readAlloc(IMAGE_DIMENSIONS_HEADER_BYTES);
+        return Option.isSome(header) ? readImageDimensions(header.value) : null;
+      }),
+    ).pipe(Effect.orElseSucceed((): ImageDimensions | null => null));
+  },
+);
+
 export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (input: {
   readonly resource: AssetResource;
   readonly workspaceRoot?: string;
@@ -236,6 +259,7 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
   let claims: AssetClaims;
   let fileName: string;
   let sourcePath: string | undefined;
+  let imageDimensions: ImageDimensions | null = null;
 
   switch (input.resource._tag) {
     case "media-file": {
@@ -276,6 +300,9 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
       );
       if (!identity) {
         return yield* new AssetWorkspaceAssetNotFoundError({ resource: input.resource });
+      }
+      if (isWorkspaceImagePreviewPath(canonicalFile)) {
+        imageDimensions = yield* readImageDimensionsFromHeader(canonicalFile);
       }
       claims = {
         version: 1,
@@ -347,6 +374,9 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
             }),
         ),
       );
+      if (isWorkspaceImagePreviewPath(resolved.relativePath)) {
+        imageDimensions = yield* readImageDimensionsFromHeader(canonicalFile);
+      }
       claims = isWorkspaceImagePreviewPath(resolved.relativePath)
         ? {
             version: 1,
@@ -390,6 +420,9 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
         INLINE_DOCUMENT_EXTENSIONS.has(extension)
           ? INLINE_DOCUMENT_MIME_TYPES[extension]
           : undefined;
+      if (!isGenericFile) {
+        imageDimensions = yield* readImageDimensionsFromHeader(attachmentPath);
+      }
       claims = {
         version: 1,
         kind: "attachment",
@@ -547,6 +580,7 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
     relativeUrl: `${ASSET_ROUTE_PREFIX}/${token}/${encodeURIComponent(fileName)}`,
     expiresAt,
     ...(sourcePath !== undefined ? { sourcePath } : {}),
+    ...(imageDimensions !== null ? { imageDimensions } : {}),
   };
 });
 

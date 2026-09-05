@@ -1,5 +1,6 @@
 import {
   type AssetCreateUrlResult,
+  type AssetImageDimensions,
   AssetResource,
   EnvironmentId,
   WS_METHODS,
@@ -60,6 +61,8 @@ export type AssetUrlState =
       readonly url: string;
       /** The host path the server chose to serve, when it differs from what was asked for. */
       readonly sourcePath?: string;
+      /** Pixel size from the image header, when the server could read one. */
+      readonly imageDimensions?: AssetImageDimensions;
     };
 
 export function assetUrlStateFromResult(
@@ -74,6 +77,9 @@ export function assetUrlStateFromResult(
     _tag: "Success",
     url,
     ...(result.value.sourcePath !== undefined ? { sourcePath: result.value.sourcePath } : {}),
+    ...(result.value.imageDimensions !== undefined
+      ? { imageDimensions: result.value.imageDimensions }
+      : {}),
   };
 }
 
