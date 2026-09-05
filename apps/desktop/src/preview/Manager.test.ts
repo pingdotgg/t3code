@@ -235,7 +235,9 @@ const makeTestHostWebContents = (): TestHostWebContents => {
   return {
     id: 7,
     mainFrame: { frameTreeNodeId: 7 },
-    executeJavaScript: vi.fn(async () => true),
+    executeJavaScript: vi.fn(async (expression: string) =>
+      expression.includes(DESKTOP_PREVIEW_RECORDING_CAPTURE_TRIGGER),
+    ),
     isDestroyed: () => false,
     session: {
       setDisplayMediaRequestHandler: vi.fn((next: TestDisplayMediaHandler) => {

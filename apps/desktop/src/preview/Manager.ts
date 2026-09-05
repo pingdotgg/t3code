@@ -67,6 +67,7 @@ import {
 import { isPreviewAnnotationPayload } from "./PickedElementPayload.ts";
 import { playwrightInjectedRuntimeInstallExpression } from "./PlaywrightInjectedRuntime.ts";
 import { makePreviewAutomationKeySequence } from "./PreviewKeyboard.ts";
+import { capturePreviewPage } from "./PreviewCapture.ts";
 import { captureFavicon, safeHttpOrigin, selectFaviconCandidates } from "./FaviconCapture.ts";
 
 export type PreviewNavStatus =
@@ -327,29 +328,16 @@ const captureAnnotationScreenshot = (
   wc: Electron.WebContents,
   cropRect: PreviewAnnotationRect | null,
 ): Effect.Effect<PreviewAnnotationPayload["screenshot"], PreviewManagerError> =>
-  Effect.tryPromise({
-    // The unused abort signal is what makes this interruptible, and therefore
-    // what lets the timeout below fire. Drop the parameter and a stalled
-    // capture strands the pick session again.
-    try: (_signal) =>
-      wc.capturePage(
-        cropRect
-          ? {
-              x: cropRect.x,
-              y: cropRect.y,
-              width: cropRect.width,
-              height: cropRect.height,
-            }
-          : undefined,
-      ),
-    catch: (cause) =>
-      new PreviewOperationError({
-        operation: "captureAnnotationScreenshot",
-        tabId,
-        webContentsId: wc.id,
-        cause,
-      }),
-  }).pipe(
+  capturePreviewPage(tabId, wc, cropRect ?? undefined).pipe(
+    Effect.mapError(
+      ({ cause }) =>
+        new PreviewOperationError({
+          operation: "captureAnnotationScreenshot",
+          tabId,
+          webContentsId: wc.id,
+          cause,
+        }),
+    ),
     Effect.map((image): PreviewAnnotationPayload["screenshot"] => {
       const size = image.getSize();
       return {
@@ -661,11 +649,8 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     const capture = Effect.gen(function* () {
       // Check after the retry delay, and again before accepting its result.
       yield* requireCurrentGuest;
-      const image = yield* Effect.tryPromise({
-        // An abort-signal parameter makes a stalled promise interruptible.
-        try: (_signal) => wc.capturePage(),
-        catch: (cause) => new PreviewOperationError({ ...errorContext, cause }),
-      }).pipe(
+      const image = yield* capturePreviewPage(tabId, wc).pipe(
+        Effect.mapError(({ cause }) => new PreviewOperationError({ ...errorContext, cause })),
         Effect.timeout(CAPTURE_PAGE_ATTEMPT_TIMEOUT_MS),
         Effect.catchTags({
           TimeoutError: (cause) =>
