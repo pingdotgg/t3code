@@ -3,6 +3,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   CommandId,
   EnvironmentId,
+  GitManagerError,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2ThreadShell,
   type Project,
@@ -454,10 +455,16 @@ const makeHarness = (options: HarnessOptions = {}) => {
       return Effect.die(new Error("simulated local status defect"));
     }
     if (localStatusCallCount === 1 && options.localStatusFailure === "interrupt") {
-      return Effect.failCause(Cause.interrupt()) as never;
+      return Effect.interrupt;
     }
     if (localStatusCallCount === 1 && options.localStatusFailure === "typed") {
-      return Effect.fail("simulated local status failure") as never;
+      return Effect.fail(
+        new GitManagerError({
+          operation: "WorktreeMcpService.test.localStatus",
+          cwd: input.cwd,
+          detail: "simulated local status failure",
+        }),
+      );
     }
     if (options.localStatusFailsOnCall === localStatusCallCount) {
       return Effect.fail("simulated local status failure") as never;
