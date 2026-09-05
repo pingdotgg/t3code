@@ -79,8 +79,19 @@ export const persistServerRuntimeState = (input: {
     ),
   );
 
-export const clearPersistedServerRuntimeState = (path: string) =>
-  Effect.gen(function* () {
+export const clearPersistedServerRuntimeState = Effect.fn("clearPersistedServerRuntimeState")(
+  function* (path: string, expectedOwner?: Pick<PersistedServerRuntimeState, "pid" | "startedAt">) {
+    if (expectedOwner) {
+      const current = yield* readPersistedServerRuntimeState(path);
+      if (
+        Option.isNone(current) ||
+        current.value.pid !== expectedOwner.pid ||
+        current.value.startedAt !== expectedOwner.startedAt
+      ) {
+        return;
+      }
+    }
+
     const fs = yield* FileSystem.FileSystem;
     yield* fs.remove(path, { force: true }).pipe(
       Effect.mapError(
@@ -102,7 +113,8 @@ export const clearPersistedServerRuntimeState = (path: string) =>
           ),
       }),
     );
-  });
+  },
+);
 
 /**
  * Report whether the pid recorded in a persisted runtime state is still
