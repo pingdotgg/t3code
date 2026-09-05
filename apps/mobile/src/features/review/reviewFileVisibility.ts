@@ -3,7 +3,7 @@ import { useCallback, useMemo } from "react";
 import { updateReviewExpandedFileIds, updateReviewViewedFileIds } from "./reviewState";
 import type { ReviewRenderableFile } from "./reviewModel";
 
-export function getDefaultReviewExpandedFileIds(
+function getDefaultReviewExpandedFileIds(
   files: ReadonlyArray<ReviewRenderableFile>,
 ): ReadonlyArray<string> {
   return files.map((file) => file.id);
