@@ -445,7 +445,7 @@ export function UsageLimitsSection({
     <div className="flex flex-col gap-8">
       {groups.length === 0 && sources.length === 0 ? (
         <p className="text-sm text-muted-foreground">
-          No provider on a connected environment reports subscription limits.
+          No provider on the selected environments reports subscription limits.
         </p>
       ) : null}
       {sources.map((source) => (

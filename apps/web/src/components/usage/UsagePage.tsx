@@ -287,8 +287,8 @@ export function UsagePage() {
             {selectedEnvironments.length === 0 ? (
               <p className="text-sm text-muted-foreground">
                 {environments.length === 0
-                  ? "Connect an environment to see usage."
-                  : "Select an environment to see usage."}
+                  ? `Connect an environment to see ${showingLimits ? "limits" : "usage"}.`
+                  : `Select an environment to see ${showingLimits ? "limits" : "usage"}.`}
               </p>
             ) : showingLimits ? (
               <UsageLimitsSection selectedEnvironmentIds={selectedEnvironmentIds} />
