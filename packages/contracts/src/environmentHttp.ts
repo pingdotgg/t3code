@@ -76,10 +76,8 @@ export const EnvironmentAuthInvalidReason = Schema.Literals([
 ]);
 export type EnvironmentAuthInvalidReason = typeof EnvironmentAuthInvalidReason.Type;
 
-export const EnvironmentOperationForbiddenReason = Schema.Literals([
-  "current_session_revoke_not_allowed",
-]);
-export type EnvironmentOperationForbiddenReason = typeof EnvironmentOperationForbiddenReason.Type;
+const EnvironmentOperationForbiddenReason = Schema.Literals(["current_session_revoke_not_allowed"]);
+type EnvironmentOperationForbiddenReason = typeof EnvironmentOperationForbiddenReason.Type;
 
 export const EnvironmentInternalErrorReason = Schema.Literals([
   "bootstrap_validation_failed",
@@ -388,33 +386,33 @@ export const EnvironmentCloudLinkStateResult = Schema.Struct({
 });
 export type EnvironmentCloudLinkStateResult = typeof EnvironmentCloudLinkStateResult.Type;
 
-export const EnvironmentCloudPreferencesRequest = Schema.Struct({
+const EnvironmentCloudPreferencesRequest = Schema.Struct({
   publishAgentActivity: Schema.Boolean,
 });
-export type EnvironmentCloudPreferencesRequest = typeof EnvironmentCloudPreferencesRequest.Type;
+type EnvironmentCloudPreferencesRequest = typeof EnvironmentCloudPreferencesRequest.Type;
 
-export const AuthPairingLinkRevokeResult = Schema.Struct({
+const AuthPairingLinkRevokeResult = Schema.Struct({
   revoked: Schema.Boolean,
 });
-export type AuthPairingLinkRevokeResult = typeof AuthPairingLinkRevokeResult.Type;
+type AuthPairingLinkRevokeResult = typeof AuthPairingLinkRevokeResult.Type;
 
-export const AuthClientSessionRevokeResult = Schema.Struct({
+const AuthClientSessionRevokeResult = Schema.Struct({
   revoked: Schema.Boolean,
 });
-export type AuthClientSessionRevokeResult = typeof AuthClientSessionRevokeResult.Type;
+type AuthClientSessionRevokeResult = typeof AuthClientSessionRevokeResult.Type;
 
-export const AuthOtherClientSessionsRevokeResult = Schema.Struct({
+const AuthOtherClientSessionsRevokeResult = Schema.Struct({
   revokedCount: Schema.Number,
 });
-export type AuthOtherClientSessionsRevokeResult = typeof AuthOtherClientSessionsRevokeResult.Type;
+type AuthOtherClientSessionsRevokeResult = typeof AuthOtherClientSessionsRevokeResult.Type;
 
-export class EnvironmentMetadataHttpApi extends HttpApiGroup.make("metadata").add(
+class EnvironmentMetadataHttpApi extends HttpApiGroup.make("metadata").add(
   HttpApiEndpoint.get("descriptor", "/.well-known/t3/environment", {
     success: ExecutionEnvironmentDescriptor,
   }),
 ) {}
 
-export class EnvironmentAuthHttpApi extends HttpApiGroup.make("auth")
+class EnvironmentAuthHttpApi extends HttpApiGroup.make("auth")
   .add(
     HttpApiEndpoint.get("session", "/api/auth/session", {
       headers: OptionalBearerHeaders,
@@ -538,7 +536,7 @@ export class EnvironmentOrchestrationHttpApi extends HttpApiGroup.make("orchestr
   ) {}
 
 /** Large, compressible pull-request payloads travel over HTTP rather than the RPC socket. */
-export class EnvironmentPullRequestsHttpApi extends HttpApiGroup.make("pullRequests").add(
+class EnvironmentPullRequestsHttpApi extends HttpApiGroup.make("pullRequests").add(
   HttpApiEndpoint.post("diff", "/api/pull-requests/diff", {
     headers: OptionalBearerHeaders,
     payload: PullRequestDiffInput,
@@ -553,7 +551,7 @@ export class EnvironmentPullRequestsHttpApi extends HttpApiGroup.make("pullReque
   }).middleware(EnvironmentAuthenticatedAuth),
 ) {}
 
-export class EnvironmentConnectHttpApi extends HttpApiGroup.make("connect")
+class EnvironmentConnectHttpApi extends HttpApiGroup.make("connect")
   .add(
     HttpApiEndpoint.post("linkProof", "/api/connect/link-proof", {
       headers: OptionalBearerHeaders,

@@ -17,8 +17,8 @@ export const ExecutionEnvironmentPlatformOs = Schema.Literals([
 ]);
 export type ExecutionEnvironmentPlatformOs = typeof ExecutionEnvironmentPlatformOs.Type;
 
-export const ExecutionEnvironmentPlatformArch = Schema.Literals(["arm64", "x64", "other"]);
-export type ExecutionEnvironmentPlatformArch = typeof ExecutionEnvironmentPlatformArch.Type;
+const ExecutionEnvironmentPlatformArch = Schema.Literals(["arm64", "x64", "other"]);
+type ExecutionEnvironmentPlatformArch = typeof ExecutionEnvironmentPlatformArch.Type;
 
 /**
  * The curated set of machine shapes an environment can wear as its icon.
@@ -37,7 +37,7 @@ export const EnvironmentMachineKind = Schema.Literals(ENVIRONMENT_MACHINE_KINDS)
 export type EnvironmentMachineKind = typeof EnvironmentMachineKind.Type;
 export const isEnvironmentMachineKind = Schema.is(EnvironmentMachineKind);
 
-export const ExecutionEnvironmentPlatform = Schema.Struct({
+const ExecutionEnvironmentPlatform = Schema.Struct({
   os: ExecutionEnvironmentPlatformOs,
   arch: ExecutionEnvironmentPlatformArch,
   /** Hardware shape detected at startup. Absent when the host gives no usable
@@ -53,7 +53,7 @@ export const ExecutionEnvironmentPlatform = Schema.Struct({
  */
 export const ThreadEnvMode = Schema.Literals(["local", "worktree"]);
 export type ThreadEnvMode = typeof ThreadEnvMode.Type;
-export type ExecutionEnvironmentPlatform = typeof ExecutionEnvironmentPlatform.Type;
+type ExecutionEnvironmentPlatform = typeof ExecutionEnvironmentPlatform.Type;
 
 /** How a server can replace itself with another version when asked over RPC.
     New servers only advertise the stable launcher-backed "boot-service" path;
@@ -157,20 +157,20 @@ export const ExecutionEnvironmentDescriptor = Schema.Struct({
 });
 export type ExecutionEnvironmentDescriptor = typeof ExecutionEnvironmentDescriptor.Type;
 
-export const EnvironmentConnectionState = Schema.Literals([
+const EnvironmentConnectionState = Schema.Literals([
   "connecting",
   "connected",
   "disconnected",
   "error",
 ]);
-export type EnvironmentConnectionState = typeof EnvironmentConnectionState.Type;
+type EnvironmentConnectionState = typeof EnvironmentConnectionState.Type;
 
-export const RepositoryIdentityLocator = Schema.Struct({
+const RepositoryIdentityLocator = Schema.Struct({
   source: Schema.Literal("git-remote"),
   remoteName: TrimmedNonEmptyString,
   remoteUrl: TrimmedNonEmptyString,
 });
-export type RepositoryIdentityLocator = typeof RepositoryIdentityLocator.Type;
+type RepositoryIdentityLocator = typeof RepositoryIdentityLocator.Type;
 
 export const RepositoryIdentity = Schema.Struct({
   canonicalKey: TrimmedNonEmptyString,
@@ -195,8 +195,8 @@ export const ScopedThreadRef = Schema.Struct({
 });
 export type ScopedThreadRef = typeof ScopedThreadRef.Type;
 
-export const ScopedThreadSessionRef = Schema.Struct({
+const ScopedThreadSessionRef = Schema.Struct({
   environmentId: EnvironmentId,
   threadId: ThreadId,
 });
-export type ScopedThreadSessionRef = typeof ScopedThreadSessionRef.Type;
+type ScopedThreadSessionRef = typeof ScopedThreadSessionRef.Type;

@@ -258,8 +258,8 @@ export const PreviewAutomationResizeResult = Schema.Struct({
 export type PreviewAutomationResizeResult = typeof PreviewAutomationResizeResult.Type;
 
 /** Mirrors DesktopPreviewColorScheme; declared here to keep this module free of ipc.ts imports. */
-export const PreviewAutomationColorScheme = Schema.Literals(["system", "light", "dark"]);
-export type PreviewAutomationColorScheme = typeof PreviewAutomationColorScheme.Type;
+const PreviewAutomationColorScheme = Schema.Literals(["system", "light", "dark"]);
+type PreviewAutomationColorScheme = typeof PreviewAutomationColorScheme.Type;
 
 export const PreviewAutomationSetColorSchemeInput = Schema.Struct({
   ...PreviewAutomationTabTargetFields,
@@ -487,7 +487,7 @@ export const PreviewAutomationWaitForInput = Schema.Struct({
   });
 export type PreviewAutomationWaitForInput = typeof PreviewAutomationWaitForInput.Type;
 
-export const PreviewAutomationElement = Schema.Struct({
+const PreviewAutomationElement = Schema.Struct({
   tag: Schema.String,
   role: Schema.NullOr(Schema.String),
   name: Schema.String,
@@ -497,7 +497,7 @@ export const PreviewAutomationElement = Schema.Struct({
   width: Schema.Number,
   height: Schema.Number,
 });
-export type PreviewAutomationElement = typeof PreviewAutomationElement.Type;
+type PreviewAutomationElement = typeof PreviewAutomationElement.Type;
 
 export const PreviewAutomationConsoleEntry = Schema.Struct({
   level: Schema.String,
@@ -563,16 +563,16 @@ export const PreviewAutomationRecordingArtifact = Schema.Struct({
 });
 export type PreviewAutomationRecordingArtifact = typeof PreviewAutomationRecordingArtifact.Type;
 
-export const PreviewAutomationClientId = TrimmedNonEmptyString.check(Schema.isMaxLength(128));
-export type PreviewAutomationClientId = typeof PreviewAutomationClientId.Type;
-export const PreviewAutomationConnectionId = TrimmedNonEmptyString.check(Schema.isMaxLength(64));
-export type PreviewAutomationConnectionId = typeof PreviewAutomationConnectionId.Type;
+const PreviewAutomationClientId = TrimmedNonEmptyString.check(Schema.isMaxLength(128));
+type PreviewAutomationClientId = typeof PreviewAutomationClientId.Type;
+const PreviewAutomationConnectionId = TrimmedNonEmptyString.check(Schema.isMaxLength(64));
+type PreviewAutomationConnectionId = typeof PreviewAutomationConnectionId.Type;
 
-export const PreviewAutomationHostIdentity = Schema.Struct({
+const PreviewAutomationHostIdentity = Schema.Struct({
   clientId: PreviewAutomationClientId,
   environmentId: EnvironmentId,
 });
-export type PreviewAutomationHostIdentity = typeof PreviewAutomationHostIdentity.Type;
+type PreviewAutomationHostIdentity = typeof PreviewAutomationHostIdentity.Type;
 
 export const PreviewAutomationHost = Schema.Struct({
   ...PreviewAutomationHostIdentity.fields,

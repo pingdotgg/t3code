@@ -1,8 +1,8 @@
 import * as Schema from "effect/Schema";
 import { TrimmedNonEmptyString } from "./baseSchemas.ts";
 
-export const EditorLaunchStyle = Schema.Literals(["direct-path", "goto", "line-column"]);
-export type EditorLaunchStyle = typeof EditorLaunchStyle.Type;
+const EditorLaunchStyle = Schema.Literals(["direct-path", "goto", "line-column"]);
+type EditorLaunchStyle = typeof EditorLaunchStyle.Type;
 
 type EditorDefinition = {
   readonly id: string;
@@ -121,8 +121,8 @@ export const buildRemoteOpenUrl = (input: {
  * gates them on a local sshd listen check. Ordered most-reachable first
  * (tailnet MagicDNS name, then mDNS `<hostname>.local`).
  */
-export const RemoteOpenTargetKind = Schema.Literals(["tailscale", "mdns"]);
-export type RemoteOpenTargetKind = typeof RemoteOpenTargetKind.Type;
+const RemoteOpenTargetKind = Schema.Literals(["tailscale", "mdns"]);
+type RemoteOpenTargetKind = typeof RemoteOpenTargetKind.Type;
 
 export const RemoteOpenTarget = Schema.Struct({
   kind: RemoteOpenTargetKind,
@@ -203,5 +203,3 @@ export const ExternalLauncherError = Schema.Union([
   ExternalLauncherEditorSpawnError,
 ]);
 export type ExternalLauncherError = typeof ExternalLauncherError.Type;
-
-export const isExternalLauncherError = Schema.is(ExternalLauncherError);

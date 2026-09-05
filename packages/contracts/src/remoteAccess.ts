@@ -2,13 +2,13 @@ import * as Schema from "effect/Schema";
 
 import { TrimmedNonEmptyString } from "./baseSchemas.ts";
 
-export const AdvertisedEndpointProviderKind = Schema.Literals([
+const AdvertisedEndpointProviderKind = Schema.Literals([
   "core",
   "private-network",
   "tunnel",
   "manual",
 ]);
-export type AdvertisedEndpointProviderKind = typeof AdvertisedEndpointProviderKind.Type;
+type AdvertisedEndpointProviderKind = typeof AdvertisedEndpointProviderKind.Type;
 
 export const AdvertisedEndpointReachability = Schema.Literals([
   "loopback",
@@ -46,11 +46,11 @@ export const AdvertisedEndpointProvider = Schema.Struct({
 });
 export type AdvertisedEndpointProvider = typeof AdvertisedEndpointProvider.Type;
 
-export const AdvertisedEndpointCompatibility = Schema.Struct({
+const AdvertisedEndpointCompatibility = Schema.Struct({
   hostedHttpsApp: AdvertisedEndpointHostedHttpsCompatibility,
   desktopApp: Schema.Literals(["compatible", "unknown"]),
 });
-export type AdvertisedEndpointCompatibility = typeof AdvertisedEndpointCompatibility.Type;
+type AdvertisedEndpointCompatibility = typeof AdvertisedEndpointCompatibility.Type;
 
 export const AdvertisedEndpoint = Schema.Struct({
   id: TrimmedNonEmptyString,

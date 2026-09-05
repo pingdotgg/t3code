@@ -12,16 +12,16 @@ import { ProviderInstanceId } from "./providerInstance.ts";
 export const BackgroundBooleanState = Schema.Literals(["true", "false", "unknown"]);
 export type BackgroundBooleanState = typeof BackgroundBooleanState.Type;
 
-export const HostPowerThermalState = Schema.Literals([
+const HostPowerThermalState = Schema.Literals([
   "unknown",
   "nominal",
   "fair",
   "serious",
   "critical",
 ]);
-export type HostPowerThermalState = typeof HostPowerThermalState.Type;
+type HostPowerThermalState = typeof HostPowerThermalState.Type;
 
-export const HostPowerSource = Schema.Literals([
+const HostPowerSource = Schema.Literals([
   "unknown",
   "node-macos-shell",
   "node-macos-native",
@@ -29,7 +29,7 @@ export const HostPowerSource = Schema.Literals([
   "node-windows",
   "electron-main",
 ]);
-export type HostPowerSource = typeof HostPowerSource.Type;
+type HostPowerSource = typeof HostPowerSource.Type;
 
 export const HostPowerSnapshot = Schema.Struct({
   source: HostPowerSource,
@@ -58,8 +58,8 @@ export const BackgroundScope = Schema.Union([
 ]);
 export type BackgroundScope = typeof BackgroundScope.Type;
 
-export const ClientKind = Schema.Literals(["web", "desktop-renderer", "mobile", "unknown"]);
-export type ClientKind = typeof ClientKind.Type;
+const ClientKind = Schema.Literals(["web", "desktop-renderer", "mobile", "unknown"]);
+type ClientKind = typeof ClientKind.Type;
 
 export const ClientActivityClientId = TrimmedNonEmptyString.check(Schema.isMaxLength(128));
 export type ClientActivityClientId = typeof ClientActivityClientId.Type;
