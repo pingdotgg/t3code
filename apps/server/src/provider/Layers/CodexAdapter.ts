@@ -70,8 +70,10 @@ import {
   type CodexSessionRuntimeShape,
 } from "./CodexSessionRuntime.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
+import { CodexBackgroundTaskEvent, CodexMonitorOutput } from "./CodexBackgroundTasks.ts";
 import { resolveCodexLaunchArgs } from "./codexLaunchArgs.ts";
 import { codexRateLimitsToUpdate } from "./codexUsageLimits.ts";
+import * as MonitorSession from "../../mcp/MonitorSession.ts";
 const isCodexAppServerProcessExitedError = Schema.is(CodexErrors.CodexAppServerProcessExitedError);
 const isCodexAppServerTransportError = Schema.is(CodexErrors.CodexAppServerTransportError);
 const isCodexSessionRuntimeThreadIdMissingError = Schema.is(
@@ -1296,6 +1298,43 @@ function mapToRuntimeEvents(
   event: ProviderEvent,
   canonicalThreadId: ThreadId,
 ): ReadonlyArray<ProviderRuntimeEvent> {
+  if (event.kind === "notification" && event.method === "backgroundMonitor/delivered") {
+    const output = readPayload(CodexMonitorOutput, event.payload);
+    if (!output) return [];
+    return [
+      {
+        ...runtimeEventBase(event, canonicalThreadId),
+        type: "item.completed",
+        payload: {
+          itemType: "dynamic_tool_call",
+          status: "completed",
+          title: "Monitor event",
+          detail: output.output,
+        },
+      },
+    ];
+  }
+  if (event.kind === "notification" && event.method === "backgroundTask/changed") {
+    const task = readPayload(CodexBackgroundTaskEvent, event.payload);
+    if (!task) return [];
+    const base = runtimeEventBase(event, canonicalThreadId);
+    const taskId = RuntimeTaskId.make(task.taskId);
+    return task.status === "running"
+      ? [
+          {
+            ...base,
+            type: "task.started",
+            payload: { taskId, description: task.description, taskType: "shell" },
+          },
+        ]
+      : [
+          {
+            ...base,
+            type: "task.completed",
+            payload: { taskId, status: task.status, taskType: "shell" },
+          },
+        ];
+  }
   if (event.kind === "notification" && event.method.startsWith("collabAgent/")) {
     return mapCollabAgentEvent(event, canonicalThreadId);
   }
@@ -2213,6 +2252,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
   options?: CodexAdapterLiveOptions,
 ) {
   const boundInstanceId = options?.instanceId ?? ProviderInstanceId.make("codex");
+  const monitorSessions = yield* MonitorSession.MonitorSessions;
   const fileSystem = yield* FileSystem.FileSystem;
   const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const crypto = yield* Crypto.Crypto;
@@ -2268,6 +2308,8 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           ...(serviceTier ? { serviceTier } : {}),
           ...(mcpSession
             ? {
+                mcpProviderSessionId: mcpSession.providerSessionId,
+                browserToolsAvailable: mcpSession.capabilities?.includes("preview") ?? true,
                 environment: {
                   ...(options?.environment ?? process.env),
                   T3_MCP_BEARER_TOKEN: mcpSession.authorizationHeader.replace(/^Bearer\s+/, ""),
@@ -2289,6 +2331,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
         );
         const createRuntime = options?.makeRuntime ?? makeCodexSessionRuntime;
         const runtime = yield* createRuntime(runtimeInput).pipe(
+          Effect.provideService(MonitorSession.MonitorSessions, monitorSessions),
           Effect.provideService(Scope.Scope, sessionScope),
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
           Effect.provideService(Crypto.Crypto, crypto),
