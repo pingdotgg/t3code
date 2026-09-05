@@ -743,7 +743,7 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
             </p>
           ) : null}
         </div>
-        <div className="flex w-full shrink-0 items-center gap-2 sm:w-auto sm:justify-end">
+        <div className="flex w-full min-w-0 items-center gap-2 sm:w-auto sm:max-w-[60%] sm:justify-end">
           {shareablePairingUrl && canCopyToClipboard ? (
             <Button
               size="xs"
@@ -992,7 +992,7 @@ const ConnectedClientListRow = memo(function ConnectedClientListRow({
             <AccessScopeSummary scopes={clientSession.scopes} label="Client scopes" />
           </p>
         </div>
-        <div className="flex w-full shrink-0 items-center gap-2 sm:w-auto sm:justify-end">
+        <div className="flex w-full min-w-0 items-center gap-2 sm:w-auto sm:max-w-[60%] sm:justify-end">
           {!clientSession.current ? (
             <Button
               size="xs"
@@ -1523,7 +1523,7 @@ function SavedBackendListRow({
             </Tooltip>
           ) : null}
           {environment.connection.error && !resumingServerUpdate ? (
-            <p className="flex min-w-0 items-center gap-2 text-destructive text-xs">
+            <p className="flex min-w-0 flex-wrap items-center gap-2 text-destructive text-xs">
               <span className="min-w-0 break-words">
                 {connectionStatusText(environment.connection)}
               </span>
@@ -1539,7 +1539,7 @@ function SavedBackendListRow({
             </p>
           ) : null}
         </div>
-        <div className="flex w-full shrink-0 items-center gap-2 sm:w-auto sm:justify-end">
+        <div className="flex w-full min-w-0 items-center gap-2 sm:w-auto sm:max-w-[60%] sm:justify-end">
           {versionMismatch &&
           (serverUpdateState.status === "idle" || serverUpdateState.status === "failed") ? (
             <ServerUpdateAction
