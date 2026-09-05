@@ -37,7 +37,10 @@ type HookInput = {
 export function useEnvironmentSpeechInput(input: HookInput) {
   const prepared = Option.getOrNull(usePreparedConnection(input.environmentId));
   const microphoneId = useClientSettings((settings) => settings.voiceMicrophone);
-  const [status, setStatus] = useState<EnvironmentSpeechStatus | null>(null);
+  const [status, setStatus] = useState<{
+    readonly prepared: NonNullable<typeof prepared>;
+    readonly value: EnvironmentSpeechStatus;
+  } | null>(null);
   const [state, setState] = useState<VoiceInputState>(INITIAL_STATE);
   const [level, setLevel] = useState(0);
   const controllerRef = useRef<VoiceInputController | null>(null);
@@ -95,7 +98,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       getTranscriber: () => platform.transcriber,
       requestPermission: async () => ({ granted: true, canAskAgain: true }),
       configureRecording: async () => undefined,
-      releaseRecording: platform.cancelRecording,
+      releaseRecording: async () => platform.cancelRecording(),
       deleteRecording: platform.deleteRecording,
       readDraft,
       commitDraft: (text, selection) => latestInputRef.current.commitDraft(text, selection),
@@ -114,7 +117,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     void runtime
       .runPromise(getEnvironmentSpeechStatus(prepared))
       .then((next) => {
-        if (!disposed) setStatus(next);
+        if (!disposed) setStatus({ prepared, value: next });
       })
       .catch(() => {
         if (!disposed) setStatus(null);
@@ -124,6 +127,8 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     };
   }, [prepared]);
 
+  const currentStatus = status?.prepared === prepared ? status.value : null;
+
   const previousOwnerRef = useRef(input.ownerKey);
   useEffect(() => {
     if (previousOwnerRef.current === input.ownerKey) return;
@@ -132,24 +137,38 @@ export function useEnvironmentSpeechInput(input: HookInput) {
   }, [input.ownerKey]);
 
   const start = useCallback(async () => {
-    const controller = controllerRef.current;
-    if (!controller || !status?.supported) return;
-    if (status.state === "missing-model") {
+    const expectedController = controllerRef.current;
+    const expectedOwner = latestInputRef.current.ownerKey;
+    if (!expectedController || !prepared) return;
+    const freshStatus = await runtime
+      .runPromise(getEnvironmentSpeechStatus(prepared))
+      .catch(() => null);
+    if (controllerRef.current !== expectedController) return;
+    if (!freshStatus) {
+      setStatus(null);
+      return;
+    }
+    setStatus({ prepared, value: freshStatus });
+    if (!freshStatus.supported) return;
+    if (freshStatus.state === "missing-model") {
       const confirmed = await ensureLocalApi().dialogs.confirm(
         "Download a 48 MiB English speech model to this T3 environment? Recordings will be sent to this environment for transcription and deleted after use.",
       );
       if (!confirmed) return;
     }
+    const controller = controllerRef.current;
+    if (controller !== expectedController || latestInputRef.current.ownerKey !== expectedOwner)
+      return;
     setLevel(0);
     await controller.start();
-  }, [status]);
+  }, [prepared]);
 
   return {
     available:
-      status?.supported === true &&
+      currentStatus?.supported === true &&
       typeof navigator !== "undefined" &&
       Boolean(navigator.mediaDevices?.getUserMedia),
-    status,
+    status: currentStatus,
     state,
     progress: null,
     level,

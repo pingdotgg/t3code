@@ -49,8 +49,13 @@ export async function downloadSpeechModel(
     if (!response.ok || !response.body) {
       throw new Error(`speech model download failed with status ${response.status}`);
     }
-    const contentLength = Number(response.headers.get("content-length"));
-    if (Number.isFinite(contentLength) && contentLength !== SPEECH_MODEL.size) {
+    const contentLengthHeader = response.headers.get("content-length");
+    const contentLength = contentLengthHeader === null ? null : Number(contentLengthHeader);
+    if (
+      contentLength !== null &&
+      Number.isFinite(contentLength) &&
+      contentLength !== SPEECH_MODEL.size
+    ) {
       throw new Error(
         `speech model download size mismatch: expected ${SPEECH_MODEL.size}, got ${contentLength}`,
       );

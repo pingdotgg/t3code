@@ -10,6 +10,7 @@ import type { PreparedConnection } from "@t3tools/client-runtime/connection";
 import { runtime } from "../lib/runtime";
 
 const TARGET_SAMPLE_RATE = 16_000;
+const MAX_RECORDING_SECONDS = 5 * 60;
 
 function transcriptionError(cause: unknown) {
   return cause instanceof VoiceTranscriptionError
@@ -28,7 +29,10 @@ async function decodePcm(uri: string, signal: AbortSignal): Promise<Uint8Array> 
   const context = new AudioContext();
   try {
     const decoded = await context.decodeAudioData(encoded);
-    const length = Math.ceil(decoded.duration * TARGET_SAMPLE_RATE);
+    const length = Math.min(
+      Math.ceil(decoded.duration * TARGET_SAMPLE_RATE),
+      TARGET_SAMPLE_RATE * MAX_RECORDING_SECONDS,
+    );
     const offline = new OfflineAudioContext(1, length, TARGET_SAMPLE_RATE);
     const source = offline.createBufferSource();
     source.buffer = decoded;
@@ -117,9 +121,13 @@ export function createBrowserVoiceInputPlatform(input: {
       if (!activeRecorder || activeRecorder.state === "inactive") return;
       await new Promise<void>((resolve, reject) => {
         activeRecorder.addEventListener("stop", () => resolve(), { once: true });
-        activeRecorder.addEventListener("error", () => reject(activeRecorder.error), {
-          once: true,
-        });
+        activeRecorder.addEventListener(
+          "error",
+          () => reject(new Error("Microphone recording failed.")),
+          {
+            once: true,
+          },
+        );
         activeRecorder.stop();
       });
       const blob = new Blob(chunks, { type: activeRecorder.mimeType });

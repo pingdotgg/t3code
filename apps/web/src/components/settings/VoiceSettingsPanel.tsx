@@ -25,7 +25,10 @@ export function VoiceSettingsPanel() {
   const prepared = Option.getOrNull(usePreparedConnection(environmentId));
   const selectedMicrophone = useClientSettings((settings) => settings.voiceMicrophone);
   const updateClientSettings = useUpdateClientSettings();
-  const [status, setStatus] = useState<EnvironmentSpeechStatus | null>(null);
+  const [status, setStatus] = useState<{
+    readonly prepared: NonNullable<typeof prepared>;
+    readonly value: EnvironmentSpeechStatus;
+  } | null>(null);
   const [microphones, setMicrophones] = useState<MediaDeviceInfo[]>([]);
   const [loadingMicrophones, setLoadingMicrophones] = useState(false);
   const [removingModel, setRemovingModel] = useState(false);
@@ -47,29 +50,35 @@ export function VoiceSettingsPanel() {
     }
   }, []);
 
-  const refreshStatus = useCallback(async () => {
-    if (!prepared) return;
-    try {
-      setStatus(await runtime.runPromise(getEnvironmentSpeechStatus(prepared)));
-    } catch {
-      setStatus(null);
-    }
-  }, [prepared]);
-
   useEffect(() => {
     void refreshMicrophones();
-    void refreshStatus();
     const mediaDevices = navigator.mediaDevices;
     if (!mediaDevices) return;
     const handleDeviceChange = () => void refreshMicrophones();
     mediaDevices.addEventListener("devicechange", handleDeviceChange);
     return () => mediaDevices.removeEventListener("devicechange", handleDeviceChange);
-  }, [refreshMicrophones, refreshStatus]);
+  }, [refreshMicrophones]);
+
+  useEffect(() => {
+    if (!prepared) return;
+    let disposed = false;
+    void runtime
+      .runPromise(getEnvironmentSpeechStatus(prepared))
+      .then((value) => {
+        if (!disposed) setStatus({ prepared, value });
+      })
+      .catch(() => {
+        if (!disposed) setStatus(null);
+      });
+    return () => {
+      disposed = true;
+    };
+  }, [prepared]);
 
   const selectedIsUnavailable = Boolean(
     selectedMicrophone && !microphones.some((device) => device.deviceId === selectedMicrophone),
   );
-  const currentStatus = prepared ? status : null;
+  const currentStatus = status?.prepared === prepared ? status.value : null;
 
   return (
     <SettingsPageContainer>
@@ -145,7 +154,7 @@ export function VoiceSettingsPanel() {
                   setRemovingModel(true);
                   void runtime
                     .runPromise(removeEnvironmentSpeechModel(prepared))
-                    .then(setStatus)
+                    .then((value) => setStatus({ prepared, value }))
                     .catch((error) =>
                       toastManager.add({
                         type: "error",

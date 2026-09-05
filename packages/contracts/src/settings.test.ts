@@ -504,3 +504,11 @@ describe("server model preferences", () => {
     expect(decodeServerSettingsPatch(input)).toEqual(input);
   });
 });
+
+describe("ClientSettings microphone", () => {
+  it("accepts microphone selection patches", () => {
+    expect(decodeClientSettingsPatch({ voiceMicrophone: "studio-mic" }).voiceMicrophone).toBe(
+      "studio-mic",
+    );
+  });
+});
