@@ -56,6 +56,13 @@ it("exports provider-compatible object schemas with described parameters", () =>
   }
 });
 
+it("names the in-app browser on status and open", () => {
+  expect(PreviewToolkit.tools.preview_status.description).toContain("in-app browser");
+  expect(PreviewToolkit.tools.preview_open.description).toContain("in-app browser");
+  expect(PreviewToolkit.tools.preview_open.description).toContain("auto-show preference");
+  expect(PreviewToolkit.tools.preview_open.description).not.toContain("by default");
+});
+
 it("exports exact object result schemas for preview actions", () => {
   const actionNames = [
     "preview_click",

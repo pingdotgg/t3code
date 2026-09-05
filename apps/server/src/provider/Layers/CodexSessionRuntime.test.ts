@@ -518,6 +518,7 @@ describe("T3 browser developer instructions", () => {
       NodeAssert.match(instructions, /preview_status/);
       NodeAssert.match(instructions, /preview_open/);
       NodeAssert.match(instructions, /Do not switch to global browser skills/);
+      NodeAssert.match(instructions, /Aside/);
     }
   });
 
@@ -526,7 +527,7 @@ describe("T3 browser developer instructions", () => {
       const instructions = buildCodexDeveloperInstructions(mode, runtime, false);
       NodeAssert.doesNotMatch(instructions, /preview_status/);
       NodeAssert.doesNotMatch(instructions, /preview_open/);
-      NodeAssert.doesNotMatch(instructions, /T3 Code collaborative browser/);
+      NodeAssert.doesNotMatch(instructions, /T3 Code in-app browser/);
       // Steering away from other browser automation must go with the tools;
       // keeping it would leave the model talked out of its only option.
       NodeAssert.doesNotMatch(instructions, /Do not switch to global browser skills/);

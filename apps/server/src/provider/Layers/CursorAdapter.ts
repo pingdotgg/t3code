@@ -67,6 +67,7 @@ import {
 } from "../acp/AcpRuntimeModel.ts";
 import { makeAcpNativeLoggerFactory } from "../acp/AcpNativeLogging.ts";
 import { applyCursorAcpModelSelection, makeCursorAcpRuntime } from "../acp/CursorAcpSupport.ts";
+import { prefixHostBrowserToolInstructions } from "../HostBrowserToolInstructions.ts";
 import {
   CursorAskQuestionRequest,
   CursorCreatePlanRequest,
@@ -144,6 +145,12 @@ interface CursorSessionContext {
    * >0 means a turn is actively running, so a new sendTurn is a steer that
    * continues it, and only the last remaining prompt settles the turn. */
   promptsInFlight: number;
+  /** False when this process loaded an existing ACP session. */
+  readonly createdViaNewSession: boolean;
+  /** True when the product-native preview MCP server was attached at session start. */
+  readonly browserToolsAttached: boolean;
+  /** True after the first successful prompt that carried in-app browser steering. */
+  browserInstructionsPrefixed: boolean;
   stopped: boolean;
 }
 
@@ -788,6 +795,9 @@ export function makeCursorAdapter(
             activeTurnId: undefined,
             cursorSkillNames: undefined,
             promptsInFlight: 0,
+            createdViaNewSession: resumeSessionId === undefined,
+            browserToolsAttached: mcpSession !== undefined,
+            browserInstructionsPrefixed: false,
             stopped: false,
           };
 
@@ -976,10 +986,19 @@ export function makeCursorAdapter(
           }
 
           const promptParts: Array<EffectAcpSchema.ContentBlock> = [];
-          const rawPrompt = input.input?.trim() ?? "";
-          if (rawPrompt) {
+          const userText = input.input?.trim() ?? "";
+          const includeBrowserTools =
+            ctx.browserToolsAttached &&
+            ctx.createdViaNewSession &&
+            !ctx.browserInstructionsPrefixed &&
+            (userText.length > 0 || (input.attachments?.length ?? 0) > 0);
+          if (userText.length > 0 || includeBrowserTools) {
             let cursorSkillNames = ctx.cursorSkillNames;
-            if (hasCursorSkillMention(rawPrompt) && cursorSkillNames === undefined) {
+            if (
+              userText.length > 0 &&
+              hasCursorSkillMention(userText) &&
+              cursorSkillNames === undefined
+            ) {
               const skills = yield* discoverCursorSkills(
                 ctx.session.cwd,
                 options?.environment,
@@ -995,9 +1014,12 @@ export function makeCursorAdapter(
               ctx.cursorSkillNames = cursorSkillNames;
             }
             const prompt = cursorSkillNames
-              ? rewriteCursorSkillMentions(rawPrompt, cursorSkillNames)
-              : rawPrompt;
-            promptParts.push({ type: "text", text: prompt });
+              ? rewriteCursorSkillMentions(userText, cursorSkillNames)
+              : userText;
+            promptParts.push({
+              type: "text",
+              text: prefixHostBrowserToolInstructions(prompt, { includeBrowserTools }),
+            });
           }
           if (input.attachments && input.attachments.length > 0) {
             for (const attachment of input.attachments) {
@@ -1060,6 +1082,9 @@ export function makeCursorAdapter(
                 mapAcpToAdapterError(PROVIDER, input.threadId, "session/prompt", error),
               ),
             );
+          if (includeBrowserTools && result.stopReason !== "cancelled") {
+            ctx.browserInstructionsPrefixed = true;
+          }
 
           const turnRecord = ctx.turns.find((turn) => turn.id === turnId);
           if (turnRecord) {

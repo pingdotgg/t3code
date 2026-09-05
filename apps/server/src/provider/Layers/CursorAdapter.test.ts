@@ -19,6 +19,7 @@ import { createModelSelection } from "@t3tools/shared/model";
 import {
   ApprovalRequestId,
   CursorSettings,
+  EnvironmentId,
   ProviderDriverKind,
   type ProviderRuntimeEvent,
   ThreadId,
@@ -26,8 +27,10 @@ import {
 } from "@t3tools/contracts";
 
 import { ServerConfig } from "../../config.ts";
-import { buildRuntimeInstructions } from "../RuntimeInstructions.ts";
+import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import { HOST_BROWSER_TOOL_INSTRUCTIONS } from "../HostBrowserToolInstructions.ts";
+import { buildRuntimeInstructions } from "../RuntimeInstructions.ts";
 import type { CursorAdapterShape } from "../Services/CursorAdapter.ts";
 import { makeCursorAdapter } from "./CursorAdapter.ts";
 import { execScriptSource, writeFakeCli } from "../../testUtils/fakeCli.ts";
@@ -92,6 +95,22 @@ async function readJsonLines(filePath: string) {
     .map((line) => line.trim())
     .filter((line) => line.length > 0)
     .map((line) => JSON.parse(line) as Record<string, unknown>);
+}
+
+function promptTextsFromLog(requests: ReadonlyArray<Record<string, unknown>>): string[] {
+  return requests.flatMap((entry) => {
+    if (entry.method !== "session/prompt") return [];
+    const prompt = (entry.params as { prompt?: ReadonlyArray<{ type?: string; text?: string }> })
+      ?.prompt;
+    return (prompt ?? [])
+      .filter(
+        (part) =>
+          part.type === "text" &&
+          typeof part.text === "string" &&
+          !part.text.startsWith("<runtime_info>"),
+      )
+      .map((part) => part.text ?? "");
+  });
 }
 
 async function waitForFileContent(filePath: string, attempts = 40) {
@@ -1556,5 +1575,116 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
       // they wait on virtual time that never advances, and a regression would
       // hang until the suite timeout instead of failing here.
     }).pipe(TestClock.withLive),
+  );
+
+  it.effect("prefixes in-app browser instructions only when preview MCP is attached", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CursorAdapter;
+      const serverSettings = yield* ServerSettingsService;
+      const threadId = ThreadId.make("cursor-browser-prefix");
+      const tempDir = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "cursor-acp-browser-prefix-")),
+      );
+      const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
+      const argvLogPath = NodePath.join(tempDir, "argv.txt");
+      yield* Effect.promise(() => NodeFSP.writeFile(requestLogPath, "", "utf8"));
+      const wrapperPath = yield* Effect.promise(() =>
+        makeProbeWrapper(requestLogPath, argvLogPath),
+      );
+      yield* serverSettings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
+      McpProviderSession.setMcpProviderSession({
+        environmentId: EnvironmentId.make("cursor-browser-prefix-environment"),
+        threadId,
+        providerSessionId: "cursor-browser-prefix-provider-session",
+        providerInstanceId: ProviderInstanceId.make("cursor-browser-prefix-instance"),
+        endpoint: "http://127.0.0.1:43123/mcp",
+        authorizationHeader: "Bearer test-token",
+      });
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("cursor"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "default" },
+      });
+      yield* adapter.sendTurn({ threadId, input: "open the app", attachments: [] });
+      yield* adapter.sendTurn({ threadId, input: "continue", attachments: [] });
+
+      const prompts = promptTextsFromLog(
+        yield* Effect.promise(() => readJsonLines(requestLogPath)),
+      );
+      assert.equal(prompts.length, 2);
+      assert.include(prompts[0], HOST_BROWSER_TOOL_INSTRUCTIONS.trim());
+      assert.match(prompts[0] ?? "", /open the app$/);
+      assert.equal(prompts[1], "continue");
+
+      yield* adapter.stopSession(threadId);
+      McpProviderSession.clearMcpProviderSession(threadId);
+    }),
+  );
+
+  it.effect("prefixes browser instructions after an attachments-only first turn", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CursorAdapter;
+      const serverSettings = yield* ServerSettingsService;
+      const threadId = ThreadId.make("cursor-browser-image-first");
+      const tempDir = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "cursor-acp-browser-image-first-")),
+      );
+      const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
+      const argvLogPath = NodePath.join(tempDir, "argv.txt");
+      yield* Effect.promise(() => NodeFSP.writeFile(requestLogPath, "", "utf8"));
+      const wrapperPath = yield* Effect.promise(() =>
+        makeProbeWrapper(requestLogPath, argvLogPath),
+      );
+      yield* serverSettings.updateSettings({ providers: { cursor: { binaryPath: wrapperPath } } });
+      const { attachmentsDir } = yield* Effect.service(ServerConfig);
+      const attachmentId = "browser-prefix-shot";
+      yield* Effect.promise(async () => {
+        await NodeFSP.mkdir(attachmentsDir, { recursive: true });
+        await NodeFSP.writeFile(NodePath.join(attachmentsDir, `${attachmentId}.png`), "pixels");
+      });
+      McpProviderSession.setMcpProviderSession({
+        environmentId: EnvironmentId.make("cursor-browser-image-first-environment"),
+        threadId,
+        providerSessionId: "cursor-browser-image-first-provider-session",
+        providerInstanceId: ProviderInstanceId.make("cursor-browser-image-first-instance"),
+        endpoint: "http://127.0.0.1:43123/mcp",
+        authorizationHeader: "Bearer test-token",
+      });
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("cursor"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+        modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "default" },
+      });
+      yield* adapter.sendTurn({
+        threadId,
+        input: "",
+        attachments: [
+          {
+            type: "image",
+            id: attachmentId,
+            name: "shot.png",
+            mimeType: "image/png",
+            sizeBytes: 6,
+          },
+        ],
+      });
+      yield* adapter.sendTurn({ threadId, input: "what is this", attachments: [] });
+
+      const prompts = promptTextsFromLog(
+        yield* Effect.promise(() => readJsonLines(requestLogPath)),
+      );
+      assert.equal(prompts.length, 2);
+      assert.equal(prompts[0], HOST_BROWSER_TOOL_INSTRUCTIONS.trim());
+      assert.equal(prompts[1], "what is this");
+
+      yield* adapter.stopSession(threadId);
+      McpProviderSession.clearMcpProviderSession(threadId);
+    }),
   );
 });
