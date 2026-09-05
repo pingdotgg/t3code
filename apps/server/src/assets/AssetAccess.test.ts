@@ -549,6 +549,42 @@ describe("AssetAccess", () => {
     }).pipe(Effect.provide(testLayer)),
   );
 
+  it.effect("issues exact workspace URLs for PDF previews", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-asset-pdf-workspace-",
+      });
+      const docsDirectory = path.join(root, "docs");
+      const pdfPath = path.join(docsDirectory, "report.pdf");
+      const siblingPath = path.join(docsDirectory, "private.pdf");
+      yield* fileSystem.makeDirectory(docsDirectory, { recursive: true });
+      yield* fileSystem.writeFileString(pdfPath, "report");
+      yield* fileSystem.writeFileString(siblingPath, "private");
+      const canonicalPdfPath = yield* fileSystem.realPath(pdfPath);
+
+      const result = yield* issueAssetUrl({
+        resource: {
+          _tag: "workspace-file",
+          threadId: ThreadId.make("thread-1"),
+          path: pdfPath,
+        },
+        workspaceRoot: root,
+      });
+      const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+      const separatorIndex = suffix.indexOf("/");
+      const token = suffix.slice(0, separatorIndex);
+
+      expect(yield* resolveAsset(token, "report.pdf")).toEqual({
+        kind: "file",
+        path: canonicalPdfPath,
+      });
+      expect(yield* resolveAsset(token, "private.pdf")).toBeNull();
+      expect(yield* resolveAsset(token, "../report.pdf")).toBeNull();
+    }).pipe(Effect.provide(testLayer)),
+  );
+
   it.effect("issues exact attachment capabilities by attachment id", () =>
     Effect.gen(function* () {
       const config = yield* ServerConfig.ServerConfig;
