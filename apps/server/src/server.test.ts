@@ -11109,10 +11109,15 @@ it.live(
       const reportedMessage =
         "2026-03-14T16:11:12.550224Z ERROR codex_core::codex: failed to load skill /home/sebherrerabe/repos/devsuite/.agent/skills/monorepo-scaffolding/SKILL.md: invalid YAML: mapping values are not allowed in this context at line 2 column 50";
       const variants = [
-        { name: "reported-233", message: () => reportedMessage },
-        { name: "saturated-repeated", message: () => "diagnostic ".repeat(300) },
+        { name: "reported-233", expectedDetailLength: 233, message: () => reportedMessage },
+        {
+          name: "saturated-repeated",
+          expectedDetailLength: 2_048,
+          message: () => "diagnostic ".repeat(300),
+        },
         {
           name: "saturated-varied",
+          expectedDetailLength: 2_048,
           message: (row: number) =>
             Array.from({ length: 80 }, (_, block) =>
               NodeCrypto.createHash("sha256").update(`${row}:${block}`).digest("base64"),
@@ -11120,6 +11125,7 @@ it.live(
         },
         {
           name: "saturated-json-escapes",
+          expectedDetailLength: 2_048,
           message: (row: number) =>
             `diagnostic ${row}: ` +
             Array.from({ length: 3_072 }, (_, index) =>
@@ -11240,7 +11246,9 @@ it.live(
                   );
                   assert.isTrue(payloads.every((payload) => payload.message.length === 180));
                   assert.isTrue(
-                    payloads.every((payload) => (payload.detail?.length ?? 0) <= 2_048),
+                    payloads.every(
+                      (payload) => payload.detail?.length === variant.expectedDetailLength,
+                    ),
                   );
                   return {
                     variant: variant.name,
