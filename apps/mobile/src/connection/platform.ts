@@ -57,31 +57,12 @@ const connectivityLayer = Connectivity.layer({
   changes: Stream.callback((queue) =>
     Effect.acquireRelease(
       Effect.sync(() => {
-        let active = true;
         const networkSubscription = Network.addNetworkStateListener((state) => {
           Queue.offerUnsafe(queue, networkStatus(state));
         });
-        const appStateSubscription = AppState.addEventListener("change", (state) => {
-          if (state !== "active") {
-            return;
-          }
-          void Network.getNetworkStateAsync()
-            .then((current) => {
-              if (active) {
-                Queue.offerUnsafe(queue, networkStatus(current));
-              }
-            })
-            .catch(() => undefined);
-        });
-        return {
-          close: () => {
-            active = false;
-            networkSubscription.remove();
-            appStateSubscription.remove();
-          },
-        };
+        return networkSubscription;
       }),
-      ({ close }) => Effect.sync(close),
+      (subscription) => Effect.sync(() => subscription.remove()),
     ).pipe(Effect.asVoid),
   ),
 });
