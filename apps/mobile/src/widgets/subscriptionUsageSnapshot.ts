@@ -32,7 +32,8 @@ export function buildSubscriptionUsageSnapshot(
 ): SubscriptionUsageSnapshot {
   const rows: SubscriptionUsageRow[] = [];
   const add = (label: string, limits: ServerProviderUsageLimits, sourceFailed = false) => {
-    const checkedAt = Date.parse(limits.checkedAt);
+    const parsedCheckedAt = Date.parse(limits.checkedAt);
+    const checkedAt = Number.isFinite(parsedCheckedAt) ? parsedCheckedAt : 0;
     if (limits.unavailable || sourceFailed || limits.windows.length === 0) {
       rows.push({
         label,
@@ -56,7 +57,10 @@ export function buildSubscriptionUsageSnapshot(
           ? `Resets ${new Date(reset).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}`
           : "Reset time unavailable",
         checkedAt,
-        expiresAt: Math.min(checkedAt + MAX_AGE, Number.isFinite(reset) ? reset : Infinity),
+        expiresAt:
+          checkedAt === 0
+            ? 0
+            : Math.min(checkedAt + MAX_AGE, Number.isFinite(reset) ? reset : Infinity),
       });
     }
   };

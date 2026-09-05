@@ -77,7 +77,7 @@ describe("iOS subscription widget", () => {
               label: "Claude",
               window: "No subscription limits",
               resetLabel: "Open app for details",
-              checkedAt: now,
+              checkedAt: 0,
               expiresAt: 0,
             },
           ],
@@ -88,6 +88,8 @@ describe("iOS subscription widget", () => {
     );
     expect(tree).toContain("—");
     expect(tree).toContain("No subscription limits");
+    expect(tree).toContain("Last checked unavailable");
+    expect(tree).not.toContain("1970");
     expect(tree).not.toContain("ProgressView");
     expect(tree).not.toContain("0% used");
   });

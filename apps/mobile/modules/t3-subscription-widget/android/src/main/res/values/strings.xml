@@ -1,4 +1,5 @@
 <resources>
+  <string name="t3_subscription_widget_unknown_check">Last checked unavailable</string>
   <string name="t3_subscription_widget_name">Subscription usage</string>
   <string name="t3_subscription_widget_description">Saved subscription quotas from your T3 Code environments. Tap to refresh in the app.</string>
   <string name="t3_subscription_widget_empty">Open T3 Code and connect an environment to see limits.</string>

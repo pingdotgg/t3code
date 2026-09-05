@@ -16,6 +16,7 @@ export function SubscriptionUsage(
         ? 2
         : 1;
   const visible = rows.slice(0, count);
+  const oldest = Math.min(...visible.map((row) => row.checkedAt));
   const now = environment.date.getTime();
   const renderRow = (row: SubscriptionUsageSnapshot["rows"][number], index: number) => (
     <VStack key={index} alignment="leading" spacing={3}>
@@ -77,7 +78,9 @@ export function SubscriptionUsage(
       <Spacer minLength={0} />
       <Text modifiers={[font({ size: 10 }), foregroundStyle("secondary"), lineLimit(1)]}>
         {visible.length > 0
-          ? `As of ${new Date(Math.min(...visible.map((row) => row.checkedAt))).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}`
+          ? oldest > 0
+            ? `As of ${new Date(oldest).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}`
+            : "Last checked unavailable"
           : "Tap to open Usage"}
       </Text>
       {props.totalRows > visible.length ? (

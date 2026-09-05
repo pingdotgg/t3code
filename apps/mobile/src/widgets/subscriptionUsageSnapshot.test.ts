@@ -155,4 +155,13 @@ describe("subscription widget snapshots", () => {
     expect(timeline[1]?.props.rows[0]?.usedPercent).toBe(40);
     expect(subscriptionUsageTimeline(snapshot, now + 60 * 60_000)).toHaveLength(1);
   });
+  it("marks a malformed check time immediately stale without changing the quota", () => {
+    const snapshot = buildSubscriptionUsageSnapshot(
+      presentations([provider({ usageLimits: { ...limits, checkedAt: "invalid" } })]),
+      deepLink,
+    );
+    expect(snapshot.rows[0]).toMatchObject({ checkedAt: 0, expiresAt: 0, usedPercent: 40 });
+    expect(subscriptionUsageTimeline(snapshot, now)).toHaveLength(1);
+    expect(JSON.stringify(snapshot)).not.toContain("null");
+  });
 });

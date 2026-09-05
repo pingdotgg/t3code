@@ -73,7 +73,13 @@ class SubscriptionUsageWidget : AppWidgetProvider() {
         }
         views.setTextViewText(
           R.id.t3_widget_footer,
-          context.getString(R.string.t3_subscription_widget_as_of, formatted) + more
+          (
+            if (oldest > 0) {
+              context.getString(R.string.t3_subscription_widget_as_of, formatted)
+            } else {
+              context.getString(R.string.t3_subscription_widget_unknown_check)
+            }
+            ) + more
         )
       }
       manager.updateAppWidget(id, views)
