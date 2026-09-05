@@ -7473,7 +7473,6 @@ export const layer: Layer.Layer<
   | EventSinkV2
   | EffectOutboxV2
   | IdAllocatorV2
-  | ThreadDispatchLockV2
   | ProviderAdapterRegistryV2
   | ProviderSessionManagerV2
   | ProviderSwitchServiceV2

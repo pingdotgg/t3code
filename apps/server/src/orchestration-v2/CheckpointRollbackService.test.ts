@@ -28,13 +28,13 @@ import {
 } from "./CheckpointRollbackService.ts";
 import { EventSinkV2, EventSinkWriteError } from "./EventSink.ts";
 import { layer as idAllocatorLayer } from "./IdAllocator.ts";
-import { threadDispatchLockLayer } from "./KeyedSerialExecutor.ts";
+import { layer as threadCommandExecutorLayer } from "./ThreadCommandExecutor.ts";
 import { ProjectionStoreReadError, ProjectionStoreV2 } from "./ProjectionStore.ts";
 import { ProviderSessionManagerV2, ProviderSessionOpenError } from "./ProviderSessionManager.ts";
 import { RuntimePolicyV2 } from "./RuntimePolicy.ts";
 
 const checkpointRollbackServiceTestLayer = checkpointRollbackServiceLayer.pipe(
-  Layer.provide(threadDispatchLockLayer),
+  Layer.provide(threadCommandExecutorLayer),
 );
 
 function makeReadyRollbackProjection(input: {

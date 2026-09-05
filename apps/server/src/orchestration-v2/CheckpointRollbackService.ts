@@ -20,11 +20,11 @@ import {
 } from "./CheckpointService.ts";
 import { EventSinkV2 } from "./EventSink.ts";
 import { IdAllocatorV2 } from "./IdAllocator.ts";
-import { ThreadDispatchLockV2 } from "./KeyedSerialExecutor.ts";
 import { ProjectionStoreV2 } from "./ProjectionStore.ts";
 import type { ProviderAdapterV2RollbackTarget } from "./ProviderAdapter.ts";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 import { RuntimePolicyV2 } from "./RuntimePolicy.ts";
+import { ThreadCommandExecutor } from "./ThreadCommandExecutor.ts";
 
 const CheckpointRollbackErrorFields = {
   threadId: ThreadId,
@@ -128,7 +128,7 @@ export const layer: Layer.Layer<
   | CheckpointServiceV2
   | EventSinkV2
   | IdAllocatorV2
-  | ThreadDispatchLockV2
+  | ThreadCommandExecutor
   | ProjectionStoreV2
   | ProviderSessionManagerV2
   | RuntimePolicyV2
@@ -138,7 +138,7 @@ export const layer: Layer.Layer<
     const checkpoints = yield* CheckpointServiceV2;
     const eventSink = yield* EventSinkV2;
     const ids = yield* IdAllocatorV2;
-    const threadDispatch = yield* ThreadDispatchLockV2;
+    const threadDispatch = yield* ThreadCommandExecutor;
     const projections = yield* ProjectionStoreV2;
     const sessions = yield* ProviderSessionManagerV2;
     const runtimePolicy = yield* RuntimePolicyV2;

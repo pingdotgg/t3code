@@ -47,9 +47,9 @@ import { CodexProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/CodexA
 import { OrchestrationEffectWorkerV2 } from "../orchestration-v2/EffectWorker.ts";
 import { EventSinkV2 } from "../orchestration-v2/EventSink.ts";
 import {
-  ThreadDispatchLockV2,
-  threadDispatchLockLayer,
-} from "../orchestration-v2/KeyedSerialExecutor.ts";
+  ThreadCommandExecutor,
+  layer as threadCommandExecutorLayer,
+} from "../orchestration-v2/ThreadCommandExecutor.ts";
 import {
   OrchestratorCheckpointRollbackTargetUnsupportedError,
   OrchestratorV2,
@@ -209,7 +209,7 @@ function makeIntegrationLayer(input: {
     Layer.provide(worktreeRepairDependenciesTestLayer),
     Layer.provide(NodeServices.layer),
   );
-  const runtimeWithDispatchLock = Layer.merge(runtime, threadDispatchLockLayer);
+  const runtimeWithDispatchLock = Layer.merge(runtime, threadCommandExecutorLayer);
   return CheckpointMcp.layer.pipe(
     Layer.provideMerge(runtimeWithDispatchLock),
     Layer.provideMerge(NodeServices.layer),
@@ -378,7 +378,7 @@ function restoreScenario(
       const checkpointStore = yield* CheckpointStore.CheckpointStore;
       const orchestrator = yield* OrchestratorV2;
       const eventSink = yield* EventSinkV2;
-      const threadDispatch = yield* ThreadDispatchLockV2;
+      const threadDispatch = yield* ThreadCommandExecutor;
       const worker = yield* OrchestrationEffectWorkerV2;
       const service = yield* CheckpointMcp.CheckpointMcpService;
       const threadId = ThreadId.make(
