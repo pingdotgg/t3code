@@ -515,13 +515,6 @@ export function decodeProjectMergeCapabilitiesJson(
   });
 }
 
-/**
- * Comments only. System notes are GitLab's own activity feed entries, and a `DiffNote` is the
- * root of a line-level discussion, which is what the review-comment kind means.
- *
- * The raw note count comes back alongside, because dropping notes hides whether the page was
- * full: a caller cannot tell "no more notes" from "a page of activity entries" without it.
- */
 /** The three revisions a positioned comment is written against. */
 export interface GitLabDiffRefs {
   readonly baseSha: string;
@@ -594,6 +587,21 @@ export function decodeDiffRefsJson(
   );
 }
 
+function systemNoteReviewState(body: string): "APPROVED" | "DISMISSED" | null {
+  switch (body.trim()) {
+    case "approved this merge request":
+      return "APPROVED";
+    case "unapproved this merge request":
+      return "DISMISSED";
+    default:
+      return null;
+  }
+}
+
+/**
+ * Comments and approval history. Other system activity stays excluded. The raw count includes
+ * every note so a page containing only skipped activity does not end pagination early.
+ */
 export function decodeNotesJson(
   raw: string,
 ): Result.Result<
@@ -609,19 +617,23 @@ export function decodeNotesJson(
     const note = decodeNoteEntry(entry);
     if (Exit.isFailure(note)) continue;
     const value = note.value;
-    if (value.system === true) continue;
     const body = value.body ?? "";
+    const reviewState = value.system === true ? systemNoteReviewState(body) : null;
+    if (value.system === true && reviewState === null) continue;
     if (body.trim().length === 0) continue;
     const isDiffNote = value.type?.trim() === "DiffNote";
     comments.push({
       id: String(value.id),
-      kind: isDiffNote ? "review-comment" : "issue-comment",
+      kind: reviewState !== null ? "review" : isDiffNote ? "review-comment" : "issue-comment",
       author: toActor(value.author),
       body,
       createdAt: value.created_at,
       url: null,
-      path: trimmed(value.position?.new_path) ?? trimmed(value.position?.old_path),
-      reviewState: null,
+      path:
+        reviewState !== null
+          ? null
+          : (trimmed(value.position?.new_path) ?? trimmed(value.position?.old_path)),
+      reviewState,
     });
   }
   return Result.succeed({ comments, rawCount: decoded.success.length });
