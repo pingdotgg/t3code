@@ -77,6 +77,24 @@ export function resolveDiffPathForWorkspace(input: {
   return relativeSegments.length > 0 ? relativeSegments.join("/") : null;
 }
 
+type OpenDiffFileInEditorInput = Omit<OpenDiffFilePrimaryActionInput, "threadRef">;
+
+export function openDiffFileInEditor({
+  filePath,
+  activeCwd,
+  repositoryRoot,
+  openInEditor,
+}: OpenDiffFileInEditorInput): void {
+  const workspaceFilePath = resolveDiffPathForWorkspace({
+    filePath,
+    workspaceRoot: activeCwd,
+    repositoryRoot,
+  });
+  if (!workspaceFilePath) return;
+
+  openInEditor(activeCwd ? resolvePathLinkTarget(workspaceFilePath, activeCwd) : workspaceFilePath);
+}
+
 export function openDiffFilePrimaryAction({
   threadRef,
   filePath,

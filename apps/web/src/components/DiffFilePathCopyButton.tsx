@@ -6,8 +6,7 @@ import {
   showAnchoredCopyErrorToast,
   showAnchoredCopySuccessToast,
 } from "./ui/anchoredCopyToast";
-import { Button } from "./ui/button";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
+import { DiffFileHeaderActionButton } from "./DiffFileHeaderActionButton";
 
 export function DiffFilePathCopyButton({ filePath }: { filePath: string }) {
   const ref = useRef<HTMLButtonElement>(null);
@@ -18,24 +17,13 @@ export function DiffFilePathCopyButton({ filePath }: { filePath: string }) {
   });
 
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <Button
-            ref={ref}
-            size="icon-micro"
-            variant="ghost"
-            className="text-muted-foreground [:hover,[data-pressed]]:bg-transparent"
-            aria-label="Copy file path"
-            onClick={() => copyToClipboard(filePath, undefined)}
-          />
-        }
-      >
-        {isCopied ? <CheckIcon className="size-3 text-success" /> : <CopyIcon className="size-3" />}
-      </TooltipTrigger>
-      <TooltipPopup>
-        <p>{isCopied ? "Copied" : "Copy path"}</p>
-      </TooltipPopup>
-    </Tooltip>
+    <DiffFileHeaderActionButton
+      ref={ref}
+      ariaLabel="Copy file path"
+      onClick={() => copyToClipboard(filePath, undefined)}
+      tooltip={isCopied ? "Copied" : "Copy path"}
+    >
+      {isCopied ? <CheckIcon aria-hidden className="text-success" /> : <CopyIcon aria-hidden />}
+    </DiffFileHeaderActionButton>
   );
 }

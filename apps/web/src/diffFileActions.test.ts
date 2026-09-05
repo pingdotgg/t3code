@@ -2,7 +2,11 @@ import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { openDiffFilePrimaryAction, resolveDiffPathForWorkspace } from "./diffFileActions";
+import {
+  openDiffFileInEditor,
+  openDiffFilePrimaryAction,
+  resolveDiffPathForWorkspace,
+} from "./diffFileActions";
 import { selectThreadRightPanelState, useRightPanelStore } from "./rightPanelStore";
 
 const THREAD_REF = scopeThreadRef(
@@ -67,6 +71,19 @@ describe("openDiffFilePrimaryAction", () => {
       activeSurfaceId: "file:Dockerfile",
     });
     expect(openInEditor).not.toHaveBeenCalled();
+  });
+
+  it("can explicitly open a repository-relative diff file in the editor", () => {
+    const openInEditor = vi.fn();
+
+    openDiffFileInEditor({
+      filePath: "frontend/Dockerfile",
+      activeCwd: "/repo/frontend",
+      repositoryRoot: "/repo",
+      openInEditor,
+    });
+
+    expect(openInEditor).toHaveBeenCalledWith("/repo/frontend/Dockerfile");
   });
 
   it("preserves repository-relative paths in a separate worktree", () => {
