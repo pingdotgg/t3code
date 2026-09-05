@@ -237,23 +237,23 @@ const resolveCanonicalWorkspaceFileForRequest = (input: {
  */
 const HEADER_IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp"]);
 
-const readImageDimensionsFromHeader = Effect.fn("AssetAccess.readImageDimensionsFromHeader")(
-  function* (filePath: string) {
-    const fileSystem = yield* FileSystem.FileSystem;
-    return yield* Effect.scoped(
-      Effect.gen(function* () {
-        const file = yield* fileSystem.open(filePath, { flag: "r" });
-        const header = yield* file.readAlloc(IMAGE_DIMENSIONS_HEADER_BYTES);
-        return Option.isSome(header) ? readImageDimensions(header.value) : null;
-      }),
-    ).pipe(Effect.orElseSucceed((): ImageDimensions | null => null));
-  },
-);
-
-/** Same, from the identity-checked handle the caller already holds, so no second open can be swapped. */
-const readImageDimensionsFromOpenFile = (file: OpenMediaFile) =>
-  readMediaFileHeader(file, IMAGE_DIMENSIONS_HEADER_BYTES).pipe(
+/** From the identity-checked, non-blocking handle the caller already holds. */
+const readImageDimensionsFromOpenFile = (filePath: string, file: OpenMediaFile) =>
+  readMediaFileHeader(filePath, file, IMAGE_DIMENSIONS_HEADER_BYTES).pipe(
     Effect.map(readImageDimensions),
+    Effect.orElseSucceed((): ImageDimensions | null => null),
+  );
+
+/**
+ * Opens through `openMediaFile` so a path swapped for a FIFO cannot block the
+ * request; a regular open would wait for a writer that never comes.
+ */
+const readImageDimensionsFromHeader = (filePath: string) =>
+  openMediaFile(filePath).pipe(
+    Effect.flatMap((file) =>
+      file === null ? Effect.succeed(null) : readImageDimensionsFromOpenFile(filePath, file),
+    ),
+    Effect.scoped,
     Effect.orElseSucceed((): ImageDimensions | null => null),
   );
 
@@ -307,7 +307,9 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
           file === null
             ? Effect.succeed(null)
             : Effect.map(
-                wantsDimensions ? readImageDimensionsFromOpenFile(file) : Effect.succeed(null),
+                wantsDimensions
+                  ? readImageDimensionsFromOpenFile(canonicalFile, file)
+                  : Effect.succeed(null),
                 (dimensions) => ({
                   identity: { device: file.info.dev.toString(), inode: file.info.ino.toString() },
                   dimensions,

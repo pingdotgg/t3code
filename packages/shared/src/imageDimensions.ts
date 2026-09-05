@@ -108,6 +108,11 @@ function readJpeg(bytes: Uint8Array): ImageDimensions | null {
       return rotated ? { width: height, height: width } : { width, height };
     }
     if (marker === 0xd9 || marker === 0xda) return null;
+    // TEM and the restart markers stand alone, with no length field.
+    if (marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) {
+      offset += 2;
+      continue;
+    }
     const length = data.getUint16(offset + 2);
     // Viewers apply the EXIF orientation before display, so a phone photo
     // stored on its side takes the swapped size on screen.

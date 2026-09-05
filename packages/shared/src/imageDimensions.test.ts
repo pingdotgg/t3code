@@ -69,6 +69,13 @@ describe("readImageDimensions", () => {
     });
   });
 
+  it("steps over standalone TEM and restart markers", () => {
+    const sof0 = bytes([0xff, 0xc0], u16(17), [8], u16(10), u16(20));
+    expect(readImageDimensions(bytes([0xff, 0xd8], [0xff, 0x01], [0xff, 0xd3], [...sof0]))).toEqual(
+      { width: 20, height: 10 },
+    );
+  });
+
   it("does not mistake a Huffman table marker for a frame", () => {
     const dht = bytes([0xff, 0xc4], u16(4), [0, 0]);
     const sof2 = bytes([0xff, 0xc2], u16(17), [8], u16(10), u16(20));
