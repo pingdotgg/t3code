@@ -1,0 +1,97 @@
+diff --git a/index.mjs b/index.mjs
+index 7ad811c..075ef36 100644
+--- a/index.mjs
++++ b/index.mjs
+@@ -142,17 +142,20 @@ function updatePos(el, debounce = true) {
+             ? 500
+             : optionsOrPlugin.duration
+         : 0;
+-    debounces.set(el, setTimeout(async () => {
++    const timeout = setTimeout(async () => {
+         const currentAnimation = animations.get(el);
+         try {
+             await (currentAnimation === null || currentAnimation === void 0 ? void 0 : currentAnimation.finished);
++            if (debounces.get(el) !== timeout)
++                return;
+             coords.set(el, getCoords(el));
+             observePosition(el);
+         }
+         catch {
+             // ignore errors as the `.finished` promise is rejected when animations were cancelled
+         }
+-    }, delay));
++    }, delay);
++    debounces.set(el, timeout);
+ }
+ /**
+  * Updates all positions that are currently being tracked.
+@@ -160,7 +163,13 @@ function updatePos(el, debounce = true) {
+ function updateAllPos() {
+     clearTimeout(debounces.get(root));
+     debounces.set(root, setTimeout(() => {
+-        parents.forEach((parent) => forEach(parent, (el) => lowPriority(() => updatePos(el))));
++        parents.forEach((parent) => {
++            const observer = mutationObservers.get(parent);
++            forEach(parent, (el) => lowPriority(() => {
++                if (mutationObservers.get(parent) === observer)
++                    updatePos(el);
++            }));
++        });
+     }, 100));
+ }
+ /**
+@@ -172,9 +181,14 @@ function updateAllPos() {
+  * @param el - Element
+  */
+ function poll(el) {
+-    setTimeout(() => {
+-        intervals.set(el, setInterval(() => lowPriority(updatePos.bind(null, el)), 2000));
+-    }, Math.round(2000 * Math.random()));
++    clearInterval(intervals.get(el));
++    intervals.set(el, setTimeout(() => {
++        const interval = setInterval(() => lowPriority(() => {
++            if (intervals.get(el) === interval)
++                updatePos(el);
++        }), 2000);
++        intervals.set(el, interval);
++    }, Math.round(2000 * Math.random())));
+ }
+ /**
+  * Perform some operation that is non critical at some point.
+@@ -537,10 +551,16 @@ function add(el) {
+ function cleanUp(el, styles) {
+     var _a;
+     el.remove();
++    clearInterval(intervals.get(el));
++    intervals.delete(el);
++    clearTimeout(debounces.get(el));
++    debounces.delete(el);
++    resize === null || resize === void 0 ? void 0 : resize.unobserve(el);
+     coords.delete(el);
+     siblings.delete(el);
+     animations.delete(el);
+     (_a = intersections.get(el)) === null || _a === void 0 ? void 0 : _a.disconnect();
++    intersections.delete(el);
+     setTimeout(() => {
+         if (DEL in el)
+             delete el[DEL];
+@@ -774,9 +794,18 @@ function autoAnimate(el, config = {}) {
+             parents.delete(el);
+             options.delete(el);
+             const mo = mutationObservers.get(el);
++            const nodes = new Set();
++            forEach(el, (node) => nodes.add(node));
++            // DOM removals may be queued when a layout effect destroys the controller.
++            for (const mutation of (mo === null || mo === void 0 ? void 0 : mo.takeRecords()) || []) {
++                for (const node of mutation.removedNodes) {
++                    if (node instanceof Element)
++                        nodes.add(node);
++                }
++            }
+             mo === null || mo === void 0 ? void 0 : mo.disconnect();
+             mutationObservers.delete(el);
+-            forEach(el, (node) => {
++            nodes.forEach((node) => {
+                 // unobserve resize
+                 resize === null || resize === void 0 ? void 0 : resize.unobserve(node);
+                 // cancel animations
