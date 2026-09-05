@@ -3596,10 +3596,14 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   const stageProdResourcesDir = path.join(stageAppDir, "apps/desktop/prod-resources");
   yield* fs.copy(stageResourcesDir, stageProdResourcesDir);
 
+  const repoEnvForSigning = loadRepoEnv({ repoRoot });
   const configuredMacPasskeySigning =
-    options.platform === "mac" && options.signed
+    options.platform === "mac" &&
+    options.signed &&
+    (repoEnvForSigning.T3CODE_CLERK_PUBLISHABLE_KEY ||
+      repoEnvForSigning.T3CODE_CLERK_PASSKEY_RP_DOMAINS)
       ? yield* Effect.try({
-          try: () => resolveMacPasskeySigningConfiguration(loadRepoEnv({ repoRoot })),
+          try: () => resolveMacPasskeySigningConfiguration(repoEnvForSigning),
           catch: MacPasskeySigningConfigurationResolutionError.fromCause,
         })
       : undefined;
