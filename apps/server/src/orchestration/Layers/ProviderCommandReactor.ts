@@ -1308,10 +1308,11 @@ const make = Effect.gen(function* () {
       event.payload.modelSelection === undefined && thread.session?.status !== "stopped"
         ? (yield* providerService.listSessions()).find((session) => session.threadId === thread.id)
         : undefined;
+    const previousSelection = threadModelSelections.get(thread.id) ?? thread.modelSelection;
     const selection = event.payload.modelSelection ?? {
-      ...(threadModelSelections.get(thread.id) ?? thread.modelSelection),
-      instanceId: activeSession?.providerInstanceId ?? thread.modelSelection.instanceId,
-      model: activeSession?.model ?? thread.modelSelection.model,
+      ...previousSelection,
+      instanceId: activeSession?.providerInstanceId ?? previousSelection.instanceId,
+      model: activeSession?.model ?? previousSelection.model,
     };
     const providerSnapshot = (yield* providerRegistry.getProviders).find(
       (entry) => entry.instanceId === selection.instanceId,
@@ -1435,15 +1436,20 @@ const make = Effect.gen(function* () {
       }
       compactingThreadIds.add(event.payload.threadId);
       yield* Effect.gen(function* () {
-        yield* ensureSessionForThread(event.payload.threadId, event.payload.createdAt, {
-          modelSelection: selection,
-          pendingTurnStart: true,
-        });
+        yield* ensureSessionForThread(
+          event.payload.threadId,
+          event.payload.createdAt,
+          event.payload.modelSelection !== undefined
+            ? { modelSelection: event.payload.modelSelection, pendingTurnStart: true }
+            : { pendingTurnStart: true },
+        );
         compactionSessionEnsured = true;
-        threadModelSelections.set(event.payload.threadId, selection);
+        if (event.payload.modelSelection !== undefined) {
+          threadModelSelections.set(event.payload.threadId, event.payload.modelSelection);
+        }
         yield* providerService.compactThread(
           event.payload.threadId,
-          selection,
+          event.payload.modelSelection,
           event.payload.messageId,
         );
       }).pipe(
@@ -1464,7 +1470,9 @@ const make = Effect.gen(function* () {
       threadId: event.payload.threadId,
       messageText: message.text,
       ...(message.attachments !== undefined ? { attachments: message.attachments } : {}),
-      modelSelection: selection,
+      ...(event.payload.modelSelection !== undefined
+        ? { modelSelection: event.payload.modelSelection }
+        : {}),
       interactionMode: event.payload.interactionMode,
       runtimeMode: event.payload.runtimeMode,
       createdAt: event.payload.createdAt,
