@@ -281,10 +281,11 @@ function terminalProcessLabel(count: number): string {
 }
 
 const TITLE_SHIMMER_STAGGER_MS = 90;
+const TITLE_SHIMMER_MAX_DELAY_MS = 600;
 const titleSegmenter = new Intl.Segmenter();
 
 // Splits the title into glyphs so a bright crest can travel through them
-// while it regenerates — the shadcn.io "Shimmering Text" effect. Every
+// once when regeneration starts. Every
 // character runs the same dim → bright(+3D lift) → dim timeline, offset one
 // stagger step from its neighbor, which produces a smooth traveling wave.
 // Whitespace is normalized and text segmented by grapheme cluster, so the
@@ -310,7 +311,9 @@ function ShimmeringTitleText(props: { text: string }) {
       <span
         key={index}
         className="title-shimmer-char"
-        style={{ animationDelay: `${index * TITLE_SHIMMER_STAGGER_MS}ms` }}
+        style={{
+          animationDelay: `${Math.min(index * TITLE_SHIMMER_STAGGER_MS, TITLE_SHIMMER_MAX_DELAY_MS)}ms`,
+        }}
       >
         {segment.segment}
       </span>,
