@@ -48,6 +48,7 @@ import {
 import { useComposerDraftStore } from "../../composerDraftStore";
 import { isElectron } from "../../env";
 import {
+  getClientSettings,
   useClientSettings,
   useEnvironmentSettings,
   useUpdateClientSettings,
@@ -78,7 +79,13 @@ import {
   type SidebarProjectSnapshot,
 } from "../../sidebarProjectGrouping";
 import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
-import { useProjects, useThreadShells } from "../../state/entities";
+import {
+  readProject,
+  readProjects,
+  useProjects,
+  useThreadShells,
+  waitForProject,
+} from "../../state/entities";
 import { projectEnvironment } from "../../state/projects";
 import { EMPTY_SERVER_PROVIDERS, serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -129,10 +136,12 @@ import {
 import {
   checkoutKey,
   projectGroupTitleNeedsUpdate,
+  relinkProjectGroupingSettings,
+  relinkProjectUiState,
   resolveSettingsProjectGroup,
 } from "./ProjectSettingsPanel.logic";
 import { openCommandPalette } from "../../commandPaletteBus";
-import { getBrowseParentPath } from "../../lib/projectPaths";
+import { getBrowseParentPath, normalizeProjectPathForComparison } from "../../lib/projectPaths";
 import { useUiStateStore } from "../../uiStateStore";
 
 const ProjectIconPickerDialog = lazy(() =>
@@ -827,6 +836,9 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
     ] ?? "inherit";
   const selectedCheckoutLabel = selectedCheckout.environmentLabel ?? "This machine";
   const updateCheckoutFolder = async (workspaceRoot: string) => {
+    const ref = scopeProjectRef(selectedCheckout.environmentId, selectedCheckout.id);
+    const previous = readProject(ref);
+    if (previous === null) return false;
     const result = await updateProject({
       environmentId: selectedCheckout.environmentId,
       input: { projectId: selectedCheckout.id, workspaceRoot },
@@ -836,17 +848,33 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
       mapAtomCommandResult(result, () => undefined),
     );
     if (result._tag === "Failure") return false;
-    const oldKey = deriveProjectGroupingOverrideKey(selectedCheckout);
-    const newKey = deriveProjectGroupingOverrideKey({ ...selectedCheckout, workspaceRoot });
-    const overrides = projectGroupingSettings.sidebarProjectGroupingOverrides;
-    if (oldKey !== newKey && overrides[oldKey] !== undefined) {
-      const nextOverrides = { ...overrides, [newKey]: overrides[oldKey] };
-      delete nextOverrides[oldKey];
-      updateClientSettings({ sidebarProjectGroupingOverrides: nextOverrides });
+    const selectedPath = normalizeProjectPathForComparison(workspaceRoot);
+    if (normalizeProjectPathForComparison(previous.workspaceRoot) === selectedPath) return true;
+    // The palette submits a resolved server browse path, not the typed query.
+    const updated = await settlePromise(() => waitForProject(ref, { workspaceRoot }));
+    reportFailure(
+      "Folder updated, but project preferences could not follow it",
+      mapAtomCommandResult(updated, () => undefined),
+    );
+    if (updated._tag === "Failure") return true;
+    const projects = readProjects();
+    const project = projects.find(
+      (item) =>
+        item.environmentId === ref.environmentId &&
+        item.id === ref.projectId &&
+        normalizeProjectPathForComparison(item.workspaceRoot) === selectedPath,
+    );
+    if (!project) return true;
+    const settings = selectProjectGroupingSettings(getClientSettings());
+    useUiStateStore.setState((state) =>
+      relinkProjectUiState(state, { previous, project, projects, settings }),
+    );
+    const nextSettings = relinkProjectGroupingSettings(settings, previous, project);
+    if (nextSettings !== settings) {
+      updateClientSettings({
+        sidebarProjectGroupingOverrides: nextSettings.sidebarProjectGroupingOverrides,
+      });
     }
-    useUiStateStore.setState((state) => ({
-      projectOrder: state.projectOrder.map((key) => (key === oldKey ? newKey : key)),
-    }));
     return true;
   };
 
