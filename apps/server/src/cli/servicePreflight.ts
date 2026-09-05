@@ -10,8 +10,8 @@ export const servicePreflightCommand = Command.make("__service-preflight", {
 }).pipe(
   Command.withHidden,
   Command.withHandler(({ databasePath, launcherProtocol }) =>
-    Console.log(JSON.stringify(runServicePreflight({ databasePath, launcherProtocol }))).pipe(
-      Effect.asVoid,
+    Effect.promise(() => runServicePreflight({ databasePath, launcherProtocol })).pipe(
+      Effect.flatMap((result) => Console.log(JSON.stringify(result))),
     ),
   ),
 );

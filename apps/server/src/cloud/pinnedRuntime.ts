@@ -18,6 +18,15 @@ import * as ProcessRunner from "../processRunner.ts";
 
 const PINNED_RUNTIME_DIR = "runtime";
 const PINNED_RUNTIME_INSTALL_TIMEOUT = Duration.minutes(10);
+// npm 12 skips dependency install scripts not covered by allowScripts and
+// still exits 0, silently dropping node-pty's native build. It rejects
+// --allow-scripts for project installs (unlike the global installs in
+// providerMaintenance.ts), so the staged manifest is the only place to grant this.
+const PINNED_RUNTIME_PACKAGE_JSON = `${JSON.stringify({
+  private: true,
+  // Keep this native subset aligned with pnpm-workspace.yaml#allowBuilds.
+  allowScripts: { "node-pty": true, "msgpackr-extract": true },
+})}\n`;
 // Boot-service setup and remote update can construct separate layers. Serialize
 // the complete install transaction across every caller in this process.
 const pinnedRuntimeInstallLock = Semaphore.makeUnsafe(1);
@@ -151,6 +160,14 @@ const installPinnedRuntime = Effect.fn("cloud.pinned_runtime.ensure_installed")(
   };
 
   return yield* Effect.gen(function* () {
+    yield* fs
+      .writeFileString(input.path.join(stagingDir, "package.json"), PINNED_RUNTIME_PACKAGE_JSON)
+      .pipe(
+        Effect.mapError(
+          (cause) =>
+            new PinnedRuntimeInstallError({ step: "configuring native dependency builds", cause }),
+        ),
+      );
     const installStep = "installing the pinned t3 runtime (this can take a few minutes)";
     yield* runner
       .run({

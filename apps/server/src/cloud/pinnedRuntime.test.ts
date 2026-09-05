@@ -57,6 +57,15 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
             validatedDirectory = staging.versionDir;
             assert.isFalse(yield* fs.exists(finalPaths.versionDir));
             assert.isTrue(yield* fs.exists(staging.entryPath));
+            // The manifest npm read while installing must let node-pty build.
+            const manifest = yield* fs.readFileString(
+              path.join(staging.versionDir, "package.json"),
+            );
+            // @effect-diagnostics-next-line preferSchemaOverJson:off - staged file written by the code under test.
+            assert.deepEqual((JSON.parse(manifest) as { allowScripts: unknown }).allowScripts, {
+              "node-pty": true,
+              "msgpackr-extract": true,
+            });
           }).pipe(Effect.orDie),
       });
 

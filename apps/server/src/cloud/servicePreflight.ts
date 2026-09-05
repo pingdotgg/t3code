@@ -13,12 +13,17 @@ export type ServicePreflightResult =
       readonly reason: string;
     };
 
-export function runServicePreflight(input: {
-  /** Older servers always pass this flag when invoking a staged preflight. */
-  readonly databasePath: string;
-  readonly launcherProtocol: number;
-  readonly version?: string;
-}): ServicePreflightResult {
+// Loading node-pty is part of the proof: npm can skip its native build and
+// still exit 0, leaving a runtime that boots but cannot open terminals.
+export async function runServicePreflight(
+  input: {
+    /** Older servers always pass this flag when invoking a staged preflight. */
+    readonly databasePath: string;
+    readonly launcherProtocol: number;
+    readonly version?: string;
+  },
+  loadNodePty: () => Promise<unknown> = () => import("node-pty"),
+): Promise<ServicePreflightResult> {
   const version = input.version ?? packageJson.version;
   if (input.launcherProtocol !== SERVICE_LAUNCHER_PROTOCOL) {
     return {
@@ -26,6 +31,16 @@ export function runServicePreflight(input: {
       version,
       reason:
         "This release requires a newer T3 Code service launcher. Update it on the server machine.",
+    };
+  }
+  try {
+    await loadNodePty();
+  } catch (cause) {
+    const detail = cause instanceof Error ? cause.message : String(cause);
+    return {
+      status: "blocked",
+      version,
+      reason: `node-pty's native binary is missing from this runtime (${detail}). On Linux it compiles during install; check that npm was allowed to run install scripts and that build tools are present.`,
     };
   }
 
