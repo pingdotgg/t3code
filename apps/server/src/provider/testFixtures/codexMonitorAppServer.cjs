@@ -128,7 +128,7 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
       } else {
         original = active;
         scenario = params.input[0]?.text;
-        notify("item/started", { threadId, turnId: active, item: command });
+        if (serial === 1) notify("item/started", { threadId, turnId: active, item: command });
         if (scenario !== "busy" && scenario !== "cleanup-failure" && !scenario.startsWith("stall-"))
           finish(active);
       }
