@@ -171,6 +171,10 @@ export function runStream<TTag extends EnvironmentStreamCommandRpcTag>(
 }
 
 interface SubscriptionOptions<TTag extends EnvironmentSubscriptionRpcTag> {
+  /** Reports protocol or programming defects without changing their recovery policy. */
+  readonly onDefect?: (
+    cause: Cause.Cause<EnvironmentRpcStreamFailure<TTag>>,
+  ) => Effect.Effect<void, never, never>;
   readonly onExpectedFailure?: (
     cause: Cause.Cause<EnvironmentRpcStreamFailure<TTag>>,
   ) => Effect.Effect<void, never, never>;
@@ -228,6 +232,18 @@ function subscribeDynamicMapped<TTag extends EnvironmentSubscriptionRpcTag, A>(
                       });
                       return mapStream(session, method(input)).pipe(
                         Stream.ensuring(completeObservation),
+                        Stream.tapCause((cause) =>
+                          options?.onDefect !== undefined &&
+                          cause.reasons.some(
+                            (reason) =>
+                              reason._tag === "Die" ||
+                              (reason._tag === "Fail" &&
+                                isRpcClientError(reason.error) &&
+                                reason.error.reason._tag === "RpcClientDefect"),
+                          )
+                            ? options.onDefect(cause)
+                            : Effect.void,
+                        ),
                         Stream.catchCause((cause) => {
                           const hasOnlyExpectedFailures =
                             cause.reasons.length > 0 &&
