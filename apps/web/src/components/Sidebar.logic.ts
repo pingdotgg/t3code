@@ -588,9 +588,9 @@ export function shouldRecedeSidebarThread(input: {
   isActive: boolean;
   isSelected: boolean;
 }): boolean {
-  if (input.isActive || input.isSelected || input.status === "input") return false;
-  if (input.status === "working" || input.status === "monitoring") return true;
-  if (input.status === "ready" || input.status === "approval") {
+  if (input.isActive || input.isSelected) return false;
+  if (input.status === "working" || input.status === "waiting") return true;
+  if (input.status === "ready" || input.status === "approval" || input.status === "input") {
     return !input.isUnread && !input.isWoke;
   }
   return false;
@@ -744,12 +744,16 @@ export function searchSidebarThreads<
 
 export function filterSidebarProjectScopeItems<TItem extends { readonly value: string }>(input: {
   items: readonly TItem[];
+  activeScopeKey: string | null;
   query: string;
   matches: (item: TItem, query: string) => boolean;
 }): readonly TItem[] {
+  const projectItems = input.items.filter((item) => item.value !== "all");
   const query = input.query.trim();
-  if (query.length === 0) return input.items;
-  return input.items.filter((item) => item.value !== "all" && input.matches(item, query));
+  if (query.length > 0) {
+    return projectItems.filter((item) => input.matches(item, query));
+  }
+  return input.activeScopeKey === null ? projectItems : input.items;
 }
 
 export interface SidebarProjectScopeMenuState {

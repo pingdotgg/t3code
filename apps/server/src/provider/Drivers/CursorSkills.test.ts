@@ -5,6 +5,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import type * as Scope from "effect/Scope";
+import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 
 import {
   discoverCursorSkills,
@@ -100,6 +101,61 @@ describe("Cursor skills", () => {
         ).toBe("Failure");
       }),
     ));
+
+  it.skipIf(!symlinksSupported)(
+    "treats a symlinked skill outside the root as a package boundary",
+    async () =>
+      await runNode(
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const userHome = yield* fileSystem.makeTempDirectoryScoped({
+            directory: NodeOS.tmpdir(),
+            prefix: "cursor-skills-home-",
+          });
+          const workspace = yield* fileSystem
+            .makeTempDirectoryScoped({
+              directory: NodeOS.tmpdir(),
+              prefix: "cursor-skills-workspace-",
+            })
+            .pipe(Effect.flatMap((directory) => fileSystem.realPath(directory)));
+          const library = yield* fileSystem.makeTempDirectoryScoped({
+            directory: NodeOS.tmpdir(),
+            prefix: "cursor-skills-library-",
+          });
+          const writeSkill = Effect.fn("writeCursorSkill")(function* (
+            directory: string,
+            contents: string,
+          ) {
+            yield* fileSystem.makeDirectory(directory, { recursive: true });
+            yield* fileSystem.writeFileString(path.join(directory, "SKILL.md"), contents);
+          });
+
+          // A skill package managed in a config repo and installed by symlink.
+          // Its own SKILL.md must be discovered under the link name, but nothing
+          // below the target may be walked.
+          yield* writeSkill(path.join(library, "shared-review"), "---\ndescription: shared\n---\n");
+          yield* writeSkill(path.join(library, "shared-review", "hidden"), "---\n---\n");
+          const root = path.join(workspace, ".cursor", "skills");
+          yield* fileSystem.makeDirectory(root, { recursive: true });
+          yield* fileSystem.symlink(path.join(library, "shared-review"), path.join(root, "review"));
+
+          const skills = yield* discoverCursorSkills(workspace, { HOME: userHome });
+          expect(skills).toEqual([
+            {
+              name: "review",
+              description: "shared",
+              path: path.join(root, "review", "SKILL.md"),
+              scope: "project",
+              enabled: true,
+            },
+          ]);
+          expect(
+            (yield* probeCursorSkills(workspace, { HOME: userHome }).pipe(Effect.result))._tag,
+          ).toBe("Success");
+        }),
+      ),
+  );
 
   it("rewrites only discovered skill mentions into Cursor slash invocations", () => {
     expect(hasCursorSkillMention("use $Review_Pr:V2 here")).toBe(true);
