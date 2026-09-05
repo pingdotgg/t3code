@@ -332,6 +332,10 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   readonly project: EnvironmentProject | null;
   readonly projectTitle?: string;
   readonly providerDriver: string | null;
+  /** Account-wide usage-limit reset for the thread's provider instance, or
+      null when it isn't exhausted. Feeds the "Until limits reset" snooze
+      preset so it leads the menu while the limit is in force. */
+  readonly limitsResetAt: string | null;
   /** Which machine hosts the thread. Null when only one environment is
       connected — repeating the same label on every row is noise. Mirrors
       the web sidebar's remote-environment cloud icon, but as text since
@@ -473,8 +477,11 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     snoozed: snoozedRow,
   });
   const snoozePresets = useMemo(
-    () => (swipeActions.secondary === "snooze" ? resolveSnoozePresets(new Date()) : ([] as const)),
-    [props.snoozePresetMinute, swipeActions.secondary],
+    () =>
+      swipeActions.secondary === "snooze"
+        ? resolveSnoozePresets(new Date(), { limitsResetAt: props.limitsResetAt })
+        : ([] as const),
+    [props.snoozePresetMinute, props.limitsResetAt, swipeActions.secondary],
   );
   const snoozePresetActions = useMemo<MenuAction[]>(
     () =>
@@ -587,6 +594,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         event: nativeEvent.event,
         displayedPresets: snoozePresets,
         now: new Date(),
+        limitsResetAt: props.limitsResetAt,
       });
       if (snoozeSelection._tag === "selected") {
         handleSnooze(snoozeSelection.preset.snoozedUntil);
@@ -607,6 +615,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       handleUnsettle,
       handleUnsnooze,
       snoozePresets,
+      props.limitsResetAt,
     ],
   );
   const primaryAction = useMemo(() => {

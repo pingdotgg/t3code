@@ -43,7 +43,8 @@ when your limits reset and offers to snooze the thread until a minute after that
 hides the thread from your active list until then — nothing resumes on its own, and you can wake
 the thread at any time. Snoozing is unavailable while the thread is waiting on you or has a
 message no turn has picked up yet, but the reset time still shows. Dismiss the notice to hide it
-until the next limit, or let it disappear on its own once the reset time passes.
+until the next limit, or let it disappear on its own once the reset time passes. The same option
+also appears first in the thread's snooze menu while the limit is in force.
 
 ## Model defaults
 
