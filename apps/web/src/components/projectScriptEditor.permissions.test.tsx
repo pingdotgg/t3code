@@ -1,4 +1,5 @@
 import { EnvironmentId } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -108,6 +109,74 @@ describe("ProjectScriptEditorDialog", () => {
     expect(persistedKeybinding).toBeNull();
     expect(onSubmit).toHaveBeenCalledWith(null, expect.objectContaining({ keybinding: null }));
   });
+
+  it.each([false, true])(
+    "re-adds a deleted action while preserving its shortcut without settings access (revoked: %s)",
+    async (revokeBeforeSubmit) => {
+      permissions.canWriteSettings = revokeBeforeSubmit;
+      const persisted = { name: null as string | null, keybinding: "mod+k" as string | null };
+      const onSubmit = vi.fn(async (_id: string | null, input: NewProjectScriptInput) => {
+        if (input.keybinding !== undefined && !permissions.canWriteSettings) {
+          return AsyncResult.failure(
+            Cause.fail(new Error("This connection cannot change keyboard shortcuts.")),
+          );
+        }
+        persisted.name = input.name;
+        if (input.keybinding !== undefined) persisted.keybinding = input.keybinding;
+        return AsyncResult.success(undefined);
+      });
+      const root = await openEditor(onSubmit, {
+        scriptId: null,
+        initial: { ...request.initial, keybinding: null },
+      });
+
+      permissions.canWriteSettings = false;
+      await act(async () => {
+        await root.findByType("form").props.onSubmit({ preventDefault() {} });
+      });
+
+      expect(persisted).toEqual({ name: "Test", keybinding: "mod+k" });
+      expect(onSubmit).toHaveBeenCalledOnce();
+    },
+  );
+
+  it.each([false, true])(
+    "requires settings access to override a retained shortcut when re-adding an action (revoked: %s)",
+    async (revokeBeforeSubmit) => {
+      permissions.canWriteSettings = true;
+      vi.stubGlobal("navigator", { platform: "Linux" });
+      const persisted = { name: null as string | null, keybinding: "mod+k" as string | null };
+      const onSubmit = vi.fn(async (_id: string | null, input: NewProjectScriptInput) => {
+        persisted.name = input.name;
+        if (input.keybinding !== undefined) persisted.keybinding = input.keybinding;
+        return AsyncResult.success(undefined);
+      });
+      const root = await openEditor(onSubmit, {
+        scriptId: null,
+        initial: { ...request.initial, keybinding: null },
+      });
+      await act(() => {
+        root.findByProps({ id: "script-keybinding" }).props.onKeyDown({
+          key: "j",
+          ctrlKey: true,
+          metaKey: false,
+          altKey: false,
+          shiftKey: false,
+          preventDefault() {},
+        });
+      });
+      if (revokeBeforeSubmit) permissions.canWriteSettings = false;
+      await act(async () => {
+        await root.findByType("form").props.onSubmit({ preventDefault() {} });
+      });
+
+      expect(persisted).toEqual(
+        revokeBeforeSubmit
+          ? { name: null, keybinding: "mod+k" }
+          : { name: "Test", keybinding: "mod+j" },
+      );
+    },
+  );
 
   it.each([false, true])(
     "preserves a concurrent shortcut change when saving only the script (settings access: %s)",
