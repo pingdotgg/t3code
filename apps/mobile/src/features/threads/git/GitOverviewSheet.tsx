@@ -66,7 +66,7 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
   );
   const gitState = useSelectedThreadGitState();
   const gitActions = useSelectedThreadGitActions();
-  const { canWriteSourceControl } = gitActions;
+  const { canWriteSourceControl, canChangeThreadBranch } = gitActions;
   const theme = useUniwindTheme();
   const foregroundColor = theme["--color-foreground"];
   const sheetColor = theme["--color-sheet"];
@@ -317,7 +317,7 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
           icon="point.topleft.down.curvedto.point.bottomright.up"
           title="Branches & worktrees"
           subtitle={
-            canWriteSourceControl
+            canChangeThreadBranch
               ? "Switch branch, create branch, or move to a worktree"
               : "View branches and worktrees"
           }
