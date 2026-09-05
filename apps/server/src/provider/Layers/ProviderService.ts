@@ -55,10 +55,10 @@ import * as Stream from "effect/Stream";
 
 import { appendUserInputAttachmentPaths } from "../userInputAttachments.ts";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
+import type { McpCapability } from "../../mcp/McpInvocationContext.ts";
 import * as ServerConfig from "../../config.ts";
 import * as DeviceService from "../../device/DeviceService.ts";
 import { ensureAgentDeviceShim } from "../../device/AgentDeviceShim.ts";
-import type * as McpInvocationContext from "../../mcp/McpInvocationContext.ts";
 import {
   increment,
   providerMetricAttributes,
@@ -906,7 +906,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   const agentAccessCapabilities = Effect.fn("ProviderService.agentAccessCapabilities")(function* (
     threadId: ThreadId,
   ) {
-    const capabilities = new Set<McpInvocationContext.McpCapability>(["pull-requests"]);
+    const capabilities = new Set<McpCapability>(["pull-requests"]);
     const access = yield* agentAccessSettings(threadId);
     if (access.browser) capabilities.add("preview");
     if (access.device) capabilities.add("device");
