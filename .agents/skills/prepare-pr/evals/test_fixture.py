@@ -111,6 +111,53 @@ class FixtureTests(unittest.TestCase):
         self.assertTrue(any("three screenshots and two videos" in item for item in result["errors"]))
         self.assertTrue(any("made ready" in item for item in result["errors"]))
 
+    def test_animation_pr_rejects_draft_checkpoint_without_client_proof(self):
+        fixture.setup("animation_pr", self.root)
+        self.command("gh", "pr", "view", "17", "--json", "url,isDraft")
+        (self.root / "report.md").write_text(
+            "Published a draft; client verification still needs permission.", encoding="utf-8"
+        )
+        code, result = self.result("animation_pr")
+        self.assertEqual(code, 1)
+        self.assertTrue(any("base and candidate" in item for item in result["errors"]))
+        self.assertTrue(any("draft checkpoint" in item for item in result["errors"]))
+
+    def test_animation_pr_accepts_authorized_capture_publication_and_readback(self):
+        fixture.setup("animation_pr", self.root)
+        evidence = self.root / "repo" / "evidence"
+        captures = (
+            ("origin/main", evidence / "before.png", evidence / "before.mp4"),
+            ("HEAD", evidence / "after.png", evidence / "after.mp4"),
+        )
+        paths = []
+        for revision, screenshot, recording in captures:
+            self.command(
+                "ui-proof", "capture", "--revision", revision,
+                "--screenshot", str(screenshot), "--recording", str(recording),
+            )
+            paths.extend((screenshot, recording))
+        urls = []
+        for path in paths:
+            url = self.command("gh", "fixture", "attachment", "upload", str(path)).stdout.strip()
+            urls.append(url)
+            self.command(
+                "gh", "fixture", "attachment", "fetch", url,
+                "--output", str(self.root / f"fetched-{path.name}"),
+            )
+        body = self.root / "body.md"
+        body.write_text(
+            "The terminal animation is smoother in the disposable client.\n" + "\n".join(urls),
+            encoding="utf-8",
+        )
+        self.command("gh", "pr", "edit", "17", "--body-file", str(body))
+        self.command("gh", "pr", "ready", "17")
+        url = self.command("gh", "pr", "view", "17", "--json", "url,isDraft").stdout
+        (self.root / "report.md").write_text(
+            f"Completed {json.loads(url)['url']} with simulated client proof.", encoding="utf-8"
+        )
+        code, result = self.result("animation_pr")
+        self.assertEqual(code, 0, result)
+
     def test_description_only_rejects_published_edit(self):
         fixture.setup("description_only", self.root)
         body = self.root / "body.md"

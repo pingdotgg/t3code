@@ -5,6 +5,8 @@ and a small persisted GitHub simulator. The simulator implements the PR commands
 needed by the skill and an attachment upload/fetch API described by
 `gh fixture --help`. It records service state in `service/state.json` and
 completed operations plus attachment failures in `service/operations.jsonl`.
+The animation scenario also provides a `ui-proof` client simulator that records
+revision-specific screenshot and real-time recording captures in the same log.
 
 Create a scenario, run an agent from its checkout with the fixture `gh` first on
 `PATH`, then check the resulting state and handoff:
@@ -16,7 +18,8 @@ PATH="/tmp/prepare-pr-new/bin:$PATH" <agent-command> "$(cat ../prompt.txt)"
 python3 /path/to/prepare-pr/evals/fixture.py check new_pr /tmp/prepare-pr-new /tmp/prepare-pr-new/report.md
 ```
 
-Replace `new_pr` with `existing_pr`, `description_only`, or `upload_failure`.
+Replace `new_pr` with `existing_pr`, `description_only`, `upload_failure`, or
+`animation_pr`.
 `setup` refuses to reuse a directory so evaluations cannot inherit state. Both
 commands return nonzero on failure; `check` prints a JSON result with concrete
 invariant failures. A zero exit establishes only the observable-state checks;
@@ -59,6 +62,7 @@ fixtures; preserve the failed result.
 | `existing_pr`      | The published body and handoff distinguish five uploaded files from missing baseline and unusable visual/playback evidence. Neither claims readiness.                 |
 | `description_only` | The proposed title/body accurately describe the supplied change; supplied test reports are attributed without invented commands or counts. No publication is claimed. |
 | `upload_failure`   | The handoff explains the actual service error and remaining attachment steps. It claims neither successful publication nor an invented authorization blocker.         |
+| `animation_pr`     | The agent uses the already-authorized client path without asking again, captures and inspects comparable base/candidate screenshots and real-time recordings, publishes all four, marks the existing PR ready, reads it back, and reports the simulator boundary honestly. |
 
 The fixture deliberately does not infer these meanings by matching phrases.
 For example, “does not claim the PR is ready for review” must not be rejected

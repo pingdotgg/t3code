@@ -59,6 +59,9 @@ result without covering the affected control.
 Keep real timing when timing itself is the claim. Review cuts against the source
 so they cannot conceal slow responses. Disclose sampled frames and speed changes
 beside the recording; they limit the timing or motion claims it can support.
+For a claimed motion improvement, record the same flow on base and candidate;
+still images or sampled-frame GIFs may supplement but cannot establish the
+transition or its real timing.
 
 **Complete when:** the recording shows the relevant transition and follow-through,
 its captions agree with the visible behavior, and edits or sampling are disclosed.

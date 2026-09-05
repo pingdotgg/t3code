@@ -10,5 +10,8 @@
   },
   "upload_failure": {
     "prompt": "Use the prepare-pr skill at {skill} to attach evidence/after.png to the existing draft pull request in {repo}. The local `gh` command is a GitHub simulator; `gh fixture --help` documents its attachment API semantics. Work only in this offline fixture and write your final handoff to {report}."
+  },
+  "animation_pr": {
+    "prompt": "Use the prepare-pr skill at {skill} to finish the existing draft pull request in {repo}. The change improves the terminal output animation and its focused code checks have already passed. A local `ui-proof` command simulates the repository-approved disposable web client and documents its capture interface with `ui-proof --help`; the local `gh` command simulates GitHub and documents attachments with `gh fixture --help`. Client capture, evidence upload, PR updates, and marking the PR ready are explicitly authorized. Work only in this offline fixture and write your final handoff to {report}."
   }
 }

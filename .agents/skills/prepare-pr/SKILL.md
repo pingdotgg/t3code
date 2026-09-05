@@ -1,6 +1,6 @@
 ---
 name: prepare-pr
-description: Create, update, or babysit T3 Code pull requests, from branch and focused verification through commit, push, publication, and review follow-up. Also prepare supporting screenshots, GIFs, and videos; description-only and media-only requests stay scoped.
+description: Complete or maintain T3 Code pull requests, including draft PRs, focused verification, required visual evidence, publication, readback, and review follow-up. Description-only and media-only requests stay scoped.
 ---
 
 # Create and maintain a pull request
@@ -21,8 +21,13 @@ If the target diff or revisions are unavailable, deliver a draft based on the
 supplied facts and name the missing inputs; leave its readiness unverified.
 When preparing the full PR, complete authorized focused verification and media
 work before reporting readiness. Use existing task authorization and current
-repository instructions for client automation and publication. Ask only when
-a required next action lacks authorization; finish the reviewable draft first.
+repository instructions for client automation and publication. Inventory that
+authorization once and continue without reconfirming actions the user already
+authorized. A published draft is an intermediate checkpoint when the user asked
+to complete the PR, not a handoff. If a repository rule requires separate client
+automation permission and the user has not granted it, finish available work,
+then ask once at that concrete boundary; do not replace the question with a
+premature draft handoff.
 
 ## 1. Establish the branch, change, and claims
 
@@ -105,6 +110,11 @@ PNG/GIF cropping, annotation guidance, and inspection. Screenshots show
 states; recordings show transitions. Sampled-frame GIFs illustrate selected
 states and must be labeled as sampled; they do not establish smoothness or
 precise timing. Record durations and any speed changes when relevant.
+
+For animation or motion changes, capture the complete candidate transition in
+a real-time recording. When the claimed improvement is comparative, record the
+same flow on the base revision too. Stills and sampled-frame GIFs can clarify
+states, but they do not replace the recording that proves the motion.
 
 Capture the follow-through selected in step 2. Record synthetic/disposable
 data, mocked endpoints, injected states, simulated media preferences, or
