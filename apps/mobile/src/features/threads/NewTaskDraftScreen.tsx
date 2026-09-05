@@ -96,6 +96,7 @@ import { removeThreadOutboxMessage } from "../../state/thread-outbox-removal";
 import { useRemoteConnectionStatus } from "../../state/use-remote-environment-registry";
 import { useNewTaskFlow } from "./new-task-flow-provider";
 import { resolveProjectThreadCreationBranch } from "./projectThreadCreationValidation";
+import { resolveNewTaskSendAction } from "./newTaskSendAction";
 import { useCreateProjectThread } from "./use-project-actions";
 import { resolveDraftProjectSelection } from "./new-task-project-selection";
 import {
@@ -893,8 +894,7 @@ export function NewTaskDraftScreen(props: {
       attachmentBlockReason !== null ||
       !modelSelection ||
       initialMessageText.length === 0 ||
-      flow.submitting ||
-      (workspaceMode === "worktree" && !selectedBranchName)
+      flow.submitting
     ) {
       return;
     }
@@ -906,6 +906,23 @@ export function NewTaskDraftScreen(props: {
         "Antigravity model unavailable",
         "Set up Antigravity on web or desktop, or choose another model.",
       );
+      return;
+    }
+    // Auto-use a resolvable base branch (an explicit picker choice, else the
+    // current/default ref the label already shows) so a worktree send never
+    // dead-ends. When nothing resolves, route the tap to the picker instead of
+    // sending — never silently fall back to local. This sits before the offline
+    // enqueue branch so an offline worktree without a branch prompts rather than
+    // queuing a task that could never drain.
+    const resolvedBranch = selectedBranchName ?? availableCurrentBranchName;
+    if (
+      resolveNewTaskSendAction({
+        workspaceMode,
+        resolvedBranch,
+        workspaceModeSettled: flow.defaultWorkspaceModeSettled,
+      }) === "pick-branch"
+    ) {
+      openContextPicker("NewTaskBranch");
       return;
     }
     // A failed-send restore can leave the draft over the cap on purpose (it
@@ -925,6 +942,14 @@ export function NewTaskDraftScreen(props: {
       // Offline: park the task in the outbox; the drain sends it when the
       // environment reconnects. Editing an existing pending task re-queues it
       // under its original identifiers.
+      // Commit the resolved base branch into the draft first, so the queued
+      // payload records it and isQueuedThreadCreationSendable lets it drain.
+      if (workspaceMode === "worktree" && selectedBranchName !== resolvedBranch) {
+        const resolvedRef = flow.availableBranches.find((ref) => ref.name === resolvedBranch);
+        if (resolvedRef) {
+          flow.selectBranch(resolvedRef);
+        }
+      }
       const metadata = editingPendingTask
         ? {
             threadId: editingPendingTask.threadId,
@@ -975,7 +1000,11 @@ export function NewTaskDraftScreen(props: {
     });
     const creationBranch = resolveProjectThreadCreationBranch({
       workspaceMode,
-      selectedBranch: selectedBranchName,
+      // A worktree send is only reached with a resolved branch (else the tap
+      // opened the picker), so pass that resolved ref through to creation. Local
+      // keeps its raw selection and resolveProjectThreadCreationBranch's
+      // current-checkout fallback.
+      selectedBranch: workspaceMode === "worktree" ? resolvedBranch : selectedBranchName,
       currentCheckoutBranch: flow.currentCheckoutBranchName,
     });
     const result = await createProjectThread({
@@ -1063,8 +1092,7 @@ export function NewTaskDraftScreen(props: {
     isIncomingShareReady &&
     !isImportingShare &&
     !flow.submitting &&
-    !voiceInput.blocksSubmission &&
-    !(flow.workspaceMode === "worktree" && !flow.selectedBranchName);
+    !voiceInput.blocksSubmission;
   const promptEditor = (
     <ComposerEditor
       ref={promptInputRef}
