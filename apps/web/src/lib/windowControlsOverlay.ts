@@ -1,3 +1,5 @@
+import { useSyncExternalStore } from "react";
+
 import { isWindowsPlatform } from "./utils";
 
 const WCO_CLASS_NAME = "wco";
@@ -6,6 +8,7 @@ const ELECTRON_WINDOWS_CLASS_NAME = "electron-windows";
 
 interface WindowControlsOverlayLike {
   readonly visible: boolean;
+  getTitlebarAreaRect(): DOMRect;
   addEventListener(type: "geometrychange", listener: EventListener): void;
   removeEventListener(type: "geometrychange", listener: EventListener): void;
 }
@@ -41,6 +44,40 @@ export function syncDocumentWindowControlsOverlayClass(): () => void {
   return () => {
     overlay.removeEventListener("geometrychange", update);
   };
+}
+
+function subscribeWindowControlsOverlayGeometry(listener: () => void): () => void {
+  const overlay = getWindowControlsOverlay();
+  if (!overlay) {
+    return () => {};
+  }
+
+  overlay.addEventListener("geometrychange", listener);
+  return () => {
+    overlay.removeEventListener("geometrychange", listener);
+  };
+}
+
+function getWindowControlsOverlayHeight(): number {
+  const overlay = getWindowControlsOverlay();
+  return overlay?.visible ? overlay.getTitlebarAreaRect().height : 0;
+}
+
+function getServerWindowControlsOverlayHeight(): number {
+  return 0;
+}
+
+/**
+ * Height of the strip the OS composites its own window controls into, or 0 when
+ * the page owns the whole viewport. Those controls paint above every DOM layer,
+ * so portaled popups have to stay out of the strip; no z-index can win it back.
+ */
+export function useWindowControlsOverlayHeight(): number {
+  return useSyncExternalStore(
+    subscribeWindowControlsOverlayGeometry,
+    getWindowControlsOverlayHeight,
+    getServerWindowControlsOverlayHeight,
+  );
 }
 
 export function getElectronPlatformClassNames(
