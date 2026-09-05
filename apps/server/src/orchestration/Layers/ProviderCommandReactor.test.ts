@@ -1178,6 +1178,108 @@ describe("ProviderCommandReactor", () => {
       expect(runningThread?.session?.status).toBe("running");
     }),
   );
+  effectIt.effect(
+    "uses a relinked project cwd for new Claude sessions without restarting existing sessions",
+    () =>
+      Effect.gen(function* () {
+        const modelSelection = {
+          instanceId: ProviderInstanceId.make("claudeAgent"),
+          model: "claude-sonnet-4-5",
+        } satisfies ModelSelection;
+        const harness = yield* Effect.promise(() =>
+          createHarness({ threadModelSelection: modelSelection }),
+        );
+        const now = "2026-01-01T00:00:00.000Z";
+
+        yield* harness.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make("cmd-turn-start-existing-claude-thread"),
+          threadId: ThreadId.make("thread-1"),
+          message: {
+            messageId: asMessageId("user-message-existing-claude-thread"),
+            role: "user",
+            text: "start the existing Claude thread",
+            attachments: [],
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          createdAt: now,
+        });
+        yield* Effect.promise(() => waitFor(() => harness.startSession.mock.calls.length === 1));
+        yield* Effect.promise(() => waitFor(() => harness.sendTurn.mock.calls.length === 1));
+
+        expect(harness.startSession).toHaveBeenCalledTimes(1);
+        expect(harness.startSession.mock.calls[0]?.[0]).toEqual(ThreadId.make("thread-1"));
+        expect(harness.startSession.mock.calls[0]?.[1]).toMatchObject({
+          cwd: "/tmp/provider-project",
+          provider: "claudeAgent",
+        });
+        expect(harness.sendTurn).toHaveBeenCalledTimes(1);
+
+        yield* harness.engine.dispatch({
+          type: "project.meta.update",
+          commandId: CommandId.make("cmd-project-relink-claude"),
+          projectId: asProjectId("project-1"),
+          workspaceRoot: "/tmp/provider-project-relocated",
+        });
+        yield* Effect.promise(() => harness.drain());
+
+        yield* harness.engine.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make("cmd-thread-create-new-claude-thread"),
+          threadId: ThreadId.make("thread-2"),
+          projectId: asProjectId("project-1"),
+          title: "New Claude thread",
+          modelSelection,
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          branch: null,
+          worktreePath: null,
+          createdAt: "2026-01-01T00:00:01.000Z",
+        });
+        yield* harness.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make("cmd-turn-start-new-claude-thread"),
+          threadId: ThreadId.make("thread-2"),
+          message: {
+            messageId: asMessageId("user-message-new-claude-thread"),
+            role: "user",
+            text: "start a new Claude thread after relinking",
+            attachments: [],
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          createdAt: "2026-01-01T00:00:01.000Z",
+        });
+        yield* Effect.promise(() => waitFor(() => harness.startSession.mock.calls.length === 2));
+        yield* Effect.promise(() => waitFor(() => harness.sendTurn.mock.calls.length === 2));
+
+        expect(harness.startSession).toHaveBeenCalledTimes(2);
+        expect(harness.startSession.mock.calls[1]?.[0]).toEqual(ThreadId.make("thread-2"));
+        expect(harness.startSession.mock.calls[1]?.[1]).toMatchObject({
+          cwd: "/tmp/provider-project-relocated",
+          provider: "claudeAgent",
+        });
+        expect(
+          harness.startSession.mock.calls.filter(
+            ([threadId]) => threadId === ThreadId.make("thread-1"),
+          ),
+        ).toHaveLength(1);
+        expect(harness.sendTurn).toHaveBeenCalledTimes(2);
+        expect(
+          harness.runtimeSessions.find((session) => session.threadId === ThreadId.make("thread-1")),
+        ).toMatchObject({ cwd: "/tmp/provider-project" });
+
+        const readModel = yield* Effect.promise(() => harness.readModel());
+        for (const threadId of [ThreadId.make("thread-1"), ThreadId.make("thread-2")]) {
+          const thread = readModel.threads.find((entry) => entry.id === threadId);
+          expect(
+            thread?.activities.some((activity) => activity.kind === "provider.turn.start.failed"),
+          ).toBe(false);
+        }
+      }),
+  );
+
   effectIt.effect("projects starting before a slow provider session finishes", () =>
     Effect.gen(function* () {
       const releaseStart = yield* Deferred.make<void>();
@@ -3703,7 +3805,7 @@ describe("ProviderCommandReactor", () => {
       ),
     );
 
-    await Effect.runPromise(
+    await harness.runEffect(
       harness.engine.dispatch({
         type: "thread.session.set",
         commandId: CommandId.make("cmd-session-set-for-approval-error"),
@@ -3798,7 +3900,7 @@ describe("ProviderCommandReactor", () => {
       ),
     );
 
-    await Effect.runPromise(
+    await harness.runEffect(
       harness.engine.dispatch({
         type: "thread.session.set",
         commandId: CommandId.make("cmd-session-set-for-user-input-error"),
@@ -3816,7 +3918,7 @@ describe("ProviderCommandReactor", () => {
       }),
     );
 
-    await Effect.runPromise(
+    await harness.runEffect(
       harness.engine.dispatch({
         type: "thread.activity.append",
         commandId: CommandId.make("cmd-user-input-requested"),
@@ -3849,7 +3951,7 @@ describe("ProviderCommandReactor", () => {
       }),
     );
 
-    await Effect.runPromise(
+    await harness.runEffect(
       harness.engine.dispatch({
         type: "thread.user-input.respond",
         commandId: CommandId.make("cmd-user-input-respond-stale"),
