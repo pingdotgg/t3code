@@ -1,6 +1,8 @@
 import { Agent, type AgentOptions, type Run, type RunResult, type SDKAgent } from "@cursor/sdk";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
@@ -53,15 +55,13 @@ interface CursorSdkRequest {
 }
 
 /**
- * Own the SDK objects and their temporary workspace beyond the caller's
- * deadline. Cursor's promises do not accept an AbortSignal, so interruption
- * requests cancellation without awaiting it; this owner removes the workspace
- * only after create/send and any acquired run have settled.
+ * Own the Cursor SDK objects beyond the caller's deadline. Cursor's promises
+ * do not accept an AbortSignal, so cancellation is requested without awaiting
+ * it and the result settles only after an acquired run and agent settle.
  */
 function runCursorSdkRequest(input: {
   readonly agentOptions: AgentOptions;
   readonly prompt: string;
-  readonly removeWorkspace: () => Promise<void>;
 }): CursorSdkRequest {
   let cancellationRequested = false;
   let run: Run | undefined;
@@ -100,9 +100,11 @@ function runCursorSdkRequest(input: {
       if (agent !== undefined) {
         await Promise.resolve(agent[Symbol.asyncDispose]()).catch(() => undefined);
       }
-      await input.removeWorkspace();
     }
   })();
+  // The owner starts eagerly, before the Effect fiber attaches its handler.
+  // Observe early failures here while returning the original promise to Effect.
+  void result.catch(() => undefined);
 
   return {
     result,
@@ -122,8 +124,7 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
   environment?: NodeJS.ProcessEnv,
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
-  const runtimeContext = yield* Effect.context<never>();
-  const runPromise = Effect.runPromiseWith(runtimeContext);
+  const ownerScope = yield* Effect.scope;
   const resolvedEnvironment = environment ?? process.env;
 
   const resolveCursorApiKey = (operation: CursorTextGenerationOperation) =>
@@ -192,30 +193,31 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
             },
           } satisfies AgentOptions;
 
-          const mapCursorSdkError = (cause: unknown) =>
-            new TextGenerationError({
-              operation,
-              detail: "Cursor SDK request failed.",
-              cause,
-            });
           const request = runCursorSdkRequest({
             agentOptions,
             prompt: metadataPrompt,
-            removeWorkspace: () =>
-              runPromise(
-                ignoreCursorCleanupFailure(
-                  fileSystem.remove(metadataWorkspace, { recursive: true, force: true }),
-                ),
-              ),
           });
-          return yield* restore(
-            Effect.callback<RunResult, TextGenerationError>((resume) => {
-              request.result.then(
-                (result) => resume(Effect.succeed(result)),
-                (cause) => resume(Effect.fail(mapCursorSdkError(cause))),
-              );
-              return Effect.sync(request.cancel);
-            }),
+          const completionFiber = yield* Effect.tryPromise({
+            try: () => request.result,
+            catch: (cause) =>
+              new TextGenerationError({
+                operation,
+                detail: "Cursor SDK request failed.",
+                cause,
+              }),
+          }).pipe(
+            Effect.onExit((exit) =>
+              exit._tag === "Failure" && Cause.hasInterrupts(exit.cause)
+                ? Effect.sync(request.cancel)
+                : ignoreCursorCleanupFailure(
+                    fileSystem.remove(metadataWorkspace, { recursive: true, force: true }),
+                  ),
+            ),
+            Effect.interruptible,
+            Effect.forkIn(ownerScope),
+          );
+          return yield* restore(Fiber.join(completionFiber)).pipe(
+            Effect.onInterrupt(() => Effect.sync(request.cancel)),
           );
         }),
       ).pipe(
