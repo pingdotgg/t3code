@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { buildDayColumns, niceScale } from "./UsageProviderChart";
+import {
+  brushSelection,
+  buildDayColumns,
+  chartLabelIndices,
+  periodIndexAt,
+  niceScale,
+  spanSinglePeriodPoints,
+} from "./UsageProviderChart";
 import { providersWithUsage } from "./usageProviders";
 
 describe("niceScale", () => {
@@ -131,5 +138,67 @@ describe("hourly chart columns", () => {
         "cost",
       ).map((column) => column.total),
     ).toEqual([0, 4, 0]);
+  });
+});
+
+describe("brushSelection", () => {
+  const days = ["2026-08-01", "2026-08-02", "2026-08-03", "2026-08-04"];
+
+  it("returns inclusive bounds for a forward drag", () => {
+    expect(brushSelection(days, 1, 3)).toEqual({
+      sinceDay: "2026-08-02",
+      untilDay: "2026-08-04",
+    });
+  });
+
+  it("normalises a backward drag", () => {
+    expect(brushSelection(days, 3, 1)).toEqual({
+      sinceDay: "2026-08-02",
+      untilDay: "2026-08-04",
+    });
+  });
+
+  it("treats a plain click as no selection", () => {
+    expect(brushSelection(days, 2, 2)).toBeNull();
+  });
+
+  it("rejects endpoints outside the day list", () => {
+    expect(brushSelection(days, 0, 9)).toBeNull();
+  });
+});
+
+describe("periodIndexAt", () => {
+  it("clamps a captured pointer to either chart edge", () => {
+    expect(periodIndexAt(-50, 100, 400, 5)).toBe(0);
+    expect(periodIndexAt(750, 100, 400, 5)).toBe(4);
+  });
+});
+
+describe("spanSinglePeriodPoints", () => {
+  it("repeats one point across the chart width", () => {
+    expect(spanSinglePeriodPoints([{ x: 0, y: 42 }])).toEqual([
+      { x: 0, y: 42 },
+      { x: 960, y: 42 },
+    ]);
+  });
+
+  it("leaves multi-period points unchanged", () => {
+    const points = [
+      { x: 0, y: 42 },
+      { x: 960, y: 12 },
+    ];
+
+    expect(spanSinglePeriodPoints(points)).toBe(points);
+  });
+});
+
+describe("chartLabelIndices", () => {
+  it("deduplicates labels for one- and two-period windows", () => {
+    expect(chartLabelIndices(1)).toEqual([0]);
+    expect(chartLabelIndices(2)).toEqual([0, 1]);
+  });
+
+  it("keeps left, middle, and right labels for wider windows", () => {
+    expect(chartLabelIndices(5)).toEqual([0, 2, 4]);
   });
 });

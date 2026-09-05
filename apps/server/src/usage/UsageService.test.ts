@@ -11,37 +11,50 @@ import * as NodePath from "node:path";
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
-import { UsageDay, type UsageSummaryInput } from "@t3tools/contracts";
+import { ProjectId, ThreadId, UsageDay, type UsageSummaryInput } from "@t3tools/contracts";
+import * as Duration from "effect/Duration";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
-import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Scheduler from "effect/Scheduler";
+import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 
 import * as ServerConfig from "../config.ts";
+import { ProjectionProjectRepositoryLive } from "../persistence/Layers/ProjectionProjects.ts";
+import { ProjectionThreadRepositoryLive } from "../persistence/Layers/ProjectionThreads.ts";
+import { ProjectionProjectRepository } from "../persistence/Services/ProjectionProjects.ts";
+import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import * as ProviderSessionRuntime from "../persistence/ProviderSessionRuntime.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as UsageService from "./UsageService.ts";
 
 function claudeLine(
   id: number,
   outputTokens: number,
-  timestamp = "2026-08-01T10:00:00Z",
-  messageId = `msg_${id}`,
-  requestId = `req_${id}`,
+  timestampOrModel = "2026-08-01T10:00:00Z",
+  messageIdOrCwd?: string,
+  requestIdOverride?: string,
 ): string {
+  const hasTimestamp = /^\d{4}-\d{2}-\d{2}T/.test(timestampOrModel);
+  const timestamp = hasTimestamp ? timestampOrModel : "2026-08-01T10:00:00Z";
+  const model = hasTimestamp ? "claude-fable-5" : timestampOrModel;
+  const messageId = hasTimestamp ? (messageIdOrCwd ?? `msg_${id}`) : `msg_${id}`;
+  const requestId = hasTimestamp ? (requestIdOverride ?? `req_${id}`) : `req_${id}`;
+  const cwd = hasTimestamp ? undefined : messageIdOrCwd;
   return `${JSON.stringify({
     type: "assistant",
     timestamp,
     requestId,
     sessionId: "session-1",
+    ...(cwd === undefined ? {} : { cwd }),
     message: {
       id: messageId,
-      model: "claude-fable-5",
+      model,
       usage: { input_tokens: 10, output_tokens: outputTokens },
     },
   })}\n`;
@@ -68,10 +81,70 @@ function claudeModelLine(
   })}\n`;
 }
 
+function claudeCacheLine(
+  id: number,
+  timestamp: string,
+  cwd: string,
+  cacheCreation5mTokens: number,
+  cacheCreation1hTokens: number,
+): string {
+  return `${JSON.stringify({
+    type: "assistant",
+    timestamp,
+    requestId: `req_${id}`,
+    sessionId: `session-${id}`,
+    cwd,
+    message: {
+      id: `msg_${id}`,
+      model: "claude-fable-5",
+      usage: {
+        input_tokens: 10,
+        output_tokens: 5,
+        cache_creation_input_tokens: cacheCreation5mTokens + cacheCreation1hTokens,
+        cache_creation: {
+          ephemeral_5m_input_tokens: cacheCreation5mTokens,
+          ephemeral_1h_input_tokens: cacheCreation1hTokens,
+        },
+      },
+    },
+  })}\n`;
+}
+
+function codexRollout(sessionId: string, cwd: string, outputTokens: number): string {
+  return [
+    {
+      type: "session_meta",
+      timestamp: "2026-08-01T10:00:00Z",
+      payload: { type: "session_meta", id: sessionId, cwd },
+    },
+    {
+      type: "turn_context",
+      timestamp: "2026-08-01T10:00:01Z",
+      payload: { type: "turn_context", model: "gpt-5.2-codex" },
+    },
+    {
+      type: "event_msg",
+      timestamp: "2026-08-01T10:00:05Z",
+      payload: {
+        type: "token_count",
+        info: { last_token_usage: { input_tokens: 100, output_tokens: outputTokens } },
+      },
+    },
+  ]
+    .map((line) => JSON.stringify(line))
+    .join("\n");
+}
+
 const WINDOW: UsageSummaryInput = {
   timeZone: "UTC",
   sinceDay: UsageDay.make("2026-07-31"),
   untilDay: UsageDay.make("2026-08-02"),
+};
+
+const NARROW_WINDOW: UsageSummaryInput = {
+  ...WINDOW,
+  sinceDay: UsageDay.make("2026-08-01"),
+  untilDay: UsageDay.make("2026-08-01"),
 };
 
 const setup = Effect.gen(function* () {
@@ -104,6 +177,8 @@ const serviceLayers = (input: {
   readonly ratesDocument?: unknown;
   readonly ratesGate?: Deferred.Deferred<void, never>;
   readonly ratesStarted?: Deferred.Deferred<void, never>;
+  readonly projectRepository?: ProjectionProjectRepository["Service"];
+  readonly runtimeRepository?: ProviderSessionRuntime.ProviderSessionRuntimeRepository["Service"];
 }) =>
   ServerConfig.layerTest(process.cwd(), input.baseDir ?? { prefix: input.prefix }).pipe(
     Layer.provideMerge(NodeServices.layer),
@@ -129,6 +204,21 @@ const serviceLayers = (input: {
     ),
     Layer.provideMerge(
       Layer.succeed(HostProcessEnvironment, { GROK_HOME: NodePath.join(input.home, "grok") }),
+    ),
+    Layer.provideMerge(
+      Layer.mergeAll(
+        input.projectRepository === undefined
+          ? ProjectionProjectRepositoryLive.pipe(Layer.provideMerge(SqlitePersistenceMemory))
+          : Layer.succeed(ProjectionProjectRepository, input.projectRepository),
+        ProjectionThreadRepositoryLive.pipe(Layer.provideMerge(SqlitePersistenceMemory)),
+        input.runtimeRepository === undefined
+          ? ProviderSessionRuntime.layer.pipe(Layer.provideMerge(SqlitePersistenceMemory))
+          : Layer.succeed(
+              ProviderSessionRuntime.ProviderSessionRuntimeRepository,
+              input.runtimeRepository,
+            ),
+        SqlitePersistenceMemory,
+      ),
     ),
   );
 
@@ -173,6 +263,66 @@ describe("UsageService", () => {
       const result = yield* service.readSummary(canonical);
 
       assert.strictEqual(totalOutputTokens(result), 5);
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("does not parse unrelated Codex token content for a targeted thread read", () =>
+    Effect.gen(function* () {
+      const { settings, home } = yield* setup;
+      const sessionsDir = NodePath.join(home, "codex", "sessions", "2026", "08", "01");
+      yield* Effect.promise(() => NodeFSP.mkdir(sessionsDir, { recursive: true }));
+      const targetPath = NodePath.join(
+        sessionsDir,
+        "rollout-2026-08-01T10-00-00-target-session.jsonl",
+      );
+      const unrelatedPath = NodePath.join(
+        sessionsDir,
+        "rollout-2026-08-01T10-00-00-unrelated-session.jsonl",
+      );
+      yield* Effect.promise(() =>
+        Promise.all([
+          NodeFSP.writeFile(targetPath, codexRollout("target-session", "/work/target", 7)),
+          NodeFSP.writeFile(unrelatedPath, codexRollout("unrelated-session", "/work/other", 999)),
+        ]),
+      );
+
+      yield* Effect.gen(function* () {
+        const config = yield* ServerConfig.ServerConfig;
+        const runtimeRepository = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
+        yield* runtimeRepository.upsert({
+          threadId: ThreadId.make("target-thread"),
+          providerName: "codex",
+          providerInstanceId: null,
+          adapterKey: "codex",
+          runtimeMode: "full-access",
+          status: "running",
+          lastSeenAt: "2026-08-01T10:00:00.000Z",
+          resumeCursor: { threadId: "target-session" },
+          runtimePayload: null,
+        });
+        const service = yield* UsageService.make;
+        const breakdown = yield* service.readThreadBreakdown({
+          ...WINDOW,
+          threadId: ThreadId.make("target-thread"),
+        });
+        assert.strictEqual(breakdown.rows.length, 1);
+        assert.strictEqual(breakdown.rows[0]?.totals.outputTokens, 7);
+
+        const persisted = (yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown))(
+          yield* Effect.promise(() =>
+            NodeFSP.readFile(NodePath.join(config.stateDir, "usage-scan-cache.json"), "utf8"),
+          ),
+        )) as { files: Record<string, unknown>; identities: Record<string, unknown> };
+        assert.deepStrictEqual(Object.keys(persisted.files), [targetPath]);
+        assert.deepStrictEqual(
+          Object.keys(persisted.identities).sort(),
+          [targetPath, unrelatedPath].sort(),
+        );
+      }).pipe(
+        Effect.provide(
+          serviceLayers({ prefix: "usage-service-target-prefilter-test", home, settings }),
+        ),
+      );
     }).pipe(Effect.scoped),
   );
 
@@ -303,6 +453,93 @@ describe("UsageService", () => {
       }).pipe(Effect.scoped),
   );
 
+  it.live("preserves project attribution and cache-write pricing across a ledger restart", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      const baseDir = NodePath.join(home, "project-cache-ledger-state");
+      const canonical = currentCanonicalWindow();
+      const timestamp = `${canonical.sinceDay}T10:00:00Z`;
+      yield* Effect.promise(() =>
+        NodeFSP.writeFile(
+          transcript,
+          claudeCacheLine(1, timestamp, "/work/app/src", 10, 20) +
+            claudeCacheLine(2, timestamp, "/work/other", 20, 10) +
+            claudeCacheLine(3, timestamp, "", 15, 15),
+        ),
+      );
+      const projectRepository: ProjectionProjectRepository["Service"] = {
+        upsert: () => Effect.die("unused project upsert"),
+        getById: () => Effect.die("unused project lookup"),
+        listAll: () =>
+          Effect.succeed([
+            {
+              projectId: ProjectId.make("project-app"),
+              title: "App",
+              workspaceRoot: "/work/app",
+              defaultModelSelection: null,
+              defaultThreadEnvMode: null,
+              autoPull: false,
+              scripts: [],
+              createdAt: "2026-08-01T00:00:00.000Z",
+              updatedAt: "2026-08-01T00:00:00.000Z",
+              deletedAt: null,
+            },
+          ]),
+        deleteById: () => Effect.die("unused project delete"),
+      };
+      const layers = serviceLayers({
+        prefix: "usage-service-project-cache-ledger-test",
+        baseDir,
+        home,
+        settings,
+        projectRepository,
+        ratesDocument: {
+          "claude-fable-5": {
+            input_cost_per_token: 1e-5,
+            output_cost_per_token: 5e-5,
+            cache_read_input_token_cost: 1e-6,
+            cache_creation_input_token_cost: 1.25e-5,
+            cache_creation_input_token_cost_above_1hr: 2e-5,
+          },
+        },
+      });
+      const service = yield* UsageService.make.pipe(Effect.provide(layers));
+
+      const scanned = yield* service.refreshSummary(canonical);
+      const scannedByAttribution = Object.fromEntries(
+        scanned.buckets.map((bucket) => [bucket.projectAttribution, bucket]),
+      );
+      assert.deepStrictEqual(Object.keys(scannedByAttribution).toSorted(), [
+        "outside",
+        "project",
+        "unknown",
+      ]);
+      assert.strictEqual(scannedByAttribution["project"]?.projectId, "project-app");
+      assert.strictEqual(scannedByAttribution["project"]?.project, "App");
+      assert.closeTo(
+        scannedByAttribution["project"]?.cacheWriteUsd ?? -1,
+        10 * 1.25e-5 + 20 * 2e-5,
+        1e-12,
+      );
+      assert.closeTo(
+        scannedByAttribution["outside"]?.cacheWriteUsd ?? -1,
+        20 * 1.25e-5 + 10 * 2e-5,
+        1e-12,
+      );
+      assert.closeTo(
+        scannedByAttribution["unknown"]?.cacheWriteUsd ?? -1,
+        15 * 1.25e-5 + 15 * 2e-5,
+        1e-12,
+      );
+
+      yield* Effect.promise(() => NodeFSP.rm(transcript));
+      const restarted = yield* UsageService.make.pipe(Effect.provide(layers));
+      const restored = yield* restarted.readSummary(canonical);
+
+      assert.deepStrictEqual(restored.buckets, scanned.buckets);
+    }).pipe(Effect.scoped),
+  );
+
   it.live("rebuilds a v2 ledger before applying a custom price to an unknown model", () =>
     Effect.gen(function* () {
       const { transcript, settings, home } = yield* setup;
@@ -385,7 +622,7 @@ describe("UsageService", () => {
         aggregates: readonly (Record<string, unknown> & { readonly dynamicPricing?: boolean })[];
         sources: readonly unknown[];
       };
-      assert.strictEqual(persisted.version, 3);
+      assert.strictEqual(persisted.version, 4);
 
       // A failed mandatory rebuild still serves the matching last-good
       // snapshot. Rewrite the fixture as v2 and make its transcript root
@@ -470,12 +707,87 @@ describe("UsageService", () => {
         Effect.provide(serviceLayers({ prefix: "usage-service-grow-test", home, settings })),
       );
 
-      const first = yield* service.readSummary(WINDOW);
+      const first = yield* service.readSummary(NARROW_WINDOW);
       assert.strictEqual(totalOutputTokens(first), 5);
 
       yield* Effect.promise(() => NodeFSP.appendFile(transcript, claudeLine(2, 7)));
       const second = yield* service.refreshSummary(WINDOW);
       assert.strictEqual(totalOutputTokens(second), 12);
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("replaces a cached progressive snapshot when a transcript grows", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
+
+      const service = yield* UsageService.make.pipe(
+        Effect.provide(serviceLayers({ prefix: "usage-service-progressive-test", home, settings })),
+      );
+
+      const first = yield* service.readSummary(WINDOW);
+      assert.strictEqual(totalOutputTokens(first), 5);
+
+      yield* Effect.promise(() => NodeFSP.appendFile(transcript, claudeLine(1, 12)));
+      const second = yield* service.readSummary({ ...WINDOW, refreshToken: "progressive-final" });
+      assert.strictEqual(totalOutputTokens(second), 12);
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("keeps project attribution unknown when the project repository cannot be read", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      yield* Effect.promise(() =>
+        NodeFSP.writeFile(transcript, claudeLine(1, 5, "claude-fable-5", "/work/app")),
+      );
+      const repositoryFailure = Effect.die(new Error("project repository unavailable"));
+      const projectRepository: ProjectionProjectRepository["Service"] = {
+        upsert: () => repositoryFailure,
+        getById: () => repositoryFailure,
+        listAll: () => repositoryFailure,
+        deleteById: () => repositoryFailure,
+      };
+      const service = yield* UsageService.make.pipe(
+        Effect.provide(
+          serviceLayers({
+            prefix: "usage-service-project-failure-test",
+            home,
+            settings,
+            projectRepository,
+          }),
+        ),
+      );
+
+      const summary = yield* service.readSummary(WINDOW);
+      assert.strictEqual(summary.buckets[0]?.projectAttribution, "unknown");
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("returns a usage read error when provider runtime state cannot be read", () =>
+    Effect.gen(function* () {
+      const { settings, home } = yield* setup;
+      const repositoryFailure = Effect.die(new Error("runtime repository unavailable"));
+      const runtimeRepository: ProviderSessionRuntime.ProviderSessionRuntimeRepository["Service"] =
+        {
+          upsert: () => repositoryFailure,
+          getByThreadId: () => repositoryFailure,
+          list: () => repositoryFailure,
+          deleteByThreadId: () => repositoryFailure,
+        };
+      const service = yield* UsageService.make.pipe(
+        Effect.provide(
+          serviceLayers({
+            prefix: "usage-service-runtime-failure-test",
+            home,
+            settings,
+            runtimeRepository,
+          }),
+        ),
+      );
+
+      const error = yield* service.readThreadBreakdown(WINDOW).pipe(Effect.flip);
+      assert.strictEqual(error.reason, "scanFailed");
+      assert.strictEqual(error.detail, "Provider runtime state could not be read");
     }).pipe(Effect.scoped),
   );
 
@@ -488,31 +800,14 @@ describe("UsageService", () => {
 
       yield* Effect.gen(function* () {
         const settingsService = yield* ServerSettings.ServerSettingsService;
-        const fileSystem = yield* FileSystem.FileSystem;
         const firstScanStarted = yield* Deferred.make<void>();
-        const secondScanStarted = yield* Deferred.make<void>();
         const releaseRates = yield* Deferred.make<void>();
-        let homeProbes = 0;
         const service = yield* UsageService.make.pipe(
-          Effect.provideService(FileSystem.FileSystem, {
-            ...fileSystem,
-            exists: (path) =>
-              fileSystem.exists(path).pipe(
-                Effect.tap(() => {
-                  if (path !== NodePath.join(home, "claude", ".claude", "projects"))
-                    return Effect.void;
-                  homeProbes += 1;
-                  return Deferred.succeed(
-                    homeProbes === 1 ? firstScanStarted : secondScanStarted,
-                    undefined,
-                  );
-                }),
-              ),
-          }),
           Effect.provideService(
             HttpClient.HttpClient,
             HttpClient.make((request) =>
-              Deferred.await(releaseRates).pipe(
+              Deferred.succeed(firstScanStarted, undefined).pipe(
+                Effect.andThen(Deferred.await(releaseRates)),
                 Effect.as(HttpClientResponse.fromWeb(request, Response.json({}))),
               ),
             ),
@@ -527,7 +822,7 @@ describe("UsageService", () => {
           },
         });
         const second = yield* service.readSummary(WINDOW).pipe(Effect.forkChild);
-        yield* Deferred.await(secondScanStarted);
+        yield* Effect.yieldNow;
         yield* Deferred.succeed(releaseRates, undefined);
 
         const original = yield* Fiber.join(first);
@@ -1921,4 +2216,154 @@ describe("UsageService", () => {
       );
     }).pipe(Effect.scoped),
   );
+
+  it.live("rejects exact thread windows longer than 24 hours", () =>
+    Effect.gen(function* () {
+      const { settings, home } = yield* setup;
+      const service = yield* UsageService.make.pipe(
+        Effect.provide(
+          serviceLayers({ prefix: "usage-service-thread-window-test", home, settings }),
+        ),
+      );
+      const reason = yield* service
+        .readThreadBreakdown({
+          timeZone: "UTC",
+          sinceDay: UsageDay.make("2026-08-01"),
+          untilDay: UsageDay.make("2026-08-02"),
+          sinceTime: "2026-08-01T00:00:00.000Z",
+          untilTime: "2026-08-02T01:00:00.000Z",
+        })
+        .pipe(
+          Effect.match({
+            onFailure: (error) => error.reason,
+            onSuccess: () => "success" as const,
+          }),
+        );
+
+      assert.strictEqual(reason, "invalidWindow");
+    }).pipe(Effect.scoped),
+  );
+});
+
+describe("isValidUsageDay", () => {
+  it("rejects impossible start and end dates instead of normalising them", () => {
+    assert.isTrue(UsageService.isValidUsageDay("2026-02-28"));
+    assert.isFalse(UsageService.isValidUsageDay("2026-02-29"));
+    assert.isFalse(UsageService.isValidUsageDay("2026-13-01"));
+  });
+});
+
+describe("shortSessionLabel", () => {
+  it("never exposes a file-derived path", () => {
+    assert.strictEqual(
+      UsageService.shortSessionLabel("claude:file:session-dir:updates"),
+      "Untitled session",
+    );
+  });
+});
+
+describe("runtimeUsageSessionKey", () => {
+  it("maps every provider with usage transcripts to its persisted session cursor", () => {
+    assert.strictEqual(
+      UsageService.runtimeUsageSessionKey("claudeAgent", { resume: "claude-session" }),
+      "claude:claude-session",
+    );
+    assert.strictEqual(
+      UsageService.runtimeUsageSessionKey("codex", { threadId: "codex-session" }),
+      "codex:codex-session",
+    );
+    assert.strictEqual(
+      UsageService.runtimeUsageSessionKey("grok", { schemaVersion: 1, sessionId: "grok-session" }),
+      "grok:grok-session",
+    );
+  });
+
+  it("includes provider sessions replaced by later model switches", () => {
+    assert.deepEqual(
+      UsageService.runtimeUsageSessionKeys(
+        "codex",
+        { threadId: "current-session" },
+        {
+          _t3PreviousResumeCursors: [
+            { providerName: "codex", resumeCursor: { threadId: "previous-session" } },
+          ],
+        },
+      ),
+      ["codex:current-session", "codex:previous-session"],
+    );
+  });
+
+  it("ignores providers and cursors without a usage transcript session", () => {
+    assert.isNull(UsageService.runtimeUsageSessionKey("opencode", { sessionId: "session" }));
+    assert.isNull(UsageService.runtimeUsageSessionKey("grok", { sessionId: "" }));
+    assert.isNull(UsageService.runtimeUsageSessionKey("grok", null));
+  });
+});
+
+describe("transcriptFileMayMatchThread", () => {
+  const target: UsageService.ThreadTranscriptTarget = {
+    sessionIds: new Map([
+      ["claude", new Set(["claude-session"])],
+      ["codex", new Set(["codex-session"])],
+      ["grok", new Set(["grok-session"])],
+    ]),
+    worktrees: new Set(["/work/app/.wt/thread-1"]),
+  };
+
+  const matches = (
+    provider: "claude" | "codex" | "grok",
+    filePath: string,
+    root: string,
+    options?: {
+      readonly cached?: { readonly size: number; readonly mtimeMs: number };
+      readonly identity?: { readonly sessionId: string; readonly cwd: string };
+    },
+  ) =>
+    UsageService.transcriptFileMayMatchThread({
+      path: NodePath,
+      provider,
+      filePath,
+      root,
+      target,
+      ...(options?.cached === undefined
+        ? {}
+        : { cached: { ...options.cached, records: [], tailRecords: [] } }),
+      ...(options?.identity === undefined ? {} : { identity: options.identity }),
+    });
+
+  it("selects provider files from current and historic session ids", () => {
+    assert.isTrue(matches("claude", "/claude/project/claude-session.jsonl", "/claude"));
+    assert.isTrue(
+      matches("claude", "/claude/project/claude-session/subagents/agent-a.jsonl", "/claude"),
+    );
+    assert.isTrue(
+      matches("codex", "/codex/2026/09/rollout-2026-09-05T12-00-00-codex-session.jsonl", "/codex"),
+    );
+    assert.isTrue(matches("grok", "/grok/cwd/grok-session/updates.jsonl", "/grok"));
+    assert.isFalse(matches("claude", "/claude/project/other-session.jsonl", "/claude"));
+  });
+
+  it("selects Claude and Grok files by their encoded dedicated worktree", () => {
+    assert.isTrue(
+      matches("claude", "/claude/-work-app--wt-thread-1/legacy-session.jsonl", "/claude"),
+    );
+    assert.isTrue(
+      matches("grok", "/grok/%2Fwork%2Fapp%2F.wt%2Fthread-1/legacy-session/updates.jsonl", "/grok"),
+    );
+  });
+
+  it("selects Codex rollouts from their bounded session metadata", () => {
+    const path = "/codex/2026/09/rollout-2026-09-05T12-00-00-other-session.jsonl";
+    assert.isFalse(matches("codex", path, "/codex"));
+    assert.isTrue(
+      matches("codex", path, "/codex", {
+        identity: { sessionId: "other-session", cwd: "/work/app/.wt/thread-1" },
+      }),
+    );
+    assert.isFalse(
+      matches("codex", path, "/codex", {
+        identity: { sessionId: "other-session", cwd: "/work/app/.wt/thread-2" },
+      }),
+    );
+  });
 });

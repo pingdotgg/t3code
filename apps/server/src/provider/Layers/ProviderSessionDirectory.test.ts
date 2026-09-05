@@ -4,7 +4,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { ProviderDriverKind, ThreadId } from "@t3tools/contracts";
+import { ProviderDriverKind, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import { it, assert } from "@effect/vitest";
 import { assertSome } from "@effect/vitest/utils";
 import * as Effect from "effect/Effect";
@@ -17,6 +17,7 @@ import {
   SqlitePersistenceMemory,
 } from "../../persistence/Layers/Sqlite.ts";
 import * as ProviderSessionRuntime from "../../persistence/ProviderSessionRuntime.ts";
+import { readProviderResumeCursorHistory } from "../providerResumeCursorHistory.ts";
 import { ProviderSessionDirectory } from "../Services/ProviderSessionDirectory.ts";
 import { ProviderSessionDirectoryLive } from "./ProviderSessionDirectory.ts";
 
@@ -119,6 +120,84 @@ it.layer(makeDirectoryLayer(SqlitePersistenceMemory))("ProviderSessionDirectoryL
           model: "gpt-5-codex",
           activeTurnId: "turn-1",
         });
+      }
+    }));
+
+  it("retains replaced provider resume cursors in runtime history", () =>
+    Effect.gen(function* () {
+      const directory = yield* ProviderSessionDirectory;
+      const runtimeRepository = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
+      const threadId = ThreadId.make("thread-resume-history");
+
+      yield* directory.upsert({
+        provider: ProviderDriverKind.make("claudeAgent"),
+        threadId,
+        resumeCursor: { resume: "provider-session-old", resumeSessionAt: "turn-1", turnCount: 1 },
+        runtimePayload: { cwd: "/tmp/project" },
+      });
+      yield* directory.upsert({
+        provider: ProviderDriverKind.make("claudeAgent"),
+        threadId,
+        resumeCursor: { resume: "provider-session-old", resumeSessionAt: "turn-2", turnCount: 2 },
+      });
+      yield* directory.upsert({
+        provider: ProviderDriverKind.make("claudeAgent"),
+        threadId,
+        resumeCursor: { resume: "provider-session-new", resumeSessionAt: "turn-1", turnCount: 1 },
+      });
+      yield* directory.upsert({
+        provider: ProviderDriverKind.make("claudeAgent"),
+        threadId,
+        resumeCursor: { resume: "provider-session-new", resumeSessionAt: "turn-2", turnCount: 2 },
+      });
+
+      const runtime = yield* runtimeRepository.getByThreadId({ threadId });
+      assert.equal(Option.isSome(runtime), true);
+      if (Option.isSome(runtime)) {
+        assert.deepEqual(readProviderResumeCursorHistory(runtime.value.runtimePayload), [
+          {
+            providerName: "claudeAgent",
+            resumeCursor: {
+              resume: "provider-session-old",
+              resumeSessionAt: "turn-2",
+              turnCount: 2,
+            },
+          },
+        ]);
+        assert.equal(
+          (runtime.value.runtimePayload as Record<string, unknown>)["cwd"],
+          "/tmp/project",
+        );
+      }
+    }));
+
+  it("retains a supported cursor when the replacement provider has no usage session", () =>
+    Effect.gen(function* () {
+      const directory = yield* ProviderSessionDirectory;
+      const runtimeRepository = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
+      const threadId = ThreadId.make("thread-provider-replacement-history");
+
+      yield* directory.upsert({
+        provider: ProviderDriverKind.make("claudeAgent"),
+        threadId,
+        resumeCursor: { resume: "claude-session" },
+      });
+      yield* directory.upsert({
+        provider: ProviderDriverKind.make("opencode"),
+        providerInstanceId: ProviderInstanceId.make("opencode"),
+        threadId,
+        resumeCursor: { schemaVersion: 1, sessionId: "opencode-session" },
+      });
+
+      const runtime = yield* runtimeRepository.getByThreadId({ threadId });
+      assert.equal(Option.isSome(runtime), true);
+      if (Option.isSome(runtime)) {
+        assert.deepEqual(readProviderResumeCursorHistory(runtime.value.runtimePayload), [
+          {
+            providerName: "claudeAgent",
+            resumeCursor: { resume: "claude-session" },
+          },
+        ]);
       }
     }));
 

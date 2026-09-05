@@ -13,6 +13,11 @@ export interface UsageRecord {
   readonly timestampMs: number;
   readonly model: string;
   readonly sessionId: string;
+  /**
+   * Working directory the session ran in, or `""` when the transcript does not
+   * record one (Grok). Drives project attribution at aggregation time.
+   */
+  readonly cwd: string;
   readonly totals: UsageTokenTotals;
   readonly reportedCostUsd: number | null;
   /**
@@ -41,10 +46,14 @@ function parseTimestampMs(value: unknown): number | null {
 }
 
 export function addTotals(a: UsageTokenTotals, b: UsageTokenTotals): UsageTokenTotals {
+  const cacheCreation5mTokens = (a.cacheCreation5mTokens ?? 0) + (b.cacheCreation5mTokens ?? 0);
+  const cacheCreation1hTokens = (a.cacheCreation1hTokens ?? 0) + (b.cacheCreation1hTokens ?? 0);
   return {
     uncachedInputTokens: a.uncachedInputTokens + b.uncachedInputTokens,
     cachedInputTokens: a.cachedInputTokens + b.cachedInputTokens,
     cacheCreationTokens: a.cacheCreationTokens + b.cacheCreationTokens,
+    ...(cacheCreation5mTokens === 0 ? {} : { cacheCreation5mTokens }),
+    ...(cacheCreation1hTokens === 0 ? {} : { cacheCreation1hTokens }),
     outputTokens: a.outputTokens + b.outputTokens,
     reasoningTokens: a.reasoningTokens + b.reasoningTokens,
   };
@@ -91,36 +100,36 @@ export function grokCostTicksToUsd(ticks: unknown): number | null {
 /**
  * Parses one line of a Claude Code transcript.
  *
- * T3 Code writes one record per assistant *content block*, and every one of
- * those records repeats the same complete `usage` object for the parent
- * message. Summing them overcounts by roughly 2.4x on a real workload, so the
- * caller must drop repeats by `dedupeKey` and keep the first.
+ * Claude Code can write several snapshots for one assistant message. The last
+ * snapshot is the complete one, so callers replace an earlier record carrying
+ * the same `dedupeKey`. `usage.iterations` is expanded into one record per
+ * attempted model; the top-level usage is the serving iteration and must not
+ * be added again.
  */
-export function parseClaudeLine(line: string): UsageRecord | null {
+export function parseClaudeLineRecords(line: string): readonly UsageRecord[] {
   let parsed: unknown;
   try {
     parsed = JSON.parse(line);
   } catch {
-    return null;
+    return [];
   }
-  if (typeof parsed !== "object" || parsed === null) return null;
+  if (typeof parsed !== "object" || parsed === null) return [];
 
   const record = parsed as Record<string, unknown>;
-  if (record["type"] !== "assistant") return null;
+  if (record["type"] !== "assistant") return [];
 
   const message = record["message"];
-  if (typeof message !== "object" || message === null) return null;
+  if (typeof message !== "object" || message === null) return [];
   const messageRecord = message as Record<string, unknown>;
 
   const usage = messageRecord["usage"];
-  if (typeof usage !== "object" || usage === null) return null;
+  if (typeof usage !== "object" || usage === null) return [];
   const usageRecord = usage as Record<string, unknown>;
 
   const timestampMs = parseTimestampMs(record["timestamp"]);
-  if (timestampMs === null) return null;
+  if (timestampMs === null) return [];
 
   const model = typeof messageRecord["model"] === "string" ? messageRecord["model"] : "";
-  if (model.length === 0) return null;
 
   const messageId = typeof messageRecord["id"] === "string" ? messageRecord["id"] : null;
   const requestId = typeof record["requestId"] === "string" ? record["requestId"] : null;
@@ -129,24 +138,72 @@ export function parseClaudeLine(line: string): UsageRecord | null {
   const dedupeKey =
     messageId === null && requestId === null ? null : `${messageId ?? ""}:${requestId ?? ""}`;
 
+  const iterations = Array.isArray(usageRecord["iterations"])
+    ? usageRecord["iterations"].filter(
+        (value): value is Record<string, unknown> => typeof value === "object" && value !== null,
+      )
+    : [];
+  const attempts = iterations.length > 0 ? iterations : [usageRecord];
+  const topLevelThinking =
+    typeof usageRecord["output_tokens_details"] === "object" &&
+    usageRecord["output_tokens_details"] !== null
+      ? int((usageRecord["output_tokens_details"] as Record<string, unknown>)["thinking_tokens"])
+      : 0;
   const cost = record["costUSD"];
 
-  return {
-    provider: "claude",
-    timestampMs,
-    model,
-    sessionId: typeof record["sessionId"] === "string" ? record["sessionId"] : "",
-    totals: {
-      uncachedInputTokens: int(usageRecord["input_tokens"]),
-      cachedInputTokens: int(usageRecord["cache_read_input_tokens"]),
-      cacheCreationTokens: int(usageRecord["cache_creation_input_tokens"]),
-      outputTokens: int(usageRecord["output_tokens"]),
-      // Anthropic folds thinking tokens into output and does not break them out.
-      reasoningTokens: 0,
-    },
-    reportedCostUsd: typeof cost === "number" && Number.isFinite(cost) ? cost : null,
-    dedupeKey,
-  };
+  return attempts.flatMap((attempt, index) => {
+    const attemptModel =
+      typeof attempt["model"] === "string" && attempt["model"].length > 0
+        ? attempt["model"]
+        : model;
+    if (attemptModel.length === 0) return [];
+
+    const cacheCreation =
+      typeof attempt["cache_creation"] === "object" && attempt["cache_creation"] !== null
+        ? (attempt["cache_creation"] as Record<string, unknown>)
+        : null;
+    const cacheCreation5mTokens = int(cacheCreation?.["ephemeral_5m_input_tokens"]);
+    const cacheCreation1hTokens = int(cacheCreation?.["ephemeral_1h_input_tokens"]);
+    const detailedCacheCreation = cacheCreation5mTokens + cacheCreation1hTokens;
+    const totalCacheCreation = int(attempt["cache_creation_input_tokens"]);
+    const outputTokens = int(attempt["output_tokens"]);
+    const isServingIteration = iterations.length === 0 || index === attempts.length - 1;
+
+    return [
+      {
+        provider: "claude" as const,
+        timestampMs,
+        model: attemptModel,
+        sessionId: typeof record["sessionId"] === "string" ? record["sessionId"] : "",
+        cwd: typeof record["cwd"] === "string" ? record["cwd"] : "",
+        totals: {
+          uncachedInputTokens: int(attempt["input_tokens"]),
+          cachedInputTokens: int(attempt["cache_read_input_tokens"]),
+          // Some Claude records classify only part of the aggregate cache
+          // creation count by TTL. Preserve the larger aggregate so the
+          // unclassified remainder is still accounted for at the base rate.
+          cacheCreationTokens: Math.max(totalCacheCreation, detailedCacheCreation),
+          ...(cacheCreation5mTokens === 0 ? {} : { cacheCreation5mTokens }),
+          ...(cacheCreation1hTokens === 0 ? {} : { cacheCreation1hTokens }),
+          outputTokens,
+          reasoningTokens: isServingIteration ? Math.min(outputTokens, topLevelThinking) : 0,
+        },
+        reportedCostUsd:
+          iterations.length === 0 && typeof cost === "number" && Number.isFinite(cost)
+            ? cost
+            : null,
+        dedupeKey:
+          dedupeKey === null || iterations.length === 0 || isServingIteration
+            ? dedupeKey
+            : `${dedupeKey}:${index}`,
+      },
+    ];
+  });
+}
+
+/** Compatibility helper for callers that only need a non-iterated line. */
+export function parseClaudeLine(line: string): UsageRecord | null {
+  return parseClaudeLineRecords(line)[0] ?? null;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -163,6 +220,7 @@ export function parseClaudeLine(line: string): UsageRecord | null {
 export interface CodexScanState {
   model: string;
   sessionId: string;
+  cwd: string;
   lastUsageSignature: string | null;
   sawSessionMeta: boolean;
   /** While true, leading usage events are re-stamped copies of parent history. */
@@ -174,6 +232,7 @@ export function initialCodexScanState(): CodexScanState {
   return {
     model: "",
     sessionId: "",
+    cwd: "",
     lastUsageSignature: null,
     sawSessionMeta: false,
     suppressingForkCopies: false,
@@ -233,6 +292,7 @@ export function parseCodexLine(line: string, state: CodexScanState): UsageRecord
     state.sawSessionMeta = true;
     const id = payloadRecord["id"] ?? payloadRecord["session_id"];
     if (typeof id === "string") state.sessionId = id;
+    if (typeof payloadRecord["cwd"] === "string") state.cwd = payloadRecord["cwd"];
     const metaTimestampMs = parseTimestampMs(record["timestamp"]);
     if (metaTimestampMs !== null && isForkedSessionMeta(payloadRecord)) {
       state.suppressingForkCopies = true;
@@ -243,6 +303,7 @@ export function parseCodexLine(line: string, state: CodexScanState): UsageRecord
 
   if (record["type"] === "turn_context") {
     if (typeof payloadRecord["model"] === "string") state.model = payloadRecord["model"];
+    if (typeof payloadRecord["cwd"] === "string") state.cwd = payloadRecord["cwd"];
     return null;
   }
 
@@ -301,6 +362,7 @@ export function parseCodexLine(line: string, state: CodexScanState): UsageRecord
     timestampMs,
     model: state.model,
     sessionId: state.sessionId,
+    cwd: state.cwd,
     totals,
     // Codex does not report cost in the rollout.
     reportedCostUsd: null,
@@ -431,6 +493,8 @@ export function parseGrokLine(line: string): readonly UsageRecord[] {
         timestampMs,
         model: "grok",
         sessionId,
+        // Grok session logs record no working directory.
+        cwd: "",
         totals: grokTotalsToUsage(topLevel),
         reportedCostUsd: grokCostTicksToUsd(topLevel.costUsdTicks),
         // No prompt id means we cannot tell two same-second updates apart.
@@ -477,6 +541,7 @@ export function parseGrokLine(line: string): readonly UsageRecord[] {
       timestampMs,
       model: entry.model,
       sessionId,
+      cwd: "",
       totals,
       reportedCostUsd,
       dedupeKey: promptId === null ? null : `${sessionId}:${promptId}:${entry.model}`,

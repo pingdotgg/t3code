@@ -16,16 +16,25 @@ import type {
 /**
  * The subset of a LiteLLM entry we price against. All values are USD per token.
  *
- * LiteLLM also publishes tiered variants (`*_above_272k_tokens`, `*_flex`,
- * `*_priority`, `*_batches`). We deliberately price at the base tier: the
- * transcripts don't record which tier served a request, so anything else would
- * be a guess dressed up as precision.
+ * LiteLLM also publishes context-length tiers (`*_above_272k_tokens`) and
+ * service tiers (`*_flex`, `*_priority`, `*_batches`). Transcript token counts
+ * determine the context-length tier; service tiers remain unknown and use
+ * their base public-list rates.
  */
-export interface ModelRate {
+interface TokenRate {
   readonly inputCostPerToken: number;
   readonly outputCostPerToken: number;
   readonly cacheReadCostPerToken: number;
   readonly cacheCreationCostPerToken: number;
+  readonly cacheCreation1hCostPerToken?: number;
+}
+
+interface LongContextRate extends TokenRate {
+  readonly thresholdTokens: number;
+}
+
+export interface ModelRate extends TokenRate {
+  readonly longContextRates?: readonly LongContextRate[];
 }
 
 export type RateTable = ReadonlyMap<string, ModelRate>;
@@ -50,15 +59,51 @@ export function createOverrideRateTable(
 }
 
 /** Raw shape of one LiteLLM entry, narrowed to the fields we read. */
-interface LiteLlmEntry {
+interface LiteLlmEntry extends Record<string, unknown> {
   readonly input_cost_per_token?: unknown;
   readonly output_cost_per_token?: unknown;
   readonly cache_read_input_token_cost?: unknown;
   readonly cache_creation_input_token_cost?: unknown;
+  readonly cache_creation_input_token_cost_above_1hr?: unknown;
 }
 
 function finiteNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function parseLongContextRates(entry: LiteLlmEntry, base: TokenRate): readonly LongContextRate[] {
+  const thresholds = new Set<number>();
+  for (const field of Object.keys(entry)) {
+    const match = /^input_cost_per_token_above_(\d+)k_tokens$/.exec(field);
+    const thousands = Number(match?.[1]);
+    if (Number.isSafeInteger(thousands) && thousands > 0) thresholds.add(thousands * 1000);
+  }
+
+  return [...thresholds]
+    .sort((left, right) => left - right)
+    .flatMap((thresholdTokens) => {
+      const suffix = `${thresholdTokens / 1000}k_tokens`;
+      const input = finiteNumber(entry[`input_cost_per_token_above_${suffix}`]);
+      const output = finiteNumber(entry[`output_cost_per_token_above_${suffix}`]);
+      if (input === null || output === null) return [];
+      const cacheCreation1hCostPerToken =
+        finiteNumber(entry[`cache_creation_input_token_cost_above_1hr_above_${suffix}`]) ??
+        base.cacheCreation1hCostPerToken;
+      return [
+        {
+          thresholdTokens,
+          inputCostPerToken: input,
+          outputCostPerToken: output,
+          cacheReadCostPerToken:
+            finiteNumber(entry[`cache_read_input_token_cost_above_${suffix}`]) ??
+            base.cacheReadCostPerToken,
+          cacheCreationCostPerToken:
+            finiteNumber(entry[`cache_creation_input_token_cost_above_${suffix}`]) ??
+            base.cacheCreationCostPerToken,
+          ...(cacheCreation1hCostPerToken === undefined ? {} : { cacheCreation1hCostPerToken }),
+        },
+      ];
+    });
 }
 
 /**
@@ -84,7 +129,7 @@ export function parseRateTable(document: unknown): RateTable {
 
     const key = normalizeRateKey(name);
     if (key.length === 0) continue;
-    table.set(key, {
+    const base: TokenRate = {
       inputCostPerToken: input,
       outputCostPerToken: output,
       // Anthropic bills cache reads at a discount and cache writes at a
@@ -92,6 +137,15 @@ export function parseRateTable(document: unknown): RateTable {
       // input rather than as free.
       cacheReadCostPerToken: finiteNumber(entry.cache_read_input_token_cost) ?? input,
       cacheCreationCostPerToken: finiteNumber(entry.cache_creation_input_token_cost) ?? input,
+      cacheCreation1hCostPerToken:
+        finiteNumber(entry.cache_creation_input_token_cost_above_1hr) ??
+        finiteNumber(entry.cache_creation_input_token_cost) ??
+        input,
+    };
+    const longContextRates = parseLongContextRates(entry, base);
+    table.set(key, {
+      ...base,
+      ...(longContextRates.length === 0 ? {} : { longContextRates }),
     });
   }
 
@@ -115,11 +169,29 @@ export function parseRateTable(document: unknown): RateTable {
 }
 
 function sameRate(a: ModelRate, b: ModelRate): boolean {
+  if (!sameTokenRate(a, b)) return false;
+  const aLong = a.longContextRates ?? [];
+  const bLong = b.longContextRates ?? [];
+  return (
+    aLong.length === bLong.length &&
+    aLong.every((rate, index) => {
+      const other = bLong[index];
+      return (
+        other !== undefined &&
+        rate.thresholdTokens === other.thresholdTokens &&
+        sameTokenRate(rate, other)
+      );
+    })
+  );
+}
+
+function sameTokenRate(a: TokenRate, b: TokenRate): boolean {
   return (
     a.inputCostPerToken === b.inputCostPerToken &&
     a.outputCostPerToken === b.outputCostPerToken &&
     a.cacheReadCostPerToken === b.cacheReadCostPerToken &&
-    a.cacheCreationCostPerToken === b.cacheCreationCostPerToken
+    a.cacheCreationCostPerToken === b.cacheCreationCostPerToken &&
+    a.cacheCreation1hCostPerToken === b.cacheCreation1hCostPerToken
   );
 }
 
@@ -180,6 +252,43 @@ export interface PricedUsage {
   readonly costSource: UsageCostSource;
 }
 
+function rateForTotals(rate: ModelRate, totals: UsageTokenTotals): TokenRate {
+  const inputTokens =
+    totals.uncachedInputTokens + totals.cachedInputTokens + totals.cacheCreationTokens;
+  let selected: TokenRate = rate;
+  for (const tier of rate.longContextRates ?? []) {
+    if (inputTokens <= tier.thresholdTokens) break;
+    selected = tier;
+  }
+  return selected;
+}
+
+function applicableRate(
+  table: RateTable,
+  model: string,
+  totals: UsageTokenTotals,
+  overrides?: RateTable,
+): TokenRate | null {
+  const rate = overrides?.get(model.trim()) ?? lookupRate(table, model);
+  return rate === null ? null : rateForTotals(rate, totals);
+}
+
+function cacheCreationCost(totals: UsageTokenTotals, rate: TokenRate): number {
+  const oneHour = Math.min(
+    totals.cacheCreationTokens,
+    Math.max(0, totals.cacheCreation1hTokens ?? 0),
+  );
+  const fiveMinute = Math.min(
+    totals.cacheCreationTokens - oneHour,
+    Math.max(0, totals.cacheCreation5mTokens ?? 0),
+  );
+  const unclassified = totals.cacheCreationTokens - fiveMinute - oneHour;
+  return (
+    (unclassified + fiveMinute) * rate.cacheCreationCostPerToken +
+    oneHour * (rate.cacheCreation1hCostPerToken ?? rate.cacheCreationCostPerToken)
+  );
+}
+
 /**
  * Prices a bucket's tokens.
  *
@@ -198,13 +307,13 @@ export function priceUsage(
     return { costUsd: reportedCostUsd, costSource: "providerReported" };
   }
 
-  const rate = override ?? lookupRate(table, model);
+  const rate = applicableRate(table, model, totals, overrides);
   if (rate === null) return { costUsd: 0, costSource: "unpriced" };
 
   const costUsd =
     totals.uncachedInputTokens * rate.inputCostPerToken +
     totals.cachedInputTokens * rate.cacheReadCostPerToken +
-    totals.cacheCreationTokens * rate.cacheCreationCostPerToken +
+    cacheCreationCost(totals, rate) +
     totals.outputTokens * rate.outputCostPerToken;
 
   return { costUsd, costSource: "modelPriced" };
@@ -220,7 +329,57 @@ export function cacheSavingsUsd(
   totals: UsageTokenTotals,
   overrides?: RateTable,
 ): number {
-  const rate = overrides?.get(model.trim()) ?? lookupRate(table, model);
+  const rate = applicableRate(table, model, totals, overrides);
   if (rate === null) return 0;
   return totals.cachedInputTokens * (rate.inputCostPerToken - rate.cacheReadCostPerToken);
+}
+
+/**
+ * Estimates what this usage's cache writes cost at the model and TTL-specific rates.
+ * Cache creation is a billing category, not proof of an expiry rewrite.
+ */
+export function cacheWriteUsd(
+  table: RateTable,
+  model: string,
+  totals: UsageTokenTotals,
+  overrides?: RateTable,
+): number {
+  const rate = applicableRate(table, model, totals, overrides);
+  if (rate === null) return 0;
+  return cacheCreationCost(totals, rate);
+}
+
+export interface UsageComponentCosts {
+  readonly cacheWriteUsd: number;
+  readonly cacheReadUsd: number;
+  /** Fresh input plus output. */
+  readonly freshUsd: number;
+}
+
+const ZERO_COMPONENT_COSTS: UsageComponentCosts = {
+  cacheWriteUsd: 0,
+  cacheReadUsd: 0,
+  freshUsd: 0,
+};
+
+/**
+ * Splits model-priced usage into cache writes, cache reads, and everything
+ * else. Unpriced models contribute nothing here; token totals still include
+ * them.
+ */
+export function usageComponentCosts(
+  table: RateTable,
+  model: string,
+  totals: UsageTokenTotals,
+  overrides?: RateTable,
+): UsageComponentCosts {
+  const rate = applicableRate(table, model, totals, overrides);
+  if (rate === null) return ZERO_COMPONENT_COSTS;
+  return {
+    cacheWriteUsd: cacheCreationCost(totals, rate),
+    cacheReadUsd: totals.cachedInputTokens * rate.cacheReadCostPerToken,
+    freshUsd:
+      totals.uncachedInputTokens * rate.inputCostPerToken +
+      totals.outputTokens * rate.outputCostPerToken,
+  };
 }

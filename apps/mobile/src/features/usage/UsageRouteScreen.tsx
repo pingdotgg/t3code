@@ -21,7 +21,7 @@ import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
 import { AppText as Text } from "../../components/AppText";
 import { cn } from "../../lib/cn";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
-import { useUsage, type EnvironmentUsageStatus } from "../../state/usage";
+import { type EnvironmentUsageStatus, useUsage } from "../../state/usage";
 import { SettingsSection } from "../settings/components/SettingsSection";
 import { UsageDailyChart } from "./UsageDailyChart";
 import { UsageLimitsSection, useRefreshLimits } from "./UsageLimitsSection";
@@ -127,10 +127,10 @@ export function UsageRouteScreen() {
   const refreshWindow = () => {
     const nextWindow = makeWindow(windowDays, undefined, isPast24Hours ? "hour" : "day");
     if (
-      nextWindow.sinceDay === window.sinceDay &&
-      nextWindow.untilDay === window.untilDay &&
-      nextWindow.sinceTime === window.sinceTime &&
-      nextWindow.untilTime === window.untilTime
+      nextWindow.sinceDay !== window.sinceDay ||
+      nextWindow.untilDay !== window.untilDay ||
+      nextWindow.sinceTime !== window.sinceTime ||
+      nextWindow.untilTime !== window.untilTime
     ) {
       refresh();
     } else {
@@ -297,14 +297,14 @@ function ChartCard(props: {
     <View className="gap-4 rounded-[24px] border-continuous bg-card p-4">
       <View className="gap-0.5">
         <Text className="text-sm text-foreground-muted">
-          {metric === "cost" ? "Raw token cost" : "Processed tokens"}
+          {metric === "cost" ? "Local public-list estimate" : "Processed tokens"}
         </Text>
         <Text className="text-4xl font-t3-bold tabular-nums text-foreground">
           {metric === "cost" ? `${formatUsd(merged.costUsd)}*` : formatTokens(merged.totalTokens)}
         </Text>
         <Text className="text-sm text-foreground-muted">
           {metric === "cost"
-            ? "* if billed at full API rate"
+            ? "* estimated from local transcripts at public list rates"
             : `Across ${formatCount(merged.sessions)} sessions`}
         </Text>
       </View>
@@ -441,7 +441,16 @@ function TotalsSection(props: { readonly merged: MergedUsage; readonly isPast24H
         <MetricCell
           label="Uncached input"
           value={formatTokens(merged.uncachedInputTokens)}
-          detail={`${formatTokens(merged.cacheCreationTokens)} cache writes`}
+          detail="fresh input tokens"
+        />
+        <MetricCell
+          label="Cache writes, estimated"
+          value={
+            merged.costQuality.cacheWriteUsd === null
+              ? "Unavailable"
+              : formatUsd(merged.costQuality.cacheWriteUsd)
+          }
+          detail={`${formatTokens(merged.cacheCreationTokens)} tokens · not an expiry measure`}
         />
         <MetricCell
           label="Output"

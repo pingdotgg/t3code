@@ -2,11 +2,15 @@ import { describe, expect, it } from "@effect/vitest";
 
 import {
   decodeScanCache,
+  decodeScanIdentityCache,
   dedupeWithinFile,
   encodeScanCache,
+  pruneScanIdentityCache,
   pruneScanCache,
+  USAGE_SCAN_CACHE_VERSION,
   type CachedFile,
   type ScanCache,
+  type ScanIdentityCache,
 } from "./usageScanCache.ts";
 import type { UsageRecord } from "./usageTranscripts.ts";
 
@@ -16,10 +20,12 @@ function record(overrides: Partial<UsageRecord> = {}): UsageRecord {
     timestampMs: 1_786_000_000_000,
     model: "claude-fable-5",
     sessionId: "session-a",
+    cwd: "/home/theo/project",
     totals: {
       uncachedInputTokens: 2,
       cachedInputTokens: 1000,
       cacheCreationTokens: 10,
+      cacheCreation5mTokens: 10,
       outputTokens: 50,
       reasoningTokens: 0,
     },
@@ -55,6 +61,28 @@ function cacheWith(entries: readonly [string, number, readonly UsageRecord[]][])
 }
 
 describe("scan cache round trip", () => {
+  it("restores positive and negative transcript identities", () => {
+    const identities: ScanIdentityCache = new Map([
+      [
+        "/target.jsonl",
+        {
+          size: 100,
+          mtimeMs: 200,
+          provider: "codex",
+          sessionId: "target-session",
+          cwd: "/work/target",
+        },
+      ],
+      ["/unknown.jsonl", { size: 10, mtimeMs: 20, provider: "codex", sessionId: "", cwd: "" }],
+    ]);
+
+    const restored = decodeScanIdentityCache(
+      JSON.parse(JSON.stringify(encodeScanCache(new Map(), identities))),
+    );
+
+    expect(restored).toEqual(identities);
+  });
+
   it("restores records unchanged", () => {
     const original = cacheWith([
       ["/a.jsonl", 100, [record(), record({ dedupeKey: "msg_2:", model: "claude-opus-5" })]],
@@ -80,6 +108,7 @@ describe("scan cache round trip", () => {
         codexState: {
           model: "gpt-5.2-codex",
           sessionId: "session-c",
+          cwd: "/home/theo/codex-project",
           lastUsageSignature: '{"input_tokens":1}',
           sawSessionMeta: true,
           suppressingForkCopies: false,
@@ -95,6 +124,25 @@ describe("scan cache round trip", () => {
     expect(restored.get("/b.jsonl")).toEqual(original.get("/b.jsonl"));
     expect(restored.get("/grok.jsonl")).toEqual(original.get("/grok.jsonl"));
     expect(restored.get("/codex.jsonl")).toEqual(original.get("/codex.jsonl"));
+  });
+
+  it("preserves partial TTL classification and its unclassified remainder", () => {
+    const partial = record({
+      totals: {
+        uncachedInputTokens: 2,
+        cachedInputTokens: 10,
+        cacheCreationTokens: 60,
+        cacheCreation5mTokens: 20,
+        cacheCreation1hTokens: 10,
+        outputTokens: 12,
+        reasoningTokens: 0,
+      },
+    });
+    const original = cacheWith([["/partial.jsonl", 100, [partial]]]);
+
+    const restored = decodeScanCache(JSON.parse(JSON.stringify(encodeScanCache(original))));
+
+    expect(restored.get("/partial.jsonl")?.records[0]?.totals).toEqual(partial.totals);
   });
 
   it("drops an entry whose persisted parse state is corrupt", () => {
@@ -125,7 +173,7 @@ describe("scan cache round trip", () => {
 
   it("rejects a document from the previous cache version", () => {
     const encoded = encodeScanCache(cacheWith([["/a.jsonl", 100, [record()]]]));
-    const previous = { ...encoded, version: 2 };
+    const previous = { ...encoded, version: USAGE_SCAN_CACHE_VERSION - 1 };
 
     expect(decodeScanCache(JSON.parse(JSON.stringify(previous))).size).toBe(0);
   });
@@ -185,6 +233,72 @@ describe("scan cache round trip", () => {
 
     const restored = decodeScanCache(JSON.parse(JSON.stringify(poisoned)));
     expect(restored.has("/a.jsonl")).toBe(false);
+  });
+
+  it.each([0.5, 99])("drops an entry with invalid cwd index %s", (cwdIndex) => {
+    const encoded = encodeScanCache(cacheWith([["/a.jsonl", 100, [record()]]]));
+    const row = encoded.files["/a.jsonl"]!.r[0]!;
+    const poisoned = {
+      ...encoded,
+      files: {
+        "/a.jsonl": {
+          ...encoded.files["/a.jsonl"]!,
+          r: [[...row.slice(0, 10), cwdIndex, ...row.slice(11)]],
+        },
+      },
+    };
+
+    expect(decodeScanCache(JSON.parse(JSON.stringify(poisoned))).has("/a.jsonl")).toBe(false);
+  });
+
+  it.each([
+    [20, 0],
+    [-1, 11],
+    [5.5, 4.5],
+  ])("drops an entry with invalid cache TTL counters %s + %s", (fiveMinute, oneHour) => {
+    const encoded = encodeScanCache(cacheWith([["/a.jsonl", 100, [record()]]]));
+    const row = encoded.files["/a.jsonl"]!.r[0]!;
+    const poisoned = {
+      ...encoded,
+      files: {
+        "/a.jsonl": {
+          ...encoded.files["/a.jsonl"]!,
+          r: [[...row.slice(0, 11), fiveMinute, oneHour]],
+        },
+      },
+    };
+
+    expect(decodeScanCache(JSON.parse(JSON.stringify(poisoned))).has("/a.jsonl")).toBe(false);
+  });
+});
+
+describe("pruneScanIdentityCache", () => {
+  it("keeps old live identities and removes only files proven deleted", () => {
+    const identities: ScanIdentityCache = new Map([
+      [
+        "/codex/sessions/live.jsonl",
+        { size: 10, mtimeMs: 1, provider: "codex", sessionId: "live", cwd: "/work/live" },
+      ],
+      [
+        "/codex/sessions/gone.jsonl",
+        { size: 10, mtimeMs: 1, provider: "codex", sessionId: "gone", cwd: "/work/gone" },
+      ],
+      [
+        "/other/sessions/unwalked.jsonl",
+        { size: 10, mtimeMs: 1, provider: "codex", sessionId: "other", cwd: "/work/other" },
+      ],
+    ]);
+
+    expect(
+      pruneScanIdentityCache(identities, {
+        livePaths: new Set(["/codex/sessions/live.jsonl"]),
+        walkedRoots: ["/codex/sessions"],
+      }),
+    ).toBe(1);
+    expect([...identities.keys()]).toEqual([
+      "/codex/sessions/live.jsonl",
+      "/other/sessions/unwalked.jsonl",
+    ]);
   });
 });
 
@@ -281,7 +395,7 @@ describe("pruneScanCache with an unwalked root", () => {
 });
 
 describe("dedupeWithinFile", () => {
-  it("keeps the first record per dedupe key", () => {
+  it("keeps the final record per dedupe key", () => {
     const kept = dedupeWithinFile([
       record({ totals: { ...record().totals, outputTokens: 1 } }),
       record({ totals: { ...record().totals, outputTokens: 999 } }),
@@ -289,7 +403,7 @@ describe("dedupeWithinFile", () => {
     ]);
 
     expect(kept).toHaveLength(2);
-    expect(kept[0]?.totals.outputTokens).toBe(1);
+    expect(kept[0]?.totals.outputTokens).toBe(999);
   });
 
   it("keeps every record that has no dedupe key", () => {

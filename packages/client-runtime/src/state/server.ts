@@ -927,6 +927,13 @@ export function createServerEnvironmentAtoms<R, E>(
       onSuccess: ({ environmentId, input }, registry) =>
         Effect.sync(() => registry.refresh(usageSummary({ environmentId, input }))),
     }),
+    // Fetched only when the thread view is opened; scans are cache-warm after
+    // the summary, so a minute of staleness matches it.
+    usageThreadBreakdown: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:usage-thread-breakdown",
+      tag: WS_METHODS.serverGetUsageThreadBreakdown,
+      staleTimeMs: 60_000,
+    }),
     configProjection,
     welcome: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
       label: "environment-data:server:welcome",

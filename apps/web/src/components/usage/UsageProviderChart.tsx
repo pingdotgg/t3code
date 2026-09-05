@@ -2,6 +2,8 @@ import type { UsageProviderKind } from "@t3tools/contracts";
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import type { DailyTotals, HourlyTotals } from "@t3tools/shared/usageMerge";
+
+import { cn } from "../../lib/utils";
 import {
   formatDayShort,
   formatHourShort,
@@ -19,6 +21,13 @@ const PLOT_TOP = 8;
 export type UsageChartMetric = "tokens" | "cost";
 
 interface UsageProviderChartProps {
+  /**
+   * Present only when the window can zoom (daily resolution). Receives the
+   * inclusive day bounds of a completed drag selection.
+   */
+  readonly onZoomToDays?: (sinceDay: string, untilDay: string) => void;
+  /** Restores the preset window on double-click. */
+  readonly onResetZoom?: () => void;
   readonly providers: readonly UsageProviderKind[];
   readonly days: readonly string[];
   readonly daily: readonly DailyTotals[];
@@ -42,6 +51,18 @@ export interface DayColumn {
 interface Point {
   readonly x: number;
   readonly y: number;
+}
+
+/** Gives a one-period daily window enough horizontal span to draw a path. */
+export function spanSinglePeriodPoints(points: readonly Point[]): readonly Point[] {
+  const only = points.length === 1 ? points[0] : undefined;
+  return only === undefined ? points : [only, { ...only, x: VIEW_WIDTH }];
+}
+
+/** Selects distinct left, middle, and right labels for the available span. */
+export function chartLabelIndices(periodCount: number): readonly number[] {
+  if (periodCount <= 0) return [];
+  return [...new Set([0, Math.floor(periodCount / 2), periodCount - 1])];
 }
 
 function valueFor(
@@ -187,7 +208,40 @@ export function buildDayColumns(
   return buildPeriodColumns(days, byDay, metric);
 }
 
+/**
+ * Inclusive day bounds of a brush selection, or null for a plain click.
+ * Endpoints may arrive in either drag direction.
+ */
+export function brushSelection(
+  days: readonly string[],
+  startIndex: number,
+  endIndex: number,
+): { readonly sinceDay: string; readonly untilDay: string } | null {
+  if (startIndex === endIndex) return null;
+  const [first, last] = startIndex < endIndex ? [startIndex, endIndex] : [endIndex, startIndex];
+  const sinceDay = days[first];
+  const untilDay = days[last];
+  if (sinceDay === undefined || untilDay === undefined) return null;
+  return { sinceDay, untilDay };
+}
+
+/** Period index beneath a pointer, clamped when pointer capture moves outside the plot. */
+export function periodIndexAt(
+  clientX: number,
+  plotLeft: number,
+  plotWidth: number,
+  periodCount: number,
+): number | null {
+  if (plotWidth <= 0 || periodCount <= 0) return null;
+  const localX = Math.min(plotWidth, Math.max(0, clientX - plotLeft));
+  const fraction = localX / plotWidth;
+  const index = Math.round(fraction * (periodCount - 1));
+  return Math.min(periodCount - 1, Math.max(0, index));
+}
+
 export function UsageProviderChart({
+  onZoomToDays,
+  onResetZoom,
   providers,
   days,
   daily,
@@ -207,6 +261,14 @@ export function UsageProviderChart({
     [daily, hourly, resolution],
   );
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
+  // Drag-selection endpoints, as period indices. Only daily windows zoom.
+  const [brush, setBrush] = useState<{ readonly start: number; readonly end: number } | null>(null);
+  const brushRef = useRef<{
+    readonly pointerId: number;
+    readonly start: number;
+    readonly end: number;
+  } | null>(null);
+  const zoomable = resolution === "day" && onZoomToDays !== undefined;
   const plotRef = useRef<HTMLDivElement | null>(null);
   const tooltipRef = useRef<HTMLDivElement | null>(null);
   const hoverPositionRef = useRef<{ x: number; y: number } | null>(null);
@@ -239,14 +301,11 @@ export function UsageProviderChart({
 
     const built = providers.map((provider) => {
       const providerIndex = PROVIDER_ORDER.indexOf(provider);
-      const line = curvePath(
-        smoothCurve(
-          columns.map((column, periodIndex) => ({
-            x: periodIndex * step,
-            y: toY(column.bands[providerIndex]?.value ?? 0),
-          })),
-        ),
-      );
+      const points = columns.map((column, periodIndex) => ({
+        x: periodIndex * step,
+        y: toY(column.bands[providerIndex]?.value ?? 0),
+      }));
+      const line = curvePath(smoothCurve(spanSinglePeriodPoints(points)));
       return {
         provider,
         total: columns.reduce((sum, column) => sum + (column.bands[providerIndex]?.value ?? 0), 0),
@@ -306,22 +365,95 @@ export function UsageProviderChart({
     return () => observer.disconnect();
   }, [hoverIndex, positionTooltip]);
 
+  const indexAt = useCallback(
+    (clientX: number): number | null => {
+      const plot = plotRef.current;
+      if (plot === null || periods.length === 0) return null;
+      const bounds = plot.getBoundingClientRect();
+      return periodIndexAt(clientX, bounds.left, bounds.width, periods.length);
+    },
+    [periods.length],
+  );
+
   const handleMove = useCallback(
     (event: React.MouseEvent<HTMLDivElement>) => {
       const plot = plotRef.current;
       if (plot === null || periods.length === 0) return;
       const bounds = plot.getBoundingClientRect();
       if (bounds.width === 0) return;
+      if (brushRef.current !== null) return;
+      const index = indexAt(event.clientX);
+      if (index === null) return;
       const localX = Math.min(bounds.width, Math.max(0, event.clientX - bounds.left));
       const localY = Math.min(bounds.height, Math.max(0, event.clientY - bounds.top));
-      const fraction = localX / bounds.width;
-      const index = Math.round(fraction * (periods.length - 1));
       hoverPositionRef.current = { x: localX, y: localY };
       positionTooltip();
-      setHoverIndex(Math.min(periods.length - 1, Math.max(0, index)));
+      setHoverIndex(index);
     },
-    [periods.length, positionTooltip],
+    [indexAt, periods.length, positionTooltip],
   );
+
+  const trackBrush = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      const activeBrush = brushRef.current;
+      if (
+        activeBrush === null ||
+        activeBrush.pointerId !== event.pointerId ||
+        !event.currentTarget.hasPointerCapture(event.pointerId)
+      ) {
+        return;
+      }
+      const index = indexAt(event.clientX);
+      if (index === null || index === activeBrush.end) return;
+      const nextBrush = { ...activeBrush, end: index };
+      brushRef.current = nextBrush;
+      setBrush(nextBrush);
+    },
+    [indexAt],
+  );
+
+  const beginBrush = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      if (!zoomable || event.button !== 0 || !event.isPrimary || brushRef.current !== null) return;
+      const index = indexAt(event.clientX);
+      if (index === null) return;
+      event.currentTarget.setPointerCapture(event.pointerId);
+      hoverPositionRef.current = null;
+      setHoverIndex(null);
+      const nextBrush = { pointerId: event.pointerId, start: index, end: index };
+      brushRef.current = nextBrush;
+      setBrush(nextBrush);
+    },
+    [indexAt, zoomable],
+  );
+
+  const finishBrush = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      const activeBrush = brushRef.current;
+      if (
+        activeBrush === null ||
+        activeBrush.pointerId !== event.pointerId ||
+        onZoomToDays === undefined
+      ) {
+        return;
+      }
+      const end = indexAt(event.clientX) ?? activeBrush.end;
+      const selection = brushSelection(days, activeBrush.start, end);
+      brushRef.current = null;
+      setBrush(null);
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      }
+      if (selection !== null) onZoomToDays(selection.sinceDay, selection.untilDay);
+    },
+    [days, indexAt, onZoomToDays],
+  );
+
+  const cancelBrush = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    if (brushRef.current?.pointerId !== event.pointerId) return;
+    brushRef.current = null;
+    setBrush(null);
+  }, []);
 
   const hoveredPeriod = hoverIndex === null ? undefined : periods[hoverIndex];
   const hoveredColumn = hoverIndex === null ? undefined : series[hoverIndex];
@@ -350,8 +482,17 @@ export function UsageProviderChart({
 
         <div
           ref={plotRef}
-          className="relative h-56 flex-1"
+          className={cn(
+            "relative h-56 flex-1",
+            zoomable && "cursor-crosshair touch-pan-y select-none",
+          )}
           onMouseMove={handleMove}
+          onPointerDown={beginBrush}
+          onPointerMove={trackBrush}
+          onPointerUp={finishBrush}
+          onPointerCancel={cancelBrush}
+          onLostPointerCapture={cancelBrush}
+          onDoubleClick={onResetZoom}
           onMouseLeave={() => {
             hoverPositionRef.current = null;
             setHoverIndex(null);
@@ -401,7 +542,22 @@ export function UsageProviderChart({
               />
             ))}
 
-            {hoverIndex === null ? null : (
+            {brush === null || brush.start === brush.end ? null : (
+              <rect
+                x={Math.min(brush.start, brush.end) * stepX}
+                y={PLOT_TOP}
+                width={Math.abs(brush.end - brush.start) * stepX}
+                height={VIEW_HEIGHT - PLOT_TOP}
+                fill="currentColor"
+                fillOpacity={0.08}
+                stroke="currentColor"
+                strokeWidth={1}
+                className="text-muted-foreground"
+                vectorEffect="non-scaling-stroke"
+              />
+            )}
+
+            {hoverIndex === null || periods.length === 1 ? null : (
               <line
                 x1={hoverIndex * stepX}
                 x2={hoverIndex * stepX}
@@ -453,17 +609,9 @@ export function UsageProviderChart({
       </div>
 
       <div className="flex justify-between pl-16 text-[10px] text-muted-foreground uppercase">
-        <span>{periods[0] === undefined ? "" : formatPeriod(periods[0])}</span>
-        <span>
-          {periods[Math.floor(periods.length / 2)] === undefined
-            ? ""
-            : formatPeriod(periods[Math.floor(periods.length / 2)] ?? "")}
-        </span>
-        <span>
-          {periods[periods.length - 1] === undefined
-            ? ""
-            : formatPeriod(periods[periods.length - 1] ?? "")}
-        </span>
+        {chartLabelIndices(periods.length).map((index) => (
+          <span key={index}>{formatPeriod(periods[index] ?? "")}</span>
+        ))}
       </div>
     </div>
   );

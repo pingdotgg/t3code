@@ -2,13 +2,28 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
+  compareUsageDays,
   enumerateHourStarts,
   formatCoverageTime,
   formatDateTimeShort,
   formatHourShort,
   formatRelativeHourShort,
+  makeCustomWindow,
   makeWindow,
 } from "./usageFormat.ts";
+
+describe("compareUsageDays", () => {
+  it("compares strict four-digit calendar dates numerically", () => {
+    expect(compareUsageDays("2026-08-03", "2026-08-11")).toBe(-1);
+    expect(compareUsageDays("2026-08-11", "2026-08-03")).toBe(1);
+    expect(compareUsageDays("2026-08-03", "2026-08-03")).toBe(0);
+  });
+
+  it("rejects variable-width years and impossible dates", () => {
+    expect(compareUsageDays("10000-01-01", "9999-12-31")).toBeNull();
+    expect(compareUsageDays("2026-02-29", "2026-03-01")).toBeNull();
+  });
+});
 
 describe("hourly usage formatting", () => {
   it("enumerates 24 fixed buckets across a rolling window", () => {
@@ -78,5 +93,34 @@ describe("hourly usage formatting", () => {
     } finally {
       resolvedOptions.mockRestore();
     }
+  });
+});
+
+describe("makeCustomWindow", () => {
+  it("builds a daily window over the inclusive range", () => {
+    const window = makeCustomWindow("2026-08-03", "2026-08-11");
+
+    expect(window.sinceDay).toBe("2026-08-03");
+    expect(window.untilDay).toBe("2026-08-11");
+    expect(window.resolution).toBe("day");
+    expect(window.sinceTime).toBeUndefined();
+  });
+
+  it("swaps out-of-order bounds so a raw drag never produces an invalid window", () => {
+    const window = makeCustomWindow("2026-08-11", "2026-08-03");
+
+    expect(window.sinceDay).toBe("2026-08-03");
+    expect(window.untilDay).toBe("2026-08-11");
+  });
+
+  it("caps typed ranges at the largest supported 90-day window", () => {
+    const window = makeCustomWindow("0001-01-01", "9999-12-31");
+
+    expect(window.sinceDay).toBe("0001-01-01");
+    expect(window.untilDay).toBe("0001-03-31");
+  });
+
+  it("rejects bounds outside the strict day format", () => {
+    expect(() => makeCustomWindow("10000-01-01", "9999-12-31")).toThrow(RangeError);
   });
 });

@@ -6,6 +6,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import * as ProviderSessionRuntime from "../../persistence/ProviderSessionRuntime.ts";
+import { preservePreviousResumeCursor } from "../providerResumeCursorHistory.ts";
 import { ProviderSessionDirectoryPersistenceError, ProviderValidationError } from "../Errors.ts";
 import {
   ProviderSessionDirectory,
@@ -125,6 +126,16 @@ const makeProviderSessionDirectory = Effect.gen(function* () {
         issue: "providerInstanceId is required for provider session runtime bindings.",
       });
     }
+    const runtimePayload = preservePreviousResumeCursor({
+      previousProviderName: existingRuntime?.providerName ?? binding.provider,
+      nextProviderName: binding.provider,
+      previousResumeCursor: existingRuntime?.resumeCursor ?? null,
+      nextResumeCursor: binding.resumeCursor,
+      runtimePayload: mergeRuntimePayload(
+        existingRuntime?.runtimePayload ?? null,
+        binding.runtimePayload,
+      ),
+    });
     yield* repository
       .upsert({
         threadId: resolvedThreadId,
@@ -140,10 +151,7 @@ const makeProviderSessionDirectory = Effect.gen(function* () {
           binding.resumeCursor !== undefined
             ? binding.resumeCursor
             : (existingRuntime?.resumeCursor ?? null),
-        runtimePayload: mergeRuntimePayload(
-          existingRuntime?.runtimePayload ?? null,
-          binding.runtimePayload,
-        ),
+        runtimePayload,
       })
       .pipe(Effect.mapError(toPersistenceError("ProviderSessionDirectory.upsert:upsert")));
   });

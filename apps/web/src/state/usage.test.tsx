@@ -1,4 +1,9 @@
-import { UsageDay, type UsageSummaryInput } from "@t3tools/contracts";
+import {
+  USAGE_CONTRACT_VERSION,
+  UsageDay,
+  type UsageSummary,
+  type UsageSummaryInput,
+} from "@t3tools/contracts";
 import { act, createElement } from "react";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -8,17 +13,28 @@ const mocks = vi.hoisted(() => ({
     label: string;
     isPending: boolean;
     error: string | null;
-    summary: null;
+    summary: UsageSummary | null;
   }[],
+  refreshSummaryCommand: {},
+  refreshRatesCommand: {},
   refreshUsageSummary: vi.fn(),
+  refreshUsageRates: vi.fn(),
+  refreshAtom: vi.fn(),
 }));
 
 vi.mock("@effect/atom-react", () => ({ useAtomValue: () => mocks.statuses }));
-vi.mock("../rpc/atomRegistry", () => ({ appAtomRegistry: { refresh: vi.fn() } }));
+vi.mock("../rpc/atomRegistry", () => ({ appAtomRegistry: { refresh: mocks.refreshAtom } }));
 vi.mock("./presentation", () => ({ presentationsAtom: {} }));
-vi.mock("./server", () => ({ serverEnvironment: { usageSummary: {}, refreshUsageSummary: {} } }));
+vi.mock("./server", () => ({
+  serverEnvironment: {
+    usageSummary: vi.fn(() => ({})),
+    refreshUsageSummary: mocks.refreshSummaryCommand,
+    refreshUsageRates: mocks.refreshRatesCommand,
+  },
+}));
 vi.mock("./use-atom-command", () => ({
-  useAtomCommand: () => mocks.refreshUsageSummary,
+  useAtomCommand: (command: object) =>
+    command === mocks.refreshRatesCommand ? mocks.refreshUsageRates : mocks.refreshUsageSummary,
 }));
 import { useUsage, type UsageView } from "./usage";
 
@@ -32,6 +48,22 @@ const WINDOW_B: UsageSummaryInput = {
   ...WINDOW_A,
   sinceDay: UsageDay.make("2026-08-02"),
   untilDay: UsageDay.make("2026-09-01"),
+};
+const SUMMARY: UsageSummary = {
+  contractVersion: USAGE_CONTRACT_VERSION,
+  readAt: "2026-08-31T12:00:00.000Z",
+  timeZone: "UTC",
+  sinceDay: WINDOW_A.sinceDay,
+  untilDay: WINDOW_A.untilDay,
+  buckets: [],
+  sources: [],
+  pricing: { status: "unavailable", source: "test", fetchedAt: null, knownModels: 0 },
+  coverage: {
+    availableThroughDay: WINDOW_A.untilDay,
+    availableThroughTime: null,
+    generatedAt: "2026-08-31T12:00:00.000Z",
+  },
+  scanDurationMs: 0,
 };
 
 class TestNode {
@@ -127,9 +159,12 @@ async function renderHarness(input: UsageSummaryInput, onView: (view: UsageView)
 describe("web useUsage boundary refresh", () => {
   beforeEach(() => {
     mocks.statuses = [
-      { environmentId: "env-1", label: "Local", isPending: false, error: null, summary: null },
+      { environmentId: "env-1", label: "Local", isPending: false, error: null, summary: SUMMARY },
     ];
     mocks.refreshUsageSummary.mockReset();
+    mocks.refreshUsageRates.mockReset();
+    mocks.refreshUsageRates.mockResolvedValue({ _tag: "Success" });
+    mocks.refreshAtom.mockReset();
   });
 
   it.each([
@@ -166,4 +201,37 @@ describe("web useUsage boundary refresh", () => {
       }
     },
   );
+
+  it.each([
+    [12, 0],
+    [13, 1],
+  ] as const)("uses the explicit refresh RPC only for a v%s server", async (version, calls) => {
+    mocks.statuses = [
+      {
+        environmentId: "env-1",
+        label: "Local",
+        isPending: false,
+        error: null,
+        summary: { ...SUMMARY, contractVersion: version } as UsageSummary,
+      },
+    ];
+    mocks.refreshUsageSummary.mockResolvedValue({ _tag: "Success" });
+    let view!: UsageView;
+    const root = await renderHarness(WINDOW_A, (nextView) => {
+      view = nextView;
+    });
+
+    try {
+      await act(async () => {
+        view.refresh();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(mocks.refreshUsageRates).toHaveBeenCalledOnce();
+      expect(mocks.refreshUsageSummary).toHaveBeenCalledTimes(calls);
+    } finally {
+      await act(() => root.unmount());
+      vi.unstubAllGlobals();
+    }
+  });
 });

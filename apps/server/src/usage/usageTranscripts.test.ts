@@ -4,6 +4,7 @@ import {
   GROK_COST_USD_TICKS_PER_DOLLAR,
   initialCodexScanState,
   parseClaudeLine,
+  parseClaudeLineRecords,
   parseCodexLine,
   parseGrokLine,
   totalTokens,
@@ -15,12 +16,14 @@ function claudeLine(overrides: {
   contentType: string;
   model?: string;
   outputTokens?: number;
+  requestId?: string;
 }): string {
   return JSON.stringify({
     type: "assistant",
     timestamp: "2026-08-07T04:05:13.944Z",
     sessionId: "5a128faa-8253-489e-b935-6c08e8e670c0",
     cwd: "/home/theo/project",
+    ...(overrides.requestId === undefined ? {} : { requestId: overrides.requestId }),
     message: {
       id: overrides.messageId,
       role: "assistant",
@@ -51,6 +54,7 @@ describe("parseClaudeLine", () => {
       reasoningTokens: 0,
     });
     expect(record?.dedupeKey).toBe("msg_1:");
+    expect(record?.cwd).toBe("/home/theo/project");
   });
 
   it("gives every content block of one message the same dedupe key", () => {
@@ -63,6 +67,185 @@ describe("parseClaudeLine", () => {
     expect(text?.totals).toEqual(toolUse?.totals);
   });
 
+  it("keeps a shared message id when the request id differs", () => {
+    const first = parseClaudeLine(
+      claudeLine({ messageId: "msg_shared", requestId: "req_1", contentType: "text" }),
+    );
+    const second = parseClaudeLine(
+      claudeLine({ messageId: "msg_shared", requestId: "req_2", contentType: "text" }),
+    );
+
+    expect(first?.dedupeKey).toBe("msg_shared:req_1");
+    expect(second?.dedupeKey).toBe("msg_shared:req_2");
+  });
+
+  it("expands fallback iterations under their own models and TTL counters", () => {
+    const records = parseClaudeLineRecords(
+      JSON.stringify({
+        type: "assistant",
+        timestamp: "2026-08-18T01:13:44.675Z",
+        requestId: "req_fallback",
+        sessionId: "session-fallback",
+        cwd: "/work/app",
+        message: {
+          id: "msg_fallback",
+          model: "claude-opus-5",
+          usage: {
+            output_tokens: 300,
+            output_tokens_details: { thinking_tokens: 125 },
+            iterations: [
+              {
+                type: "message",
+                model: "claude-fable-5",
+                input_tokens: 2,
+                cache_read_input_tokens: 10,
+                cache_creation_input_tokens: 20,
+                cache_creation: {
+                  ephemeral_5m_input_tokens: 20,
+                  ephemeral_1h_input_tokens: 0,
+                },
+                output_tokens: 100,
+              },
+              {
+                type: "fallback_message",
+                model: "claude-opus-5",
+                input_tokens: 3,
+                cache_read_input_tokens: 11,
+                cache_creation_input_tokens: 40,
+                cache_creation: {
+                  ephemeral_5m_input_tokens: 0,
+                  ephemeral_1h_input_tokens: 40,
+                },
+                output_tokens: 300,
+              },
+            ],
+          },
+        },
+      }),
+    );
+
+    expect(records).toHaveLength(2);
+    expect(records.map((record) => record.model)).toEqual(["claude-fable-5", "claude-opus-5"]);
+    expect(records[0]?.totals).toMatchObject({
+      cacheCreationTokens: 20,
+      cacheCreation5mTokens: 20,
+      reasoningTokens: 0,
+    });
+    expect(records[1]?.totals).toMatchObject({
+      cacheCreationTokens: 40,
+      cacheCreation1hTokens: 40,
+      reasoningTokens: 125,
+    });
+    expect(records.map((record) => record.dedupeKey)).toEqual([
+      "msg_fallback:req_fallback:0",
+      "msg_fallback:req_fallback",
+    ]);
+  });
+
+  it("preserves an aggregate cache creation count when TTL details are partial", () => {
+    const records = parseClaudeLineRecords(
+      JSON.stringify({
+        type: "assistant",
+        timestamp: "2026-09-03T01:13:44.675Z",
+        requestId: "req_partial_ttl",
+        sessionId: "session-partial-ttl",
+        cwd: "/work/app",
+        message: {
+          id: "msg_partial_ttl",
+          model: "claude-opus-5",
+          usage: {
+            input_tokens: 2,
+            cache_read_input_tokens: 10,
+            cache_creation_input_tokens: 60,
+            cache_creation: {
+              ephemeral_5m_input_tokens: 20,
+              ephemeral_1h_input_tokens: 10,
+            },
+            output_tokens: 12,
+          },
+        },
+      }),
+    );
+
+    expect(records).toHaveLength(1);
+    expect(records[0]?.totals).toMatchObject({
+      cacheCreationTokens: 60,
+      cacheCreation5mTokens: 20,
+      cacheCreation1hTokens: 10,
+    });
+  });
+
+  it("uses the serving model when an iteration omits its model", () => {
+    const records = parseClaudeLineRecords(
+      JSON.stringify({
+        type: "assistant",
+        timestamp: "2026-09-03T01:13:44.675Z",
+        requestId: "req_model_omitted",
+        sessionId: "session-model-omitted",
+        cwd: "/work/app",
+        message: {
+          id: "msg_model_omitted",
+          model: "claude-fable-5-1",
+          usage: {
+            output_tokens: 12,
+            iterations: [
+              {
+                type: "message",
+                input_tokens: 2,
+                cache_read_input_tokens: 100,
+                cache_creation_input_tokens: 20,
+                output_tokens: 12,
+              },
+            ],
+          },
+        },
+      }),
+    );
+
+    expect(records).toHaveLength(1);
+    expect(records[0]?.model).toBe("claude-fable-5-1");
+    expect(records[0]?.totals).toMatchObject({
+      uncachedInputTokens: 2,
+      cachedInputTokens: 100,
+      cacheCreationTokens: 20,
+      outputTokens: 12,
+    });
+  });
+
+  it("replaces a progressive Claude snapshot with its final serving iteration", () => {
+    const partial = parseClaudeLineRecords(
+      claudeLine({
+        messageId: "msg_progressive",
+        requestId: "req_progressive",
+        contentType: "text",
+      }),
+    );
+    const complete = parseClaudeLineRecords(
+      JSON.stringify({
+        type: "assistant",
+        timestamp: "2026-08-18T01:13:44.675Z",
+        requestId: "req_progressive",
+        message: {
+          id: "msg_progressive",
+          model: "claude-opus-5",
+          usage: {
+            output_tokens: 300,
+            iterations: [
+              { model: "claude-fable-5", output_tokens: 100 },
+              { model: "claude-opus-5", output_tokens: 300 },
+            ],
+          },
+        },
+      }),
+    );
+
+    expect(partial[0]?.dedupeKey).toBe("msg_progressive:req_progressive");
+    expect(complete.map((record) => record.dedupeKey)).toEqual([
+      "msg_progressive:req_progressive:0",
+      "msg_progressive:req_progressive",
+    ]);
+  });
+
   it("ignores records that are not assistant messages", () => {
     expect(parseClaudeLine(JSON.stringify({ type: "user", message: {} }))).toBeNull();
     expect(parseClaudeLine("not json")).toBeNull();
@@ -73,7 +256,11 @@ describe("parseCodexLine", () => {
   const sessionMeta = JSON.stringify({
     type: "session_meta",
     timestamp: "2026-08-01T05:17:41.289Z",
-    payload: { type: "session_meta", id: "019fbbc1-b12c-7360-a685-28c181f0025f" },
+    payload: {
+      type: "session_meta",
+      id: "019fbbc1-b12c-7360-a685-28c181f0025f",
+      cwd: "/home/theo/project",
+    },
   });
   const turnContext = JSON.stringify({
     type: "turn_context",
@@ -107,10 +294,32 @@ describe("parseCodexLine", () => {
     expect(record?.provider).toBe("codex");
     expect(record?.model).toBe("gpt-5.6-sol");
     expect(record?.sessionId).toBe("019fbbc1-b12c-7360-a685-28c181f0025f");
+    expect(record?.cwd).toBe("/home/theo/project");
     // Codex reports input_tokens inclusive of the cached portion.
     expect(record?.totals.uncachedInputTokens).toBe(19239 - 11008);
     expect(record?.totals.cachedInputTokens).toBe(11008);
     expect(record?.totals.reasoningTokens).toBe(116);
+  });
+
+  it("attributes resumed usage to the latest turn working directory", () => {
+    const state = initialCodexScanState();
+    parseCodexLine(sessionMeta, state);
+    parseCodexLine(
+      JSON.stringify({
+        type: "turn_context",
+        timestamp: "2026-08-01T05:17:42.694Z",
+        payload: {
+          type: "turn_context",
+          model: "gpt-5.6-sol",
+          cwd: "/home/theo/next-project",
+        },
+      }),
+      state,
+    );
+
+    const record = parseCodexLine(tokenCount(100, 0, 10, 0), state);
+
+    expect(record?.cwd).toBe("/home/theo/next-project");
   });
 
   it("skips a repeated token_count so deltas are not double counted", () => {

@@ -9,9 +9,15 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
   USAGE_CONTRACT_VERSION,
+  USAGE_EXPLICIT_REFRESH_SINCE,
+  USAGE_THREAD_BREAKDOWN_SINCE,
   type EnvironmentId,
   type UsageSummary,
   type UsageSummaryInput,
+  type UsageProviderKind,
+  type UsageThreadBreakdown,
+  type UsageThreadBreakdownInput,
+  type UsageThreadRow,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
@@ -23,7 +29,18 @@ import {
   startUsageRefresh,
   type UsageRefreshState,
 } from "@t3tools/shared/usageRefreshState";
-import { mergeUsage, type EnvironmentUsage, type MergedUsage } from "@t3tools/shared/usageMerge";
+import {
+  makeUsageRefreshToken,
+  mergeUsage,
+  projectFilterForEnvironment,
+  retainUsageStatuses,
+  usageRefreshTargets,
+  type EnvironmentProviderContribution,
+  type EnvironmentUsage,
+  type MergedUsage,
+  type SettledUsageStatuses,
+} from "@t3tools/shared/usageMerge";
+import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentPresentations } from "./presentation";
 import { serverEnvironment } from "./server";
 import { useAtomCommand } from "./use-atom-command";
@@ -80,8 +97,25 @@ export interface UsageView {
   readonly refresh: (requestedInput?: UsageSummaryInput) => void;
 }
 
-export function useUsage(input: UsageSummaryInput): UsageView {
-  const windowKey = useMemo(
+export function filterUsageEnvironmentsForProject<
+  T extends { readonly environmentId: EnvironmentId },
+>(environments: readonly T[], projectFilter: string | null | undefined): readonly T[] {
+  return environments.filter(
+    (environment) =>
+      projectFilterForEnvironment(projectFilter, environment.environmentId) !==
+      "environment-mismatch:",
+  );
+}
+
+export function useUsage(
+  input: UsageSummaryInput,
+  /** A namespaced project key, `null` for outside-projects buckets, `undefined` for no filter. */
+  projectFilter?: string | null,
+  /** Refresh the deferred thread query only while its table is mounted. */
+  refreshThreads = false,
+): UsageView {
+  const [refreshToken, setRefreshToken] = useState<string>();
+  const rangeKey = useMemo(
     () =>
       JSON.stringify({
         sinceDay: input.sinceDay,
@@ -100,8 +134,58 @@ export function useUsage(input: UsageSummaryInput): UsageView {
       input.untilTime,
     ],
   );
+  const windowKey = useMemo(
+    () =>
+      JSON.stringify({
+        sinceDay: input.sinceDay,
+        untilDay: input.untilDay,
+        timeZone: input.timeZone,
+        resolution: input.resolution,
+        sinceTime: input.sinceTime,
+        untilTime: input.untilTime,
+        refreshToken,
+      }),
+    [
+      input.sinceDay,
+      input.untilDay,
+      input.timeZone,
+      input.resolution,
+      input.sinceTime,
+      input.untilTime,
+      refreshToken,
+    ],
+  );
   const atom = usageByWindowAtom(windowKey);
-  const environments = useAtomValue(atom);
+  const currentEnvironments = useAtomValue(atom);
+  const settledStatuses = useRef<SettledUsageStatuses<EnvironmentUsageStatus> | null>(null);
+  const retained = retainUsageStatuses(rangeKey, currentEnvironments, settledStatuses.current);
+  settledStatuses.current = retained.settled;
+  const environments = retained.visible;
+  const answered = useMemo<readonly EnvironmentUsage[]>(
+    () =>
+      environments.flatMap((environment) =>
+        environment.summary === null
+          ? []
+          : [
+              {
+                environmentId: environment.environmentId,
+                label: environment.label,
+                summary: environment.summary,
+              },
+            ],
+      ),
+    [environments],
+  );
+  const merged = useMemo(
+    () =>
+      mergeUsage(
+        answered,
+        USAGE_CONTRACT_VERSION,
+        projectFilter === undefined ? undefined : { projectFilter },
+      ),
+    [answered, projectFilter],
+  );
+
   const refreshUsageSummary = useAtomCommand(serverEnvironment.refreshUsageSummary, {
     reportFailure: false,
   });
@@ -109,63 +193,120 @@ export function useUsage(input: UsageSummaryInput): UsageView {
     reportFailure: false,
   });
   const [manualRefreshState, setManualRefreshState] = useState<UsageRefreshState>({
-    windowKey,
+    windowKey: rangeKey,
     requestId: 0,
     refreshing: false,
-    error: null as string | null,
+    error: null,
   });
-  const currentWindowKey = useRef(windowKey);
+  const currentWindowKey = useRef(rangeKey);
   const currentRefreshId = useRef(0);
-  const pendingRefreshWindowKey = useRef(windowKey);
+  const pendingRefreshWindowKey = useRef(rangeKey);
   useEffect(() => {
-    currentWindowKey.current = windowKey;
-  }, [windowKey]);
+    currentWindowKey.current = rangeKey;
+  }, [rangeKey]);
   useEffect(() => {
-    // A refresh started while selecting the next window already targets this
-    // committed key. Keep its request id and state so the completion can settle
-    // after React commits the selection.
     const nextState = refreshStateForWindowChange(
       manualRefreshState,
-      windowKey,
+      rangeKey,
       pendingRefreshWindowKey.current,
     );
     if (nextState === manualRefreshState) return;
-    // A refresh belongs to one window. Invalidate its completion and clear the
-    // state so switching away and back cannot resurrect an old spinner/error.
     currentRefreshId.current = nextState.requestId;
-    pendingRefreshWindowKey.current = windowKey;
+    pendingRefreshWindowKey.current = rangeKey;
     setManualRefreshState(nextState);
-  }, [manualRefreshState, windowKey]);
+  }, [manualRefreshState, rangeKey]);
 
-  // Explicit refresh is a server command, so it really rescans and publishes
-  // a new last-good snapshot. The normal query remains snapshot-only.
   const refresh = useCallback(
     (requestedInput?: UsageSummaryInput) => {
-      const input = requestedInput ?? (JSON.parse(windowKey) as UsageSummaryInput);
+      const refreshEnvironments = usageRefreshTargets(environments);
+      if (refreshEnvironments.length === 0) return;
+      const requestInput = requestedInput ?? (JSON.parse(rangeKey) as UsageSummaryInput);
       const requestWindowKey =
         requestedInput === undefined
-          ? windowKey
+          ? rangeKey
           : JSON.stringify({
-              sinceDay: input.sinceDay,
-              untilDay: input.untilDay,
-              timeZone: input.timeZone,
-              resolution: input.resolution,
-              sinceTime: input.sinceTime,
-              untilTime: input.untilTime,
+              sinceDay: requestInput.sinceDay,
+              untilDay: requestInput.untilDay,
+              timeZone: requestInput.timeZone,
+              resolution: requestInput.resolution,
+              sinceTime: requestInput.sinceTime,
+              untilTime: requestInput.untilTime,
             });
       const nextRefreshState = startUsageRefresh(currentRefreshId.current, requestWindowKey);
       const requestId = nextRefreshState.requestId;
       currentRefreshId.current = requestId;
       pendingRefreshWindowKey.current = requestWindowKey;
       setManualRefreshState(nextRefreshState);
-      void Promise.all(
-        environments.map((environment) =>
-          refreshUsageRates({ environmentId: environment.environmentId, input: {} }).then(
-            () => refreshUsageSummary({ environmentId: environment.environmentId, input }),
-            () => refreshUsageSummary({ environmentId: environment.environmentId, input }),
-          ),
+
+      void Promise.allSettled(
+        refreshEnvironments.map((environment) =>
+          refreshUsageRates({ environmentId: environment.environmentId, input: {} }),
         ),
       )
+        .then(() => {
+          const explicitRefreshes = refreshEnvironments.flatMap((environment) =>
+            (environment.summary?.contractVersion ?? 0) < USAGE_EXPLICIT_REFRESH_SINCE
+              ? []
+              : [
+                  refreshUsageSummary({
+                    environmentId: environment.environmentId,
+                    input: requestInput,
+                  }),
+                ],
+          );
+          const legacyOrUnknown = refreshEnvironments.filter(
+            (environment) =>
+              (environment.summary?.contractVersion ?? 0) < USAGE_EXPLICIT_REFRESH_SINCE,
+          );
+          const legacyAnswered = refreshEnvironments.flatMap((environment) =>
+            environment.summary !== null &&
+            environment.summary.contractVersion < USAGE_EXPLICIT_REFRESH_SINCE
+              ? [
+                  {
+                    environmentId: environment.environmentId,
+                    label: environment.label,
+                    summary: environment.summary,
+                  },
+                ]
+              : [],
+          );
+          const nextToken = makeUsageRefreshToken(legacyAnswered);
+          if (legacyOrUnknown.length > 0) {
+            if (nextToken !== undefined && nextToken !== refreshToken) {
+              setRefreshToken(nextToken);
+            } else {
+              for (const environment of legacyOrUnknown) {
+                appAtomRegistry.refresh(
+                  serverEnvironment.usageSummary({
+                    environmentId: environment.environmentId,
+                    input: { ...requestInput, refreshToken },
+                  }),
+                );
+              }
+            }
+          }
+
+          if (refreshThreads) {
+            for (const contribution of filterProviderContributionsForProject(
+              projectFilter,
+              merged.providerContributions,
+            )) {
+              if (contribution.contractVersion < USAGE_THREAD_BREAKDOWN_SINCE) continue;
+              appAtomRegistry.refresh(
+                serverEnvironment.usageThreadBreakdown({
+                  environmentId: contribution.environmentId,
+                  input: makeThreadBreakdownInput(
+                    requestInput,
+                    projectFilter,
+                    contribution.providers,
+                    contribution.environmentId,
+                  ),
+                }),
+              );
+            }
+          }
+          return Promise.all(explicitRefreshes);
+        })
         .then((results) => {
           const nextState = completeUsageRefresh(
             currentWindowKey.current,
@@ -189,31 +330,29 @@ export function useUsage(input: UsageSummaryInput): UsageView {
           if (nextState !== null) setManualRefreshState(nextState);
         });
     },
-    [environments, refreshUsageRates, refreshUsageSummary, windowKey],
+    [
+      answered,
+      environments,
+      merged.providerContributions,
+      projectFilter,
+      rangeKey,
+      refreshThreads,
+      refreshToken,
+      refreshUsageRates,
+      refreshUsageSummary,
+    ],
   );
 
-  const merged = useMemo(() => {
-    const answered: EnvironmentUsage[] = environments.flatMap((environment) =>
-      environment.summary === null
-        ? []
-        : [
-            {
-              environmentId: environment.environmentId,
-              label: environment.label,
-              summary: environment.summary,
-            },
-          ],
-    );
-    return mergeUsage(answered, USAGE_CONTRACT_VERSION);
-  }, [environments]);
-
-  const answeredCount = environments.filter((environment) => environment.summary !== null).length;
-  const stillReporting = environments.filter(
+  const relevantEnvironments = filterUsageEnvironmentsForProject(environments, projectFilter);
+  const answeredCount = relevantEnvironments.filter(
+    (environment) => environment.summary !== null,
+  ).length;
+  const stillReporting = relevantEnvironments.filter(
     (environment) => environment.summary === null && environment.error === null,
   ).length;
   const isRefreshing =
     environments.some((environment) => environment.isPending && environment.summary !== null) ||
-    (manualRefreshState.windowKey === windowKey && manualRefreshState.refreshing);
+    (manualRefreshState.windowKey === rangeKey && manualRefreshState.refreshing);
 
   return {
     merged,
@@ -221,7 +360,148 @@ export function useUsage(input: UsageSummaryInput): UsageView {
     isPending: answeredCount === 0 && stillReporting > 0,
     isPartial: answeredCount > 0 && stillReporting > 0,
     isRefreshing,
-    refreshError: manualRefreshState.windowKey === windowKey ? manualRefreshState.error : null,
+    refreshError: manualRefreshState.windowKey === rangeKey ? manualRefreshState.error : null,
     refresh,
   };
+}
+
+export interface UsageThreadRowWithEnvironment extends UsageThreadRow {
+  /** Environment that reported the row; thread deep links are environment-scoped. */
+  readonly environmentId: EnvironmentId;
+}
+
+export interface UsageThreadsView {
+  readonly rows: readonly UsageThreadRowWithEnvironment[];
+  readonly truncatedRows: number;
+  /** True until every listed environment answered or failed. */
+  readonly isPending: boolean;
+  readonly failedEnvironments: number;
+}
+
+export interface EnvironmentUsageThreadBreakdown {
+  readonly environmentId: EnvironmentId;
+  readonly breakdown: UsageThreadBreakdown;
+}
+
+export function makeThreadBreakdownInput(
+  input: UsageSummaryInput,
+  projectFilter: string | null | undefined,
+  providers: readonly UsageProviderKind[],
+  environmentId: EnvironmentId,
+): UsageThreadBreakdownInput {
+  return {
+    sinceDay: input.sinceDay,
+    untilDay: input.untilDay,
+    timeZone: input.timeZone,
+    ...(input.sinceTime === undefined ? {} : { sinceTime: input.sinceTime }),
+    ...(input.untilTime === undefined ? {} : { untilTime: input.untilTime }),
+    ...(projectFilter === undefined
+      ? {}
+      : { projectKey: projectFilterForEnvironment(projectFilter, environmentId) }),
+    providers: [...providers],
+  };
+}
+
+function withOwnedProviders(
+  input: UsageThreadBreakdownInput,
+  providers: readonly UsageProviderKind[],
+): UsageThreadBreakdownInput {
+  return { ...input, providers: [...providers] };
+}
+
+/** Applies the summary's physical-source ownership to thread rows. */
+export function mergeUsageThreadBreakdowns(
+  environments: readonly EnvironmentUsageThreadBreakdown[],
+  providerContributions: readonly EnvironmentProviderContribution[],
+): Pick<UsageThreadsView, "rows" | "truncatedRows"> {
+  const providersByEnvironment = new Map(
+    providerContributions.map((entry) => [entry.environmentId, new Set(entry.providers)]),
+  );
+  const rows: UsageThreadRowWithEnvironment[] = [];
+  let truncatedRows = 0;
+
+  for (const environment of environments) {
+    const ownedProviders = providersByEnvironment.get(environment.environmentId);
+    if (ownedProviders === undefined) continue;
+    for (const row of environment.breakdown.rows) {
+      if (!ownedProviders.has(row.provider)) continue;
+      rows.push({ ...row, environmentId: environment.environmentId });
+      truncatedRows += row.groupedRows ?? 0;
+    }
+  }
+  rows.sort((a, b) => b.costUsd - a.costUsd);
+  return { rows, truncatedRows };
+}
+
+/** Excludes environments that cannot own a namespaced project selection. */
+export function filterProviderContributionsForProject(
+  projectKey: string | null | undefined,
+  providerContributions: readonly EnvironmentProviderContribution[],
+): readonly EnvironmentProviderContribution[] {
+  if (projectKey === undefined || projectKey === null) return providerContributions;
+  return providerContributions.filter(
+    (contribution) =>
+      projectFilterForEnvironment(projectKey, contribution.environmentId) !==
+      "environment-mismatch:",
+  );
+}
+
+const usageThreadsAtom = Atom.family((requestKey: string) =>
+  Atom.make((get): UsageThreadsView => {
+    const { input, providerContributions } = JSON.parse(requestKey) as {
+      input: UsageThreadBreakdownInput;
+      providerContributions: readonly EnvironmentProviderContribution[];
+    };
+
+    const relevantContributions = filterProviderContributionsForProject(
+      input.projectKey,
+      providerContributions,
+    );
+    const breakdowns: EnvironmentUsageThreadBreakdown[] = [];
+    let pending = 0;
+    let failed = relevantContributions.filter(
+      (contribution) => contribution.contractVersion < USAGE_THREAD_BREAKDOWN_SINCE,
+    ).length;
+    for (const contribution of relevantContributions) {
+      if (contribution.contractVersion < USAGE_THREAD_BREAKDOWN_SINCE) continue;
+      const { environmentId } = contribution;
+      const environmentInput =
+        input.projectKey === undefined
+          ? input
+          : {
+              ...input,
+              projectKey: projectFilterForEnvironment(input.projectKey, environmentId),
+            };
+      const result = get(
+        serverEnvironment.usageThreadBreakdown({
+          environmentId,
+          input: withOwnedProviders(environmentInput, contribution.providers),
+        }),
+      );
+      if (result.waiting) pending += 1;
+      if (result._tag === "Failure") failed += 1;
+      const breakdown = Option.getOrNull(AsyncResult.value(result));
+      if (breakdown === null) continue;
+      breakdowns.push({ environmentId, breakdown });
+    }
+    const merged = mergeUsageThreadBreakdowns(breakdowns, relevantContributions);
+
+    return { ...merged, isPending: pending > 0, failedEnvironments: failed };
+  }).pipe(Atom.withLabel(`web-usage:threads:${requestKey}`)),
+);
+
+/**
+ * Thread drill-down across the environments that contributed to the summary.
+ * Mount the consuming component only while the thread view is open; fetching
+ * starts on first read.
+ */
+export function useUsageThreads(
+  input: UsageThreadBreakdownInput,
+  providerContributions: readonly EnvironmentProviderContribution[],
+): UsageThreadsView {
+  const requestKey = useMemo(
+    () => JSON.stringify({ input, providerContributions }),
+    [input, providerContributions],
+  );
+  return useAtomValue(usageThreadsAtom(requestKey));
 }

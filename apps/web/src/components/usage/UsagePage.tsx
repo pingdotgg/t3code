@@ -1,17 +1,24 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { UsageProviderKind } from "@t3tools/contracts";
 import { CheckIcon, RefreshCwIcon, XIcon } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 
-import type { DailyTotals, HourlyTotals } from "@t3tools/shared/usageMerge";
+import {
+  projectFilterForEnvironment,
+  type DailyTotals,
+  type HourlyTotals,
+  type ProjectTotals,
+} from "@t3tools/shared/usageMerge";
 
 import { isElectron } from "../../env";
+import { useCommitOnBlur } from "../../hooks/useCommitOnBlur";
 import { cn } from "../../lib/utils";
 import { environmentPresentations } from "../../state/presentation";
 import { serverEnvironment } from "../../state/server";
 import { useUsage, type EnvironmentUsageStatus } from "../../state/usage";
 import { useAtomCommand } from "../../state/use-atom-command";
 import {
+  compareUsageDays,
   enumerateDays,
   enumerateHourStarts,
   formatCount,
@@ -22,10 +29,13 @@ import {
   formatPercent,
   formatTokens,
   formatUsd,
+  makeCustomWindow,
   makeWindow,
 } from "@t3tools/shared/usageFormat";
 import { Button } from "../ui/button";
+import { Input } from "../ui/input";
 import { ScrollArea } from "../ui/scroll-area";
+import { segmentedControlGroupClassName } from "../ui/segmented-control-styles";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { SidebarInset } from "../ui/sidebar";
 import { Skeleton } from "../ui/skeleton";
@@ -40,6 +50,8 @@ import { WorkspacePageHeader } from "../WorkspacePageHeader";
 import { UsageLimitsSection } from "./UsageLimits";
 import { UsagePriceOverrides } from "./UsagePriceOverrides";
 import { UsageProviderChart, type UsageChartMetric } from "./UsageProviderChart";
+import { UsageCacheWriteCell } from "./UsageCacheWriteCell";
+import { UsageThreadTable } from "./UsageThreadTable";
 import { PROVIDER_ORDER, PROVIDER_PRESENTATION, providersWithUsage } from "./usageProviders";
 
 type UsageMetric = UsageChartMetric | "limits";
@@ -61,17 +73,22 @@ const WINDOW_OPTIONS = [
 ] as const;
 
 export function UsagePage() {
+  // `days` remembers the last preset even while a custom (brushed or typed)
+  // range is active, so a reset lands back where the user started.
   const [windowSelection, setWindowSelection] = useState(() => ({
     days: 30,
+    custom: false,
     window: makeWindow(30),
   }));
   const [metric, setMetric] = useState<UsageMetric>("cost");
   const showingLimits = metric === "limits";
-  const [breakdown, setBreakdown] = useState<"model" | "time">("model");
-  const { days: windowDays, window } = windowSelection;
-  const isPast24Hours = windowDays === 1;
+  const [breakdown, setBreakdown] = useState<"model" | "project" | "thread" | "time">("model");
+  // A namespaced project key, null for work outside every project, undefined for all.
+  const [projectFilter, setProjectFilter] = useState<string | null | undefined>(undefined);
+  const { days: windowDays, custom: isCustomWindow, window } = windowSelection;
+  const isPast24Hours = !isCustomWindow && windowDays === 1;
   const { merged, environments, isPending, isPartial, isRefreshing, refreshError, refresh } =
-    useUsage(window);
+    useUsage(window, projectFilter, breakdown === "thread");
   const presentations = useAtomValue(environmentPresentations.presentationsAtom);
   const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
     reportFailure: false,
@@ -114,13 +131,60 @@ export function UsagePage() {
         : merged.models,
     [breakdown, merged.models, metric],
   );
+  const breakdownProjects = useMemo(() => {
+    const scoped =
+      projectFilter === undefined
+        ? merged.projects
+        : merged.projects.filter((project) => project.projectKey === projectFilter);
+    return metric === "tokens"
+      ? scoped.toSorted(
+          (left, right) => right.totalTokens - left.totalTokens || right.costUsd - left.costUsd,
+        )
+      : scoped;
+  }, [merged.projects, metric, projectFilter]);
+  const breakdownProjectCostUsd = useMemo(
+    () => breakdownProjects.reduce((sum, project) => sum + project.costUsd, 0),
+    [breakdownProjects],
+  );
+  const projectLabelsRef = useRef(new Map<string, string>());
+  for (const project of merged.projects) {
+    if (project.projectKey !== null && project.project !== null) {
+      projectLabelsRef.current.set(project.projectKey, project.project);
+    }
+  }
+  const selectedProjectLabel =
+    projectFilter === undefined
+      ? null
+      : projectFilter === null
+        ? "Outside projects"
+        : (projectLabelsRef.current.get(projectFilter) ?? "Selected project");
   const activeProviders = useMemo(() => providersWithUsage(merged.providers), [merged.providers]);
   const timeValueColumnWidth = `${60 / (activeProviders.length + 2)}%`;
+  // Session figures are per transcript directory; a project filter cannot
+  // split them, so they only render unfiltered.
+  const sessionsKnown = projectFilter === undefined;
+  const onlyProject = merged.projects.length === 1 ? merged.projects[0] : undefined;
+  // Unknown attribution remains in the overall totals but is absent from the
+  // project list. Keep a lone known project selectable when that distinction
+  // lets the user remove unknown usage from the page.
+  const showProjectPicker =
+    merged.projects.length > 1 ||
+    projectFilter !== undefined ||
+    (onlyProject !== undefined &&
+      (onlyProject.totalTokens !== merged.totalTokens || onlyProject.costUsd !== merged.costUsd));
 
   const selectWindow = (days: number) => {
     setWindowSelection({
       days,
+      custom: false,
       window: makeWindow(days, undefined, days === 1 ? "hour" : "day"),
+    });
+  };
+  const selectCustomWindow = (sinceDay: string, untilDay: string) => {
+    setWindowSelection({
+      days: windowDays,
+      custom: true,
+      window: makeCustomWindow(sinceDay, untilDay),
     });
   };
   const refreshWindow = () => {
@@ -132,18 +196,24 @@ export function UsagePage() {
       }
       return;
     }
+    // A custom range is a fixed span of past days; rescanning is all a
+    // refresh can mean for it.
+    if (isCustomWindow) {
+      refresh();
+      return;
+    }
     const nextWindow = makeWindow(windowDays, undefined, isPast24Hours ? "hour" : "day");
     if (
-      nextWindow.sinceDay === window.sinceDay &&
-      nextWindow.untilDay === window.untilDay &&
-      nextWindow.sinceTime === window.sinceTime &&
-      nextWindow.untilTime === window.untilTime
+      nextWindow.sinceDay !== window.sinceDay ||
+      nextWindow.untilDay !== window.untilDay ||
+      nextWindow.sinceTime !== window.sinceTime ||
+      nextWindow.untilTime !== window.untilTime
     ) {
-      refresh();
-    } else {
-      setWindowSelection({ days: windowDays, window: nextWindow });
+      setWindowSelection({ days: windowDays, custom: false, window: nextWindow });
       refresh(nextWindow);
+      return;
     }
+    refresh();
   };
   const windowLabel =
     isPast24Hours && window.sinceTime !== undefined && window.untilTime !== undefined
@@ -165,6 +235,14 @@ export function UsagePage() {
         )}
       </WorkspaceBreadcrumb>
       <div className="ms-auto hidden min-w-0 items-center justify-end gap-2 lg:flex">
+        {showProjectPicker ? (
+          <UsageProjectSelect
+            projects={merged.projects}
+            filter={projectFilter}
+            selectedLabel={selectedProjectLabel}
+            onChange={setProjectFilter}
+          />
+        ) : null}
         <ToggleGroup
           aria-label="Usage metric"
           variant="segmented"
@@ -180,12 +258,18 @@ export function UsagePage() {
             </Toggle>
           ))}
         </ToggleGroup>
-        {/* The period does not apply to Limits, so it stays in place but
-            disabled; unmounting it shifted the metric toggle ~300px. */}
+        <UsageDateRangeInputs
+          sinceDay={window.sinceDay}
+          untilDay={window.untilDay}
+          onChange={selectCustomWindow}
+          disabled={showingLimits}
+        />
+        {/* The period does not apply to Limits, so the controls stay in place
+            but disabled; unmounting them shifts the metric toggle. */}
         <ToggleGroup
           aria-label="Usage period"
           variant="segmented"
-          value={[String(windowDays)]}
+          value={isCustomWindow ? [] : [String(windowDays)]}
           disabled={showingLimits}
           onValueChange={(next) => {
             const value = next[0];
@@ -212,6 +296,14 @@ export function UsagePage() {
         </Button>
       </div>
       <div className="ms-auto flex min-w-0 items-center justify-end gap-1 lg:hidden">
+        {showProjectPicker ? (
+          <UsageProjectSelect
+            projects={merged.projects}
+            filter={projectFilter}
+            selectedLabel={selectedProjectLabel}
+            onChange={setProjectFilter}
+          />
+        ) : null}
         <Select
           value={metric}
           onValueChange={(value) => {
@@ -237,9 +329,11 @@ export function UsagePage() {
           </SelectPopup>
         </Select>
         <Select
-          value={String(windowDays)}
+          value={isCustomWindow ? "custom" : String(windowDays)}
           disabled={showingLimits}
-          onValueChange={(value) => selectWindow(Number(value))}
+          onValueChange={(value) => {
+            if (value !== "custom" && value !== null) selectWindow(Number(value));
+          }}
         >
           <SelectTrigger
             aria-label="Usage period"
@@ -248,7 +342,9 @@ export function UsagePage() {
             className="w-auto min-w-0"
           >
             <SelectValue>
-              {WINDOW_OPTIONS.find((option) => option.days === windowDays)?.label}
+              {isCustomWindow
+                ? "Custom"
+                : WINDOW_OPTIONS.find((option) => option.days === windowDays)?.label}
             </SelectValue>
           </SelectTrigger>
           <SelectPopup align="end" alignItemWithTrigger={false}>
@@ -283,9 +379,17 @@ export function UsagePage() {
         <ScrollArea className="min-h-0 flex-1">
           <WorkspacePageContainer width="wide">
             {!showingLimits ? (
-              <div className="flex justify-end">
-                <UsagePriceOverrides usage={environments} />
-              </div>
+              <>
+                <UsageDateRangeInputs
+                  className="mb-4 flex-wrap lg:hidden"
+                  sinceDay={window.sinceDay}
+                  untilDay={window.untilDay}
+                  onChange={selectCustomWindow}
+                />
+                <div className="flex justify-end">
+                  <UsagePriceOverrides usage={environments} />
+                </div>
+              </>
             ) : null}
             {showingLimits ? (
               <UsageLimitsSection />
@@ -318,13 +422,16 @@ export function UsagePage() {
                           : formatTokens(merged.totalTokens)}
                       </span>
                       <span className="text-xs text-muted-foreground">
-                        {metric === "cost"
-                          ? merged.sessionsExact
-                            ? `${formatCount(merged.sessions)} sessions · API estimate`
-                            : "Sessions unavailable until all environments share a cutoff"
-                          : merged.sessionsExact
-                            ? `${formatCount(merged.sessions)} sessions`
-                            : "Sessions unavailable until all environments share a cutoff"}
+                        {(() => {
+                          const scope = sessionsKnown
+                            ? merged.sessionsExact
+                              ? `${formatCount(merged.sessions)} sessions`
+                              : "Sessions unavailable until all environments share a cutoff"
+                            : (selectedProjectLabel ?? "Outside projects");
+                          return metric === "cost"
+                            ? `${scope} · local public-list estimate`
+                            : scope;
+                        })()}
                       </span>
                     </div>
 
@@ -352,9 +459,11 @@ export function UsagePage() {
                                 <span className="truncate">
                                   {PROVIDER_PRESENTATION[provider].label}
                                 </span>
-                                <span className="shrink-0 whitespace-nowrap text-[11px] text-muted-foreground tabular-nums">
-                                  {sessionLabel}
-                                </span>
+                                {sessionsKnown ? (
+                                  <span className="shrink-0 whitespace-nowrap text-[11px] text-muted-foreground tabular-nums">
+                                    {sessionLabel}
+                                  </span>
+                                ) : null}
                               </span>
                             </span>
                             <span className="shrink-0 text-sm font-medium text-foreground tabular-nums">
@@ -374,10 +483,17 @@ export function UsagePage() {
                   </div>
 
                   <div className="flex min-w-0 flex-col gap-3">
-                    <h2 className="text-sm font-medium text-foreground">
-                      {isPast24Hours ? "Hourly" : "Daily"}{" "}
-                      {metric === "tokens" ? "processed tokens" : "cost"}
-                    </h2>
+                    <div className="flex items-baseline justify-between gap-3">
+                      <h2 className="text-sm font-medium text-foreground">
+                        {isPast24Hours ? "Hourly" : "Daily"}{" "}
+                        {metric === "tokens" ? "processed tokens" : "cost"}
+                      </h2>
+                      {isPast24Hours ? null : (
+                        <span className="text-[10px] tracking-wide text-muted-foreground uppercase">
+                          drag to zoom · double-click resets
+                        </span>
+                      )}
+                    </div>
                     <UsageProviderChart
                       providers={activeProviders}
                       days={days}
@@ -388,13 +504,19 @@ export function UsagePage() {
                       referenceTime={window.untilTime}
                       resolution={isPast24Hours ? "hour" : "day"}
                       timeZone={window.timeZone}
+                      {...(isPast24Hours
+                        ? {}
+                        : {
+                            onZoomToDays: selectCustomWindow,
+                            onResetZoom: () => selectWindow(windowDays),
+                          })}
                     />
                   </div>
                 </section>
 
                 <section className="flex flex-col gap-2">
                   <h2 className="text-sm font-medium text-foreground">Totals</h2>
-                  <div className="grid grid-cols-2 gap-x-6 gap-y-4 py-1 md:grid-cols-5">
+                  <div className="grid grid-cols-2 gap-x-6 gap-y-4 py-1 md:grid-cols-6">
                     <Metric label="Processed tokens" value={formatTokens(merged.totalTokens)} />
                     <Metric label="Cached input" value={formatTokens(merged.cachedInputTokens)} />
                     <Metric
@@ -402,6 +524,19 @@ export function UsagePage() {
                       value={formatTokens(merged.uncachedInputTokens)}
                     />
                     <Metric label="Output" value={formatTokens(merged.outputTokens)} />
+                    <Metric
+                      label="Cache writes, estimated"
+                      value={
+                        merged.costQuality.cacheWriteUsd === null
+                          ? "Unavailable"
+                          : formatUsd(merged.costQuality.cacheWriteUsd)
+                      }
+                      {...(merged.costUsd > 0 && merged.costQuality.cacheWriteUsd !== null
+                        ? {
+                            detail: `${formatPercent(merged.costQuality.cacheWriteUsd / merged.costUsd, 0)} of estimate · not an expiry measure`,
+                          }
+                        : {})}
+                    />
                     <Metric
                       label="Cache savings"
                       value={formatUsd(merged.costQuality.cacheSavingsUsd)}
@@ -418,12 +553,21 @@ export function UsagePage() {
                       value={[breakdown]}
                       onValueChange={(next) => {
                         const value = next[0];
-                        if (value === "model" || value === "time") setBreakdown(value);
+                        if (
+                          value === "model" ||
+                          value === "project" ||
+                          value === "thread" ||
+                          value === "time"
+                        ) {
+                          setBreakdown(value);
+                        }
                       }}
                     >
                       {(
                         [
                           { value: "model", label: "Model" },
+                          { value: "project", label: "Project" },
+                          { value: "thread", label: "Thread" },
                           { value: "time", label: isPast24Hours ? "Hour" : "Day" },
                         ] as const
                       ).map((option) => (
@@ -434,18 +578,109 @@ export function UsagePage() {
                     </ToggleGroup>
                   </div>
 
-                  {breakdown === "model" ? (
+                  {breakdown === "thread" ? (
+                    <UsageThreadTable
+                      input={{
+                        sinceDay: window.sinceDay,
+                        untilDay: window.untilDay,
+                        timeZone: window.timeZone,
+                        ...(window.sinceTime === undefined ? {} : { sinceTime: window.sinceTime }),
+                        ...(window.untilTime === undefined ? {} : { untilTime: window.untilTime }),
+                        ...(projectFilter === undefined ? {} : { projectKey: projectFilter }),
+                      }}
+                      providerContributions={merged.providerContributions}
+                      summaryFailedEnvironments={
+                        environments.filter(
+                          (environment) =>
+                            (environment.error !== null ||
+                              merged.staleEnvironments.includes(environment.environmentId)) &&
+                            projectFilterForEnvironment(
+                              projectFilter,
+                              environment.environmentId,
+                            ) !== "environment-mismatch:",
+                        ).length
+                      }
+                    />
+                  ) : breakdown === "project" ? (
                     <table className="w-full table-fixed text-sm">
                       <colgroup>
-                        <col className="w-2/5" />
-                        <col className="w-1/5" />
-                        <col className="w-1/5" />
-                        <col className="w-1/5" />
+                        <col className="w-[32%]" />
+                        <col className="w-[17%]" />
+                        <col className="w-[17%]" />
+                        <col className="w-[17%]" />
+                        <col className="w-[17%]" />
+                      </colgroup>
+                      <thead>
+                        <tr className="border-b border-border text-left text-xs text-muted-foreground">
+                          <th className="py-2 font-normal">Project</th>
+                          <th className="py-2 text-right font-normal">Cost</th>
+                          <th className="py-2 text-right font-normal">Cache writes</th>
+                          <th className="py-2 text-right font-normal">Share</th>
+                          <th className="py-2 text-right font-normal">Tokens</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {breakdownProjects.length === 0 ? (
+                          <tr>
+                            <td colSpan={5} className="py-6 text-center text-muted-foreground">
+                              {merged.records === 0
+                                ? "No activity in this window."
+                                : "No project attribution in this window."}
+                            </td>
+                          </tr>
+                        ) : (
+                          breakdownProjects.map((project) => (
+                            <tr
+                              key={project.projectKey ?? "\0"}
+                              className="border-b border-border/50 transition-colors hover:bg-muted/50"
+                            >
+                              <td className="py-2">
+                                {project.project === null ? (
+                                  <span className="text-muted-foreground">Outside projects</span>
+                                ) : (
+                                  <span className="block truncate text-foreground">
+                                    {project.project}
+                                  </span>
+                                )}
+                              </td>
+                              <td className="py-2 text-right text-foreground tabular-nums">
+                                {formatUsd(project.costUsd)}
+                              </td>
+                              <UsageCacheWriteCell
+                                cacheWriteTokens={project.cacheWriteTokens}
+                                cacheWriteUsd={project.cacheWriteUsd}
+                              />
+                              <td className="py-2 text-right text-muted-foreground tabular-nums">
+                                {formatPercent(
+                                  projectFilter === undefined
+                                    ? project.costShare
+                                    : breakdownProjectCostUsd === 0
+                                      ? 0
+                                      : project.costUsd / breakdownProjectCostUsd,
+                                )}
+                              </td>
+                              <td className="py-2 text-right text-muted-foreground tabular-nums">
+                                {formatTokens(project.totalTokens)}
+                              </td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  ) : breakdown === "model" ? (
+                    <table className="w-full table-fixed text-sm">
+                      <colgroup>
+                        <col className="w-[32%]" />
+                        <col className="w-[17%]" />
+                        <col className="w-[17%]" />
+                        <col className="w-[17%]" />
+                        <col className="w-[17%]" />
                       </colgroup>
                       <thead>
                         <tr className="border-b border-border text-left text-xs text-muted-foreground">
                           <th className="py-2 font-normal">Model</th>
                           <th className="py-2 text-right font-normal">Cost</th>
+                          <th className="py-2 text-right font-normal">Cache writes</th>
                           <th className="py-2 text-right font-normal">Share</th>
                           <th className="py-2 text-right font-normal">Tokens</th>
                         </tr>
@@ -453,7 +688,7 @@ export function UsagePage() {
                       <tbody>
                         {breakdownModels.length === 0 ? (
                           <tr>
-                            <td colSpan={4} className="py-6 text-center text-muted-foreground">
+                            <td colSpan={5} className="py-6 text-center text-muted-foreground">
                               No activity in this window.
                             </td>
                           </tr>
@@ -472,6 +707,10 @@ export function UsagePage() {
                               <td className="py-2 text-right text-foreground tabular-nums">
                                 {formatUsd(model.costUsd)}
                               </td>
+                              <UsageCacheWriteCell
+                                cacheWriteTokens={model.cacheWriteTokens}
+                                cacheWriteUsd={model.cacheWriteUsd}
+                              />
                               <td className="py-2 text-right text-muted-foreground tabular-nums">
                                 {formatPercent(model.costShare)}
                               </td>
@@ -556,6 +795,148 @@ export function UsagePage() {
   );
 }
 
+/**
+ * Free date-range bounds beside the presets. Native date inputs; committing
+ * either bound deselects every preset. Compact layouts render the same control
+ * above the page content so custom ranges remain reachable without crowding
+ * the header.
+ */
+function UsageDateRangeInputs({
+  className,
+  sinceDay,
+  untilDay,
+  onChange,
+  disabled = false,
+}: {
+  readonly className?: string;
+  readonly sinceDay: string;
+  readonly untilDay: string;
+  readonly onChange: (sinceDay: string, untilDay: string) => void;
+  readonly disabled?: boolean;
+}) {
+  // The shared buffered-input hook preserves a focused draft across upstream
+  // range changes and commits on both blur and Enter. Keep the hooks separate
+  // so each bound can validate against the last committed opposite bound.
+  const sinceInput = useCommitOnBlur(sinceDay, (next) => {
+    const comparison = compareUsageDays(next, untilDay);
+    if (comparison !== null && comparison <= 0) onChange(next, untilDay);
+  });
+  const untilInput = useCommitOnBlur(untilDay, (next) => {
+    const comparison = compareUsageDays(sinceDay, next);
+    if (comparison !== null && comparison <= 0) onChange(sinceDay, next);
+  });
+  const comparison = compareUsageDays(sinceInput.value, untilInput.value);
+  const invalid = comparison === null || comparison > 0;
+  const inputClassName =
+    "[color-scheme:inherit] [&_[data-slot=input]::-webkit-calendar-picker-indicator]:opacity-50";
+
+  return (
+    <div
+      className={cn(
+        "flex w-fit items-center text-xs text-muted-foreground",
+        segmentedControlGroupClassName,
+        className,
+      )}
+    >
+      <Input
+        nativeInput
+        type="date"
+        size="segmented"
+        variant="segmented"
+        aria-label="From day"
+        className={inputClassName}
+        max={untilInput.value}
+        disabled={disabled}
+        aria-invalid={invalid || undefined}
+        {...sinceInput}
+      />
+      <span className="px-0.5">to</span>
+      <Input
+        nativeInput
+        type="date"
+        size="segmented"
+        variant="segmented"
+        aria-label="To day"
+        className={inputClassName}
+        min={sinceInput.value}
+        disabled={disabled}
+        aria-invalid={invalid || undefined}
+        {...untilInput}
+      />
+    </div>
+  );
+}
+
+/**
+ * Select values are plain strings, so the three filter states get distinct
+ * encodings: sentinels for "all" and "outside", while attributed projects
+ * already carry a namespaced stable key from the merge layer.
+ */
+const ALL_PROJECTS_VALUE = "all";
+const OUTSIDE_PROJECTS_VALUE = "outside";
+const PROJECT_VALUE_PREFIX = "p:";
+
+function projectFilterValue(filter: string | null | undefined): string {
+  if (filter === undefined) return ALL_PROJECTS_VALUE;
+  if (filter === null) return OUTSIDE_PROJECTS_VALUE;
+  return `${PROJECT_VALUE_PREFIX}${filter}`;
+}
+
+function projectFilterFromValue(value: string): string | null | undefined {
+  if (value === OUTSIDE_PROJECTS_VALUE) return null;
+  if (value.startsWith(PROJECT_VALUE_PREFIX)) return value.slice(PROJECT_VALUE_PREFIX.length);
+  return undefined;
+}
+
+/** Narrows the whole page to one project's buckets. */
+function UsageProjectSelect({
+  projects,
+  filter,
+  selectedLabel,
+  onChange,
+}: {
+  readonly projects: readonly ProjectTotals[];
+  readonly filter: string | null | undefined;
+  readonly selectedLabel: string | null;
+  readonly onChange: (filter: string | null | undefined) => void;
+}) {
+  const label = filter === undefined ? "All projects" : (selectedLabel ?? "Selected project");
+  return (
+    <Select
+      value={projectFilterValue(filter)}
+      onValueChange={(value) => onChange(projectFilterFromValue(value ?? ""))}
+    >
+      <SelectTrigger
+        aria-label="Project filter"
+        size="compact"
+        variant="ghost"
+        className="w-auto max-w-48 min-w-0"
+      >
+        <SelectValue>
+          <span className="truncate">{label}</span>
+        </SelectValue>
+      </SelectTrigger>
+      <SelectPopup align="end" alignItemWithTrigger={false}>
+        <SelectItem value={ALL_PROJECTS_VALUE}>All projects</SelectItem>
+        {projects.map((project) =>
+          project.project === null ? (
+            <SelectItem key={OUTSIDE_PROJECTS_VALUE} value={OUTSIDE_PROJECTS_VALUE}>
+              Outside projects
+            </SelectItem>
+          ) : (
+            <SelectItem
+              key={project.projectKey}
+              value={`${PROJECT_VALUE_PREFIX}${project.projectKey}`}
+            >
+              {project.project}
+            </SelectItem>
+          ),
+        )}
+      </SelectPopup>
+    </Select>
+  );
+}
+
 /** Brand mark for the harness a row belongs to. */
 function ProviderMark({
   provider,
@@ -568,11 +949,22 @@ function ProviderMark({
   return <Mark className={cn("shrink-0", className)} aria-hidden />;
 }
 
-function Metric({ label, value }: { readonly label: string; readonly value: string }) {
+function Metric({
+  label,
+  value,
+  detail,
+}: {
+  readonly label: string;
+  readonly value: string;
+  readonly detail?: string;
+}) {
   return (
     <div className="flex min-w-0 flex-col gap-0.5">
       <span className="text-xs text-muted-foreground">{label}</span>
       <span className="text-base font-medium text-foreground tabular-nums">{value}</span>
+      {detail === undefined ? null : (
+        <span className="text-xs text-muted-foreground tabular-nums">{detail}</span>
+      )}
     </div>
   );
 }
@@ -748,15 +1140,20 @@ function UsageSkeleton() {
 
       <section className="flex flex-col gap-2">
         <h2 className="text-sm font-medium text-foreground">Totals</h2>
-        <div className="grid grid-cols-2 gap-x-6 gap-y-4 py-1 md:grid-cols-5">
-          {["Processed tokens", "Cached input", "Uncached input", "Output", "Cache savings"].map(
-            (label) => (
-              <div key={label} className="flex flex-col gap-0.5">
-                <span className="text-xs text-muted-foreground">{label}</span>
-                <Skeleton className="h-6 w-16" />
-              </div>
-            ),
-          )}
+        <div className="grid grid-cols-2 gap-x-6 gap-y-4 py-1 md:grid-cols-6">
+          {[
+            "Processed tokens",
+            "Cached input",
+            "Uncached input",
+            "Output",
+            "Cache writes, estimated",
+            "Cache savings",
+          ].map((label) => (
+            <div key={label} className="flex flex-col gap-0.5">
+              <span className="text-xs text-muted-foreground">{label}</span>
+              <Skeleton className="h-6 w-16" />
+            </div>
+          ))}
         </div>
       </section>
 
