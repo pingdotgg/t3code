@@ -8,8 +8,12 @@ import {
   nativeMarkdownDocumentRuns,
   nativeMarkdownWithPreservedSoftBreaks,
 } from "./nativeMarkdownText";
-import { NativeMarkdownBlock } from "./NativeMarkdownBlock.ios";
-import { NativeMarkdownSelectableText } from "./NativeMarkdownSelectableText.ios";
+import { MarkdownImageRendererContext, NativeMarkdownBlock } from "./NativeMarkdownBlock.ios";
+import {
+  MarkdownFileContextMenuContext,
+  NativeMarkdownSelectableText,
+  type MarkdownFileContextMenuHandlers,
+} from "./NativeMarkdownSelectableText.ios";
 import type {
   SelectableMarkdownSkill,
   SelectableMarkdownTextProps,
@@ -20,6 +24,8 @@ const EMPTY_SKILLS: ReadonlyArray<SelectableMarkdownSkill> = [];
 export type {
   MarkdownCodeHighlighter,
   MarkdownHighlightedToken,
+  MarkdownImageRenderer,
+  MarkdownImageRequest,
   NativeMarkdownTextStyle,
   SelectableMarkdownSkill,
   SelectableMarkdownTextProps,
@@ -36,6 +42,9 @@ export function SelectableMarkdownText({
   highlightCode,
   preserveSoftBreaks = false,
   onLinkPress,
+  fileContextMenu,
+  onFileContextMenuAction,
+  renderImage,
   marginTop = 0,
   marginBottom = 0,
 }: SelectableMarkdownTextProps) {
@@ -58,38 +67,51 @@ export function SelectableMarkdownText({
     );
   }, [markdown, preserveSoftBreaks, skills]);
 
-  return (
-    // A percentage width here creates a cyclic intrinsic measurement inside
-    // shrink-to-fit containers such as user-message bubbles. Yoga then gives
-    // the native text node an unbounded second pass and the parent only clips
-    // the resulting single-line width instead of reflowing it.
-    <View style={{ flexShrink: 1, minWidth: 0, marginTop, marginBottom }}>
-      {chunks.map((chunk, index) => {
-        const content =
-          chunk.kind === "rich" ? (
-            <NativeMarkdownBlock
-              node={chunk.node}
-              textStyle={textStyle}
-              highlightCode={highlightCode}
-              onLinkPress={onLinkPress}
-            />
-          ) : (
-            <NativeMarkdownSelectableText
-              runs={chunk.runs}
-              textStyle={textStyle}
-              onLinkPress={onLinkPress}
-            />
-          );
+  const fileContextMenuHandlers = useMemo<MarkdownFileContextMenuHandlers | null>(
+    () =>
+      fileContextMenu && onFileContextMenuAction
+        ? { fileContextMenu, onFileContextMenuAction }
+        : null,
+    [fileContextMenu, onFileContextMenuAction],
+  );
 
-        return (
-          <View
-            key={chunk.key}
-            style={{ paddingTop: nativeMarkdownChunkSpacing(chunks[index - 1], chunk) }}
-          >
-            {content}
-          </View>
-        );
-      })}
-    </View>
+  return (
+    <MarkdownImageRendererContext.Provider value={renderImage ?? null}>
+      <MarkdownFileContextMenuContext.Provider value={fileContextMenuHandlers}>
+        {/* A percentage width here creates a cyclic intrinsic measurement inside
+          shrink-to-fit containers such as user-message bubbles. Yoga then gives
+          the native text node an unbounded second pass and the parent only clips
+          the resulting single-line width instead of reflowing it. */}
+        <View style={{ flexShrink: 1, minWidth: 0, marginTop, marginBottom }}>
+          {chunks.map((chunk, index) => {
+            const content =
+              chunk.kind === "rich" ? (
+                <NativeMarkdownBlock
+                  node={chunk.node}
+                  skills={skills}
+                  textStyle={textStyle}
+                  highlightCode={highlightCode}
+                  onLinkPress={onLinkPress}
+                />
+              ) : (
+                <NativeMarkdownSelectableText
+                  runs={chunk.runs}
+                  textStyle={textStyle}
+                  onLinkPress={onLinkPress}
+                />
+              );
+
+            return (
+              <View
+                key={chunk.key}
+                style={{ paddingTop: nativeMarkdownChunkSpacing(chunks[index - 1], chunk) }}
+              >
+                {content}
+              </View>
+            );
+          })}
+        </View>
+      </MarkdownFileContextMenuContext.Provider>
+    </MarkdownImageRendererContext.Provider>
   );
 }

@@ -18,11 +18,8 @@ import { useEnvironmentQuery } from "~/state/query";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 
-import { Button } from "../ui/button";
-import { Menu, MenuPopup, MenuTrigger } from "../ui/menu";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
-import { PullRequestPeopleGhost } from "./PullRequestGhosts";
+import { PullRequestCandidatePicker } from "./PullRequestCandidatePicker";
 import { PullRequestActorLabel } from "./pullRequestPresentation";
 import { readableFailure } from "./pullRequestDetail.logic";
 
@@ -103,85 +100,40 @@ export function PullRequestReviewerPicker({
     candidatesQuery.refresh();
   };
 
-  if (!allowed) {
-    return (
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <Button size="icon-xs" variant="ghost" disabled aria-label="Request a review">
-              <UserPlusIcon className="size-3.5" />
-            </Button>
-          }
-        />
-        <TooltipPopup side="bottom">
-          Asking someone to review needs write access on this repository
-        </TooltipPopup>
-      </Tooltip>
-    );
-  }
-
   return (
-    <Menu open={open} onOpenChange={setOpen}>
-      <MenuTrigger
-        render={
-          <Button size="icon-xs" variant="ghost" aria-label="Request a review">
-            <UserPlusIcon className="size-3.5" />
-          </Button>
-        }
-      />
-      <MenuPopup align="start" side="bottom" className="w-72 p-0">
-        <div className="border-b border-border/60 p-2">
-          <input
-            autoFocus
-            value={query}
-            onChange={(event) => setQuery(event.currentTarget.value)}
-            placeholder="Search people with access"
-            aria-label="Search people with access"
-            className="h-7 w-full rounded-md border border-input bg-background px-2 text-xs outline-none placeholder:text-muted-foreground/72 focus-visible:border-ring"
-          />
-        </div>
-        <div className="max-h-72 overflow-y-auto p-1">
-          {candidatesQuery.isPending ? (
-            <PullRequestPeopleGhost rows={4} />
-          ) : candidatesQuery.error !== null ? (
-            <p className="p-2 text-xs text-muted-foreground">
-              The people with access could not be read. {candidatesQuery.error}
-            </p>
-          ) : candidates.length === 0 ? (
-            <p className="p-2 text-xs text-muted-foreground">
-              {query.length > 0
-                ? "Nobody with access matches that."
-                : "Nobody else has access to this repository."}
-            </p>
-          ) : (
-            candidates.map((candidate) => (
-              <button
-                key={`${candidate.kind}:${candidate.id}`}
-                type="button"
-                disabled={pending !== null}
-                onClick={() => void toggle(candidate)}
-                className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs hover:bg-accent/60 disabled:opacity-60"
-              >
-                <PullRequestActorLabel actor={candidate} className="min-w-0 flex-1 truncate" />
-                {candidate.kind === "team" ? (
-                  <span className="shrink-0 text-muted-foreground">team</span>
-                ) : null}
-                {candidate.isRequested ? (
-                  <CheckIcon aria-label="Already asked" className="size-3.5 shrink-0" />
-                ) : null}
-              </button>
-            ))
-          )}
-          {candidatesQuery.data?.truncated ? (
-            // Typing filters what arrived; it does not ask the host again, so this says what the
-            // list is rather than offering a search that would find nothing further.
-            <p className="px-2 py-1.5 text-xs text-muted-foreground">
-              This repository has more people with access than are listed here. Ask for the rest on
-              the host.
-            </p>
+    <PullRequestCandidatePicker
+      icon={<UserPlusIcon className="size-3.5" />}
+      label="Request a review"
+      allowed={allowed}
+      disabledReason="Asking someone to review needs write access on this repository"
+      open={open}
+      onOpenChange={setOpen}
+      query={query}
+      onQueryChange={setQuery}
+      searchLabel="Search people with access"
+      isPending={candidatesQuery.isPending}
+      error={candidatesQuery.error}
+      candidates={candidates}
+      emptyLabel="Nobody else has access to this repository."
+      noMatchLabel="Nobody with access matches that."
+      errorLabel="The people with access could not be read."
+      truncated={candidatesQuery.data?.truncated === true}
+      truncatedLabel="This repository has more people with access than are listed here. Ask for the rest on the host."
+      candidateKey={(candidate) => `${candidate.kind}:${candidate.id}`}
+      disabled={pending !== null}
+      onSelect={(candidate) => void toggle(candidate)}
+    >
+      {(candidate) => (
+        <>
+          <PullRequestActorLabel actor={candidate} className="min-w-0 flex-1 truncate" />
+          {candidate.kind === "team" ? (
+            <span className="shrink-0 text-muted-foreground">team</span>
           ) : null}
-        </div>
-      </MenuPopup>
-    </Menu>
+          {candidate.isRequested ? (
+            <CheckIcon aria-label="Already asked" className="size-3.5 shrink-0" />
+          ) : null}
+        </>
+      )}
+    </PullRequestCandidatePicker>
   );
 }

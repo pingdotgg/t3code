@@ -4,7 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { EnvironmentId } from "@t3tools/contracts";
 import { RelayMobileClientId } from "@t3tools/contracts/relay";
-import { ManagedRelay } from "@t3tools/client-runtime/relay";
+import { DPOP_UNKNOWN_HINT, ManagedRelay } from "@t3tools/client-runtime/relay";
 import { remoteHttpClientLayer } from "@t3tools/client-runtime/rpc";
 import { HttpClient } from "effect/unstable/http";
 import { MobilePreferencesStore } from "../../persistence/mobile-preferences";
@@ -31,6 +31,19 @@ vi.mock("expo-constants", () => ({
       },
     },
   },
+}));
+
+vi.mock("expo-device", () => ({
+  deviceType: 1,
+  DeviceType: {
+    UNKNOWN: 0,
+    PHONE: 1,
+    TABLET: 2,
+    DESKTOP: 3,
+    TV: 4,
+  },
+  osVersion: "18.4.1",
+  modelName: "iPhone 15 Pro",
 }));
 
 vi.mock("react-native", () => ({
@@ -1076,11 +1089,86 @@ describe("mobile cloud link environment client", () => {
       ).pipe(Effect.flip);
       expect(error).toMatchObject({
         _tag: "CloudEnvironmentLinkError",
-        message:
-          "https://relay.example.test/v1/environments/env-1/connect failed: Relay rejected the DPoP proof.",
+        message: `https://relay.example.test/v1/environments/env-1/connect failed: Relay rejected the DPoP proof. ${DPOP_UNKNOWN_HINT}`,
         traceId: "trace-connect",
       });
     }),
+  );
+
+  it.effect(
+    "presents clock skew as one possible cause when an older environment rejects DPoP",
+    () =>
+      Effect.gen(function* () {
+        vi.stubGlobal(
+          "fetch",
+          vi.fn((url: string | URL) => {
+            const value = String(url);
+            if (value.endsWith("/v1/client/dpop-token")) {
+              return Promise.resolve(
+                Response.json(validDpopAccessTokenResponse("environment:connect")),
+              );
+            }
+            if (value.endsWith("/v1/environments/env-1/connect")) {
+              return Promise.resolve(
+                Response.json({
+                  environmentId: "env-1",
+                  endpoint: {
+                    httpBaseUrl: "https://desktop.example.test/",
+                    wsBaseUrl: "wss://desktop.example.test/ws",
+                    providerKind: "cloudflare_tunnel",
+                  },
+                  credential: "one-time-cloud-credential",
+                  expiresAt: "2026-05-25T00:05:00.000Z",
+                }),
+              );
+            }
+            if (value.endsWith("/.well-known/t3/environment")) {
+              return Promise.resolve(
+                Response.json({
+                  environmentId: "env-1",
+                  label: "Desktop",
+                  platform: { os: "darwin", arch: "arm64" },
+                  serverVersion: "0.0.0-test",
+                  capabilities: { repositoryIdentity: true },
+                }),
+              );
+            }
+            return Promise.resolve(
+              Response.json(
+                {
+                  _tag: "EnvironmentAuthInvalidError",
+                  code: "auth_invalid",
+                  reason: "invalid_credential",
+                  traceId: "trace-environment",
+                },
+                { status: 401 },
+              ),
+            );
+          }),
+        );
+
+        const error = yield* withCloudServices(
+          connectCloudEnvironment({
+            clerkToken: "clerk-token",
+            environment: {
+              environmentId: EnvironmentId.make("env-1"),
+              label: "Desktop",
+              endpoint: {
+                httpBaseUrl: "https://desktop.example.test/",
+                wsBaseUrl: "wss://desktop.example.test/ws",
+                providerKind: "cloudflare_tunnel",
+              },
+              linkedAt: "2026-05-25T00:00:00.000Z",
+            },
+          }),
+        ).pipe(Effect.flip);
+
+        expect(error).toMatchObject({
+          _tag: "CloudEnvironmentLinkError",
+          message: `Could not exchange a managed endpoint DPoP access token. ${DPOP_UNKNOWN_HINT}`,
+          traceId: "trace-environment",
+        });
+      }),
   );
 
   it.effect("rejects relay connect responses for a different endpoint", () =>

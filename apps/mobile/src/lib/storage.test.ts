@@ -177,6 +177,31 @@ describe("mobile connection storage", () => {
     await expect(loadPreferences()).resolves.toEqual({ baseFontSize: 17 });
   });
 
+  it("persists independent light and dark theme choices", async () => {
+    mocks.setPreferencesJson(
+      JSON.stringify({
+        themeId: "grove",
+        lightThemeId: "iris",
+        darkThemeId: "ocean",
+        themeMode: "system",
+      }),
+      10,
+    );
+
+    await expect(loadPreferences()).resolves.toEqual({
+      themeId: "grove",
+      lightThemeId: "iris",
+      darkThemeId: "ocean",
+      themeMode: "system",
+    });
+  });
+
+  it("drops the removed theme transition preference", async () => {
+    mocks.setPreferencesJson(JSON.stringify({ themeTransition: "circle-bottom-left" }), 10);
+
+    await expect(loadPreferences()).resolves.toEqual({});
+  });
+
   it("falls back to secure storage when SQLite cannot save preferences", async () => {
     mocks.setDatabaseFailures(true, true);
     await expect(savePreferencesPatch({ baseFontSize: 19 })).resolves.toEqual({ baseFontSize: 19 });
@@ -186,6 +211,42 @@ describe("mobile connection storage", () => {
     };
     expect(JSON.parse(fallback.payload)).toEqual({ baseFontSize: 19 });
     expect(fallback.updatedAt).toEqual(expect.any(Number));
+  });
+
+  it("persists thread list shelf expansion preferences", async () => {
+    await expect(
+      savePreferencesPatch({
+        threadListSettledShelfExpanded: false,
+        threadListSnoozedShelfExpanded: true,
+      }),
+    ).resolves.toEqual({
+      threadListSettledShelfExpanded: false,
+      threadListSnoozedShelfExpanded: true,
+    });
+
+    await expect(loadPreferences()).resolves.toEqual({
+      threadListSettledShelfExpanded: false,
+      threadListSnoozedShelfExpanded: true,
+    });
+    expect(JSON.parse(mocks.getPreferencesJson() ?? "")).toEqual({
+      threadListSettledShelfExpanded: false,
+      threadListSnoozedShelfExpanded: true,
+    });
+  });
+
+  it("drops legacy and invalid thread list shelf expansion preferences", async () => {
+    mocks.setPreferencesJson(
+      JSON.stringify({
+        baseFontSize: 17,
+        threadListV2SettledShelfExpanded: true,
+        threadListV2SnoozedShelfExpanded: true,
+        threadListSettledShelfExpanded: "false",
+        threadListSnoozedShelfExpanded: 1,
+      }),
+      10,
+    );
+
+    await expect(loadPreferences()).resolves.toEqual({ baseFontSize: 17 });
   });
 
   it("reconciles fallback preferences after SQLite recovers", async () => {

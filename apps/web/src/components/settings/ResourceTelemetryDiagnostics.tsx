@@ -45,6 +45,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { formatRelativeTime } from "../../timestampFormat";
 import { Button } from "../ui/button";
 import { ScrollArea } from "../ui/scroll-area";
+import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
 import {
@@ -378,21 +379,21 @@ function HistoryWindowSelector({
   onSelect: (windowMs: number) => void;
 }) {
   return (
-    <div className="flex items-center rounded-md border border-border/60 p-0.5">
+    <ToggleGroup
+      aria-label="Resource history period"
+      variant="segmented"
+      value={[String(selectedWindowMs)]}
+      onValueChange={(next) => {
+        const selected = HISTORY_WINDOWS.find((option) => String(option.windowMs) === next[0]);
+        if (selected) onSelect(selected.windowMs);
+      }}
+    >
       {HISTORY_WINDOWS.map((option) => (
-        <button
-          key={option.windowMs}
-          type="button"
-          className={cn(
-            "cursor-pointer h-6 rounded-sm px-2 text-[11px] font-medium text-muted-foreground hover:text-foreground",
-            selectedWindowMs === option.windowMs && "bg-muted text-foreground",
-          )}
-          onClick={() => onSelect(option.windowMs)}
-        >
+        <Toggle key={option.windowMs} value={String(option.windowMs)}>
           {option.label}
-        </button>
+        </Toggle>
       ))}
-    </div>
+    </ToggleGroup>
   );
 }
 
@@ -486,14 +487,14 @@ function ProcessTreeName({
       style={{ paddingLeft: `${Math.min(process.depth, 7) * 10}px` }}
     >
       {hasChildren ? (
-        <button
-          type="button"
-          className="cursor-pointer inline-flex size-5 items-center justify-center rounded-sm text-muted-foreground hover:bg-accent hover:text-foreground"
+        <Button
+          size="icon-micro"
+          variant="ghost-muted"
           onClick={() => onToggle(process)}
           aria-label={collapsed ? `Expand ${name}` : `Collapse ${name}`}
         >
           <ChevronIcon className="size-3.5" />
-        </button>
+        </Button>
       ) : (
         <span className="size-5" aria-hidden />
       )}
@@ -975,9 +976,8 @@ export function ResourceTelemetryDiagnostics() {
               <TooltipTrigger
                 render={
                   <Button
-                    size="icon-xs"
+                    size="icon-micro"
                     variant="ghost"
-                    className="size-5 rounded-sm p-0"
                     disabled={telemetry.isPending}
                     onClick={telemetry.refresh}
                     aria-label="Refresh resource telemetry"
@@ -1227,9 +1227,8 @@ export function ResourceTelemetryDiagnostics() {
           <div className="flex items-center gap-2">
             <HistoryWindowSelector selectedWindowMs={windowMs} onSelect={setWindowMs} />
             <Button
-              size="icon-xs"
+              size="icon-micro"
               variant="ghost"
-              className="size-5 rounded-sm p-0"
               disabled={history.isPending}
               onClick={history.refresh}
               aria-label="Refresh resource history"

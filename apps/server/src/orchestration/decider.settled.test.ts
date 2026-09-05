@@ -5,6 +5,7 @@ import {
   ProjectId,
   ProviderInstanceId,
   ThreadId,
+  type OrchestrationEvent,
   type OrchestrationReadModel,
   type OrchestrationSession,
   type OrchestrationThread,
@@ -14,9 +15,12 @@ import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
 import { decideOrchestrationCommand } from "./decider.ts";
+import { projectEvent } from "./projector.ts";
 
 const NOW = "2026-01-01T00:00:00.000Z";
 const SETTLED_AT = "2025-12-30T00:00:00.000Z";
+const SETTLE_BLOCKED_MESSAGE =
+  "This thread still needs attention. Resolve or interrupt it first, then try again.";
 
 function makeReadModel(
   settledOverride: OrchestrationThread["settledOverride"],
@@ -24,6 +28,11 @@ function makeReadModel(
   session: OrchestrationSession | null = null,
   activities: OrchestrationThread["activities"] = [],
   messages: OrchestrationThread["messages"] = [],
+  lifecycle: {
+    readonly pinnedAt?: string | null;
+    readonly snoozedUntil?: string | null;
+    readonly snoozedAt?: string | null;
+  } = {},
 ): OrchestrationReadModel {
   return {
     snapshotSequence: 0,
@@ -44,6 +53,9 @@ function makeReadModel(
         archivedAt,
         settledOverride,
         settledAt: settledOverride === "settled" ? SETTLED_AT : null,
+        snoozedUntil: lifecycle.snoozedUntil ?? null,
+        snoozedAt: lifecycle.snoozedAt ?? (lifecycle.snoozedUntil != null ? SETTLED_AT : null),
+        pinnedAt: lifecycle.pinnedAt ?? null,
         deletedAt: null,
         messages,
         proposedPlans: [],
@@ -69,7 +81,45 @@ function makeSession(status: OrchestrationSession["status"]): OrchestrationSessi
 }
 
 it.layer(NodeServices.layer)("settled thread decider", (it) => {
-  it.effect("settles active threads and re-emits idempotently for settled ones", () =>
+  it.effect("preserves the activity stamp when automatically settling", () =>
+    Effect.gen(function* () {
+      const result = yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.auto-settle",
+          commandId: CommandId.make("cmd-auto-settle-inactive"),
+          threadId: ThreadId.make("thread-1"),
+          snapshotSequence: 0,
+          settledAt: SETTLED_AT,
+        },
+        readModel: makeReadModel(null),
+      });
+      const events = Array.isArray(result) ? result : [result];
+      const settled = events.find((event) => event.type === "thread.settled");
+      expect(settled?.payload.settledAt).toBe(SETTLED_AT);
+      // updatedAt stays the command time so the row still moves on settle.
+      expect(settled?.payload.updatedAt).toBe(settled?.occurredAt);
+      expect(settled?.payload.updatedAt).not.toBe(SETTLED_AT);
+    }),
+  );
+
+  it.effect("rejects an automatic settle when the thread is pinned active", () =>
+    Effect.gen(function* () {
+      const command = {
+        type: "thread.auto-settle" as const,
+        commandId: CommandId.make("cmd-auto-settle"),
+        threadId: ThreadId.make("thread-1"),
+        snapshotSequence: 0,
+        settledAt: SETTLED_AT,
+      };
+      const pinnedActive = yield* decideOrchestrationCommand({
+        command,
+        readModel: makeReadModel("active"),
+      }).pipe(Effect.flip);
+      expect(pinnedActive._tag).toBe("OrchestrationCommandInvariantError");
+    }),
+  );
+
+  it.effect("settles awake threads without a redundant wake and re-emits idempotently", () =>
     Effect.gen(function* () {
       const event = yield* decideOrchestrationCommand({
         command: {
@@ -108,6 +158,75 @@ it.layer(NodeServices.layer)("settled thread decider", (it) => {
     }),
   );
 
+  it.effect("settling a snoozed thread also wakes it", () =>
+    Effect.gen(function* () {
+      const result = yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.settle",
+          commandId: CommandId.make("cmd-settle-snoozed"),
+          threadId: ThreadId.make("thread-1"),
+        },
+        readModel: makeReadModel(null, null, null, [], [], {
+          snoozedUntil: "1970-01-02T09:00:00.000Z",
+        }),
+      });
+      const events = Array.isArray(result) ? result : [result];
+      expect(events.map((entry) => entry.type)).toEqual(["thread.settled", "thread.unsnoozed"]);
+      const settled = events.find((entry) => entry.type === "thread.settled");
+      const unsnoozed = events.find((entry) => entry.type === "thread.unsnoozed");
+      if (settled?.type === "thread.settled" && unsnoozed?.type === "thread.unsnoozed") {
+        expect(unsnoozed.payload.reason).toBe("user");
+        expect(unsnoozed.payload.updatedAt).toBe(settled.payload.updatedAt);
+      }
+    }),
+  );
+
+  it.effect("repeated settle repairs legacy settled and snoozed state", () =>
+    Effect.gen(function* () {
+      const result = yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.settle",
+          commandId: CommandId.make("cmd-settle-snoozed-again"),
+          threadId: ThreadId.make("thread-1"),
+        },
+        readModel: makeReadModel("settled", null, null, [], [], {
+          snoozedUntil: "1970-01-02T09:00:00.000Z",
+        }),
+      });
+      const events = Array.isArray(result) ? result : [result];
+      expect(events.map((entry) => entry.type)).toEqual(["thread.settled", "thread.unsnoozed"]);
+      const settled = events.find((entry) => entry.type === "thread.settled");
+      const unsnoozed = events.find((entry) => entry.type === "thread.unsnoozed");
+      if (settled?.type === "thread.settled" && unsnoozed?.type === "thread.unsnoozed") {
+        expect(settled.payload.settledAt).toBe(SETTLED_AT);
+        expect(settled.payload.updatedAt).toBe(NOW);
+        expect(unsnoozed.payload.updatedAt).not.toBe(NOW);
+      }
+    }),
+  );
+
+  it.effect("settling a pinned and snoozed thread clears the pin and snooze", () =>
+    Effect.gen(function* () {
+      const result = yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.settle",
+          commandId: CommandId.make("cmd-settle-pinned-snoozed"),
+          threadId: ThreadId.make("thread-1"),
+        },
+        readModel: makeReadModel(null, null, null, [], [], {
+          pinnedAt: SETTLED_AT,
+          snoozedUntil: "1970-01-02T09:00:00.000Z",
+        }),
+      });
+      const events = Array.isArray(result) ? result : [result];
+      expect(events.map((entry) => entry.type)).toEqual([
+        "thread.settled",
+        "thread.unpinned",
+        "thread.unsnoozed",
+      ]);
+    }),
+  );
+
   it.effect("rejects settling a thread with a live session", () =>
     Effect.gen(function* () {
       for (const status of ["starting", "running"] as const) {
@@ -119,7 +238,11 @@ it.layer(NodeServices.layer)("settled thread decider", (it) => {
           },
           readModel: makeReadModel(null, null, makeSession(status)),
         }).pipe(Effect.flip);
-        expect(error._tag).toBe("OrchestrationCommandInvariantError");
+        expect(error).toMatchObject({
+          _tag: "OrchestrationThreadSettleBlockedError",
+          threadId: ThreadId.make("thread-1"),
+          message: SETTLE_BLOCKED_MESSAGE,
+        });
       }
       // Stopped/error sessions are settleable — only live work is protected.
       const settled = yield* decideOrchestrationCommand({
@@ -159,7 +282,11 @@ it.layer(NodeServices.layer)("settled thread decider", (it) => {
           requestActivity("approval.requested", "req-1", NOW),
         ]),
       }).pipe(Effect.flip);
-      expect(openError._tag).toBe("OrchestrationCommandInvariantError");
+      expect(openError).toMatchObject({
+        _tag: "OrchestrationThreadSettleBlockedError",
+        threadId: ThreadId.make("thread-1"),
+        message: SETTLE_BLOCKED_MESSAGE,
+      });
 
       // Same request later resolved: settleable again.
       const settled = yield* decideOrchestrationCommand({
@@ -187,7 +314,11 @@ it.layer(NodeServices.layer)("settled thread decider", (it) => {
           requestActivity("user-input.requested", "req-2", NOW),
         ]),
       }).pipe(Effect.flip);
-      expect(inputError._tag).toBe("OrchestrationCommandInvariantError");
+      expect(inputError).toMatchObject({
+        _tag: "OrchestrationThreadSettleBlockedError",
+        threadId: ThreadId.make("thread-1"),
+        message: SETTLE_BLOCKED_MESSAGE,
+      });
     }),
   );
 
@@ -208,8 +339,7 @@ it.layer(NodeServices.layer)("settled thread decider", (it) => {
           createdAt: NOW,
         }) as OrchestrationThread["activities"][number];
 
-      // Stale-failure detail clears the request — mirrors the projection's
-      // pending accounting, which is what the client's canSettle sees.
+      // Stale-failure details clear the request, matching the projection flags.
       const settled = yield* decideOrchestrationCommand({
         command: {
           type: "thread.settle",
@@ -245,7 +375,11 @@ it.layer(NodeServices.layer)("settled thread decider", (it) => {
           }),
         ]),
       }).pipe(Effect.flip);
-      expect(stillOpen._tag).toBe("OrchestrationCommandInvariantError");
+      expect(stillOpen).toMatchObject({
+        _tag: "OrchestrationThreadSettleBlockedError",
+        threadId: ThreadId.make("thread-1"),
+        message: SETTLE_BLOCKED_MESSAGE,
+      });
     }),
   );
 
@@ -273,7 +407,11 @@ it.layer(NodeServices.layer)("settled thread decider", (it) => {
         },
         readModel: makeReadModel(null, null, null, [], [userMessage("1969-12-31T23:59:30.000Z")]),
       }).pipe(Effect.flip);
-      expect(queuedError._tag).toBe("OrchestrationCommandInvariantError");
+      expect(queuedError).toMatchObject({
+        _tag: "OrchestrationThreadSettleBlockedError",
+        threadId: ThreadId.make("thread-1"),
+        message: SETTLE_BLOCKED_MESSAGE,
+      });
 
       // Message timestamp far in the FUTURE (client clock ahead of server):
       // a negative age must not read as queued forever — past the grace
@@ -348,6 +486,42 @@ it.layer(NodeServices.layer)("settled thread decider", (it) => {
       const userAgainEvents = Array.isArray(userAgain) ? userAgain : [userAgain];
       expect(userAgainEvents).toHaveLength(1);
       expect(userAgainEvents[0]?.type).toBe("thread.unsettled");
+    }),
+  );
+
+  // Command-to-projection: an accepted un-settle must land as the re-entry
+  // stamp clients sort by (max of createdAt and unsettledAt, see
+  // activeThreadAnchorTimestampMs in client-runtime), so the thread surfaces
+  // above threads created after it. The projector tests feed events directly;
+  // this one proves the decider actually emits what they consume.
+  it.effect("an accepted un-settle re-anchors the thread for the active list", () =>
+    Effect.gen(function* () {
+      const readModel = makeReadModel("settled");
+      const result = yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.unsettle",
+          commandId: CommandId.make("cmd-unsettle-anchor"),
+          threadId: ThreadId.make("thread-1"),
+          reason: "user",
+        },
+        readModel,
+      });
+      const events = Array.isArray(result) ? result : [result];
+      const unsettled = events[0]!;
+      expect(unsettled.type).toBe("thread.unsettled");
+
+      const projected = yield* projectEvent(readModel, {
+        ...unsettled,
+        sequence: readModel.snapshotSequence + 1,
+      } as OrchestrationEvent);
+      const thread = projected.threads[0]!;
+      expect(thread.settledOverride).toBe("active");
+      // The stamp is the decider's accept time: every thread created before
+      // the un-settle anchors below it.
+      expect(thread.unsettledAt).toBe(unsettled.occurredAt);
+      if (unsettled.type === "thread.unsettled") {
+        expect(thread.unsettledAt).toBe(unsettled.payload.updatedAt);
+      }
     }),
   );
 

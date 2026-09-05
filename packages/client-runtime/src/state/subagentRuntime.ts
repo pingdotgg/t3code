@@ -58,7 +58,7 @@ export interface SubagentRunHandles {
 
 export interface RuntimeSubagent {
   readonly id: string;
-  readonly kind: "subagent" | "workflow" | "workflow_agent";
+  readonly kind: "subagent" | "subagent_batch" | "workflow" | "workflow_agent";
   readonly title: string;
   readonly role: string | null;
   readonly model: string | null;
@@ -259,6 +259,9 @@ function kindFromPayload(
   payload: Record<string, unknown>,
   agentId: string,
 ): RuntimeSubagent["kind"] {
+  if (payload.taskType === "subagent_batch") {
+    return "subagent_batch";
+  }
   if (asString(payload.taskType) === "local_workflow") {
     return "workflow";
   }
@@ -314,6 +317,7 @@ function getOrCreate(
 
 /** Metadata fill from any payload: never downgrades known values to null. */
 function fillMetadata(agent: MutableAgent, payload: Record<string, unknown>): void {
+  if (payload.taskType === "subagent_batch") agent.kind = "subagent_batch";
   const title = asString(payload.title);
   if (title) agent.title = title;
   const role = asString(payload.role);
@@ -546,6 +550,8 @@ export function foldSubagentActivities(
         if (!agents.has(taskId) && isBackgroundTaskActivity(payload)) break;
         const agent = getOrCreate(agents, taskId, payload, at);
         fillMetadata(agent, payload);
+        const detail = asString(payload.detail);
+        if (detail) agent.progress = bounded(detail);
         // A task first seen via task.updated (start row aged out) has run at
         // least once — zero activations would misreport "run 0" and let a
         // later start row treat it as never-started (review finding).
@@ -826,15 +832,16 @@ export function deriveAgentPanelModel({
   let settledCount = 0;
   let totalTokens = 0;
   for (const agent of source) {
+    // A workflow coordinator with members is a container for those members, not
+    // work of its own: it reports running for the whole run and aggregates their
+    // usage upstream in some providers. Counting it would report one more agent
+    // working than there are, and double count tokens.
+    if (agent.kind === "workflow" && (members.get(agent.id) ?? []).length > 0) continue;
     if (agent.status === "running" || agent.status === "pending") runningCount += 1;
     else if (agent.status === "waiting") waitingCount += 1;
     else if (agent.status === "idle") idleCount += 1;
     else settledCount += 1;
-    // Workflow coordinators aggregate member usage upstream in some providers;
-    // avoid double counting by only summing leaf agents when members exist.
-    if (agent.kind !== "workflow" || (members.get(agent.id) ?? []).length === 0) {
-      totalTokens += agent.usage?.totalTokens ?? 0;
-    }
+    totalTokens += agent.usage?.totalTokens ?? 0;
   }
 
   return {

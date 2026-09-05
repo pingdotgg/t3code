@@ -3,6 +3,7 @@
 import * as NodeFS from "node:fs";
 
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
@@ -13,14 +14,26 @@ import type * as AcpSchema from "effect-acp/schema";
 
 const requestLogPath = process.env.T3_ACP_REQUEST_LOG_PATH;
 const exitLogPath = process.env.T3_ACP_EXIT_LOG_PATH;
+const antigravityProfile = process.env.T3_ACP_ANTIGRAVITY === "1";
 const emitToolCalls = process.env.T3_ACP_EMIT_TOOL_CALLS === "1";
 const emitInterleavedAssistantToolCalls =
   process.env.T3_ACP_EMIT_INTERLEAVED_ASSISTANT_TOOL_CALLS === "1";
 const emitGenericToolPlaceholders = process.env.T3_ACP_EMIT_GENERIC_TOOL_PLACEHOLDERS === "1";
 const emitAskQuestion = process.env.T3_ACP_EMIT_ASK_QUESTION === "1";
 const emitXAiAskUserQuestion = process.env.T3_ACP_EMIT_XAI_ASK_USER_QUESTION === "1";
+const emitXAiExitPlanMode = process.env.T3_ACP_EMIT_XAI_EXIT_PLAN_MODE === "1";
+const emitXAiPlanMdWrite = process.env.T3_ACP_EMIT_XAI_PLAN_MD_WRITE === "1";
 const emitXAiPromptCompleteThenHang = process.env.T3_ACP_EMIT_XAI_PROMPT_COMPLETE_THEN_HANG === "1";
+const emitXAiRateLimitThenHang = process.env.T3_ACP_EMIT_XAI_RATE_LIMIT_THEN_HANG === "1";
+const emitXAiAskUserQuestionThenHang =
+  process.env.T3_ACP_EMIT_XAI_ASK_USER_QUESTION_THEN_HANG === "1";
+const emitContentThenHang = process.env.T3_ACP_EMIT_CONTENT_THEN_HANG === "1";
+const emitPlanThenHang = process.env.T3_ACP_EMIT_PLAN_THEN_HANG === "1";
+const emitActiveToolThenHang = process.env.T3_ACP_EMIT_ACTIVE_TOOL_THEN_HANG === "1";
 const emitForeignSessionUpdates = process.env.T3_ACP_EMIT_FOREIGN_SESSION_UPDATES === "1";
+const waitForResumeRelease = process.env.T3_ACP_WAIT_FOR_RESUME_RELEASE === "1";
+const completeFirstPromptOnCancel = process.env.T3_ACP_COMPLETE_FIRST_PROMPT_ON_CANCEL === "1";
+const floodStderr = process.env.T3_ACP_FLOOD_STDERR === "1";
 const hangPromptForever = process.env.T3_ACP_HANG_PROMPT_FOREVER === "1";
 const hangFirstPromptForever = process.env.T3_ACP_HANG_FIRST_PROMPT_FOREVER === "1";
 const emitLateUpdateAfterCancel = process.env.T3_ACP_EMIT_LATE_UPDATE_AFTER_CANCEL === "1";
@@ -39,16 +52,23 @@ const failPrompt = process.env.T3_ACP_FAIL_PROMPT === "1";
 const failSetConfigOption = process.env.T3_ACP_FAIL_SET_CONFIG_OPTION === "1";
 const exitOnSetConfigOption = process.env.T3_ACP_EXIT_ON_SET_CONFIG_OPTION === "1";
 const promptResponseText = process.env.T3_ACP_PROMPT_RESPONSE_TEXT;
+const initialGrokReasoningEffort =
+  process.env.T3_ACP_INITIAL_GROK_REASONING_EFFORT?.trim() || undefined;
 const promptDelayMs = Number(process.env.T3_ACP_PROMPT_DELAY_MS ?? "0");
 const permissionOptionIds = {
   allowOnce: process.env.T3_ACP_ALLOW_ONCE_OPTION_ID ?? "allow-once",
   allowAlways: process.env.T3_ACP_ALLOW_ALWAYS_OPTION_ID ?? "allow-always",
   rejectOnce: process.env.T3_ACP_REJECT_ONCE_OPTION_ID ?? "reject-once",
 };
+const omitAllowAlways = process.env.T3_ACP_OMIT_ALLOW_ALWAYS === "1";
+const permissionRequestCount = Math.max(
+  1,
+  Number(process.env.T3_ACP_PERMISSION_REQUEST_COUNT ?? "1") || 1,
+);
 const sessionId = "mock-session-1";
 
-let currentModeId = "ask";
-let currentModelId = "default";
+let currentModeId = antigravityProfile ? "default" : "ask";
+let currentModelId = antigravityProfile ? "gemini-test-low" : "default";
 let parameterizedModelPicker = false;
 let currentReasoning = "medium";
 let currentContext = "272k";
@@ -94,6 +114,26 @@ process.once("exit", (code) => {
 });
 
 function configOptions(): ReadonlyArray<AcpSchema.SessionConfigOption> {
+  if (antigravityProfile) {
+    return [
+      {
+        id: "model",
+        name: "Model",
+        category: "model",
+        type: "select",
+        currentValue: currentModelId,
+        options: antigravityModels.map((model) => ({ value: model.modelId, name: model.name })),
+      },
+      {
+        id: "mode",
+        name: "Mode",
+        category: "mode",
+        type: "select",
+        currentValue: currentModeId,
+        options: availableModes.map((mode) => ({ value: mode.id, name: mode.name })),
+      },
+    ];
+  }
   if (parameterizedModelPicker) {
     const baseOptions: Array<AcpSchema.SessionConfigOption> = [
       {
@@ -253,23 +293,34 @@ function availableModels(): ReadonlyArray<{
   }));
 }
 
-const availableModes: ReadonlyArray<AcpSchema.SessionMode> = [
-  {
-    id: "ask",
-    name: "Ask",
-    description: "Request permission before making any changes",
-  },
-  {
-    id: "architect",
-    name: "Architect",
-    description: "Design and plan software systems without implementation",
-  },
-  {
-    id: "code",
-    name: "Code",
-    description: "Write and modify code with full tool access",
-  },
-];
+const antigravityModels = [
+  { modelId: "gemini-test-low", name: "Gemini Test Low" },
+  { modelId: "gemini-test-high", name: "Gemini Test High" },
+] satisfies ReadonlyArray<AcpSchema.ModelInfo>;
+
+const availableModes: ReadonlyArray<AcpSchema.SessionMode> = antigravityProfile
+  ? [
+      { id: "default", name: "Default" },
+      { id: "auto_edit", name: "Auto edit" },
+      { id: "yolo", name: "YOLO" },
+    ]
+  : [
+      {
+        id: "ask",
+        name: "Ask",
+        description: "Request permission before making any changes",
+      },
+      {
+        id: "architect",
+        name: "Architect",
+        description: "Design and plan software systems without implementation",
+      },
+      {
+        id: "code",
+        name: "Code",
+        description: "Write and modify code with full tool access",
+      },
+    ];
 
 function modeState(): AcpSchema.SessionModeState {
   return {
@@ -278,15 +329,33 @@ function modeState(): AcpSchema.SessionModeState {
   };
 }
 
+// Mirrors the real Grok ACP: it advertises versioned model ids, never the CLI's own
+// "grok-build" product name, and it rejects unknown ids in session/set_model.
 const grokAcpModels: ReadonlyArray<AcpSchema.ModelInfo> = [
-  { modelId: "grok-build", name: "Grok Build" },
+  {
+    modelId: "grok-4.6",
+    name: "Grok 4.6",
+    _meta: {
+      totalContextTokens: 500_000,
+      supportsReasoningEffort: true,
+      reasoningEffort: initialGrokReasoningEffort ?? "high",
+      reasoningEfforts: [
+        { id: "xhigh", value: "xhigh", label: "Extra High Effort", default: false },
+        { id: "high", value: "high", label: "High Effort", default: true },
+        { id: "low", value: "low", label: "Low Effort", default: false },
+      ],
+    },
+  },
   { modelId: "grok-mock-alt", name: "Grok Mock Alt" },
 ];
 
 function modelState(): AcpSchema.SessionModelState {
+  if (antigravityProfile) {
+    return { currentModelId, availableModels: antigravityModels };
+  }
   const modelId = grokAcpModels.some((model) => model.modelId === currentModelId)
     ? currentModelId
-    : "grok-build";
+    : "grok-4.6";
   return {
     currentModelId: modelId,
     availableModels: grokAcpModels,
@@ -295,26 +364,108 @@ function modelState(): AcpSchema.SessionModelState {
 
 const program = Effect.gen(function* () {
   const agent = yield* EffectAcpAgent.AcpAgent;
+  const resumeRelease = yield* Deferred.make<void>();
+  const nativeCancelRequested = yield* Deferred.make<void>();
+  const nativeCancelRelease = yield* Deferred.make<void>();
+  const publishAntigravityCommands = (targetSessionId: string) =>
+    agent.client.sessionUpdate({
+      sessionId: targetSessionId,
+      update: {
+        sessionUpdate: "available_commands_update",
+        availableCommands: [
+          { name: "plan", description: "Plan a task", input: { hint: "task" } },
+          { name: "logout", description: "Sign out" },
+        ],
+      },
+    });
 
   yield* agent.handleInitialize((request) =>
-    Effect.sync(() => {
+    Effect.gen(function* () {
+      if (floodStderr) {
+        yield* Effect.promise(
+          () =>
+            new Promise<void>((resolve) => {
+              process.stderr.write("stderr".repeat(350_000), () => resolve());
+            }),
+        );
+      }
       parameterizedModelPicker =
         request.clientCapabilities?._meta?.parameterizedModelPicker === true;
+      if (antigravityProfile) {
+        return {
+          protocolVersion: 1,
+          agentInfo: { name: "antigravity-acp", version: "mock" },
+          agentCapabilities: {
+            loadSession: true,
+            sessionCapabilities: { resume: {} },
+            auth: { logout: {} },
+            promptCapabilities: { image: true, embeddedContext: true },
+          },
+          authMethods: [{ id: "oauth-personal", name: "Sign in with Google" }],
+        };
+      }
       return {
         protocolVersion: 1,
-        agentCapabilities: { loadSession: true },
+        agentCapabilities: { loadSession: true, sessionCapabilities: { resume: {} } },
+        // Grok advertises model state before any session exists; the provider
+        // health check reads it from here without authenticating.
+        _meta: { modelState: modelState() },
       };
     }),
   );
 
-  yield* agent.handleAuthenticate(() => Effect.succeed({}));
+  // Mirrors the real agent: the API key method reads GEMINI_API_KEY from the
+  // process environment and rejects when it is missing.
+  yield* agent.handleAuthenticate((request) =>
+    !antigravityProfile || request.methodId === "oauth-personal"
+      ? Effect.succeed({})
+      : request.methodId === "gemini-api-key" && process.env.GEMINI_API_KEY
+        ? Effect.succeed({})
+        : Effect.fail(
+            AcpError.AcpRequestError.invalidParams(
+              `Mock Antigravity rejected auth method ${request.methodId}.`,
+            ),
+          ),
+  );
+  if (antigravityProfile) {
+    yield* agent.handleLogout(() => Effect.succeed({}));
+  }
 
   yield* agent.handleCreateSession(() =>
-    Effect.succeed({
-      sessionId,
-      modes: modeState(),
-      models: modelState(),
-      configOptions: configOptions(),
+    Effect.gen(function* () {
+      if (antigravityProfile) {
+        yield* publishAntigravityCommands(sessionId);
+      }
+      return {
+        sessionId,
+        modes: modeState(),
+        models: modelState(),
+        configOptions: configOptions(),
+      };
+    }),
+  );
+
+  yield* agent.handleResumeSession((request) =>
+    Effect.gen(function* () {
+      yield* agent.client.sessionUpdate({
+        sessionId: request.sessionId,
+        update: {
+          sessionUpdate: "user_message_chunk",
+          content: { type: "text", text: "native-resume-started" },
+        },
+      });
+      if (waitForResumeRelease) {
+        yield* Deferred.await(resumeRelease);
+      }
+      if (antigravityProfile) {
+        yield* publishAntigravityCommands(request.sessionId);
+      }
+      return {
+        modes: modeState(),
+        models: modelState(),
+        configOptions: configOptions(),
+        _meta: { nativeResume: true },
+      };
     }),
   );
 
@@ -382,7 +533,7 @@ const program = Effect.gen(function* () {
 
   yield* agent.handleSetSessionModel((request) =>
     Effect.gen(function* () {
-      if (!grokAcpModels.some((model) => model.modelId === request.modelId)) {
+      if (!modelState().availableModels.some((model) => model.modelId === request.modelId)) {
         return yield* AcpError.AcpRequestError.invalidParams(
           `Unknown mock model id: ${request.modelId}`,
           {
@@ -437,6 +588,16 @@ const program = Effect.gen(function* () {
     Effect.gen(function* () {
       const cancelledSessionId = String(sessionId ?? "mock-session-1");
       cancelledSessions.add(cancelledSessionId);
+      if (completeFirstPromptOnCancel) {
+        yield* Deferred.succeed(nativeCancelRequested, undefined);
+        yield* agent.client.sessionUpdate({
+          sessionId: cancelledSessionId,
+          update: {
+            sessionUpdate: "agent_thought_chunk",
+            content: { type: "text", text: "native-cancel-received" },
+          },
+        });
+      }
       if (emitLateUpdateAfterCancel) {
         yield* Effect.sleep("50 millis");
         yield* Effect.sync(() => {
@@ -456,6 +617,38 @@ const program = Effect.gen(function* () {
     Effect.gen(function* () {
       const requestedSessionId = String(request.sessionId ?? sessionId);
       promptCount += 1;
+
+      if (completeFirstPromptOnCancel && promptCount === 1) {
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: "native-cancel-tool",
+            title: "Long command",
+            kind: "execute",
+            status: "in_progress",
+          },
+        });
+        yield* Deferred.await(nativeCancelRequested);
+        yield* Deferred.await(nativeCancelRelease);
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "native-cancel-tool",
+            status: "failed",
+            content: [{ type: "content", content: { type: "text", text: "Cancelled." } }],
+          },
+        });
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: "Request cancelled." },
+          },
+        });
+        return { stopReason: "cancelled", _meta: { nativeCancel: true } };
+      }
 
       if (Number.isFinite(promptDelayMs) && promptDelayMs > 0) {
         yield* Effect.sleep(`${promptDelayMs} millis`);
@@ -519,6 +712,68 @@ const program = Effect.gen(function* () {
       }
 
       if (hangPromptForever || (hangFirstPromptForever && promptCount === 1)) {
+        return yield* Effect.never;
+      }
+
+      if (emitXAiRateLimitThenHang) {
+        writeJsonRpcNotification("_x.ai/session/prompt_complete", {
+          sessionId: requestedSessionId,
+          promptId: promptIdFromRequestMeta(request) ?? "mock-xai-rate-limit-prompt-1",
+          stopReason: "rate_limit",
+          agentResult: null,
+        });
+        return yield* Effect.never;
+      }
+
+      if (emitContentThenHang) {
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: "partial before stall" },
+          },
+        });
+        return yield* Effect.never;
+      }
+
+      if (emitPlanThenHang) {
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "plan",
+            entries: [
+              {
+                content: "Wait for more ACP progress",
+                priority: "high",
+                status: "in_progress",
+              },
+            ],
+          },
+        });
+        return yield* Effect.never;
+      }
+
+      if (emitActiveToolThenHang) {
+        const toolCallId = "tool-call-long-running-1";
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId,
+            title: "Long-running tool",
+            kind: "execute",
+            status: "pending",
+            rawInput: { command: ["long-running-tool"] },
+          },
+        });
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId,
+            status: "in_progress",
+          },
+        });
         return yield* Effect.never;
       }
 
@@ -656,37 +911,58 @@ const program = Effect.gen(function* () {
           },
         });
 
-        const permission = yield* agent.client.requestPermission({
-          sessionId: requestedSessionId,
-          toolCall: {
-            toolCallId,
-            title: "`cat server/package.json`",
-            kind: "execute",
-            status: "pending",
-            content: [
-              {
-                type: "content",
-                content: {
-                  type: "text",
-                  text: "Not in allowlist: cat server/package.json",
+        const permissionOptions: Array<AcpSchema.PermissionOption> = [
+          { optionId: permissionOptionIds.allowOnce, name: "Allow once", kind: "allow_once" },
+          ...(omitAllowAlways
+            ? []
+            : [
+                {
+                  optionId: permissionOptionIds.allowAlways,
+                  name: "Allow always",
+                  kind: "allow_always" as const,
                 },
-              },
-            ],
-          },
-          options: [
-            { optionId: permissionOptionIds.allowOnce, name: "Allow once", kind: "allow_once" },
-            {
-              optionId: permissionOptionIds.allowAlways,
-              name: "Allow always",
-              kind: "allow_always",
-            },
-            { optionId: permissionOptionIds.rejectOnce, name: "Reject", kind: "reject_once" },
-          ],
-        });
+              ]),
+          { optionId: permissionOptionIds.rejectOnce, name: "Reject", kind: "reject_once" },
+        ];
 
-        const cancelled =
-          cancelledSessions.delete(requestedSessionId) ||
-          permission.outcome.outcome === "cancelled";
+        let cancelled = cancelledSessions.delete(requestedSessionId);
+        for (let index = 0; index < permissionRequestCount; index++) {
+          const command =
+            index > 0
+              ? (process.env.T3_ACP_SECOND_PERMISSION_COMMAND ?? "cat server/package.json")
+              : "cat server/package.json";
+          const permission = yield* agent.client.requestPermission({
+            sessionId: requestedSessionId,
+            toolCall: {
+              toolCallId: index === 0 ? toolCallId : `${toolCallId}-${index + 1}`,
+              title: process.env.T3_ACP_PERMISSION_TITLE ?? `\`${command}\``,
+              kind: "execute",
+              status: "pending",
+              rawInput: {
+                variant: "Bash",
+                command,
+                description: index === 0 ? "Read package metadata" : "Read it again",
+              },
+              content: [
+                {
+                  type: "content",
+                  content: {
+                    type: "text",
+                    text: `Not in allowlist: ${command}`,
+                  },
+                },
+              ],
+            },
+            options: permissionOptions,
+          });
+          cancelled =
+            cancelled ||
+            cancelledSessions.delete(requestedSessionId) ||
+            permission.outcome.outcome === "cancelled";
+          if (cancelled) {
+            break;
+          }
+        }
 
         yield* agent.client.sessionUpdate({
           sessionId: requestedSessionId,
@@ -773,7 +1049,7 @@ const program = Effect.gen(function* () {
         return { stopReason: "end_turn" };
       }
 
-      if (emitXAiAskUserQuestion) {
+      if (emitXAiAskUserQuestion || emitXAiAskUserQuestionThenHang) {
         const result = yield* agent.client.extRequest("_x.ai/ask_user_question", {
           method: "x.ai/ask_user_question",
           params: {
@@ -807,6 +1083,84 @@ const program = Effect.gen(function* () {
           throw new Error("Expected accepted _x.ai/ask_user_question response answers.");
         }
 
+        if (emitXAiAskUserQuestionThenHang) {
+          return yield* Effect.never;
+        }
+
+        return { stopReason: "end_turn" };
+      }
+
+      if (emitXAiPlanMdWrite) {
+        // Match Grok's real session layout so isGrokPlanMarkdownPath accepts it.
+        const planRoot = process.env.T3_ACP_PLAN_ROOT ?? "/tmp/mock-home/.grok";
+        const planPath = `${planRoot}/sessions/${requestedSessionId}/plan.md`;
+        const planBody = "# Mock plan\n\n- Write the feature\n- Add a test\n- Ship it\n";
+        // enter_plan_mode first so the adapter arms planModeActive.
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: "enter-plan-mode-1",
+            title: "enter_plan_mode",
+            kind: "other",
+            status: "completed",
+            rawInput: { variant: "EnterPlanMode" },
+          },
+        });
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: "plan-md-write-1",
+            title: "write",
+            kind: "edit",
+            status: "pending",
+            rawInput: { file_path: planPath, content: planBody },
+          },
+        });
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "plan-md-write-1",
+            kind: "edit",
+            status: "completed",
+            title: `Write \`${planPath}\``,
+            rawInput: { file_path: planPath, content: planBody },
+            content: [
+              {
+                type: "diff",
+                path: planPath,
+                oldText: "",
+                newText: planBody,
+              },
+            ],
+          },
+        });
+        return { stopReason: "end_turn" };
+      }
+
+      if (emitXAiExitPlanMode) {
+        const result = yield* agent.client.extRequest("_x.ai/exit_plan_mode", {
+          method: "x.ai/exit_plan_mode",
+          params: {
+            sessionId: requestedSessionId,
+            toolCallId: "exit-plan-mode-tool-call-1",
+            planContent: "# Exit plan\n\n- Step one\n- Step two\n",
+          },
+        });
+        if (typeof result !== "object" || result === null || !("outcome" in result)) {
+          throw new Error("Expected _x.ai/exit_plan_mode response outcome.");
+        }
+        if (
+          result.outcome !== "abandoned" &&
+          result.outcome !== "approved" &&
+          result.outcome !== "request_changes"
+        ) {
+          throw new Error(
+            `Expected exit_plan_mode outcome abandoned|approved|request_changes, got ${String(result.outcome)}`,
+          );
+        }
         return { stopReason: "end_turn" };
       }
 
@@ -878,6 +1232,60 @@ const program = Effect.gen(function* () {
   );
 
   yield* agent.handleUnknownExtRequest((method, params) => {
+    if (method === "_test/environment") {
+      return Effect.succeed({
+        inherited: process.env.T3_ACP_RUNTIME_AMBIENT === "sentinel",
+        explicit: process.env.T3_ACP_RUNTIME_EXPLICIT === "kept",
+      });
+    }
+    if (method === "_test/release-resume") {
+      return Deferred.succeed(resumeRelease, undefined).pipe(Effect.as({}));
+    }
+    if (method === "_test/finish-cancel") {
+      return Deferred.succeed(nativeCancelRelease, undefined).pipe(Effect.as({}));
+    }
+    if (method === "_test/startup-metadata") {
+      return Effect.gen(function* () {
+        for (const [metadataSessionId, commandName, modeId] of [
+          [sessionId, "plan", "code"],
+          ["child-session", "foreign-command", "ask"],
+        ] as const) {
+          yield* agent.client.sessionUpdate({
+            sessionId: metadataSessionId,
+            update: {
+              sessionUpdate: "available_commands_update",
+              availableCommands: [{ name: commandName, description: "Native command" }],
+            },
+          });
+          yield* agent.client.sessionUpdate({
+            sessionId: metadataSessionId,
+            update: { sessionUpdate: "current_mode_update", currentModeId: modeId },
+          });
+          yield* agent.client.sessionUpdate({
+            sessionId: metadataSessionId,
+            update: {
+              sessionUpdate: "config_option_update",
+              configOptions: configOptions().map((option) =>
+                option.type === "select" && option.category === "model"
+                  ? {
+                      ...option,
+                      currentValue: metadataSessionId === sessionId ? "gpt-5.4" : "default",
+                    }
+                  : option,
+              ),
+            },
+          });
+          yield* agent.client.sessionUpdate({
+            sessionId: metadataSessionId,
+            update: {
+              sessionUpdate: "agent_message_chunk",
+              content: { type: "text", text: "Startup transcript must not replay." },
+            },
+          });
+        }
+        return {};
+      });
+    }
     if (method === "cursor/list_available_models") {
       return Effect.succeed({
         models: availableModels(),
@@ -923,6 +1331,10 @@ const program = Effect.gen(function* () {
 
     return Effect.succeed({});
   });
+
+  yield* agent.handleUnknownExtNotification((method) =>
+    method === "_test/exit" ? Effect.sync(() => process.exit(19)) : Effect.void,
+  );
 
   return yield* Effect.never;
 }).pipe(

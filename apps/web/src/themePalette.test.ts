@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vite-plus/test";
+import { BUILT_IN_THEMES } from "@t3tools/shared/themePalettes";
 
 import {
   applyThemeColorPreview,
@@ -10,6 +11,7 @@ import {
   getThemePreferenceMode,
   isKnownThemePreference,
   getCustomThemes,
+  getStandardThemeColors,
   getStoredCustomThemeCollection,
   invalidateCustomThemes,
   installCustomTheme,
@@ -38,6 +40,7 @@ import {
   themeColorToHex,
   toCanonicalThemeColor,
   THEME_FILE_VERSION,
+  singleAppearanceOf,
 } from "./themePalette";
 
 function asHex(value: string): string {
@@ -78,6 +81,16 @@ function contrastRatio(first: string, second: string): number {
 }
 
 describe("theme files", () => {
+  it("keeps every built-in palette value in canonical OKLCH form", () => {
+    for (const theme of BUILT_IN_THEMES) {
+      for (const colors of [theme.colors, ...Object.values(theme.variants ?? {})]) {
+        for (const value of Object.values(colors)) {
+          expect(toCanonicalThemeColor(value)).toBe(value);
+        }
+      }
+    }
+  });
+
   it("derives a readable palette from extreme simple-editor colors", () => {
     const light = createManagedThemeColors("light", "#111827", "#ffff00");
     const dark = createManagedThemeColors("dark", "#ffffff", "#ffff00");
@@ -122,6 +135,19 @@ describe("theme files", () => {
     expect(asHex(dark.error)).not.toBe(asHex(darkDefaults.error));
   });
 
+  it("keeps stock dark controls in the neutral-black surface hierarchy", () => {
+    expectThemeColors(getStandardThemeColors("dark"), {
+      canvas: "#0a0a0a",
+      surface: "#111111",
+      surfaceRaised: "#111111",
+      surfaceOverlay: "#111111",
+      toolbarControl: "#111111",
+      secondary: "#111111",
+      muted: "#111111",
+      accentSurface: "#141414",
+    });
+  });
+
   it("derives readable, distinctive vivid palettes from exact seeds", () => {
     const seeds: ReadonlyArray<["light" | "dark", string, string]> = [
       ["light", "#f4f9f2", "#1d8a4e"],
@@ -144,7 +170,13 @@ describe("theme files", () => {
       expect(contrastRatio(colors.textMuted, colors.canvas)).toBeGreaterThanOrEqual(4.5);
       expect(contrastRatio(colors.textMuted, colors.canvas)).toBeLessThan(5.5);
       expect(contrastRatio(colors.mutedForeground, colors.muted)).toBeGreaterThanOrEqual(4.5);
+      expect(contrastRatio(colors.mutedForeground, colors.muted)).toBeLessThan(
+        contrastRatio(colors.text, colors.muted),
+      );
       expect(contrastRatio(colors.placeholder, colors.surfaceRaised)).toBeGreaterThanOrEqual(4.5);
+      expect(contrastRatio(colors.placeholder, colors.surfaceRaised)).toBeLessThan(
+        contrastRatio(colors.text, colors.surfaceRaised),
+      );
       expect(colors.secondaryLabel).toBe(colors.textMuted);
       expect(contrastRatio(colors.accentForeground, colors.accent)).toBeGreaterThanOrEqual(4.5);
       expect(
@@ -244,6 +276,18 @@ describe("theme files", () => {
     ] as const) {
       expect(theme.colors[role]).toMatch(/^oklch\(/);
     }
+  });
+
+  it("gamut maps extreme finite OKLCH chroma from theme files", () => {
+    const theme = parseThemeFile({
+      version: THEME_FILE_VERSION,
+      name: "Extreme chroma",
+      appearance: "light",
+      colors: { accent: "oklch(0.5 1e303 0)" },
+    });
+
+    expect(theme.colors.accent).toBe("oklch(0.5 1e+303 0)");
+    expect(themeColorToHex(theme.colors.accent)).toBe("#b5005e");
   });
 
   it("rejects unknown roles and invalid color values", () => {
@@ -1047,5 +1091,13 @@ describe("stored theme preferences", () => {
 
     vi.unstubAllGlobals();
     invalidateCustomThemes();
+  });
+});
+
+describe("singleAppearanceOf", () => {
+  it("reports the only half a theme can claim, and null for a pair", () => {
+    const { variants: _pair, ...base } = T3_CHAT_THEME;
+    expect(singleAppearanceOf({ ...base, id: "x", appearance: "dark" })).toBe("dark");
+    expect(singleAppearanceOf(T3_CHAT_THEME)).toBe(null);
   });
 });

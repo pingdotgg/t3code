@@ -1,20 +1,22 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { EnvironmentId } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as TestClock from "effect/testing/TestClock";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import * as ServerConfig from "../config.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { PersistenceSqlError } from "../persistence/Errors.ts";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import * as AuthSessions from "../persistence/AuthSessions.ts";
 import * as SessionStore from "./SessionStore.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
 
-const makeServerConfigLayer = (
-  overrides?: Partial<Pick<ServerConfig.ServerConfig["Service"], "desktopBootstrapToken">>,
-) =>
+const makeServerConfigLayer = (overrides?: Partial<ServerConfig.ServerConfig["Service"]>) =>
   Layer.effect(
     ServerConfig.ServerConfig,
     Effect.gen(function* () {
@@ -26,12 +28,19 @@ const makeServerConfigLayer = (
     }),
   ).pipe(Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-auth-session-test-" })));
 
+const makeServerEnvironmentLayer = (environmentId: EnvironmentId) =>
+  Layer.succeed(ServerEnvironment.ServerEnvironmentIdentity, {
+    getEnvironmentId: Effect.succeed(environmentId),
+  });
+
 const makeSessionStoreLayer = (
-  overrides?: Partial<Pick<ServerConfig.ServerConfig["Service"], "desktopBootstrapToken">>,
+  overrides?: Partial<ServerConfig.ServerConfig["Service"]>,
+  environmentId = EnvironmentId.make("test-environment"),
 ) =>
   SessionStore.layer.pipe(
     Layer.provide(SqlitePersistenceMemory),
     Layer.provide(ServerSecretStore.layer),
+    Layer.provide(makeServerEnvironmentLayer(environmentId)),
     Layer.provide(makeServerConfigLayer(overrides)),
   );
 
@@ -42,11 +51,13 @@ const repositoryFailure = new PersistenceSqlError({
 
 const failingSessionLookupRepositoryLayer = Layer.succeed(AuthSessions.AuthSessionRepository, {
   create: () => Effect.void,
+  createReplacingActive: () => Effect.succeed([]),
   getById: () => Effect.fail(repositoryFailure),
   listActive: () => Effect.succeed([]),
   revoke: () => Effect.fail(repositoryFailure),
   revokeAllExcept: () => Effect.fail(repositoryFailure),
   setLastConnectedAt: () => Effect.void,
+  setClientConnection: () => Effect.void,
 });
 
 const failingSessionLookupCredentialLayer = Layer.effect(
@@ -56,10 +67,32 @@ const failingSessionLookupCredentialLayer = Layer.effect(
   Layer.provide(failingSessionLookupRepositoryLayer),
   Layer.provide(ServerSecretStore.layer),
   Layer.provide(SqlitePersistenceMemory),
+  Layer.provide(makeServerEnvironmentLayer(EnvironmentId.make("test-environment"))),
   Layer.provide(makeServerConfigLayer()),
 );
 
 it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
+  it.effect("keys remote cookies by environment identity instead of state directory", () =>
+    Effect.gen(function* () {
+      const cookieName = (stateDir: string, environmentId: EnvironmentId) =>
+        Effect.gen(function* () {
+          const sessions = yield* SessionStore.SessionStore;
+          return sessions.cookieName;
+        }).pipe(
+          Effect.provide(
+            makeSessionStoreLayer({ mode: "web", host: "192.168.1.50", stateDir }, environmentId),
+          ),
+        );
+
+      const original = yield* cookieName("/srv/t3-one", EnvironmentId.make("environment-one"));
+      const moved = yield* cookieName("/srv/t3-moved", EnvironmentId.make("environment-one"));
+      const other = yield* cookieName("/srv/t3-one", EnvironmentId.make("environment-two"));
+
+      expect(moved).toBe(original);
+      expect(other).not.toBe(original);
+    }),
+  );
+
   it.effect("issues and verifies signed browser session tokens", () =>
     Effect.gen(function* () {
       const sessions = yield* SessionStore.SessionStore;
@@ -148,6 +181,78 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
         "relay:read",
       ]);
     }).pipe(Effect.provide(Layer.merge(makeSessionStoreLayer(), TestClock.layer()))),
+  );
+
+  it.effect("atomically replaces active sessions with the same subject and method", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const browser = yield* sessions.issue({
+        subject: "desktop-bootstrap",
+        method: "browser-session-cookie",
+      });
+      const [firstBearer, secondBearer] = yield* Effect.all(
+        [
+          sessions.issue({
+            subject: "desktop-bootstrap",
+            method: "bearer-access-token",
+            replaceActiveForSubjectAndMethod: true,
+          }),
+          sessions.issue({
+            subject: "desktop-bootstrap",
+            method: "bearer-access-token",
+            replaceActiveForSubjectAndMethod: true,
+          }),
+        ],
+        { concurrency: "unbounded" },
+      );
+
+      const active = yield* sessions.listActive();
+      const bearerVerification = yield* Effect.all([
+        sessions.verify(firstBearer.token).pipe(Effect.option),
+        sessions.verify(secondBearer.token).pipe(Effect.option),
+      ]);
+
+      expect(active).toHaveLength(2);
+      expect(active.find((entry) => entry.sessionId === browser.sessionId)).toBeDefined();
+      expect(
+        active.filter(
+          (entry) =>
+            entry.subject === "desktop-bootstrap" && entry.method === "bearer-access-token",
+        ),
+      ).toHaveLength(1);
+      expect(bearerVerification.filter(Option.isSome)).toHaveLength(1);
+    }).pipe(Effect.provide(makeSessionStoreLayer())),
+  );
+
+  it.effect("keeps the previous desktop session valid when replacement fails", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const sql = yield* SqlClient.SqlClient;
+      const previous = yield* sessions.issue({
+        subject: "desktop-bootstrap",
+        method: "bearer-access-token",
+      });
+      yield* sql`
+        CREATE TRIGGER reject_auth_session_insert BEFORE INSERT ON auth_sessions
+        BEGIN
+          SELECT RAISE(ABORT, 'simulated insert failure');
+        END
+      `;
+
+      const error = yield* sessions
+        .issue({
+          subject: "desktop-bootstrap",
+          method: "bearer-access-token",
+          replaceActiveForSubjectAndMethod: true,
+        })
+        .pipe(Effect.flip);
+
+      expect(error._tag).toBe("SessionCredentialIssueError");
+      expect((yield* sessions.verify(previous.token)).sessionId).toBe(previous.sessionId);
+      expect((yield* sessions.listActive()).map((session) => session.sessionId)).toEqual([
+        previous.sessionId,
+      ]);
+    }).pipe(Effect.provide(Layer.mergeAll(makeSessionStoreLayer(), SqlitePersistenceMemory))),
   );
 
   it.effect("rejects websocket tokens once the parent session has expired", () =>
@@ -314,5 +419,36 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
       expect(afterReconnect[0]?.lastConnectedAt).not.toBeNull();
       expect(afterReconnect[0]?.lastConnectedAt?.toString()).not.toBe(firstConnectedAt?.toString());
     }).pipe(Effect.provide(Layer.merge(makeSessionStoreLayer(), TestClock.layer()))),
+  );
+  it.effect("records client connection metadata without clearing prior values", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const sql = yield* SqlClient.SqlClient;
+      const issued = yield* sessions.issue({
+        subject: "client-connection-test",
+        method: "bearer-access-token",
+      });
+      const readRow = sql<{
+        readonly surface: string | null;
+        readonly appVersion: string | null;
+      }>`
+        SELECT client_surface AS "surface", client_app_version AS "appVersion"
+        FROM auth_sessions
+        WHERE session_id = ${issued.sessionId}
+      `;
+
+      yield* sessions.recordClientConnection(issued.sessionId, {
+        surface: "mobile",
+        appVersion: "1.2.0",
+      });
+      expect((yield* readRow)[0]).toEqual({ surface: "mobile", appVersion: "1.2.0" });
+
+      // A partial report (old or minimal client) must not null out stored data.
+      yield* sessions.recordClientConnection(issued.sessionId, { appVersion: "1.3.0" });
+      expect((yield* readRow)[0]).toEqual({ surface: "mobile", appVersion: "1.3.0" });
+
+      yield* sessions.recordClientConnection(issued.sessionId, {});
+      expect((yield* readRow)[0]).toEqual({ surface: "mobile", appVersion: "1.3.0" });
+    }).pipe(Effect.provide(Layer.mergeAll(makeSessionStoreLayer(), SqlitePersistenceMemory))),
   );
 });

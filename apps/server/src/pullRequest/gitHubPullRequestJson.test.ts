@@ -11,11 +11,13 @@ import {
   decodePullRequestListJson,
   decodePullRequestNodeIdJson,
   decodePullRequestSearchJson,
+  decodeLabelCandidatesJson,
   decodeRepositoryAccessJson,
   decodeReviewerCandidatesJson,
   decodeReviewThreadCommentsJson,
   decodeReviewThreadsJson,
   decodeViewerPermissionsJson,
+  decodeWorkflowRunApprovalsJson,
   reviewThreadConversation,
   REVIEW_THREADS_GRAPHQL_QUERY,
 } from "./gitHubPullRequestJson.ts";
@@ -223,18 +225,56 @@ describe("pull request detail decoding", () => {
     ]);
   });
 
-  it("reads an auto-merge request as armed, its null as off and its absence as neither", () => {
+  it("keeps a workflow waiting for approval out of the passing state", () => {
+    const raw = JSON.parse(detailJson) as Record<string, unknown>;
+    const detail = expectSuccess(
+      decodePullRequestDetailJson(
+        JSON.stringify({
+          ...raw,
+          statusCheckRollup: [
+            { __typename: "CheckRun", name: "build", status: "COMPLETED", conclusion: "SUCCESS" },
+            {
+              __typename: "CheckRun",
+              name: "contributor tests",
+              status: "COMPLETED",
+              conclusion: "ACTION_REQUIRED",
+            },
+          ],
+        }),
+      ),
+    );
+
+    expect(detail.checks.map((check) => check.status)).toEqual(["success", "action-required"]);
+    expect(detail.checksState).toBe("pending");
+  });
+
+  it("decodes workflow runs that can be approved", () => {
+    expect(
+      expectSuccess(
+        decodeWorkflowRunApprovalsJson(
+          JSON.stringify([
+            { databaseId: 10, workflowName: "contributor tests", url: "https://example.com/10" },
+            { databaseId: 11, workflowName: null, url: null },
+          ]),
+        ),
+      ),
+    ).toEqual([
+      { id: 10, name: "contributor tests", url: "https://example.com/10" },
+      { id: 11, name: "Workflow run 11", url: null },
+    ]);
+  });
+
+  it("reads an auto-merge request and strategy, its null as off and its absence as neither", () => {
     const raw = JSON.parse(detailJson) as Record<string, unknown>;
     const armed = (entry: Record<string, unknown>) =>
-      expectSuccess(decodePullRequestDetailJson(JSON.stringify({ ...raw, ...entry })))
-        .autoMergeEnabled;
+      expectSuccess(decodePullRequestDetailJson(JSON.stringify({ ...raw, ...entry })));
 
     expect(
       armed({ autoMergeRequest: { enabledBy: { login: "octocat" }, mergeMethod: "SQUASH" } }),
-    ).toBe(true);
-    expect(armed({ autoMergeRequest: null })).toBe(false);
+    ).toMatchObject({ autoMergeEnabled: true, autoMergeMethod: "squash" });
+    expect(armed({ autoMergeRequest: null }).autoMergeEnabled).toBe(false);
     // `gh` not answering for the field at all is not GitHub saying the merge is unarmed.
-    expect(armed({})).toBeUndefined();
+    expect(armed({}).autoMergeEnabled).toBeUndefined();
   });
 
   it("shows a re-running check once, as the run that is happening now", () => {
@@ -417,6 +457,36 @@ describe("review thread decoding", () => {
       ["abc123", { additions: 18, deletions: 7 }],
       ["def456", { additions: 3, deletions: 0 }],
     ]);
+  });
+
+  it("omits misleading line counts from merge commits", () => {
+    const result = expectSuccess(
+      decodeReviewThreadsJson(
+        JSON.stringify({
+          data: {
+            repository: {
+              pullRequest: {
+                reviewThreads: { totalCount: 0, nodes: [] },
+                commits: {
+                  nodes: [
+                    {
+                      commit: {
+                        oid: "merge123",
+                        additions: 36_858,
+                        deletions: 12_928,
+                        parents: { totalCount: 2 },
+                      },
+                    },
+                  ],
+                },
+              },
+            },
+          },
+        }),
+      ),
+    );
+
+    expect([...result.commitStats]).toEqual([]);
   });
 
   it("decodes the newest commits off the same connection, oldest to newest", () => {
@@ -604,7 +674,9 @@ describe("review thread decoding", () => {
       decodeReviewThreadCommentsJson(
         JSON.stringify({
           data: {
+            repository: { pullRequest: { id: "PR_1" } },
             node: {
+              pullRequest: { id: "PR_1" },
               comments: {
                 pageInfo: { hasNextPage: false, endCursor: "Y3Vyc29yOjk" },
                 nodes: [{ id: "t9", body: "last", createdAt: "2026-07-01T00:00:00Z" }],
@@ -623,7 +695,9 @@ describe("reaction decoding", () => {
   const commentWithGroups = (reactionGroups: ReadonlyArray<Record<string, unknown>>) =>
     JSON.stringify({
       data: {
+        repository: { pullRequest: { id: "PR_1" } },
         node: {
+          pullRequest: { id: "PR_1" },
           comments: {
             pageInfo: { hasNextPage: false, endCursor: null },
             nodes: [{ id: "t1", body: "nice", createdAt: "2026-07-01T00:00:00Z", reactionGroups }],
@@ -669,7 +743,9 @@ describe("reaction decoding", () => {
         JSON.stringify({
           data: {
             viewer: { login: "Bilal" },
+            repository: { pullRequest: { id: "PR_1" } },
             node: {
+              pullRequest: { id: "PR_1" },
               comments: {
                 pageInfo: { hasNextPage: false, endCursor: null },
                 nodes: [
@@ -757,7 +833,7 @@ describe("viewer permission decoding", () => {
           }),
         ),
       ),
-    ).toEqual({ canWrite: false, canUpdate: true, didAuthor: true });
+    ).toEqual({ canWrite: false, canTriage: false, canUpdate: true, didAuthor: true });
   });
 
   it("says no to a passer-by on a repository they can only read", () => {
@@ -770,7 +846,7 @@ describe("viewer permission decoding", () => {
           }),
         ),
       ),
-    ).toEqual({ canWrite: false, canUpdate: false, didAuthor: false });
+    ).toEqual({ canWrite: false, canTriage: false, canUpdate: false, didAuthor: false });
   });
 
   it("reads silence as permission, but not as authorship", () => {
@@ -779,9 +855,78 @@ describe("viewer permission decoding", () => {
     // and claiming it for someone who did not is how an author's own rules get handed out.
     expect(expectSuccess(decodeViewerPermissionsJson(viewerJson({ pullRequest: null })))).toEqual({
       canWrite: false,
+      canTriage: false,
       canUpdate: true,
       didAuthor: false,
     });
+  });
+
+  it("reads triage as enough to label, and not enough to write", () => {
+    const access = expectSuccess(
+      decodeViewerPermissionsJson(
+        viewerJson({
+          viewerPermission: "TRIAGE",
+          pullRequest: { viewerCanUpdate: false, viewerDidAuthor: false },
+        }),
+      ),
+    );
+    expect(access.canTriage).toBe(true);
+    expect(access.canWrite).toBe(false);
+  });
+});
+
+describe("label candidate decoding", () => {
+  const labelsJson = (input: {
+    readonly defined: ReadonlyArray<Record<string, unknown>>;
+    readonly applied?: ReadonlyArray<string>;
+    readonly hasNextPage?: boolean;
+  }) =>
+    JSON.stringify({
+      data: {
+        repository: {
+          labels: {
+            pageInfo: { hasNextPage: input.hasNextPage ?? false },
+            nodes: input.defined,
+          },
+          pullRequest: { labels: { nodes: (input.applied ?? []).map((name) => ({ name })) } },
+        },
+      },
+    });
+
+  it("marks the labels the pull request already wears", () => {
+    const list = expectSuccess(
+      decodeLabelCandidatesJson(
+        labelsJson({
+          defined: [
+            { name: "bug", color: "d73a4a", description: "Something is broken" },
+            { name: "size:XL", color: "e4572e", description: null },
+          ],
+          applied: ["size:XL"],
+        }),
+      ),
+    );
+    expect(list.candidates).toEqual([
+      { name: "bug", color: "d73a4a", description: "Something is broken", isApplied: false },
+      { name: "size:XL", color: "e4572e", description: null, isApplied: true },
+    ]);
+    expect(list.truncated).toBe(false);
+  });
+
+  it("keeps a worn label the repository no longer defines, so it can be taken off", () => {
+    const list = expectSuccess(
+      decodeLabelCandidatesJson(labelsJson({ defined: [{ name: "bug" }], applied: ["legacy"] })),
+    );
+    expect(list.candidates.map((label) => [label.name, label.isApplied])).toEqual([
+      ["legacy", true],
+      ["bug", false],
+    ]);
+  });
+
+  it("says so when the repository defines more labels than the read asked for", () => {
+    expect(
+      expectSuccess(decodeLabelCandidatesJson(labelsJson({ defined: [], hasNextPage: true })))
+        .truncated,
+    ).toBe(true);
   });
 });
 
@@ -1009,6 +1154,16 @@ describe("decodePullRequestNodeIdJson", () => {
 });
 
 describe("REVIEW_THREADS_GRAPHQL_QUERY", () => {
+  it("caps the initial query after the 104-point rate-limit regression", () => {
+    const match = REVIEW_THREADS_GRAPHQL_QUERY.match(
+      /reviewThreads\(first: (\d+)[\s\S]*?comments\(first: (\d+)\)/u,
+    );
+
+    expect(match).not.toBeNull();
+    if (match === null) throw new Error("expected review-thread connections");
+    expect(Number(match[1]) * Number(match[2])).toBeLessThanOrEqual(1_000);
+  });
+
   it("asks for reactionGroups on the pull request itself, its comments, its reviews and each thread's comments", () => {
     expect(REVIEW_THREADS_GRAPHQL_QUERY.match(/reactionGroups/g)).toHaveLength(4);
     // The reviews connection is new: only reactions were ever wanted off it.
@@ -1147,8 +1302,16 @@ describe("review submission payload", () => {
         verdict: "request-changes",
         body: "Two things.",
         comments: [
-          { path: "src/a.ts", line: 12, side: "right", body: "rename this" },
-          { path: "src/b.ts", line: 3, side: "left", body: "why remove?" },
+          {
+            path: "src/a.ts",
+            position: { kind: "added", newLine: 12 },
+            body: "rename this",
+          },
+          {
+            path: "src/b.ts",
+            position: { kind: "deleted", oldLine: 3 },
+            body: "why remove?",
+          },
         ],
       }),
     ) as Record<string, unknown>;

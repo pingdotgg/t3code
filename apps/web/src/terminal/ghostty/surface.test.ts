@@ -1,20 +1,25 @@
-import { describe, expect, it, vi } from "vite-plus/test";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
-import type { GhosttyCell, GhosttyRow } from "./core";
+import { GhosttyTerminalCore, type GhosttyCell, type GhosttyRow } from "./core";
 import {
   DEFAULT_TERMINAL_FONT_FAMILY,
   DEFAULT_TERMINAL_FONT_SIZE,
   advanceTerminalSelectionClickSequence,
+  applyTerminalCopyEvent,
+  clearPrimedTerminalCopyInput,
   ghosttyMouseButton,
   isTerminalAltGraphText,
   isTerminalCompositionCommitInput,
+  isTerminalCompositionKey,
   isTerminalCopyShortcut,
   isTerminalLinkPointerGesture,
   isTerminalPasteShortcut,
   loadTerminalFontFamily,
+  primeTerminalCopyInput,
+  resolveTerminalMouseData,
+  resolveTerminalMouseTrackingState,
   shouldBlinkTerminalCursor,
   shouldReportTerminalMouse,
-  shouldShowTerminalLinkHover,
   terminalGridCellAt,
   terminalScrollbarGeometry,
   terminalScrollbarOffsetAtPointer,
@@ -26,7 +31,327 @@ import {
   terminalFontSize,
   terminalWheelArrowData,
   terminalWheelDeltaRows,
+  GhosttyTerminalSurface,
+  type GhosttyTerminalSurfaceOptions,
 } from "./surface";
+
+vi.mock("./vendor/ghostty-vt.wasm?url", async () => ({
+  default: (await import("./vendor/ghostty-vt.wasm?inline")).default,
+}));
+vi.mock("./vendor/ghostty-write-pty.wasm?url&no-inline", async () => ({
+  default: (await import("./vendor/ghostty-write-pty.wasm?inline")).default,
+}));
+
+describe("GhosttyTerminalSurface visibility", () => {
+  const surfaces = new Set<GhosttyTerminalSurface>();
+
+  // Keep the real surface, renderer, and WASM core. Only browser layout and
+  // scheduling are replaced so tests can count work while the terminal is hidden.
+  function createHarness() {
+    vi.useFakeTimers();
+    const frames = new Map<number, FrameRequestCallback>();
+    const resizeCallbacks = new Set<() => void>();
+    const paint = vi.fn((_operation: string, _args: ReadonlyArray<unknown>) => {});
+    let frameId = 0;
+    const requestFrame = vi.fn((callback: FrameRequestCallback) => {
+      frames.set(++frameId, callback);
+      return frameId;
+    });
+
+    class TerminalTestElement extends EventTarget {
+      style: Record<string, string> = {};
+      parentElement: TerminalTestElement | null = null;
+      clientWidth = 168;
+      clientHeight = 104;
+      width = 300;
+      height = 150;
+      value = "";
+      private readonly captures = new Set<number>();
+
+      setAttribute() {}
+      append(...children: TerminalTestElement[]) {
+        for (const child of children) child.parentElement = this;
+      }
+      replaceChildren(...children: TerminalTestElement[]) {
+        this.append(...children);
+      }
+      remove() {
+        this.parentElement = null;
+      }
+      getContext() {
+        return context;
+      }
+      focus() {
+        this.dispatchEvent(new Event("focus"));
+      }
+      setPointerCapture(pointerId: number) {
+        this.captures.add(pointerId);
+      }
+      hasPointerCapture(pointerId: number) {
+        return this.captures.has(pointerId);
+      }
+      releasePointerCapture(pointerId: number) {
+        this.captures.delete(pointerId);
+      }
+      getBoundingClientRect() {
+        return { left: 0, top: 0, right: 168, bottom: 104, width: 168, height: 104 };
+      }
+    }
+
+    const canvas = new TerminalTestElement();
+    const mount = new TerminalTestElement();
+    const context = {
+      canvas,
+      beginPath() {},
+      clip() {},
+      rect() {},
+      resetTransform() {},
+      restore() {},
+      save() {},
+      setTransform() {},
+      fillRect: (...args: number[]) => paint("fillRect", args),
+      strokeRect: (...args: number[]) => paint("strokeRect", args),
+      fillText: (...args: [string, number, number, number?]) => paint("fillText", args),
+      measureText: (text: string) => ({
+        width: text.length * 8,
+        actualBoundingBoxAscent: 9,
+        actualBoundingBoxDescent: 3,
+      }),
+    };
+    vi.stubGlobal("document", {
+      createElement: (tag: string) => (tag === "canvas" ? canvas : new TerminalTestElement()),
+      fonts: Object.assign(new EventTarget(), { load: async () => [], add() {} }),
+    });
+    vi.stubGlobal(
+      "window",
+      Object.assign(new EventTarget(), {
+        devicePixelRatio: 1,
+        requestAnimationFrame: requestFrame,
+        cancelAnimationFrame: (id: number) => frames.delete(id),
+        setTimeout,
+        clearTimeout,
+        setInterval,
+        clearInterval,
+        matchMedia: () => Object.assign(new EventTarget(), { matches: false }),
+      }),
+    );
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        constructor(private readonly callback: () => void) {
+          resizeCallbacks.add(callback);
+        }
+        observe() {}
+        disconnect() {
+          resizeCallbacks.delete(this.callback);
+        }
+      },
+    );
+    const snapshot = vi.spyOn(GhosttyTerminalCore.prototype, "snapshot");
+    const onData = vi.fn<(data: string) => void>();
+
+    return {
+      mount,
+      frames,
+      paint,
+      requestFrame,
+      snapshot,
+      onData,
+      get renderedSnapshot() {
+        const result = snapshot.mock.results.at(-1);
+        if (result?.type !== "return") throw new Error("No terminal snapshot was rendered");
+        return result.value;
+      },
+      flushFrame() {
+        const queued = [...frames.values()];
+        frames.clear();
+        for (const callback of queued) callback(0);
+      },
+      resize() {
+        for (const callback of resizeCallbacks) callback();
+      },
+      pointer(type: string, clientX: number, buttons: number) {
+        canvas.dispatchEvent(
+          Object.assign(new Event(type, { cancelable: true }), {
+            clientX,
+            clientY: 5,
+            pointerId: 1,
+            button: 0,
+            buttons,
+          }),
+        );
+      },
+      async create(options: Partial<GhosttyTerminalSurfaceOptions> = {}) {
+        const surface = await GhosttyTerminalSurface.create(mount as unknown as HTMLElement, {
+          theme: {
+            foreground: { r: 255, g: 255, b: 255 },
+            background: { r: 0, g: 0, b: 0 },
+            cursor: { r: 255, g: 255, b: 255 },
+          },
+          onData,
+          onResize() {},
+          onSelectionChange() {},
+          beforeKey: () => false,
+          onLinkActivate() {},
+          ...options,
+          get visible() {
+            return options.visible ?? true;
+          },
+        });
+        surfaces.add(surface);
+        return surface;
+      },
+    };
+  }
+
+  afterEach(() => {
+    for (const surface of surfaces) surface.dispose();
+    surfaces.clear();
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("stops hidden snapshots and paint while preserving live VT replies and the next cursor", async () => {
+    const harness = createHarness();
+    const surface = await harness.create();
+    surface.focus();
+    surface.write("ready\x1b[1 q");
+    harness.flushFrame();
+    vi.advanceTimersByTime(500);
+    harness.flushFrame();
+    surface.write("queued");
+    expect(harness.frames.size).toBe(1);
+    surface.setVisible(false);
+    expect(harness.frames.size).toBe(0);
+    expect(vi.getTimerCount()).toBe(0);
+    harness.snapshot.mockClear();
+    harness.paint.mockClear();
+    harness.requestFrame.mockClear();
+
+    surface.write("\x1b[2J\x1b[H\x1b[3");
+    surface.write("1mhidden");
+    surface.write("界🙂\x1b[0m\x1b[5n\x1b[6n");
+    surface.fit();
+    vi.advanceTimersByTime(2_000);
+    harness.flushFrame();
+
+    expect(harness.onData.mock.calls).toEqual([["\x1b[0n"], ["\x1b[1;11R"]]);
+    expect(harness.snapshot).not.toHaveBeenCalled();
+    expect(harness.paint).not.toHaveBeenCalled();
+    expect(harness.requestFrame).not.toHaveBeenCalled();
+
+    surface.setVisible(true);
+    expect(harness.snapshot).toHaveBeenCalledTimes(1);
+    expect(harness.renderedSnapshot).toMatchObject({ cursorX: 10, cursorY: 0 });
+    expect(harness.renderedSnapshot.rowData[0]?.text).toContain("hidden");
+    expect(harness.paint.mock.calls).toContainEqual(["fillRect", [84, 4, 8, 16]]);
+    expect(harness.frames.size).toBe(0);
+  });
+
+  it("keeps the selection on reveal and applies a hidden selection clear", async () => {
+    const harness = createHarness();
+    const surface = await harness.create();
+    surface.write("hello world");
+    harness.flushFrame();
+    harness.pointer("pointerdown", 5, 1);
+    harness.pointer("pointermove", 37, 1);
+    harness.pointer("pointerup", 37, 0);
+    harness.flushFrame();
+    expect(surface.getSelection()).toBe("hello");
+    const position = surface.getSelectionPosition();
+
+    surface.setVisible(false);
+    harness.snapshot.mockClear();
+    surface.setVisible(true);
+    expect(harness.snapshot).toHaveBeenCalledTimes(1);
+    expect(surface.getSelectionPosition()).toEqual(position);
+    expect(
+      harness.renderedSnapshot.rowData[0]?.cells.slice(0, 5).every((cell) => cell.selected),
+    ).toBe(true);
+
+    surface.setVisible(false);
+    harness.snapshot.mockClear();
+    surface.clearSelection();
+    surface.write("!");
+    expect(harness.snapshot).not.toHaveBeenCalled();
+    surface.setVisible(true);
+    expect(harness.snapshot).toHaveBeenCalledTimes(1);
+    expect(surface.getSelection()).toBe("");
+    expect(surface.getSelectionPosition()).toBeNull();
+    expect(harness.renderedSnapshot.rowData[0]?.cells.some((cell) => cell.selected)).toBe(false);
+  });
+
+  it("stops zero-size mounts and repaints when the same size returns", async () => {
+    const harness = createHarness();
+    const surface = await harness.create();
+    surface.focus();
+    surface.write("visible");
+    harness.flushFrame();
+    harness.snapshot.mockClear();
+    harness.paint.mockClear();
+    harness.mount.clientWidth = 0;
+    surface.write("!");
+    harness.flushFrame();
+    harness.requestFrame.mockClear();
+    for (let index = 0; index < 8; index += 1) surface.write("x");
+    vi.advanceTimersByTime(2_000);
+
+    expect(harness.snapshot).not.toHaveBeenCalled();
+    expect(harness.paint).not.toHaveBeenCalled();
+    expect(harness.requestFrame).not.toHaveBeenCalled();
+    harness.mount.clientWidth = 168;
+    harness.resize();
+    expect(harness.snapshot).toHaveBeenCalledTimes(1);
+    expect(harness.renderedSnapshot.rowData[0]?.text).toContain("visible!xxxxxxxx");
+    expect(harness.paint).toHaveBeenCalled();
+  });
+
+  it.each([false, true])(
+    "uses visibility %s if it changes while WASM initializes",
+    async (visible) => {
+      const harness = createHarness();
+      let markCreated!: () => void;
+      const created = new Promise<void>((resolve) => {
+        markCreated = resolve;
+      });
+      let finishLoading!: () => void;
+      const release = new Promise<void>((resolve) => {
+        finishLoading = resolve;
+      });
+      const create = GhosttyTerminalCore.create;
+      vi.spyOn(GhosttyTerminalCore, "create").mockImplementation(async (...args) => {
+        const core = await create(...args);
+        markCreated();
+        await release;
+        return core;
+      });
+      let currentVisible = !visible;
+      const pending = harness.create({
+        get visible() {
+          return currentVisible;
+        },
+      });
+      await created;
+      currentVisible = visible;
+      harness.paint.mockClear();
+      finishLoading();
+      const surface = await pending;
+
+      expect(harness.snapshot).toHaveBeenCalledTimes(visible ? 1 : 0);
+      if (!visible) expect(harness.paint).not.toHaveBeenCalled();
+      surface.write("ready\x1b[5n");
+      expect(harness.onData).toHaveBeenCalledWith("\x1b[0n");
+      if (!visible) {
+        expect(harness.frames.size).toBe(0);
+        surface.setVisible(true);
+      } else {
+        harness.flushFrame();
+      }
+      expect(harness.renderedSnapshot.rowData[0]?.text).toContain("ready");
+    },
+  );
+});
 
 const cell = (text: string): GhosttyCell => ({
   text,
@@ -219,16 +544,90 @@ describe("isTerminalCopyShortcut", () => {
     expect(isTerminalCopyShortcut(event({ metaKey: true }), "MacIntel")).toBe(true);
   });
 
-  it("uses the conventional Ctrl+Shift+C shortcut elsewhere", () => {
-    expect(isTerminalCopyShortcut(event({ ctrlKey: true }), "Linux x86_64")).toBe(false);
+  it("copies with Ctrl+C and Ctrl+Shift+C elsewhere", () => {
+    expect(isTerminalCopyShortcut(event({ ctrlKey: true }), "Linux x86_64")).toBe(true);
     expect(isTerminalCopyShortcut(event({ ctrlKey: true, shiftKey: true }), "Linux x86_64")).toBe(
       true,
     );
+    expect(isTerminalCopyShortcut(event({}), "Linux x86_64")).toBe(false);
   });
 
   it("uses the produced character instead of the physical key position", () => {
     expect(isTerminalCopyShortcut(event({ key: "C", metaKey: true }), "MacIntel")).toBe(true);
     expect(isTerminalCopyShortcut(event({ key: "j", metaKey: true }), "MacIntel")).toBe(false);
+  });
+});
+
+describe("applyTerminalCopyEvent", () => {
+  it("writes the selection and claims the fallback when clipboardData is present", () => {
+    const setData = vi.fn();
+    expect(applyTerminalCopyEvent("ls -la", { setData })).toEqual({
+      preventDefault: true,
+      claimWriteFallback: true,
+    });
+    expect(setData).toHaveBeenCalledWith("text/plain", "ls -la");
+  });
+
+  it("leaves the writeText fallback alive when clipboardData is missing", () => {
+    // Electron's edit-menu Copy often delivers a copy event with no
+    // clipboardData. Claiming that event used to skip writeText and copy the
+    // empty IME textarea, which is the blank clipboard users paste.
+    expect(applyTerminalCopyEvent("ls -la", null)).toEqual({
+      preventDefault: false,
+      claimWriteFallback: false,
+    });
+    expect(applyTerminalCopyEvent("", { setData: vi.fn() })).toEqual({
+      preventDefault: false,
+      claimWriteFallback: false,
+    });
+  });
+
+  it("primes the current selection before a copy event with no clipboardData", () => {
+    const input = {
+      value: "stale",
+      selectionStart: 0,
+      selectionEnd: 0,
+      select() {
+        this.selectionStart = 0;
+        this.selectionEnd = this.value.length;
+      },
+    };
+    primeTerminalCopyInput(input, "git status");
+    expect(applyTerminalCopyEvent("git status", null)).toEqual({
+      preventDefault: false,
+      claimWriteFallback: false,
+    });
+    expect(input.value).toBe("git status");
+    expect(input.selectionStart).toBe(0);
+    expect(input.selectionEnd).toBe(10);
+  });
+});
+
+describe("primeTerminalCopyInput", () => {
+  it("selects the Ghostty selection in the hidden textarea so native copy has text", () => {
+    const input = {
+      value: "",
+      selectionStart: 0,
+      selectionEnd: 0,
+      select() {
+        this.selectionStart = 0;
+        this.selectionEnd = this.value.length;
+      },
+    };
+    primeTerminalCopyInput(input, "git status");
+    expect(input.value).toBe("git status");
+    expect(input.selectionStart).toBe(0);
+    expect(input.selectionEnd).toBe(10);
+    clearPrimedTerminalCopyInput(input, "git status");
+    expect(input.value).toBe("");
+  });
+
+  it("does not wipe an IME candidate that replaced the primed copy", () => {
+    const input = { value: "", select() {} };
+    primeTerminalCopyInput(input, "git status");
+    input.value = "あ";
+    clearPrimedTerminalCopyInput(input, "git status");
+    expect(input.value).toBe("あ");
   });
 });
 
@@ -252,6 +651,22 @@ describe("isTerminalPasteShortcut", () => {
       true,
     );
   });
+
+  it("supports the conventional Shift+Insert paste shortcut", () => {
+    expect(isTerminalPasteShortcut(event({ key: "Insert", shiftKey: true }), "Linux x86_64")).toBe(
+      true,
+    );
+    expect(isTerminalPasteShortcut(event({ key: "Insert" }), "Linux x86_64")).toBe(false);
+    expect(
+      isTerminalPasteShortcut(
+        event({ key: "Insert", ctrlKey: true, shiftKey: true }),
+        "Linux x86_64",
+      ),
+    ).toBe(false);
+    expect(isTerminalPasteShortcut(event({ key: "Insert", shiftKey: true }), "MacIntel")).toBe(
+      false,
+    );
+  });
 });
 
 describe("isTerminalCompositionCommitInput", () => {
@@ -263,6 +678,28 @@ describe("isTerminalCompositionCommitInput", () => {
 
   it("keeps a fast repeated input as legitimate text", () => {
     expect(isTerminalCompositionCommitInput({ inputType: "insertText" })).toBe(false);
+  });
+});
+
+describe("isTerminalCompositionKey", () => {
+  const event = (
+    overrides: Partial<Pick<KeyboardEvent, "isComposing" | "key" | "keyCode">> = {},
+  ) => ({
+    isComposing: false,
+    key: "a",
+    keyCode: 65,
+    ...overrides,
+  });
+
+  it("treats in-progress IME keydowns as composition so the copy primer cannot wipe them", () => {
+    expect(isTerminalCompositionKey(event({ isComposing: true }), false)).toBe(true);
+    expect(isTerminalCompositionKey(event(), true)).toBe(true);
+    expect(isTerminalCompositionKey(event({ key: "Process" }), false)).toBe(true);
+    expect(isTerminalCompositionKey(event({ keyCode: 229 }), false)).toBe(true);
+  });
+
+  it("lets ordinary keydowns clear a primed copy", () => {
+    expect(isTerminalCompositionKey(event(), false)).toBe(false);
   });
 });
 
@@ -286,11 +723,39 @@ describe("application mouse reporting", () => {
     expect([0, 1, 2, 3, 4, 5].map(ghosttyMouseButton)).toEqual([1, 3, 2, 4, 5, null]);
   });
 
-  it("only shows link hover during mouse tracking when the link modifier is held", () => {
-    expect(shouldShowTerminalLinkHover(false, false)).toBe(true);
-    expect(shouldShowTerminalLinkHover(false, true)).toBe(true);
-    expect(shouldShowTerminalLinkHover(true, false)).toBe(false);
-    expect(shouldShowTerminalLinkHover(true, true)).toBe(true);
+  it("drops repeated motion reports until another mouse action resets the cell", () => {
+    const first = resolveTerminalMouseData("motion", "\u001b[<35;8;4M", "");
+    expect(first).toEqual({ send: true, nextMotionData: "\u001b[<35;8;4M" });
+
+    const duplicate = resolveTerminalMouseData("motion", "\u001b[<35;8;4M", first.nextMotionData);
+    expect(duplicate).toEqual({ send: false, nextMotionData: "\u001b[<35;8;4M" });
+
+    const press = resolveTerminalMouseData("press", "\u001b[<0;8;4M", duplicate.nextMotionData);
+    expect(press).toEqual({ send: true, nextMotionData: "" });
+
+    expect(resolveTerminalMouseData("motion", "\u001b[<35;8;4M", press.nextMotionData)).toEqual({
+      send: true,
+      nextMotionData: "\u001b[<35;8;4M",
+    });
+  });
+
+  it("clears the motion baseline when application mouse tracking changes", () => {
+    expect(resolveTerminalMouseTrackingState(true, false, "\u001b[<35;8;4M")).toEqual({
+      tracking: false,
+      motionData: "",
+    });
+    expect(resolveTerminalMouseTrackingState(false, true, "\u001b[<35;8;4M")).toEqual({
+      tracking: true,
+      motionData: "",
+    });
+    expect(resolveTerminalMouseTrackingState(true, true, "\u001b[<35;8;4M")).toEqual({
+      tracking: true,
+      motionData: "\u001b[<35;8;4M",
+    });
+    expect(resolveTerminalMouseTrackingState(false, false, "\u001b[<35;8;4M")).toEqual({
+      tracking: false,
+      motionData: "\u001b[<35;8;4M",
+    });
   });
 });
 

@@ -22,7 +22,9 @@ import { Children, isValidElement, type ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
 
+import { Badge } from "../ui/badge";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import type { PullRequestReviewOutcome } from "./pullRequestDetail.logic";
 
 interface StatePresentation {
   readonly label: string;
@@ -31,9 +33,9 @@ interface StatePresentation {
 }
 
 /**
- * How a pull request's state reads on this page. Open, closed and merged use the same ink as
- * the thread badge in `ThreadStatusIndicators`, so one pull request cannot look like two
- * different things in two places; draft and conflicts are states that badge never shows.
+ * How a pull request's state reads on this page. Open, closed, merged, and draft use the same
+ * ink as the thread badge in `ThreadStatusIndicators`, so one pull request cannot look like two
+ * different things in two places.
  *
  * Draft outranks conflicts: a draft is not heading for a merge yet, so conflicts only surface
  * once it is real work.
@@ -118,6 +120,11 @@ export function PullRequestStateGlyph({
 
 const CHECK_STATUS_PRESENTATION = {
   pending: { label: "Running", Icon: LoaderIcon, toneClassName: "animate-spin text-amber-500" },
+  "action-required": {
+    label: "Awaiting action",
+    Icon: CircleDotIcon,
+    toneClassName: "text-amber-600 dark:text-amber-400/90",
+  },
   success: {
     label: "Passed",
     Icon: CircleCheckIcon,
@@ -132,8 +139,20 @@ const CHECK_STATUS_PRESENTATION = {
   { label: string; Icon: typeof CircleCheckIcon; toneClassName: string }
 >;
 
-export function pullRequestCheckStatusLabel(status: PullRequestCheckStatus): string {
-  return CHECK_STATUS_PRESENTATION[status].label;
+function isWorkflowApprovalCheck(check: Pick<PullRequestCheck, "status" | "url">): boolean {
+  return (
+    check.status === "action-required" &&
+    check.url !== null &&
+    /\/actions\/runs\/\d+(?:\/|$)/u.test(check.url)
+  );
+}
+
+export function pullRequestCheckStatusLabel(
+  check: Pick<PullRequestCheck, "status" | "url">,
+): string {
+  return isWorkflowApprovalCheck(check)
+    ? "Awaiting approval"
+    : CHECK_STATUS_PRESENTATION[check.status].label;
 }
 
 export function PullRequestCheckStatusIcon({ status }: { status: PullRequestCheckStatus }) {
@@ -185,10 +204,121 @@ export function pullRequestChecksState(
   checks: ReadonlyArray<PullRequestCheck>,
 ): PullRequestChecksState | null {
   if (checks.length === 0) return null;
-  const statuses = checks.map((check) => check.status);
-  if (statuses.includes("failure") || statuses.includes("cancelled")) return "failing";
-  if (statuses.includes("pending")) return "pending";
-  return statuses.includes("success") ? "passing" : null;
+  const statuses = new Set(checks.map((check) => check.status));
+  if (statuses.has("failure") || statuses.has("cancelled")) return "failing";
+  if (statuses.has("pending") || statuses.has("action-required")) return "pending";
+  return statuses.has("success") ? "passing" : null;
+}
+
+/**
+ * How a verdict reads, in the one place every surface takes it from. The green is the green a
+ * passing check already wears in the same panel, so "approved" and "all checks passed" cannot
+ * look like two different kinds of good news.
+ *
+ * The ring runs a shade stronger than the text tones. At 16px across it is a thin arc, and the
+ * muted pairing that reads well as a word was barely there as an outline.
+ */
+const REVIEW_OUTCOME_PRESENTATION = {
+  approved: {
+    label: "Approved",
+    Icon: CircleCheckIcon,
+    toneClassName: "text-emerald-600 dark:text-emerald-300/90",
+    ringClassName: "ring-2 ring-emerald-500 dark:ring-emerald-400",
+    staleRingClassName:
+      "ring-2 ring-[color-mix(in_srgb,var(--color-emerald-500)_35%,var(--background))] dark:ring-[color-mix(in_srgb,var(--color-emerald-400)_35%,var(--background))]",
+    badgeVariant: "success",
+  },
+  "changes-requested": {
+    label: "Changes requested",
+    Icon: CircleXIcon,
+    toneClassName: "text-destructive",
+    ringClassName: "ring-2 ring-destructive",
+    staleRingClassName: "ring-2 ring-[color-mix(in_srgb,var(--destructive)_35%,var(--background))]",
+    badgeVariant: "error",
+  },
+  dismissed: {
+    label: "Review dismissed",
+    Icon: CircleDashedIcon,
+    toneClassName: "text-muted-foreground/70",
+    ringClassName: "ring-2 ring-muted-foreground/60",
+    staleRingClassName:
+      "ring-2 ring-[color-mix(in_srgb,var(--contrast-muted-foreground)_30%,var(--background))]",
+    badgeVariant: "outline",
+  },
+} as const satisfies Record<
+  PullRequestReviewOutcome,
+  {
+    label: string;
+    Icon: typeof CircleCheckIcon;
+    toneClassName: string;
+    ringClassName: string;
+    staleRingClassName: string;
+    badgeVariant: "success" | "error" | "outline";
+  }
+>;
+
+export function pullRequestReviewOutcomeToneClassName(outcome: PullRequestReviewOutcome): string {
+  return REVIEW_OUTCOME_PRESENTATION[outcome].toneClassName;
+}
+
+/** Worn by whatever wraps a reviewer's avatar, so their verdict reads without a row of its own. */
+/**
+ * A faded verdict is mixed into the background rather than made translucent. The ring is the only
+ * separator an avatar carrying one has — the summary drops the opaque `ring-background` where a
+ * verdict is drawn — and the stack overlaps by 4px, so an alpha ring would let the neighbour show
+ * straight through it and the two faces would merge.
+ */
+export function pullRequestReviewOutcomeRingClassName(
+  outcome: PullRequestReviewOutcome,
+  stale = false,
+): string {
+  const presentation = REVIEW_OUTCOME_PRESENTATION[outcome];
+  return stale ? presentation.staleRingClassName : presentation.ringClassName;
+}
+
+/**
+ * What a superseded verdict says, which is the same word with when it applied added. Commits
+ * landed after it, so it stands for code the branch no longer has.
+ */
+export function pullRequestReviewOutcomeStaleLabel(outcome: PullRequestReviewOutcome): string {
+  return `${REVIEW_OUTCOME_PRESENTATION[outcome].label} earlier changes`;
+}
+
+/** Decorative: every caller says which verdict this is in words beside it. */
+export function PullRequestReviewOutcomeIcon({
+  outcome,
+  className,
+}: {
+  outcome: PullRequestReviewOutcome;
+  className?: string;
+}) {
+  const presentation = REVIEW_OUTCOME_PRESENTATION[outcome];
+  return (
+    <presentation.Icon
+      aria-hidden
+      className={cn("size-3.5 shrink-0", presentation.toneClassName, className)}
+    />
+  );
+}
+
+export function pullRequestReviewOutcomeLabel(outcome: PullRequestReviewOutcome): string {
+  return REVIEW_OUTCOME_PRESENTATION[outcome].label;
+}
+
+export function PullRequestReviewOutcomeBadge({
+  outcome,
+  className,
+}: {
+  outcome: PullRequestReviewOutcome;
+  className?: string;
+}) {
+  const presentation = REVIEW_OUTCOME_PRESENTATION[outcome];
+  return (
+    <Badge size="sm" variant={presentation.badgeVariant} className={cn("gap-1", className)}>
+      <presentation.Icon aria-hidden className="size-3" />
+      {presentation.label}
+    </Badge>
+  );
 }
 
 export function PullRequestActorAvatar({
@@ -226,16 +356,52 @@ export function PullRequestActorAvatar({
 export function PullRequestActorLabel({
   actor,
   className,
+  labelClassName,
+  tooltip = true,
+  profileUrl,
 }: {
   actor: PullRequestActor | null;
   className?: string;
+  labelClassName?: string;
+  tooltip?: boolean;
+  profileUrl?: string | null;
 }) {
   const login = actor?.login ?? "ghost";
-  return (
-    <span className={cn("flex min-w-0 items-center gap-1.5", className)} title={login}>
+  const label = (
+    <>
       <PullRequestActorAvatar actor={actor} />
-      <span className="truncate">{login}</span>
-    </span>
+      <span className={cn("truncate", labelClassName)}>{login}</span>
+    </>
+  );
+  if (!tooltip) {
+    return <span className={cn("flex min-w-0 items-center gap-1.5", className)}>{label}</span>;
+  }
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          profileUrl ? (
+            <a
+              href={profileUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label={`Open ${login}'s profile`}
+            />
+          ) : (
+            <span />
+          )
+        }
+        className={cn(
+          "flex min-w-0 items-center gap-1.5",
+          profileUrl &&
+            "cursor-pointer rounded-sm underline-offset-2 outline-none hover:text-foreground hover:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background",
+          className,
+        )}
+      >
+        {label}
+      </TooltipTrigger>
+      <TooltipPopup side="top">{profileUrl ? `Open ${login}'s profile` : login}</TooltipPopup>
+    </Tooltip>
   );
 }
 
@@ -305,12 +471,24 @@ export function PullRequestMetaLine({
 
 export function summarizePullRequestChecks(checks: ReadonlyArray<PullRequestCheck>): string {
   if (checks.length === 0) return "No checks reported";
+  const actionRequired = checks.filter((check) => check.status === "action-required");
+  const workflowApprovalRequired = actionRequired.filter(isWorkflowApprovalCheck).length;
+  const otherActionRequired = actionRequired.length - workflowApprovalRequired;
   const failed = checks.filter(
     (check) => check.status === "failure" || check.status === "cancelled",
   ).length;
   const pending = checks.filter((check) => check.status === "pending").length;
   const passed = checks.filter((check) => check.status === "success").length;
   if (failed > 0) return `${failed} of ${checks.length} failing`;
+  if (workflowApprovalRequired > 0 && otherActionRequired > 0) {
+    return `${workflowApprovalRequired} ${workflowApprovalRequired === 1 ? "workflow" : "workflows"} and ${otherActionRequired} ${otherActionRequired === 1 ? "check" : "checks"} awaiting action`;
+  }
+  if (workflowApprovalRequired > 0) {
+    return `${workflowApprovalRequired} ${workflowApprovalRequired === 1 ? "workflow" : "workflows"} awaiting approval`;
+  }
+  if (otherActionRequired > 0) {
+    return `${otherActionRequired} ${otherActionRequired === 1 ? "check" : "checks"} awaiting action`;
+  }
   if (pending > 0) return `${pending} of ${checks.length} running`;
   return passed === checks.length ? "All checks passed" : `${passed} of ${checks.length} passing`;
 }

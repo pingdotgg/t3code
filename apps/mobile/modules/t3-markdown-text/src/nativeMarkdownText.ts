@@ -1,7 +1,11 @@
 import type { MarkdownNode } from "react-native-nitro-markdown/headless";
 
 import type { SelectableMarkdownSkill } from "./SelectableMarkdownText.types";
-import { resolveMarkdownLinkPresentation, type MarkdownFileIcon } from "./markdownLinks";
+import {
+  resolveMarkdownInlineCodePresentation,
+  resolveMarkdownLinkPresentation,
+  type MarkdownFileIcon,
+} from "./markdownLinks";
 
 export interface NativeMarkdownTextRun {
   readonly text: string;
@@ -70,15 +74,22 @@ const EMPTY_CONTEXT: RunContext = {
 
 const INLINE_HTML_TAG_PATTERN = /<\/?(?:kbd|mark|sub|sup|u)(?:\s[^>]*)?>/gi;
 
+function decodeCodePoint(codePoint: number, entity: string): string {
+  if (!Number.isInteger(codePoint) || codePoint < 0 || codePoint > 0x10ffff) {
+    return entity;
+  }
+  return String.fromCodePoint(codePoint);
+}
+
 function decodeHtmlEntitiesOnce(value: string): string {
   return value.replace(
     /&(?:#(\d+)|#x([0-9a-f]+)|amp|apos|gt|lt|nbsp|quot);/gi,
     (entity, decimal: string | undefined, hexadecimal: string | undefined) => {
       if (decimal) {
-        return String.fromCodePoint(Number.parseInt(decimal, 10));
+        return decodeCodePoint(Number.parseInt(decimal, 10), entity);
       }
       if (hexadecimal) {
-        return String.fromCodePoint(Number.parseInt(hexadecimal, 16));
+        return decodeCodePoint(Number.parseInt(hexadecimal, 16), entity);
       }
       switch (entity.toLowerCase()) {
         case "&amp;":
@@ -184,7 +195,8 @@ function appendRun(
   return runs;
 }
 
-const SKILL_TOKEN_REGEX = /(^|\s)\$([a-zA-Z][a-zA-Z0-9:_-]*)(?=\s|$)/g;
+const SKILL_TOKEN_REGEX =
+  /(^|\s)\$(?![0-9][0-9_]*(?:[kKmMbBtT]|[eE][0-9]+)?(?:\s|$))(?=[a-zA-Z0-9:_-]*[a-zA-Z])([a-zA-Z0-9][a-zA-Z0-9:_-]*)(?=\s|$)/g;
 
 function formatSkillLabel(skill: SelectableMarkdownSkill): string {
   const displayName = skill.displayName?.trim();
@@ -276,8 +288,17 @@ function appendNode(
       return appendRun(runs, textNodeContent(nodeTextContent(node)), context);
     case "html_inline":
       return appendRun(runs, inlineHtmlText(nodeTextContent(node)), context);
-    case "code_inline":
-      return appendRun(runs, nodeTextContent(node), { ...context, code: true });
+    case "code_inline": {
+      const content = nodeTextContent(node);
+      const presentation = context.href ? null : resolveMarkdownInlineCodePresentation(content);
+      return presentation
+        ? appendRun(runs, presentation.label, {
+            ...context,
+            href: presentation.href,
+            fileIcon: presentation.icon,
+          })
+        : appendRun(runs, content, { ...context, code: true });
+    }
     case "soft_break":
       return appendRun(runs, " ", context);
     case "line_break":
@@ -661,6 +682,7 @@ function appendDocumentBlock(
 function containsRichBlock(node: MarkdownNode): boolean {
   if (
     node.type === "code_block" ||
+    node.type === "blockquote" ||
     node.type === "table" ||
     node.type === "image" ||
     node.type === "horizontal_rule" ||

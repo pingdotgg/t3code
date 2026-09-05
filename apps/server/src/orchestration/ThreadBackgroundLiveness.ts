@@ -130,6 +130,18 @@ export function make(): ThreadBackgroundLivenessService["Service"] {
         return;
       }
 
+      // Status-free progress and metadata updates are not restarts. A delayed
+      // row after idle must not put the task back in the live set (#7128).
+      if ((input.kind === "progress" || input.kind === "updated") && input.status === undefined) {
+        const existing = stateByThreadId.get(input.threadId);
+        const stillLive =
+          existing !== undefined &&
+          (existing.agents.has(input.taskId) || existing.monitors.has(input.taskId));
+        if (!stillLive) {
+          return;
+        }
+      }
+
       drop(input.threadId, input.taskId);
       const state = stateFor(input.threadId);
       const bucket =

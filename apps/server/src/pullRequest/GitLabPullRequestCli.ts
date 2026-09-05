@@ -14,6 +14,7 @@ import type {
   PullRequestReaction,
   PullRequestReactionContent,
   PullRequestReviewCommentDraft,
+  PullRequestReviewPosition,
   PullRequestReviewThread,
   PullRequestReviewVerdict,
   PullRequestReviewerCandidateList,
@@ -400,6 +401,22 @@ function projectPath(repository: string): string {
   return encodeURIComponent(repository.trim());
 }
 
+function gitLabReviewPositionLines(
+  position: PullRequestReviewPosition,
+):
+  | { readonly new_line: number }
+  | { readonly old_line: number }
+  | { readonly old_line: number; readonly new_line: number } {
+  switch (position.kind) {
+    case "added":
+      return { new_line: position.newLine };
+    case "deleted":
+      return { old_line: position.oldLine };
+    case "context":
+      return { old_line: position.oldLine, new_line: position.newLine };
+  }
+}
+
 function stateParam(state: PullRequestListState): string {
   // GitLab's `closed` already excludes merged merge requests, so no extra filter is needed,
   // and it spans every state under `all`.
@@ -487,6 +504,10 @@ function actionArgs(
       return ["rebase"];
     case "reopen":
       return ["reopen"];
+    // Never reached: this host does not declare the action, so the service refuses it first.
+    case "revert":
+    case "approve-workflows":
+      throw new Error(`GitLab merge request action ${action} is unsupported`);
   }
 }
 
@@ -1324,9 +1345,7 @@ export const make = Effect.gen(function* () {
                     // draft carries the name the file had before the change.
                     old_path: comment.oldPath ?? comment.path,
                     new_path: comment.path,
-                    ...(comment.side === "left"
-                      ? { old_line: comment.line }
-                      : { new_line: comment.line }),
+                    ...gitLabReviewPositionLines(comment.position),
                   },
                 }),
               }),

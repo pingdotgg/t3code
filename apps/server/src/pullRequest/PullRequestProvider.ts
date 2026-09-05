@@ -22,9 +22,11 @@ import type {
   PullRequestReviewCommentDraft,
   PullRequestReviewDecision,
   PullRequestReviewThread,
+  PullRequestThreadCommentsResult,
   PullRequestReviewVerdict,
   PullRequestReviewerCandidateList,
   PullRequestReviewerKind,
+  PullRequestLabelCandidateList,
   PullRequestState,
   PullRequestUpdateMethod,
   PullRequestViewerPermissions,
@@ -37,21 +39,28 @@ import { SourceControlProviderKind as SourceControlProviderKindSchema } from "@t
  * without knowing which CLI or API produced it.
  *
  * `reason` is the part the service acts on: a missing or unauthenticated tool disables the
- * provider for the whole workspace, while anything else is specific to the request.
+ * provider for the whole workspace, a rate limit pauses its host, and anything else is specific
+ * to the request.
  */
 export class PullRequestProviderError extends Schema.TaggedErrorClass<PullRequestProviderError>()(
   "PullRequestProviderError",
   {
     provider: SourceControlProviderKindSchema,
     operation: Schema.String,
-    reason: Schema.Literals(["missing-tool", "unauthenticated", "failed"]),
+    reason: Schema.Literals(["missing-tool", "unauthenticated", "rate-limited", "failed"]),
     detail: Schema.String,
+    retryAt: Schema.optional(Schema.Number),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
     return `${this.provider} failed in ${this.operation}: ${this.detail}`;
   }
+}
+
+export interface PullRequestProviderFailure {
+  readonly reason: PullRequestProviderError["reason"];
+  readonly retryAt?: number | undefined;
 }
 
 /** A change request as the provider sees it, before the service attaches project context. */
@@ -61,6 +70,7 @@ export interface ProviderChangeRequest {
   readonly url: string;
   readonly author: PullRequestActor | null;
   readonly headBranch: string;
+  readonly headRepositoryNameWithOwner?: string | null;
   readonly baseBranch: string;
   readonly state: PullRequestState;
   readonly isDraft: boolean;
@@ -76,6 +86,19 @@ export interface ProviderChangeRequest {
   readonly reviewDecision?: PullRequestReviewDecision | null | undefined;
   /** Absent from a host that reports no check rollup on its listings. */
   readonly checksState?: PullRequestChecksState | null | undefined;
+}
+
+/** The fields needed to keep a linked thread's pull request status live. */
+export interface ProviderChangeRequestSummary {
+  readonly number: number;
+  readonly title: string;
+  readonly url: string;
+  readonly headBranch: string;
+  readonly baseBranch: string;
+  readonly state: PullRequestState;
+  /** Present when the host says an open pull request is still a draft. */
+  readonly isDraft?: boolean;
+  readonly updatedAt: string;
 }
 
 export interface ProviderChangeRequestPage {
@@ -157,6 +180,10 @@ export interface ProviderChangeRequestDetail extends ProviderChangeRequest {
   readonly behindBy?: number;
   /** Absent from a host that does not report whether it is armed to merge this on its own. */
   readonly autoMergeEnabled?: boolean;
+  /** The strategy stored with an armed auto-merge, where the host reports it. */
+  readonly autoMergeMethod?: PullRequestMergeMethod;
+  /** Workflow runs on this head commit that still need a maintainer's approval. */
+  readonly workflowApprovalsRequired?: number;
 }
 
 /** The conversation-shaped half of a detail, loaded after the core can already render. */
@@ -292,10 +319,27 @@ export interface PullRequestProviderApi {
     input: ProviderRepositoryRef & { readonly number: number },
   ) => Effect.Effect<ProviderChangeRequestDetail, PullRequestProviderError>;
 
+  /**
+   * The cheap live fields used by linked threads. Optional because a provider without a narrow
+   * endpoint can fall back to its full detail read at the service boundary.
+   */
+  readonly getChangeRequestSummary?: (
+    input: ProviderRepositoryRef & { readonly number: number },
+  ) => Effect.Effect<ProviderChangeRequestSummary, PullRequestProviderError>;
+
   /** Comments, line threads, and commits, kept off the critical path for the core detail. */
   readonly getChangeRequestActivity: (
     input: ProviderRepositoryRef & { readonly number: number },
   ) => Effect.Effect<ProviderChangeRequestActivity, PullRequestProviderError>;
+
+  /** One explicit page after a reader asks to continue an unfinished review thread. */
+  readonly getReviewThreadComments?: (
+    input: ProviderRepositoryRef & {
+      readonly number: number;
+      readonly threadId: string;
+      readonly cursor: string;
+    },
+  ) => Effect.Effect<PullRequestThreadCommentsResult, PullRequestProviderError>;
 
   /**
    * The same answer `getChangeRequest` carries, on its own. Asked before anything is written, so
@@ -425,6 +469,23 @@ export interface PullRequestProviderApi {
         readonly kind: PullRequestReviewerKind;
       }>;
       readonly requested: boolean;
+    },
+  ) => Effect.Effect<void, PullRequestProviderError>;
+
+  /**
+   * The repository's labels, with the ones already on the change request marked. Present with
+   * `setLabels` only where `capabilities.labels` is true; the service refuses both without it.
+   */
+  readonly listLabelCandidates?: (
+    input: ProviderRepositoryRef & { readonly number: number },
+  ) => Effect.Effect<PullRequestLabelCandidateList, PullRequestProviderError>;
+
+  /** Puts labels on the change request, or takes them off. One call for both directions. */
+  readonly setLabels?: (
+    input: ProviderRepositoryRef & {
+      readonly number: number;
+      readonly labels: ReadonlyArray<string>;
+      readonly applied: boolean;
     },
   ) => Effect.Effect<void, PullRequestProviderError>;
 

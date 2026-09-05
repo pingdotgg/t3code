@@ -1,9 +1,8 @@
 import type { ConfirmDialogOptions, ContextMenuItem, LocalApi } from "@t3tools/contracts";
 
 import { requestConfirmDialog } from "./confirmDialog";
-import { showContextMenuFallback } from "./contextMenuFallback";
+import { dismissContextMenu, showContextMenuFallback } from "./contextMenuFallback";
 import { readBrowserClientSettings, writeBrowserClientSettings } from "./clientPersistenceStorage";
-import { resetRequestLatencyStateForTests } from "./rpc/requestLatencyState";
 
 let cachedApi: LocalApi | undefined;
 
@@ -30,6 +29,17 @@ function createBrowserLocalApi(): LocalApi {
 
         window.open(url, "_blank", "noopener,noreferrer");
       },
+      // Only the desktop shell can reach the OS; the web build (and older
+      // desktop shells that predate this method) have nothing to open.
+      openSystemSettings: async (pane) => {
+        if (!window.desktopBridge?.openSystemSettings) {
+          throw new Error("Unable to open System Settings.");
+        }
+        const opened = await window.desktopBridge.openSystemSettings(pane);
+        if (!opened) {
+          throw new Error("Unable to open System Settings.");
+        }
+      },
     },
     contextMenu: {
       show: async <T extends string>(
@@ -40,6 +50,14 @@ function createBrowserLocalApi(): LocalApi {
           return window.desktopBridge.showContextMenu(items, position) as Promise<T | null>;
         }
         return showContextMenuFallback(items, position);
+      },
+      // A native desktop menu blocks keyboard input and closes on outside
+      // interaction, so nothing to do there; the DOM fallback needs an explicit
+      // dismiss when the state behind it goes away.
+      close: async () => {
+        if (!window.desktopBridge) {
+          dismissContextMenu();
+        }
       },
     },
     persistence: {
@@ -77,11 +95,4 @@ export function ensureLocalApi(): LocalApi {
     throw new Error("Local API not found");
   }
   return api;
-}
-
-export async function __resetLocalApiForTests() {
-  cachedApi = undefined;
-  const { __resetClientSettingsPersistenceForTests } = await import("./hooks/useSettings");
-  __resetClientSettingsPersistenceForTests();
-  resetRequestLatencyStateForTests();
 }

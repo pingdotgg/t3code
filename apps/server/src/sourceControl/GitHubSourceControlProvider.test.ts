@@ -150,7 +150,7 @@ it.effect("uses gh json listing for non-open change request state queries", () =
       "--limit",
       "10",
       "--json",
-      "number,title,url,baseRefName,headRefName,state,mergedAt,updatedAt,isCrossRepository,headRepository,headRepositoryOwner",
+      "number,title,url,baseRefName,headRefName,state,isDraft,mergedAt,updatedAt,isCrossRepository,headRepository,headRepositoryOwner",
     ]);
     assert.strictEqual(changeRequests[0]?.provider, "github");
     assert.strictEqual(changeRequests[0]?.state, "merged");
@@ -379,5 +379,20 @@ it("reports unauthenticated when GitHub JSON has accounts but none are valid", (
       host: Option.some("github.com"),
       detail: Option.some("The token in keyring is invalid."),
     },
+  );
+});
+
+it("reports an update hint instead of unauthenticated when gh predates --json", () => {
+  const auth = GitHubSourceControlProvider.discovery.parseAuth(
+    processResult("", {
+      stderr: "unknown flag: --json\n\nUsage:  gh auth status [flags]\n",
+      exitCode: ChildProcessSpawner.ExitCode(1),
+    }),
+  );
+
+  assert.strictEqual(auth.status, "unknown");
+  assert.match(
+    Option.getOrElse(auth.detail, () => ""),
+    /2\.81\.0/,
   );
 });

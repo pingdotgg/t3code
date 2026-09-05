@@ -1,14 +1,8 @@
 import { useCallback, useMemo, useRef, useState } from "react";
-import {
-  Platform,
-  PlatformColor,
-  Pressable,
-  StyleSheet,
-  View,
-  type AccessibilityActionEvent,
-} from "react-native";
+import { Pressable, StyleSheet, View, type AccessibilityActionEvent } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import { runOnJS } from "react-native-reanimated";
+import { cn } from "../../lib/cn";
 
 const ACCESSIBILITY_RESIZE_STEP = 24;
 
@@ -84,7 +78,13 @@ export function WorkspacePaneDivider(props: WorkspacePaneDividerProps) {
         onHoverIn={() => setHovered(true)}
         onHoverOut={() => setHovered(false)}
       >
-        <View style={[styles.line, (hovered || dragging) && styles.activeLine]} />
+        <View
+          className={cn(
+            "h-full self-center bg-border opacity-70",
+            hovered || dragging ? "w-0.5 bg-primary opacity-100" : "w-px",
+          )}
+          style={[styles.line, (hovered || dragging) && styles.activeLine]}
+        />
       </Pressable>
     </GestureDetector>
   );
@@ -93,15 +93,10 @@ export function WorkspacePaneDivider(props: WorkspacePaneDividerProps) {
 const styles = StyleSheet.create({
   line: {
     alignSelf: "center",
-    backgroundColor:
-      Platform.OS === "ios" ? PlatformColor("separator") : "rgba(120, 120, 128, 0.28)",
     height: "100%",
-    opacity: 0.7,
     width: StyleSheet.hairlineWidth,
   },
   activeLine: {
-    backgroundColor: Platform.OS === "ios" ? PlatformColor("systemBlueColor") : "#0a84ff",
-    opacity: 1,
     width: 2,
   },
 });

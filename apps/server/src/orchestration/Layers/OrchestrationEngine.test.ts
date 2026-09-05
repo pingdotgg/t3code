@@ -1,4 +1,11 @@
+// @effect-diagnostics nodeBuiltinImport:off
+import * as NodeFSP from "node:fs/promises";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+
 import {
+  ApprovalRequestId,
+  EventId,
   CheckpointRef,
   CommandId,
   DEFAULT_PROVIDER_INTERACTION_MODE,
@@ -10,6 +17,7 @@ import {
   ProviderInstanceId,
 } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { it as effectIt } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
@@ -17,12 +25,17 @@ import * as Metric from "effect/Metric";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
+import { TestClock } from "effect/testing";
 import { describe, expect, it } from "vite-plus/test";
 
 import { PersistenceSqlError } from "../../persistence/Errors.ts";
 import { OrchestrationCommandReceiptRepositoryLive } from "../../persistence/Layers/OrchestrationCommandReceipts.ts";
+import * as OrchestrationCommandReceipts from "../../persistence/Services/OrchestrationCommandReceipts.ts";
 import { OrchestrationEventStoreLive } from "../../persistence/Layers/OrchestrationEventStore.ts";
-import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
+import {
+  makeSqlitePersistenceLive,
+  SqlitePersistenceMemory,
+} from "../../persistence/Layers/Sqlite.ts";
 import {
   OrchestrationEventStore,
   type OrchestrationEventStoreShape,
@@ -46,32 +59,40 @@ const asMessageId = (value: string): MessageId => MessageId.make(value);
 const asTurnId = (value: string): TurnId => TurnId.make(value);
 const asCheckpointRef = (value: string): CheckpointRef => CheckpointRef.make(value);
 
-async function createOrchestrationSystem() {
+function makeOrchestrationLayer(databasePath?: string) {
+  const persistence = databasePath
+    ? makeSqlitePersistenceLive(databasePath)
+    : SqlitePersistenceMemory;
   const ServerConfigLayer = ServerConfig.layerTest(process.cwd(), {
     prefix: "t3-orchestration-engine-test-",
   });
-  const orchestrationLayer = Layer.mergeAll(
+  return Layer.mergeAll(
     OrchestrationEngineLive.pipe(
       Layer.provide(OrchestrationProjectionSnapshotQueryLive),
       Layer.provide(OrchestrationProjectionPipelineLive),
     ),
     OrchestrationProjectionSnapshotQueryLive,
   ).pipe(
-    Layer.provide(ThreadBackgroundLiveness.layer),
+    Layer.provideMerge(ThreadBackgroundLiveness.layer),
     Layer.provide(ThreadPlanProgress.layer),
     Layer.provide(OrchestrationEventStoreLive),
-    Layer.provide(OrchestrationCommandReceiptRepositoryLive),
+    Layer.provideMerge(OrchestrationCommandReceiptRepositoryLive),
     Layer.provide(RepositoryIdentityResolver.layer),
-    Layer.provide(SqlitePersistenceMemory),
+    Layer.provide(persistence),
     Layer.provideMerge(ServerConfigLayer),
     Layer.provideMerge(NodeServices.layer),
   );
-  const runtime = ManagedRuntime.make(orchestrationLayer);
+}
+
+async function createOrchestrationSystem(databasePath?: string) {
+  const runtime = ManagedRuntime.make(makeOrchestrationLayer(databasePath));
   const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
   const snapshotQuery = await runtime.runPromise(Effect.service(ProjectionSnapshotQuery));
   return {
     engine,
     readModel: () => runtime.runPromise(snapshotQuery.getSnapshot()),
+    readThread: (threadId: ThreadId) =>
+      runtime.runPromise(snapshotQuery.getThreadDetailById(threadId)),
     run: <A, E>(effect: Effect.Effect<A, E>) => runtime.runPromise(effect),
     dispose: () => runtime.dispose(),
   };
@@ -93,6 +114,196 @@ const hasMetricSnapshot = (
   );
 
 describe("OrchestrationEngine", () => {
+  it.each(["running", "stopped"] as const)(
+    "sends async answers with a %s session and rejects old duplicate replies",
+    async (status) => {
+      const directory = await NodeFSP.mkdtemp(
+        NodePath.join(NodeOS.tmpdir(), "t3-async-questions-"),
+      );
+      const databasePath = NodePath.join(directory, "state.sqlite");
+      let system = await createOrchestrationSystem(databasePath);
+      const threadId = ThreadId.make("async-thread");
+      const projectId = ProjectId.make("async-project");
+      const requestId = ApprovalRequestId.make("codex-async:question-1");
+      try {
+        await system.run(
+          system.engine.dispatch({
+            type: "project.create",
+            commandId: CommandId.make("async-project"),
+            projectId,
+            title: "Async questions",
+            workspaceRoot: "/tmp/async-questions",
+            createdAt: now(),
+          }),
+        );
+        await system.run(
+          system.engine.dispatch({
+            type: "thread.create",
+            commandId: CommandId.make("async-thread"),
+            threadId,
+            projectId,
+            title: "Async questions",
+            modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            createdAt: now(),
+          }),
+        );
+        await system.run(
+          system.engine.dispatch({
+            type: "thread.session.set",
+            commandId: CommandId.make("async-session"),
+            threadId,
+            createdAt: now(),
+            session: {
+              threadId,
+              status,
+              providerName: "codex",
+              runtimeMode: "full-access",
+              activeTurnId: status === "running" ? TurnId.make("turn-1") : null,
+              lastError: null,
+              updatedAt: now(),
+            },
+          }),
+        );
+        await system.run(
+          system.engine.dispatch({
+            type: "thread.activity.append",
+            commandId: CommandId.make("async-question"),
+            threadId,
+            createdAt: now(),
+            activity: {
+              id: EventId.make("async-question"),
+              kind: "user-input.requested",
+              summary: "User input requested",
+              tone: "info",
+              turnId: TurnId.make("turn-1"),
+              createdAt: now(),
+              payload: {
+                requestId,
+                responseMode: "message",
+                questions: [
+                  {
+                    id: "0",
+                    header: "Question",
+                    question: "Which package manager?",
+                    options: [{ label: "pnpm", description: "" }],
+                  },
+                  {
+                    id: "1",
+                    header: "Question",
+                    question: "What should it be named?",
+                    options: [],
+                  },
+                ],
+              },
+            },
+          }),
+        );
+        const appendWork = async (prefix: string, createdAt: string) => {
+          for (let index = 0; index < 501; index += 1) {
+            await system.run(
+              system.engine.dispatch({
+                type: "thread.activity.append",
+                commandId: CommandId.make(`${prefix}-${index}`),
+                threadId,
+                createdAt,
+                activity: {
+                  id: EventId.make(`${prefix}-${index}`),
+                  kind: "tool.completed",
+                  summary: "Work continued",
+                  payload: {},
+                  tone: "info",
+                  turnId: TurnId.make("turn-1"),
+                  createdAt,
+                },
+              }),
+            );
+          }
+        };
+        await appendWork("work", "2026-01-01T00:00:01.000Z");
+        const before = await system.readModel();
+        expect(
+          before.threads[0]?.activities.some((activity) => activity.id === "async-question"),
+        ).toBe(true);
+        if (status === "stopped") {
+          await system.dispose();
+          system = await createOrchestrationSystem(databasePath);
+        }
+        const response = {
+          type: "thread.user-input.respond" as const,
+          commandId: CommandId.make("async-response"),
+          threadId,
+          requestId,
+          answers: { "0": "pnpm", "1": "Example" },
+          createdAt: "2026-01-01T00:00:02.000Z",
+        };
+        await expect(
+          system.run(
+            system.engine.dispatch({
+              ...response,
+              commandId: CommandId.make("incomplete-answer"),
+              answers: { "0": "pnpm" },
+            }),
+          ),
+        ).rejects.toThrow("Answer each question before sending.");
+        await system.run(system.engine.dispatch(response));
+        const after = await system.readModel();
+        const userMessages = after.threads[0]?.messages.filter(
+          (message) => message.role === "user",
+        );
+        expect(userMessages).toHaveLength(1);
+        expect(userMessages?.[0]?.text).toBe(
+          "Which package manager?\npnpm\n\nWhat should it be named?\nExample",
+        );
+        expect(
+          after.threads[0]?.activities.find((activity) => activity.kind === "user-input.resolved")
+            ?.payload,
+        ).toMatchObject({ requestId, responseMode: "message", answers: response.answers });
+        const events = await system.run(Stream.runCollect(system.engine.readEvents(0)));
+        expect(
+          Array.from(events)
+            .filter((event) => event.commandId === response.commandId)
+            .map((event) => event.type),
+        ).toEqual([
+          "thread.activity-appended",
+          "thread.message-sent",
+          "thread.turn-start-requested",
+        ]);
+        await expect(
+          system.run(
+            system.engine.dispatch({
+              ...response,
+              commandId: CommandId.make("second-client-reply"),
+            }),
+          ),
+        ).rejects.toThrow("This question has already been answered.");
+        await appendWork("later-work", "2026-01-01T00:00:03.000Z");
+        const afterEviction = Option.getOrThrow(await system.readThread(threadId));
+        expect(
+          afterEviction.activities.some((activity) => activity.kind === "user-input.resolved"),
+        ).toBe(false);
+        if (status === "stopped") {
+          await system.dispose();
+          system = await createOrchestrationSystem(databasePath);
+        }
+        await expect(
+          system.run(
+            system.engine.dispatch({
+              ...response,
+              commandId: CommandId.make("reply-after-eviction"),
+            }),
+          ),
+        ).rejects.toThrow("This question has already been answered.");
+      } finally {
+        await system.dispose();
+        await NodeFSP.rm(directory, { recursive: true, force: true });
+      }
+    },
+  );
+
   it("bootstraps command handling from persisted projections without reading the full snapshot", async () => {
     let nextSequence = 8;
     const eventStore: OrchestrationEventStoreShape = {
@@ -113,6 +324,9 @@ describe("OrchestrationEngine", () => {
             detail: "historical replay should not be used during bootstrap",
           }),
         ),
+      hasEventAfter: () => Effect.succeed(false),
+      readAggregateRange: () => Stream.die("unused aggregate replay"),
+      getAggregateReplayStats: () => Effect.die("unused aggregate replay stats"),
     };
 
     const projectionSnapshot = {
@@ -176,6 +390,7 @@ describe("OrchestrationEngine", () => {
     const layer = OrchestrationEngineLive.pipe(
       Layer.provide(
         Layer.succeed(ProjectionSnapshotQuery, {
+          getUserInputActivity: () => Effect.die("unused"),
           getCommandReadModel: () => Effect.succeed(commandReadModel),
           getSnapshot: () =>
             Effect.sync(() => {
@@ -199,11 +414,13 @@ describe("OrchestrationEngine", () => {
           getSnapshotSequence: () =>
             Effect.succeed({ snapshotSequence: projectionSnapshot.snapshotSequence }),
           getCounts: () => Effect.succeed({ projectCount: 1, threadCount: 1 }),
+          getEventReplayStats: () => Effect.die("unused"),
           getActiveProjectByWorkspaceRoot: () => Effect.succeed(Option.none()),
           getProjectShellById: () => Effect.succeed(Option.none()),
           getFirstActiveThreadIdByProjectId: () => Effect.succeed(Option.none()),
           getThreadCheckpointContext: () => Effect.succeed(Option.none()),
           getFullThreadDiffContext: () => Effect.succeed(Option.none()),
+          getThreadRuntimeContext: () => Effect.die("unused"),
           getThreadShellById: () => Effect.succeed(Option.none()),
           getThreadDetailById: () => Effect.succeed(Option.none()),
           getThreadDetailSnapshot: () => Effect.succeed(Option.none()),
@@ -214,9 +431,11 @@ describe("OrchestrationEngine", () => {
         Layer.succeed(OrchestrationProjectionPipeline, {
           bootstrap: Effect.void,
           projectEvent: () => Effect.void,
+          projectEventDeferred: () => Effect.succeed(Effect.void),
         } satisfies OrchestrationProjectionPipelineShape),
       ),
       Layer.provide(Layer.succeed(OrchestrationEventStore, eventStore)),
+      Layer.provide(ThreadBackgroundLiveness.layer),
       Layer.provide(OrchestrationCommandReceiptRepositoryLive),
       Layer.provide(SqlitePersistenceMemory),
       Layer.provideMerge(NodeServices.layer),
@@ -241,6 +460,211 @@ describe("OrchestrationEngine", () => {
 
     await runtime.dispose();
   });
+
+  effectIt.effect("preserves the blocked-settle error and persists its rejected receipt", () =>
+    Effect.gen(function* () {
+      const engine = yield* OrchestrationEngineService;
+      const receipts = yield* OrchestrationCommandReceipts.OrchestrationCommandReceiptRepository;
+      const projectId = ProjectId.make("project-blocked-settle");
+      const threadId = ThreadId.make("thread-blocked-settle");
+      const commandId = CommandId.make("cmd-blocked-settle");
+      const createdAt = now();
+
+      yield* engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.make("cmd-blocked-settle-project-create"),
+        projectId,
+        title: "Project",
+        workspaceRoot: "/tmp/project-blocked-settle",
+        createdAt,
+      });
+      yield* engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("cmd-blocked-settle-thread-create"),
+        threadId,
+        projectId,
+        title: "Thread",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5-codex",
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "full-access",
+        branch: null,
+        worktreePath: null,
+        createdAt,
+      });
+      yield* engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-blocked-settle-session-set"),
+        threadId,
+        createdAt,
+        session: {
+          threadId,
+          status: "running",
+          providerName: "codex",
+          runtimeMode: "full-access",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: createdAt,
+        },
+      });
+
+      const sequence = yield* engine.latestSequence;
+      const error = yield* engine
+        .dispatch({ type: "thread.settle", commandId, threadId })
+        .pipe(Effect.flip);
+      const message =
+        "This thread still needs attention. Resolve or interrupt it first, then try again.";
+      expect(error).toMatchObject({
+        _tag: "OrchestrationThreadSettleBlockedError",
+        threadId,
+        message,
+      });
+      expect(Option.getOrNull(yield* receipts.getByCommandId({ commandId }))).toMatchObject({
+        commandId,
+        aggregateKind: "thread",
+        aggregateId: threadId,
+        status: "rejected",
+        error: message,
+        resultSequence: sequence,
+      });
+      expect(yield* engine.latestSequence).toBe(sequence);
+    }).pipe(Effect.provide(makeOrchestrationLayer())),
+  );
+
+  effectIt.effect(
+    "rejects persisted changes and live background work without blocking unrelated threads",
+    () =>
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(now()));
+        const engine = yield* OrchestrationEngineService;
+        const snapshots = yield* ProjectionSnapshotQuery;
+        const backgroundLiveness = yield* ThreadBackgroundLiveness.ThreadBackgroundLivenessService;
+        const projectId = ProjectId.make("project-auto-settle-guard");
+        const guardedThreadId = ThreadId.make("thread-auto-settle-guarded");
+        const unrelatedThreadId = ThreadId.make("thread-auto-settle-unrelated");
+        const liveThreadId = ThreadId.make("thread-auto-settle-live");
+
+        yield* engine.dispatch({
+          type: "project.create",
+          commandId: CommandId.make("cmd-auto-settle-guard-project"),
+          projectId,
+          title: "Project",
+          workspaceRoot: "/tmp/project-auto-settle-guard",
+          createdAt: now(),
+        });
+        for (const threadId of [guardedThreadId, unrelatedThreadId, liveThreadId]) {
+          yield* engine.dispatch({
+            type: "thread.create",
+            commandId: CommandId.make(`cmd-create-${threadId}`),
+            threadId,
+            projectId,
+            title: "Thread",
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("codex"),
+              model: "gpt-5-codex",
+            },
+            interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+            runtimeMode: "full-access",
+            branch: null,
+            worktreePath: null,
+            createdAt: now(),
+          });
+        }
+
+        const beforeUpdate = yield* snapshots.getSnapshot();
+        const snapshotSequence = beforeUpdate.snapshotSequence;
+        const originalUpdatedAt = beforeUpdate.threads.find(
+          (thread) => thread.id === guardedThreadId,
+        )?.updatedAt;
+        yield* engine.dispatch({
+          type: "thread.meta.update",
+          commandId: CommandId.make("cmd-auto-settle-guard-meta"),
+          threadId: guardedThreadId,
+          branch: "new-branch",
+        });
+        const afterUpdate = yield* snapshots.getSnapshot();
+        expect(afterUpdate.threads.find((thread) => thread.id === guardedThreadId)?.updatedAt).toBe(
+          originalUpdatedAt,
+        );
+
+        // Automatic settlement stamps the last activity, never the sweep time.
+        const lastActivityAt = "2025-12-20T00:00:00.000Z";
+        const staleError = yield* engine
+          .dispatch({
+            type: "thread.auto-settle",
+            commandId: CommandId.make("cmd-auto-settle-stale-snapshot"),
+            threadId: guardedThreadId,
+            snapshotSequence,
+            settledAt: lastActivityAt,
+          })
+          .pipe(Effect.flip);
+        expect(staleError._tag).toBe("OrchestrationCommandInvariantError");
+
+        const livenessSnapshotSequence = yield* engine.latestSequence;
+        for (const [taskType, expectedLiveness] of [
+          ["subagent", "working"],
+          ["local_bash", "monitoring"],
+        ] as const) {
+          backgroundLiveness.recordTaskLiveness({
+            threadId: liveThreadId,
+            taskId: `task-${expectedLiveness}`,
+            taskType,
+            status: undefined,
+            kind: "started",
+          });
+          expect(backgroundLiveness.getThreadBackgroundLiveness(liveThreadId)).toBe(
+            expectedLiveness,
+          );
+          expect(yield* engine.latestSequence).toBe(livenessSnapshotSequence);
+
+          const livenessError = yield* engine
+            .dispatch({
+              type: "thread.auto-settle",
+              commandId: CommandId.make(`cmd-auto-settle-${expectedLiveness}`),
+              threadId: liveThreadId,
+              snapshotSequence: livenessSnapshotSequence,
+              settledAt: lastActivityAt,
+            })
+            .pipe(Effect.flip);
+          expect(livenessError._tag).toBe("OrchestrationCommandInvariantError");
+          expect(yield* engine.latestSequence).toBe(livenessSnapshotSequence);
+          backgroundLiveness.clearThreadLiveness(liveThreadId);
+        }
+
+        yield* engine.dispatch({
+          type: "thread.auto-settle",
+          commandId: CommandId.make("cmd-auto-settle-after-liveness-cleared"),
+          threadId: liveThreadId,
+          snapshotSequence: livenessSnapshotSequence,
+          settledAt: lastActivityAt,
+        });
+
+        const freshSnapshotSequence = yield* engine.latestSequence;
+        yield* engine.dispatch({
+          type: "thread.meta.update",
+          commandId: CommandId.make("cmd-auto-settle-unrelated-meta"),
+          threadId: unrelatedThreadId,
+          title: "Unrelated update",
+        });
+        yield* engine.dispatch({
+          type: "thread.auto-settle",
+          commandId: CommandId.make("cmd-auto-settle-after-unrelated-update"),
+          threadId: guardedThreadId,
+          snapshotSequence: freshSnapshotSequence,
+          settledAt: lastActivityAt,
+        });
+
+        const settled = yield* snapshots.getSnapshot();
+        for (const threadId of [guardedThreadId, liveThreadId]) {
+          const thread = settled.threads.find((candidate) => candidate.id === threadId);
+          expect(thread?.settledOverride).toBe("settled");
+          expect(thread?.settledAt).toBe(lastActivityAt);
+          expect(thread?.updatedAt).toBe(now());
+        }
+      }).pipe(Effect.provide(makeOrchestrationLayer())),
+  );
 
   it("persists deterministic read models for repeated snapshot reads", async () => {
     const createdAt = now();
@@ -812,6 +1236,9 @@ describe("OrchestrationEngine", () => {
       readAll() {
         return Stream.fromIterable(events);
       },
+      hasEventAfter: () => Effect.succeed(false),
+      readAggregateRange: () => Stream.die("unused aggregate replay"),
+      getAggregateReplayStats: () => Effect.die("unused aggregate replay stats"),
     };
 
     const ServerConfigLayer = ServerConfig.layerTest(process.cwd(), {
@@ -907,7 +1334,8 @@ describe("OrchestrationEngine", () => {
     let shouldFailRequestedProjection = true;
     const flakyProjectionPipeline: OrchestrationProjectionPipelineShape = {
       bootstrap: Effect.void,
-      projectEvent: (event) => {
+      projectEvent: () => Effect.void,
+      projectEventDeferred: (event) => {
         if (
           shouldFailRequestedProjection &&
           event.commandId === CommandId.make("cmd-turn-start-atomic") &&
@@ -921,7 +1349,7 @@ describe("OrchestrationEngine", () => {
             }),
           );
         }
-        return Effect.void;
+        return Effect.succeed(Effect.void);
       },
     };
 
@@ -1048,12 +1476,16 @@ describe("OrchestrationEngine", () => {
       readAll() {
         return Stream.fromIterable(events);
       },
+      hasEventAfter: () => Effect.succeed(false),
+      readAggregateRange: () => Stream.die("unused aggregate replay"),
+      getAggregateReplayStats: () => Effect.die("unused aggregate replay stats"),
     };
 
     let shouldFailProjection = true;
     const flakyProjectionPipeline: OrchestrationProjectionPipelineShape = {
       bootstrap: Effect.void,
-      projectEvent: (event) => {
+      projectEvent: () => Effect.void,
+      projectEventDeferred: (event) => {
         if (
           shouldFailProjection &&
           event.commandId === CommandId.make("cmd-thread-archive-sync-fail")
@@ -1066,7 +1498,7 @@ describe("OrchestrationEngine", () => {
             }),
           );
         }
-        return Effect.void;
+        return Effect.succeed(Effect.void);
       },
     };
 
@@ -1227,6 +1659,206 @@ describe("OrchestrationEngine", () => {
         }),
       ),
     ).rejects.toThrow("already exists");
+
+    await system.dispose();
+  });
+
+  it("replays the accepted receipt for a genuine retry of the same command", async () => {
+    const createdAt = now();
+    const system = await createOrchestrationSystem();
+    const { engine } = system;
+
+    await system.run(
+      engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.make("cmd-retry-project-create"),
+        projectId: asProjectId("project-retry"),
+        title: "Retry Project",
+        workspaceRoot: "/tmp/project-retry",
+        defaultModelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5-codex",
+        },
+        createdAt,
+      }),
+    );
+    await system.run(
+      engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("cmd-retry-thread-create"),
+        threadId: ThreadId.make("thread-retry"),
+        projectId: asProjectId("project-retry"),
+        title: "retry",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5-codex",
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        branch: null,
+        worktreePath: null,
+        createdAt,
+      }),
+    );
+
+    const turnStart = {
+      type: "thread.turn.start",
+      commandId: CommandId.make("cmd-retry-turn-start"),
+      threadId: ThreadId.make("thread-retry"),
+      message: {
+        messageId: asMessageId("msg-retry"),
+        role: "user",
+        text: "hello",
+        attachments: [],
+      },
+      interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+      runtimeMode: "approval-required",
+      createdAt,
+    } as const;
+
+    const first = await system.run(engine.dispatch(turnStart));
+    const second = await system.run(engine.dispatch(turnStart));
+    expect(second.sequence).toBe(first.sequence);
+
+    const readModel = await system.readModel();
+    const thread = readModel.threads.find((candidate) => candidate.id === "thread-retry");
+    expect(thread?.messages.filter((message) => message.role === "user")).toHaveLength(1);
+
+    await system.dispose();
+  });
+
+  it("rejects reusing an accepted command id for a different aggregate", async () => {
+    const createdAt = now();
+    const system = await createOrchestrationSystem();
+    const { engine } = system;
+
+    await system.run(
+      engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.make("cmd-conflict-project-create"),
+        projectId: asProjectId("project-conflict"),
+        title: "Conflict Project",
+        workspaceRoot: "/tmp/project-conflict",
+        defaultModelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5-codex",
+        },
+        createdAt,
+      }),
+    );
+    for (const threadId of ["thread-conflict-a", "thread-conflict-b"]) {
+      await system.run(
+        engine.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make(`cmd-${threadId}-create`),
+          threadId: ThreadId.make(threadId),
+          projectId: asProjectId("project-conflict"),
+          title: threadId,
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5-codex",
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          branch: null,
+          worktreePath: null,
+          createdAt,
+        }),
+      );
+    }
+
+    await system.run(
+      engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-conflict-turn-start"),
+        threadId: ThreadId.make("thread-conflict-a"),
+        message: {
+          messageId: asMessageId("msg-conflict-a"),
+          role: "user",
+          text: "hello",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt,
+      }),
+    );
+
+    await expect(
+      system.run(
+        engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make("cmd-conflict-turn-start"),
+          threadId: ThreadId.make("thread-conflict-b"),
+          message: {
+            messageId: asMessageId("msg-conflict-b"),
+            role: "user",
+            text: "hello again",
+            attachments: [],
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          createdAt,
+        }),
+      ),
+    ).rejects.toThrow("already used for thread 'thread-conflict-a'");
+
+    const readModel = await system.readModel();
+    const targetThread = readModel.threads.find(
+      (candidate) => candidate.id === "thread-conflict-b",
+    );
+    expect(targetThread?.messages.filter((message) => message.role === "user")).toHaveLength(0);
+
+    await system.dispose();
+  });
+
+  it("stamps the dispatching client's origin onto persisted event metadata", async () => {
+    const createdAt = now();
+    const system = await createOrchestrationSystem();
+    const { engine } = system;
+
+    await system.run(
+      engine.dispatch(
+        {
+          type: "project.create",
+          commandId: CommandId.make("cmd-origin-project-create"),
+          projectId: asProjectId("project-origin"),
+          title: "Origin Project",
+          workspaceRoot: "/tmp/project-origin",
+          defaultModelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5-codex",
+          },
+          createdAt,
+        },
+        { origin: { surface: "mobile", appVersion: "1.2.3" } },
+      ),
+    );
+    await system.run(
+      engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.make("cmd-no-origin-project-create"),
+        projectId: asProjectId("project-no-origin"),
+        title: "No Origin Project",
+        workspaceRoot: "/tmp/project-no-origin",
+        defaultModelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5-codex",
+        },
+        createdAt,
+      }),
+    );
+
+    const events = await system.run(
+      Stream.runCollect(engine.readEvents(0)).pipe(Effect.map((chunk) => Array.from(chunk))),
+    );
+    const withOrigin = events.find((event) => event.commandId === "cmd-origin-project-create");
+    const withoutOrigin = events.find(
+      (event) => event.commandId === "cmd-no-origin-project-create",
+    );
+
+    expect(withOrigin?.metadata.origin).toEqual({ surface: "mobile", appVersion: "1.2.3" });
+    expect(withoutOrigin?.metadata.origin).toBeUndefined();
 
     await system.dispose();
   });
