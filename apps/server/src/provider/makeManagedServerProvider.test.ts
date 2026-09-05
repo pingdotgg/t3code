@@ -18,7 +18,7 @@ import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
 
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
-import { ServerSettingsService } from "../serverSettings.ts";
+import { resolveServerSettings, ServerSettingsService } from "../serverSettings.ts";
 import { makeManagedServerProvider } from "./makeManagedServerProvider.ts";
 
 const emptyCapabilities = createModelCapabilities({ optionDescriptors: [] });
@@ -298,11 +298,13 @@ describe("makeManagedServerProvider", () => {
           ServerSettingsService.of({
             start: Effect.void,
             ready: Effect.void,
-            getSettings: Ref.get(serverSettingsRef),
+            getSettings: Ref.get(serverSettingsRef).pipe(Effect.map(resolveServerSettings)),
             updateSettings: () => Effect.die(new Error("unused in this test")),
             streamChanges: Stream.empty,
             subscribeChanges: PubSub.subscribe(serverSettingsChanges).pipe(
-              Effect.map((subscription) => Stream.fromSubscription(subscription)),
+              Effect.map((subscription) =>
+                Stream.fromSubscription(subscription).pipe(Stream.map(resolveServerSettings)),
+              ),
             ),
           }),
         );

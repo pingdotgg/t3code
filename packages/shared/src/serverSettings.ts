@@ -26,28 +26,36 @@ const decodeServerSettingsJson = Schema.decodeUnknownOption(ServerSettingsJson);
 type LegacyProviderSettings = ServerSettings["providers"][keyof ServerSettings["providers"]];
 
 const getLegacyProviderSettings = (
-  settings: ServerSettings,
+  settings: Pick<ServerSettings, "providers">,
   provider: ProviderDriverKind,
 ): LegacyProviderSettings | undefined =>
   (settings.providers as Record<string, LegacyProviderSettings | undefined>)[provider];
 
 export function isModelSelectionProviderEnabled(
-  settings: ServerSettings,
+  settings: Pick<ServerSettings, "providerInstances"> & Partial<Pick<ServerSettings, "providers">>,
   selection: ModelSelection,
 ): boolean {
-  const instanceConfig = settings.providerInstances[selection.instanceId];
+  const instanceConfig = Object.hasOwn(settings.providerInstances, selection.instanceId)
+    ? settings.providerInstances[selection.instanceId]
+    : undefined;
   if (instanceConfig !== undefined) {
     return resolveProviderInstanceEnabled(instanceConfig);
   }
 
   return (
+    settings.providers !== undefined &&
     isProviderDriverKind(selection.instanceId) &&
-    getLegacyProviderSettings(settings, selection.instanceId)?.enabled === true
+    getLegacyProviderSettings({ providers: settings.providers }, selection.instanceId)?.enabled ===
+      true
   );
 }
 
 export function resolveSourceControlWriterModelSelection(
-  settings: ServerSettings,
+  settings: Pick<
+    ServerSettings,
+    "providerInstances" | "sourceControlWriterModelSelection" | "textGenerationModelSelection"
+  > &
+    Partial<Pick<ServerSettings, "providers">>,
   providers?: ReadonlyArray<ServerProvider>,
 ): ModelSelection {
   const selection = settings.sourceControlWriterModelSelection;

@@ -21,6 +21,7 @@ import {
   type UsageLimitSourceConfig,
   ProviderDriverKind,
   ProviderInstanceId,
+  resolveProviderInstanceEnabled,
   ServerSettings,
   ServerSettingsError,
   type ServerSettingsPatch,
@@ -59,17 +60,24 @@ export { resolveSourceControlWriterModelSelection } from "@t3tools/shared/server
 const encodeServerSettings = Schema.encodeEffect(ServerSettings);
 const encodeServerSettingsJson = Schema.encodeUnknownEffect(fromJsonStringPretty(ServerSettings));
 const decodeServerSettings = Schema.decodeUnknownEffect(ServerSettings);
+const legacyProviderReaders = Object.entries(ServerSettings.fields.providers.to.fields).map(
+  ([driver, schema]) => ({
+    driver,
+    decode: Schema.decodeUnknownOption(schema),
+    defaults: Schema.decodeUnknownSync(schema)({}),
+  }),
+);
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
 
+/** Runtime consumers use instance IDs. Legacy settings stay at the file and client boundaries. */
+export type RuntimeServerSettings = Omit<ServerSettings, "providers">;
+
 /**
- * Fold the legacy in-config `enabled` flag into the envelope-level
- * `ProviderInstanceConfig.enabled` and strip it from the config blob, so
- * explicit provider instances carry exactly one enabled flag. Old settings
- * files can hold both flags with conflicting values; an explicit false on
- * either side wins so a user's disable is never silently undone. Runs on
- * every load and update — the file converges on the next write.
+ * Move old built-in `enabled` flags into the instance envelope. An explicit
+ * false on either flag wins. Unknown driver configs stay unchanged. The next
+ * settings write persists the normalized flags.
  */
 const foldProviderInstanceEnabledFlags = (settings: ServerSettings): ServerSettings => {
   let changed = false;
@@ -80,6 +88,7 @@ const foldProviderInstanceEnabledFlags = (settings: ServerSettings): ServerSetti
     // stay in the blob so driver schema validation flags it instead of the
     // fold silently repairing the config.
     if (
+      !Object.hasOwn(DEFAULT_SERVER_SETTINGS.providers, instance.driver) ||
       config === null ||
       typeof config !== "object" ||
       Array.isArray(config) ||
@@ -110,6 +119,62 @@ const foldProviderInstanceEnabledFlags = (settings: ServerSettings): ServerSetti
     providerInstances: providerInstances as ServerSettings["providerInstances"],
   };
 };
+
+/** Convert old default-provider settings before they reach the runtime. Explicit entries win. */
+export function resolveServerSettings(settings: ServerSettings): RuntimeServerSettings {
+  const { providers, ...resolved } = foldProviderInstanceEnabledFlags(settings);
+  const providerInstances: Record<ProviderInstanceId, ProviderInstanceConfig> = Object.fromEntries(
+    Object.entries(resolved.providerInstances).map(([instanceId, instance]) => [
+      instanceId,
+      Object.hasOwn(providers, instance.driver)
+        ? { ...instance, enabled: resolveProviderInstanceEnabled(instance) }
+        : instance,
+    ]),
+  );
+  for (const [driver, { enabled, ...config }] of Object.entries(providers)) {
+    const instanceId = ProviderInstanceId.make(driver);
+    if (Object.hasOwn(providerInstances, instanceId)) continue;
+    providerInstances[instanceId] = { driver: ProviderDriverKind.make(driver), enabled, config };
+  }
+  return { ...resolved, providerInstances };
+}
+
+/** Do not turn unchanged legacy defaults into explicit overrides when clients save the full map. */
+function applySettingsPatch(current: ServerSettings, patch: ServerSettingsPatch): ServerSettings {
+  const next = applyServerSettingsPatch(current, patch);
+  if (patch.providerInstances === undefined) return next;
+  const legacyInstances = resolveServerSettings({
+    ...next,
+    providerInstances: {},
+  }).providerInstances;
+  return {
+    ...next,
+    providerInstances: Object.fromEntries(
+      Object.entries(next.providerInstances).filter(
+        ([instanceId, instance]) =>
+          Object.hasOwn(current.providerInstances, instanceId) ||
+          !Equal.equals(instance, legacyInstances[ProviderInstanceId.make(instanceId)]),
+      ),
+    ),
+  };
+}
+
+/** Keep old clients readable without exposing a second settings source to runtime code. */
+function legacyProvidersForClient(settings: RuntimeServerSettings): ServerSettings["providers"] {
+  const entries = legacyProviderReaders.map(({ driver, decode, defaults }) => {
+    const instance = settings.providerInstances[ProviderInstanceId.make(driver)];
+    const decoded = decode(instance?.config ?? {});
+    const config = Option.getOrElse(decoded, () => defaults);
+    return [
+      driver,
+      {
+        ...config,
+        enabled: instance?.driver === driver && Option.isSome(decoded) && instance.enabled === true,
+      },
+    ];
+  });
+  return Object.fromEntries(entries) as ServerSettings["providers"];
+}
 
 const normalizeServerSettings = (
   settings: ServerSettings,
@@ -159,7 +224,7 @@ function redactProviderEnvironmentVariable(
   };
 }
 
-export function redactServerSettingsForClient(settings: ServerSettings): ServerSettings {
+export function redactServerSettingsForClient(settings: RuntimeServerSettings): ServerSettings {
   const providerInstances = Object.fromEntries(
     Object.entries(settings.providerInstances).map(([instanceId, instance]) => [
       instanceId,
@@ -181,7 +246,12 @@ export function redactServerSettingsForClient(settings: ServerSettings): ServerS
       },
     ]),
   );
-  return { ...settings, providerInstances, usageLimitSources };
+  return {
+    ...settings,
+    providers: legacyProvidersForClient(settings),
+    providerInstances,
+    usageLimitSources,
+  };
 }
 
 export class ServerSettingsService extends Context.Service<
@@ -194,22 +264,26 @@ export class ServerSettingsService extends Context.Service<
     readonly ready: Effect.Effect<void, ServerSettingsError>;
 
     /** Read the current settings. */
-    readonly getSettings: Effect.Effect<ServerSettings, ServerSettingsError>;
+    readonly getSettings: Effect.Effect<RuntimeServerSettings, ServerSettingsError>;
 
     /** Patch settings and persist. Returns the new full settings object. */
     readonly updateSettings: (
       patch: ServerSettingsPatch,
-    ) => Effect.Effect<ServerSettings, ServerSettingsError>;
+    ) => Effect.Effect<RuntimeServerSettings, ServerSettingsError>;
 
     /** Stream of settings change events. */
-    readonly streamChanges: Stream.Stream<ServerSettings>;
+    readonly streamChanges: Stream.Stream<RuntimeServerSettings>;
 
     /**
      * Acquire a settings change subscription synchronously in the current
      * fiber. Use this before reading a snapshot when changes between the
      * snapshot and a lazily started stream must not be lost.
      */
-    readonly subscribeChanges: Effect.Effect<Stream.Stream<ServerSettings>, never, Scope.Scope>;
+    readonly subscribeChanges: Effect.Effect<
+      Stream.Stream<RuntimeServerSettings>,
+      never,
+      Scope.Scope
+    >;
   }
 >()("t3/serverSettings/ServerSettingsService") {
   /** @deprecated Import and use `layerTest` from this module. */
@@ -235,12 +309,16 @@ const makeTest = (overrides: DeepPartial<ServerSettings> = {}) =>
     return {
       start: Effect.void,
       ready: Effect.void,
-      getSettings: Ref.get(currentSettingsRef).pipe(Effect.map(resolveTextGenerationProvider)),
+      getSettings: Ref.get(currentSettingsRef).pipe(
+        Effect.map(resolveServerSettings),
+        Effect.map(resolveTextGenerationProvider),
+      ),
       updateSettings: (patch) =>
         Ref.get(currentSettingsRef).pipe(
-          Effect.map((currentSettings) => applyServerSettingsPatch(currentSettings, patch)),
+          Effect.map((currentSettings) => applySettingsPatch(currentSettings, patch)),
           Effect.flatMap(normalizeServerSettings),
           Effect.tap((nextSettings) => Ref.set(currentSettingsRef, nextSettings)),
+          Effect.map(resolveServerSettings),
           Effect.map(resolveTextGenerationProvider),
         ),
       streamChanges: Stream.empty,
@@ -314,15 +392,25 @@ function restoreUsedProviders(
   };
 }
 
-function resolveTextGenerationProvider(settings: ServerSettings): ServerSettings {
+function resolveTextGenerationProvider(settings: RuntimeServerSettings): RuntimeServerSettings {
   return isModelSelectionProviderEnabled(settings, settings.textGenerationModelSelection)
     ? settings
     : fallbackTextGenerationProvider(settings);
 }
 
-function fallbackTextGenerationProvider(settings: ServerSettings): ServerSettings {
-  const fallbackEntry = Object.entries(settings.providers).find(([, provider]) => provider.enabled);
-  const fallback = fallbackEntry ? ProviderDriverKind.make(fallbackEntry[0]) : undefined;
+function fallbackTextGenerationProvider(settings: RuntimeServerSettings): RuntimeServerSettings {
+  let fallback = Object.entries(settings.providerInstances).find(
+    ([, instance]) => instance.enabled && Object.hasOwn(DEFAULT_MODEL_BY_PROVIDER, instance.driver),
+  );
+  // Keep the default-provider order, but never bypass an instance's disabled flag.
+  for (const driver of Object.keys(DEFAULT_MODEL_BY_PROVIDER)) {
+    const instanceId = ProviderInstanceId.make(driver);
+    const instance = settings.providerInstances[instanceId];
+    if (instance?.driver === driver && instance.enabled) {
+      fallback = [instanceId, instance];
+      break;
+    }
+  }
   if (!fallback) {
     return settings;
   }
@@ -330,10 +418,10 @@ function fallbackTextGenerationProvider(settings: ServerSettings): ServerSetting
   return {
     ...settings,
     textGenerationModelSelection: {
-      instanceId: ProviderInstanceId.make(fallback),
+      instanceId: ProviderInstanceId.make(fallback[0]),
       model:
-        DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER[fallback] ??
-        DEFAULT_MODEL_BY_PROVIDER[fallback] ??
+        DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER[fallback[1].driver] ??
+        DEFAULT_MODEL_BY_PROVIDER[fallback[1].driver] ??
         DEFAULT_TEXT_GENERATION_MODEL,
     } satisfies ModelSelection,
   };
@@ -573,6 +661,7 @@ const make = Effect.gen(function* () {
           ),
         ),
       ),
+      Stream.map(resolveServerSettings),
       Stream.map(resolveTextGenerationProvider),
     );
 
@@ -817,6 +906,7 @@ const make = Effect.gen(function* () {
     ready: Deferred.await(startedDeferred),
     getSettings: getSettingsFromCache.pipe(
       Effect.flatMap(materializeProviderEnvironmentSecrets),
+      Effect.map(resolveServerSettings),
       Effect.map(resolveTextGenerationProvider),
     ),
     updateSettings: (patch) =>
@@ -825,14 +915,14 @@ const make = Effect.gen(function* () {
           const current = yield* getSettingsFromCache;
           const nextPersisted = yield* persistProviderEnvironmentSecrets(
             current,
-            applyServerSettingsPatch(current, patch),
+            applySettingsPatch(current, patch),
           );
           const next = yield* normalizeServerSettings(nextPersisted);
           yield* writeSettingsAtomically(next);
           yield* Cache.set(settingsCache, cacheKey, next);
           yield* emitChange(next);
           const materialized = yield* materializeProviderEnvironmentSecrets(next);
-          return resolveTextGenerationProvider(materialized);
+          return resolveTextGenerationProvider(resolveServerSettings(materialized));
         }),
       ),
     get streamChanges() {

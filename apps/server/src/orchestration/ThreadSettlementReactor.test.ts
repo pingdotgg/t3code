@@ -31,7 +31,7 @@ import {
   type PullRequestMergeEvent,
 } from "../pullRequest/PullRequestService.ts";
 import { ServerActivation } from "../serverActivation.ts";
-import { ServerSettingsService } from "../serverSettings.ts";
+import { resolveServerSettings, ServerSettingsService } from "../serverSettings.ts";
 import { OrchestrationCommandInvariantError } from "./Errors.ts";
 import {
   OrchestrationEngineService,
@@ -206,11 +206,13 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
   const serverSettings = ServerSettingsService.of({
     start: Effect.void,
     ready: Effect.void,
-    getSettings: Ref.get(settings),
-    updateSettings,
-    streamChanges: Stream.fromPubSub(settingsChanges),
+    getSettings: Ref.get(settings).pipe(Effect.map(resolveServerSettings)),
+    updateSettings: (patch) => updateSettings(patch).pipe(Effect.map(resolveServerSettings)),
+    streamChanges: Stream.fromPubSub(settingsChanges).pipe(Stream.map(resolveServerSettings)),
     subscribeChanges: PubSub.subscribe(settingsChanges).pipe(
-      Effect.map((subscription) => Stream.fromSubscription(subscription)),
+      Effect.map((subscription) =>
+        Stream.fromSubscription(subscription).pipe(Stream.map(resolveServerSettings)),
+      ),
     ),
   });
 

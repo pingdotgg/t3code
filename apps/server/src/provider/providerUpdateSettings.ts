@@ -12,7 +12,7 @@ export interface ProviderSnapshotSettings<Settings> {
 
 export function makeProviderSnapshotSettings<Settings>(
   provider: Settings,
-  settings: ServerSettings,
+  settings: Pick<ServerSettings, "enableProviderUpdateChecks">,
 ): ProviderSnapshotSettings<Settings> {
   return {
     provider,
@@ -34,7 +34,7 @@ export function makeProviderSnapshotSettingsSource<Settings>(
   readonly getSettings: Effect.Effect<ProviderSnapshotSettings<Settings>, ServerSettingsError>;
   readonly streamSettings: Stream.Stream<ProviderSnapshotSettings<Settings>>;
 } {
-  const mapSettings = (settings: ServerSettings) =>
+  const mapSettings = (settings: Pick<ServerSettings, "enableProviderUpdateChecks">) =>
     makeProviderSnapshotSettings(provider, settings);
   return {
     getSettings: serverSettings.getSettings.pipe(Effect.map(mapSettings)),

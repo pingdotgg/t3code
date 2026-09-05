@@ -42,7 +42,7 @@ function resolveHomePath(path: Path.Path, value: string | undefined): string {
 }
 
 export const resolveCodexHomeLayout = Effect.fn("resolveCodexHomeLayout")(function* (
-  config: CodexSettings,
+  config: Pick<CodexSettings, "homePath" | "shadowHomePath">,
 ): Effect.fn.Return<CodexHomeLayout, never, Path.Path> {
   const path = yield* Path.Path;
   const sharedHomePath = resolveHomePath(path, config.homePath);

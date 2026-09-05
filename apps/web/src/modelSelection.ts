@@ -43,15 +43,10 @@ const DEFAULT_TEXT_GENERATION_INSTANCE_ID = ProviderInstanceId.make("codex");
  * present and falling back to the legacy per-kind
  * `settings.providers[kind].customModels` bucket for default instances only.
  *
- * The Settings UI promotes the legacy bucket into an explicit
- * `providerInstances[defaultId]` entry on every edit (the "migrate on
- * first write" scheme documented in
- * `ProviderInstanceRegistryHydration`), so this helper exists primarily
- * so readers pick up that promotion immediately — and so first-time
- * viewers on pre-migration settings still see their legacy list on
- * default slots. Custom instances intentionally do not read the legacy
- * per-driver bucket; otherwise one custom model added to `claude_openrouter`
- * can appear on the stock `claudeAgent` instance.
+ * Current servers include default instances in the map. The legacy fallback
+ * supports older servers that omit them. Custom instances never read the
+ * legacy per-driver bucket, so one account's custom models cannot appear
+ * on another account.
  */
 function readInstanceCustomModels(
   settings: UnifiedSettings,

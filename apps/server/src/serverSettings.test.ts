@@ -27,6 +27,11 @@ import { resolveProviderInstanceTerminalEnvironment } from "./terminal/Manager.t
 
 const decodeSettingsPatch = Schema.decodeUnknownEffect(ServerSettingsPatch);
 const decodeServerSettings = Schema.decodeUnknownEffect(ServerSettings);
+const encodeServerSettings = Schema.encodeEffect(ServerSettings);
+const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
+const decodePersistedServerSettings = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(ServerSettings),
+);
 
 const makeServerSettingsLayer = () =>
   ServerSettingsModule.layer.pipe(
@@ -221,7 +226,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         },
       });
 
-      assert.deepEqual(next.providers.codex, {
+      assert.deepEqual(ServerSettingsModule.redactServerSettingsForClient(next).providers.codex, {
         enabled: true,
         binaryPath: "/opt/homebrew/bin/codex",
         homePath: "/Users/julius/.codex",
@@ -229,14 +234,17 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         launchArgs: "",
         customModels: [],
       });
-      assert.deepEqual(next.providers.claudeAgent, {
-        enabled: true,
-        binaryPath: "/usr/local/bin/claude",
-        homePath: "",
-        customModels: ["claude-custom"],
-        launchArgs: "",
-        autoCompactWindow: "",
-      });
+      assert.deepEqual(
+        ServerSettingsModule.redactServerSettingsForClient(next).providers.claudeAgent,
+        {
+          enabled: true,
+          binaryPath: "/usr/local/bin/claude",
+          homePath: "",
+          customModels: ["claude-custom"],
+          launchArgs: "",
+          autoCompactWindow: "",
+        },
+      );
       assert.deepEqual(
         next.textGenerationModelSelection,
         createModelSelection(
@@ -247,6 +255,217 @@ it.layer(NodeServices.layer)("server settings", (it) => {
             { id: "fastMode", value: false },
           ],
         ),
+      );
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  it.effect(
+    "normalizes legacy settings and keeps instance overrides stable after save and reload",
+    () =>
+      Effect.gen(function* () {
+        const config = yield* ServerConfig.ServerConfig;
+        const fs = yield* FileSystem.FileSystem;
+        const settingsService = yield* ServerSettingsModule.ServerSettingsService;
+        const forkConfig = {
+          enabled: false,
+          endpoint: "https://provider.example",
+          extra: { mode: "fork" },
+        };
+        yield* fs.writeFileString(
+          config.settingsPath,
+          yield* encodeJson({
+            providers: {
+              codex: { enabled: true, homePath: "/old/codex" },
+              opencode: { serverUrl: "http://127.0.0.1:4096" },
+            },
+            providerInstances: {
+              codex: {
+                driver: "codex",
+                enabled: false,
+                config: { enabled: true, homePath: "/new/codex" },
+              },
+              fork_work: { driver: "fork", config: forkConfig },
+            },
+          }),
+        );
+        yield* recordProviderUsage("opencode");
+
+        const initial = yield* settingsService.getSettings;
+        assert.notProperty(initial, "providers");
+        assert.deepEqual(initial.providerInstances[ProviderInstanceId.make("codex")], {
+          driver: ProviderDriverKind.make("codex"),
+          enabled: false,
+          config: { homePath: "/new/codex" },
+        });
+        assert.deepInclude(initial.providerInstances[ProviderInstanceId.make("opencode")], {
+          enabled: true,
+          config: {
+            binaryPath: "opencode",
+            serverUrl: "http://127.0.0.1:4096",
+            serverPassword: "",
+            customModels: [],
+          },
+        });
+        assert.deepEqual(
+          initial.providerInstances[ProviderInstanceId.make("fork_work")]?.config,
+          forkConfig,
+        );
+        assert.notProperty(
+          initial.providerInstances[ProviderInstanceId.make("fork_work")],
+          "enabled",
+        );
+
+        const saved = yield* settingsService.updateSettings({
+          providerInstances: initial.providerInstances,
+        });
+        const reloaded = yield* Effect.gen(function* () {
+          return yield* (yield* ServerSettingsModule.ServerSettingsService).getSettings;
+        }).pipe(
+          Effect.provide(
+            Layer.fresh(ServerSettingsModule.layer.pipe(Layer.provide(ServerSecretStore.layer))),
+          ),
+        );
+        assert.deepEqual(reloaded.providerInstances, saved.providerInstances);
+
+        const clientSettings = ServerSettingsModule.redactServerSettingsForClient(reloaded);
+        assert.isFalse(clientSettings.providers.codex.enabled);
+        assert.equal(clientSettings.providers.codex.homePath, "/new/codex");
+        assert.deepEqual(
+          clientSettings.providerInstances[ProviderInstanceId.make("fork_work")]?.config,
+          forkConfig,
+        );
+        assert.deepEqual(
+          yield* decodeServerSettings(yield* encodeServerSettings(clientSettings)),
+          clientSettings,
+        );
+      }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  it.effect(
+    "does not use a legacy enabled flag to select a disabled text generation instance",
+    () =>
+      Effect.gen(function* () {
+        const settings = yield* ServerSettingsModule.ServerSettingsService;
+        const result = yield* settings.updateSettings({
+          providerInstances: {
+            [ProviderInstanceId.make("codex")]: {
+              driver: ProviderDriverKind.make("codex"),
+              enabled: false,
+            },
+          },
+        });
+        assert.equal(result.textGenerationModelSelection.instanceId, "claudeAgent");
+        assert.isFalse(result.providerInstances[ProviderInstanceId.make("codex")]?.enabled);
+
+        const customOnly = yield* settings.updateSettings({
+          providerInstances: {
+            ...result.providerInstances,
+            [ProviderInstanceId.make("claudeAgent")]: {
+              driver: ProviderDriverKind.make("claudeAgent"),
+              enabled: false,
+            },
+            [ProviderInstanceId.make("codex_work")]: {
+              driver: ProviderDriverKind.make("codex"),
+              enabled: true,
+            },
+          },
+        });
+        assert.equal(customOnly.textGenerationModelSelection.instanceId, "codex_work");
+
+        const unknownOnly = yield* settings.updateSettings({
+          providerInstances: {
+            ...result.providerInstances,
+            [ProviderInstanceId.make("claudeAgent")]: {
+              driver: ProviderDriverKind.make("claudeAgent"),
+              enabled: false,
+            },
+            [ProviderInstanceId.make("unknown")]: {
+              driver: ProviderDriverKind.make("constructor"),
+              enabled: true,
+            },
+          },
+        });
+        assert.equal(unknownOnly.textGenerationModelSelection.instanceId, "codex");
+      }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  it.effect("does not pin untouched legacy providers when a client saves the normalized map", () =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const fs = yield* FileSystem.FileSystem;
+      const service = yield* ServerSettingsModule.ServerSettingsService;
+      const initial = ServerSettingsModule.redactServerSettingsForClient(
+        yield* service.getSettings,
+      );
+      const claudeId = ProviderInstanceId.make("claudeAgent");
+      const codexId = ProviderInstanceId.make("codex");
+      const patch = yield* decodeSettingsPatch({
+        providers: { claudeAgent: DEFAULT_SERVER_SETTINGS.providers.claudeAgent },
+        providerInstances: {
+          ...initial.providerInstances,
+          [claudeId]: {
+            driver: "claudeAgent",
+            enabled: true,
+            config: { homePath: "/configured/claude" },
+          },
+        },
+      });
+      yield* service.updateSettings(patch);
+      const persisted = yield* decodePersistedServerSettings(
+        yield* fs.readFileString(config.settingsPath),
+      );
+      assert.deepEqual(Object.keys(persisted.providerInstances), [claudeId]);
+
+      const changed = yield* service.updateSettings({ providers: { codex: { enabled: false } } });
+      assert.isFalse(changed.providerInstances[codexId]?.enabled);
+      assert.deepEqual(changed.providerInstances[claudeId]?.config, {
+        homePath: "/configured/claude",
+      });
+
+      const { [claudeId]: _removed, ...remainingInstances } = changed.providerInstances;
+      const reset = yield* service.updateSettings({
+        providers: { claudeAgent: DEFAULT_SERVER_SETTINGS.providers.claudeAgent },
+        providerInstances: remainingInstances,
+      });
+      assert.equal(
+        ServerSettingsModule.redactServerSettingsForClient(reset).providers.claudeAgent.homePath,
+        "",
+      );
+      assert.isFalse(reset.providerInstances[codexId]?.enabled);
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  it.effect("preserves invalid and unknown instance configs in client settings", () =>
+    Effect.gen(function* () {
+      const service = yield* ServerSettingsModule.ServerSettingsService;
+      const invalidConfig = { enabled: "invalid", binaryPath: 42 };
+      const unknownConfig = { enabled: true, mode: "custom" };
+      const settings = yield* service.updateSettings({
+        providerInstances: {
+          [ProviderInstanceId.make("codex")]: {
+            driver: ProviderDriverKind.make("codex"),
+            config: invalidConfig,
+          },
+          [ProviderInstanceId.make("claudeAgent")]: {
+            driver: ProviderDriverKind.make("fork"),
+            config: unknownConfig,
+          },
+        },
+      });
+      const clientSettings = ServerSettingsModule.redactServerSettingsForClient(settings);
+      assert.isFalse(clientSettings.providers.codex.enabled);
+      assert.isFalse(clientSettings.providers.claudeAgent.enabled);
+      assert.deepEqual(
+        clientSettings.providerInstances[ProviderInstanceId.make("codex")]?.config,
+        invalidConfig,
+      );
+      assert.deepEqual(
+        clientSettings.providerInstances[ProviderInstanceId.make("claudeAgent")]?.config,
+        unknownConfig,
+      );
+      assert.deepEqual(
+        yield* decodeServerSettings(yield* encodeServerSettings(clientSettings)),
+        clientSettings,
       );
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
@@ -267,7 +486,9 @@ it.layer(NodeServices.layer)("server settings", (it) => {
 
         const firstChange = yield* changes.pipe(Stream.runHead, Effect.timeout("1 second"));
         assert.equal(
-          Option.getOrUndefined(firstChange)?.providers.codex.binaryPath,
+          Option.getOrUndefined(
+            Option.map(firstChange, ServerSettingsModule.redactServerSettingsForClient),
+          )?.providers.codex.binaryPath,
           "/usr/local/bin/codex-next",
         );
       }),
@@ -600,10 +821,13 @@ it.layer(NodeServices.layer)("server settings", (it) => {
 
       const settings = yield* serverSettings.getSettings;
 
-      assert.isFalse(settings.providers.grok.enabled);
-      assert.isTrue(settings.providers.opencode.enabled);
-      assert.isFalse(settings.providers.cursor.enabled);
-      assert.equal(settings.providers.opencode.serverUrl, "http://127.0.0.1:4096");
+      assert.isFalse(settings.providerInstances[ProviderInstanceId.make("grok")]?.enabled);
+      assert.isTrue(settings.providerInstances[ProviderInstanceId.make("opencode")]?.enabled);
+      assert.isFalse(settings.providerInstances[ProviderInstanceId.make("cursor")]?.enabled);
+      assert.equal(
+        ServerSettingsModule.redactServerSettingsForClient(settings).providers.opencode.serverUrl,
+        "http://127.0.0.1:4096",
+      );
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
@@ -622,7 +846,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
 
       const settings = yield* serverSettings.getSettings;
 
-      assert.isTrue(settings.providers.cursor.enabled);
+      assert.isTrue(settings.providerInstances[ProviderInstanceId.make("cursor")]?.enabled);
       assert.isTrue(settings.providerInstances[ProviderInstanceId.make("cursor_work")]?.enabled);
       assert.isTrue(settings.providerInstances[ProviderInstanceId.make("grok")]?.enabled);
       assert.isTrue(settings.providerInstances[ProviderInstanceId.make("opencode_work")]?.enabled);
@@ -647,9 +871,6 @@ it.layer(NodeServices.layer)("server settings", (it) => {
 
       const settings = yield* serverSettings.getSettings;
 
-      assert.isFalse(settings.providers.grok.enabled);
-      assert.isFalse(settings.providers.opencode.enabled);
-      assert.isFalse(settings.providers.cursor.enabled);
       assert.isFalse(settings.providerInstances[ProviderInstanceId.make("grok")]?.enabled);
       assert.isFalse(settings.providerInstances[ProviderInstanceId.make("opencode")]?.enabled);
       assert.isFalse(settings.providerInstances[ProviderInstanceId.make("cursor")]?.enabled);
@@ -665,9 +886,9 @@ it.layer(NodeServices.layer)("server settings", (it) => {
 
       const settings = yield* serverSettings.getSettings;
 
-      assert.isFalse(settings.providers.grok.enabled);
-      assert.isFalse(settings.providers.opencode.enabled);
-      assert.isFalse(settings.providers.cursor.enabled);
+      assert.isFalse(settings.providerInstances[ProviderInstanceId.make("grok")]?.enabled);
+      assert.isFalse(settings.providerInstances[ProviderInstanceId.make("opencode")]?.enabled);
+      assert.isFalse(settings.providerInstances[ProviderInstanceId.make("cursor")]?.enabled);
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
@@ -678,9 +899,9 @@ it.layer(NodeServices.layer)("server settings", (it) => {
 
       const settings = yield* serverSettings.getSettings;
 
-      assert.isTrue(settings.providers.grok.enabled);
-      assert.isFalse(settings.providers.opencode.enabled);
-      assert.isFalse(settings.providers.cursor.enabled);
+      assert.isTrue(settings.providerInstances[ProviderInstanceId.make("grok")]?.enabled);
+      assert.isFalse(settings.providerInstances[ProviderInstanceId.make("opencode")]?.enabled);
+      assert.isFalse(settings.providerInstances[ProviderInstanceId.make("cursor")]?.enabled);
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
@@ -694,9 +915,9 @@ it.layer(NodeServices.layer)("server settings", (it) => {
 
       const settings = yield* serverSettings.getSettings;
 
-      assert.isTrue(settings.providers.cursor.enabled);
-      assert.isFalse(settings.providers.grok.enabled);
-      assert.isFalse(settings.providers.opencode.enabled);
+      assert.isTrue(settings.providerInstances[ProviderInstanceId.make("cursor")]?.enabled);
+      assert.isFalse(settings.providerInstances[ProviderInstanceId.make("grok")]?.enabled);
+      assert.isFalse(settings.providerInstances[ProviderInstanceId.make("opencode")]?.enabled);
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
@@ -713,9 +934,9 @@ it.layer(NodeServices.layer)("server settings", (it) => {
 
       const settings = yield* serverSettings.getSettings;
 
-      assert.isFalse(settings.providers.cursor.enabled);
-      assert.isTrue(settings.providers.grok.enabled);
-      assert.isFalse(settings.providers.opencode.enabled);
+      assert.isFalse(settings.providerInstances[ProviderInstanceId.make("cursor")]?.enabled);
+      assert.isTrue(settings.providerInstances[ProviderInstanceId.make("grok")]?.enabled);
+      assert.isFalse(settings.providerInstances[ProviderInstanceId.make("opencode")]?.enabled);
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
@@ -744,9 +965,9 @@ it.layer(NodeServices.layer)("server settings", (it) => {
 
       const settings = yield* serverSettings.getSettings;
 
-      assert.isFalse(settings.providers.grok.enabled);
-      assert.isTrue(settings.providers.opencode.enabled);
-      assert.isFalse(settings.providers.cursor.enabled);
+      assert.isFalse(settings.providerInstances[ProviderInstanceId.make("grok")]?.enabled);
+      assert.isTrue(settings.providerInstances[ProviderInstanceId.make("opencode")]?.enabled);
+      assert.isFalse(settings.providerInstances[ProviderInstanceId.make("cursor")]?.enabled);
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
@@ -757,12 +978,15 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
       yield* recordProviderUsage("grok");
 
-      assert.isTrue((yield* serverSettings.getSettings).providers.grok.enabled);
+      assert.isTrue(
+        (yield* serverSettings.getSettings).providerInstances[ProviderInstanceId.make("grok")]
+          ?.enabled,
+      );
 
       const settings = yield* serverSettings.updateSettings({
         providers: { grok: { enabled: false } },
       });
-      assert.isFalse(settings.providers.grok.enabled);
+      assert.isFalse(settings.providerInstances[ProviderInstanceId.make("grok")]?.enabled);
 
       const raw = yield* fileSystem.readFileString(serverConfig.settingsPath);
       // @effect-diagnostics-next-line preferSchemaOverJson:off
@@ -801,9 +1025,9 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
 
       const initial = yield* serverSettings.getSettings;
-      assert.isFalse(initial.providers.grok.enabled);
-      assert.isFalse(initial.providers.opencode.enabled);
-      assert.isFalse(initial.providers.cursor.enabled);
+      assert.isFalse(initial.providerInstances[ProviderInstanceId.make("grok")]?.enabled);
+      assert.isFalse(initial.providerInstances[ProviderInstanceId.make("opencode")]?.enabled);
+      assert.isFalse(initial.providerInstances[ProviderInstanceId.make("cursor")]?.enabled);
 
       const next = yield* serverSettings.updateSettings({
         addProjectBaseDirectory: "~/Development",
@@ -815,9 +1039,9 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         },
       });
 
-      assert.isFalse(next.providers.grok.enabled);
-      assert.isFalse(next.providers.opencode.enabled);
-      assert.isFalse(next.providers.cursor.enabled);
+      assert.isFalse(next.providerInstances[ProviderInstanceId.make("grok")]?.enabled);
+      assert.isFalse(next.providerInstances[ProviderInstanceId.make("opencode")]?.enabled);
+      assert.isFalse(next.providerInstances[ProviderInstanceId.make("cursor")]?.enabled);
       const grok = next.providerInstances[ProviderInstanceId.make("grok")];
       assert.isDefined(grok);
       assert.isFalse(resolveProviderInstanceEnabled(grok));
@@ -863,6 +1087,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       // surface it instead of the fold silently repairing the config.
       assert.deepEqual(settings.providerInstances[ProviderInstanceId.make("cursor")], {
         driver: ProviderDriverKind.make("cursor"),
+        enabled: false,
         config: { enabled: "nope" },
       });
     }).pipe(Effect.provide(makeServerSettingsLayer())),
@@ -912,7 +1137,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         },
       });
 
-      assert.deepEqual(next.providers.codex, {
+      assert.deepEqual(ServerSettingsModule.redactServerSettingsForClient(next).providers.codex, {
         enabled: true,
         binaryPath: "/opt/homebrew/bin/codex",
         homePath: "",
@@ -920,22 +1145,28 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         launchArgs: "",
         customModels: [],
       });
-      assert.deepEqual(next.providers.claudeAgent, {
-        enabled: true,
-        binaryPath: "/opt/homebrew/bin/claude",
-        homePath: "",
-        customModels: [],
-        launchArgs: "",
-        autoCompactWindow: "",
-      });
-      assert.deepEqual(next.providers.opencode, {
-        // OpenCode is disabled by default; this update only touches paths.
-        enabled: false,
-        binaryPath: "/opt/homebrew/bin/opencode",
-        serverUrl: "http://127.0.0.1:4096",
-        serverPassword: "secret-password",
-        customModels: [],
-      });
+      assert.deepEqual(
+        ServerSettingsModule.redactServerSettingsForClient(next).providers.claudeAgent,
+        {
+          enabled: true,
+          binaryPath: "/opt/homebrew/bin/claude",
+          homePath: "",
+          customModels: [],
+          launchArgs: "",
+          autoCompactWindow: "",
+        },
+      );
+      assert.deepEqual(
+        ServerSettingsModule.redactServerSettingsForClient(next).providers.opencode,
+        {
+          // OpenCode is disabled by default; this update only touches paths.
+          enabled: false,
+          binaryPath: "/opt/homebrew/bin/opencode",
+          serverUrl: "http://127.0.0.1:4096",
+          serverPassword: "secret-password",
+          customModels: [],
+        },
+      );
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
@@ -974,8 +1205,14 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         },
       });
 
-      assert.equal(next.providers.codex.binaryPath, "codex");
-      assert.equal(next.providers.claudeAgent.binaryPath, "claude");
+      assert.equal(
+        ServerSettingsModule.redactServerSettingsForClient(next).providers.codex.binaryPath,
+        "codex",
+      );
+      assert.equal(
+        ServerSettingsModule.redactServerSettingsForClient(next).providers.claudeAgent.binaryPath,
+        "claude",
+      );
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
@@ -1002,7 +1239,10 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         automaticGitFetchInterval: Duration.seconds(10),
       });
 
-      assert.equal(next.providers.codex.binaryPath, "/opt/homebrew/bin/codex");
+      assert.equal(
+        ServerSettingsModule.redactServerSettingsForClient(next).providers.codex.binaryPath,
+        "/opt/homebrew/bin/codex",
+      );
 
       const raw = yield* fileSystem.readFileString(serverConfig.settingsPath);
       // @effect-diagnostics-next-line preferSchemaOverJson:off

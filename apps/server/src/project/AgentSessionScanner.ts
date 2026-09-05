@@ -19,7 +19,6 @@ import {
   AgentSessionScanError,
   ClaudeSettings,
   CodexSettings,
-  ProviderDriverKind,
   ProviderInstanceId,
   resolveProviderInstanceEnabled,
   type AgentSessionImportSource,
@@ -930,18 +929,6 @@ export const make = Effect.gen(function* () {
           instanceId: ProviderInstanceId.make(instanceId),
           config,
         }));
-      if (!Object.hasOwn(settings.providerInstances, source)) {
-        const legacyInstance = {
-          instanceId: ProviderInstanceId.make(source),
-          config: {
-            driver: ProviderDriverKind.make(source),
-            config: settings.providers[source],
-          },
-        };
-        if (resolveProviderInstanceEnabled(legacyInstance.config)) {
-          instances.push(legacyInstance);
-        }
-      }
 
       // A shared home contains one copy of each session. Prefer the built-in
       // instance as its owner, then keep configured order for custom accounts.
