@@ -12,6 +12,7 @@ public struct ThreadDetailView: View {
     let thread: FeatureThread
     let submitMessage: (FeatureMessageSubmission) async -> Bool
     let onNavigateBack: () -> Void
+    let onOpenCommandDrawer: (() -> Void)?
     private let draftStore: FeatureComposerDraftStore
 
     @State private var draft = ""
@@ -42,12 +43,14 @@ public struct ThreadDetailView: View {
         thread: FeatureThread,
         submitMessage: @escaping (FeatureMessageSubmission) async -> Bool,
         onNavigateBack: @escaping () -> Void = {},
+        onOpenCommandDrawer: (() -> Void)? = nil,
         draftStore: FeatureComposerDraftStore = .shared
     ) {
         self.model = model
         self.thread = thread
         self.submitMessage = submitMessage
         self.onNavigateBack = onNavigateBack
+        self.onOpenCommandDrawer = onOpenCommandDrawer
         self.draftStore = draftStore
     }
 
@@ -77,6 +80,17 @@ public struct ThreadDetailView: View {
             }
             ToolbarItem(placement: .primaryAction) {
                 threadActionsMenu
+            }
+            if let onOpenCommandDrawer {
+                ToolbarItem(placement: .primaryAction) {
+                    Button(action: onOpenCommandDrawer) {
+                        Image(systemName: "command")
+                    }
+                    .accessibilityLabel(FeatureCommandDrawerAccessibility.openLabel)
+                    .accessibilityIdentifier(
+                        FeatureCommandDrawerAccessibility.openThreadIdentifier
+                    )
+                }
             }
         }
         .task(id: thread.id) {
