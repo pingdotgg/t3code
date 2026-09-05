@@ -7,6 +7,7 @@ import {
   CONNECT_ONBOARDING_OPT_OUT_STORAGE_KEY,
   ConnectOnboardingOptOutSchema,
   EMPTY_CONNECT_ONBOARDING_OPT_OUT_STATE,
+  consumeConnectOnboardingAuthPending,
 } from "~/cloud/connectOnboarding";
 import { hasCloudPublicConfig } from "~/cloud/publicConfig";
 import { useCloudLinkController } from "~/cloud/useCloudLinkController";
@@ -36,7 +37,8 @@ import { toastManager } from "../ui/toast";
  * environment (managed tunnel + agent activity, both defaulting on) when the
  * current session is authorized to manage the relay link, then lists the
  * account's T3 Connect environments so every device can be connected right
- * away. A cold load with a restored session does not count as a sign-in.
+ * away. A cold load with a restored session does not count as a sign-in, but
+ * an auth redirect records its pending sign-in across the renderer reload.
  */
 export function ConnectOnboardingDialog() {
   if (!hasCloudPublicConfig()) return null;
@@ -91,10 +93,11 @@ function ConfiguredConnectOnboardingDialog() {
 
   const optOutAccounts = optOutState.optOutAccounts;
 
-  // Every sign-in or account switch that completes during this session
-  // requests the wizard — account transitions clear the connected relay
-  // environments, so each new session starts with no devices to reach. A cold
-  // load observes undefined → account and must not re-prompt.
+  // Every sign-in or account switch requests the wizard. Clerk Electron can
+  // complete auth by reloading the renderer, so the auth prompt stores a
+  // session marker for the initial signed-in snapshot after that redirect. A
+  // normal cold load observes undefined → account without the marker and must
+  // not re-prompt.
   useEffect(() => {
     if (!isLoaded) return;
     // A loaded-but-incomplete snapshot (signed in, user id not yet populated)
@@ -104,7 +107,9 @@ function ConfiguredConnectOnboardingDialog() {
     const previousAccount = observedAccountRef.current;
     const nextAccount = isSignedIn && userId ? userId : null;
     observedAccountRef.current = nextAccount;
-    if (previousAccount !== undefined && previousAccount !== nextAccount && nextAccount !== null) {
+    const authPromptPending = nextAccount !== null ? consumeConnectOnboardingAuthPending() : false;
+    const accountChanged = previousAccount !== undefined && previousAccount !== nextAccount;
+    if (nextAccount !== null && (accountChanged || authPromptPending)) {
       setRequestedAccount(nextAccount);
     }
   }, [isLoaded, isSignedIn, userId]);
