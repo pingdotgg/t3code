@@ -1,153 +1,93 @@
-# Source Control Integrations
+# Source control
 
-T3 Code connects to your Git hosting provider so you can create pull requests, review code, and manage repositories without leaving the app.
+T3 Code integrates with GitHub, GitLab, Bitbucket, and Azure DevOps to clone and publish
+repositories, create pull requests, and review changes.
 
-## Supported Providers
+## Connect an account
 
-T3 Code works with the platforms your team already uses:
+Install Git and configure authentication on the machine running your T3 Code server. For a remote
+environment, do this on the remote machine. After signing in, open **Settings → Source Control**
+and choose **Rescan**.
 
-- **GitHub** – Pull requests, repository creation, and clone integration
-- **GitLab** – Merge requests, repository publishing, and hosted clones
-- **Bitbucket** – Pull request workflows (via API token authentication)
-- **Azure DevOps** – Pull request support for Microsoft-hosted repositories
+### GitHub
 
-## What You Can Do
+Install [GitHub CLI](https://cli.github.com/) 2.81.0 or newer, then sign in:
 
-### Start Projects from Anywhere
+```bash
+gh auth login
+```
 
-**Clone repositories directly**
+### GitLab
 
-- Open the Command Palette (`Cmd/Ctrl + K`) → **Add Project**
-- Choose **GitHub repository**, **GitLab repository**, **Bitbucket repository**, **Azure DevOps repository**, or paste any **Git URL**
-- Enter the repository path (`owner/repo`, `group/project`, `workspace/repository`, or `project/repository`) or a full Git URL, pick a destination, and start coding
+Install [GitLab CLI](https://gitlab.com/gitlab-org/cli), then sign in:
 
-**Publish local projects to the cloud**
+```bash
+glab auth login
+```
 
-- Have a local Git repository without a remote?
-- Use the **Publish Repository** action to create a new hosted repository (GitHub, GitLab, Bitbucket, or Azure DevOps), add it as your origin remote, and push, in one flow
-- If the local repository has no commits yet, publishing creates the remote and wires it up but does not push. Make a commit, then push normally.
+### Bitbucket
 
-### Manage Code Reviews Without Context Switching
-
-**Create pull requests while you work**
-
-- Push a branch and create a pull request from the Git actions controls in the toolbar
-- T3 Code can suggest titles and descriptions based on your commits
-- Supports GitHub Pull Requests, GitLab Merge Requests, Bitbucket Pull Requests, and Azure DevOps Pull Requests
-
-**Stay on top of open reviews**
-
-- See if your current branch already has an open PR/MR
-- Open several reviews from the **Pull requests** page as tabs in the right panel
-- While working in a thread, open linked reviews in the same compact right-panel tabs without
-  leaving the conversation
-- Open the review directly in your browser with one click
-- If T3 Code cannot load a GitHub pull request, including when GitHub rate limits requests, use
-  **Open on GitHub** in the error view
-- Command-click (Control-click on Windows and Linux) a pull request number in the sidebar to open it in your browser instead of in T3 Code
-- Check out a teammate's branch to review code locally
-
-**Fix what you wrote, in place**
-
-- Rewrite a pull request's title and description from the review itself, in Markdown, with a
-  preview before you save
-- Rewrite your own comments the same way, wherever they are shown
-- Works on GitHub, GitLab, and Bitbucket. Azure DevOps takes a new title and description; its
-  comments stay read-only here, as they already were
-
-### Know Your Setup at a Glance
-
-The **Source Control settings** page shows you exactly what's connected:
-
-- ✅ Which providers are authenticated and ready
-- ⚠️ What's missing and how to fix it
-- 👤 Which account is signed in (when available)
-
-Run a quick **Rescan** after setting up a new machine or changing credentials.
-
-## Getting Started
-
-### For GitHub (Recommended for most users)
-
-1. Install the GitHub CLI (version 2.81.0 or newer) on the machine running T3 Code:
-   ```bash
-   brew install gh
-   ```
-2. Sign in:
-   ```bash
-   gh auth login
-   ```
-3. Open **Settings → Source Control** in T3 Code and verify GitHub shows as authenticated
-
-You can now clone, publish, and create pull requests.
-
-### For GitLab
-
-1. Install the GitLab CLI:
-   ```bash
-   brew install glab
-   ```
-2. Authenticate:
-   ```bash
-   glab auth login
-   ```
-3. Check **Settings → Source Control** to confirm the connection
-
-### For Bitbucket
-
-Bitbucket uses tokens instead of a CLI tool. Two options, both set as environment variables on the
-machine running T3 Code.
-
-Recommended, a Bitbucket access token:
+Set an access token in the server's environment:
 
 ```bash
 export T3CODE_BITBUCKET_ACCESS_TOKEN="your-access-token"
 ```
 
-Or an Atlassian account email plus API token, with read/write access to pull requests and
-repositories, plus read access to your user account (`read:user:bitbucket`, used to verify the
-connection):
+Or use an Atlassian account email and API token with read/write access to repositories and pull
+requests, plus user read access (`read:user:bitbucket`):
 
 ```bash
 export T3CODE_BITBUCKET_EMAIL="you@example.com"
 export T3CODE_BITBUCKET_API_TOKEN="your-token"
 ```
 
-If both are set, the access token wins. Restart T3 Code and verify the connection in **Source
-Control settings**.
+The access token takes precedence if both are configured. Restart the server after changing these
+variables.
 
-### For Azure DevOps
+### Azure DevOps
 
-1. Install Azure CLI:
-   ```bash
-   brew install azure-cli
-   ```
-2. Add the DevOps extension:
-   ```bash
-   az extension add --name azure-devops
-   ```
-3. Sign in:
-   ```bash
-   az login
-   ```
+Install [Azure CLI](https://learn.microsoft.com/en-us/cli/azure/), add the DevOps extension, and sign in:
 
----
+```bash
+az extension add --name azure-devops
+az login
+```
 
-## Requirements & Troubleshooting
+## Clone or publish a project
 
-**Git is required** – T3 Code uses Git for all local operations. Ensure `git` is installed on your server.
+Use **Add Project** in the command palette (`Cmd/Ctrl+K`) to clone a repository. Choose a hosting
+provider or paste a Git URL, then choose where to save it.
 
-**Server-side setup** – Authentication happens on the machine running T3 Code (the server), not your local browser. If you're using a hosted or team instance, your administrator may have already configured providers.
+For a local Git repository without a remote, **Publish Repository** creates a hosted repository,
+adds it as `origin`, and pushes your commits. If there are no commits yet, it creates the remote;
+make your first commit before pushing.
 
-**Common issues:**
+## Create a pull request
 
-- **Provider shows "Not authenticated"** – Run the login command for that provider (e.g., `gh auth login`) in a terminal on the server, then rescan in Settings
-- **GitHub says it could not verify sign-in status** – T3 Code needs GitHub CLI 2.81.0 or newer to check sign-in status. Update `gh` (e.g., `brew upgrade gh`), then rescan
-- **Bitbucket not connecting** – Double-check your environment variables are set in the correct shell profile and the server was restarted
-- **Can't push to a remote** – Verify your Git remote URL matches the provider you've authenticated with (SSH vs HTTPS remotes may need different credentials)
+Use a thread's Git actions to commit, push, and create a pull request. T3 Code can generate commit
+messages, review titles, and descriptions from your changes.
 
-**Need more help?** Check your provider's CLI documentation:
+Choose the writing style and model in **Settings → Source Control**. **Repository conventions**
+uses the project's instructions and recent commit subjects.
 
-- [GitHub CLI](https://cli.github.com/)
-- [GitLab CLI](https://gitlab.com/gitlab-org/cli)
-- [Azure CLI](https://learn.microsoft.com/en-us/cli/azure/)
+## Review and merge
+
+Open **Pull requests** to review changes and comments, request reviewers, check out a branch,
+or merge. You can edit review titles and descriptions and your own comments where the host allows it.
+GitLab calls these merge requests.
+
+GitHub, GitLab, and Azure DevOps support auto-merge while checks are outstanding. GitHub also
+supports approving waiting fork workflows and opening a revert pull request for a merged change.
+
+For Azure DevOps, use the host website to view diffs or change comments. Bitbucket does not support
+reopening a declined pull request.
+
+## Troubleshooting
+
+- **Not authenticated:** run the provider's login command on the server, then rescan. For Bitbucket,
+  confirm the running server received the environment variables.
+- **GitHub sign-in cannot be verified:** update GitHub CLI to at least 2.81.0.
+- **Push fails despite a connected account:** check the Git remote's credentials. SSH and HTTPS
+  remotes can require separate setup from the hosting provider's API access.
+- **A review cannot load:** open it on the host website while resolving connectivity, permissions,
+  or rate limits.

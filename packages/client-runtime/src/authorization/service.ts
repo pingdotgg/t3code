@@ -30,7 +30,10 @@ import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 
-import type { PreparedHttpAuthorization } from "../connection/model.ts";
+import {
+  DPOP_ACCESS_TOKEN_REFRESH_SKEW_MS,
+  type PreparedHttpAuthorization,
+} from "../connection/model.ts";
 
 export interface RelayEnvironmentAuthorization {
   readonly environmentId: EnvironmentId;
@@ -66,7 +69,6 @@ export class RemoteEnvironmentAuthorization extends Context.Service<
   }
 >()("@t3tools/client-runtime/authorization/service/RemoteEnvironmentAuthorization") {}
 
-const TOKEN_EXPIRY_SAFETY_MARGIN_MS = 60_000;
 const CACHED_ENDPOINT_SOCKET_TIMEOUT_MS = 3_000;
 const BEARER_DESCRIPTOR_CACHE_TTL_MS = 10_000;
 
@@ -78,9 +80,10 @@ function mapDpopSocketError(error: RemoteEnvironmentAuthError | ConnectionAttemp
 
 const fetchDescriptor = Effect.fn("clientRuntime.connection.remote.fetchDescriptor")(function* (
   httpBaseUrl: string,
+  connectionMethod: ClientConnectionMethod,
 ) {
   return yield* fetchRemoteEnvironmentDescriptor({ httpBaseUrl }).pipe(
-    Effect.mapError(mapRemoteEnvironmentError),
+    Effect.mapError((error) => mapRemoteEnvironmentError(error, connectionMethod)),
   );
 });
 
@@ -117,7 +120,7 @@ export const make = Effect.gen(function* () {
         cachedDescriptor.validatedAtEpochMs + BEARER_DESCRIPTOR_CACHE_TTL_MS > now;
       const descriptor = canReuseDescriptor
         ? cachedDescriptor.descriptor
-        : yield* fetchDescriptor(input.httpBaseUrl).pipe(
+        : yield* fetchDescriptor(input.httpBaseUrl, input.connectionMethod).pipe(
             Effect.provideService(HttpClient.HttpClient, httpClient),
           );
       if (descriptor.environmentId !== input.expectedEnvironmentId) {
@@ -216,7 +219,7 @@ export const make = Effect.gen(function* () {
         Option.isSome(cached) &&
         cached.value.environmentId === input.expectedEnvironmentId &&
         cached.value.dpopThumbprint === thumbprint &&
-        cached.value.expiresAtEpochMs > now + TOKEN_EXPIRY_SAFETY_MARGIN_MS
+        cached.value.expiresAtEpochMs > now + DPOP_ACCESS_TOKEN_REFRESH_SKEW_MS
       ) {
         yield* Effect.annotateCurrentSpan({
           "connection.remote_token_cache": "hit",
@@ -234,6 +237,7 @@ export const make = Effect.gen(function* () {
             httpAuthorization: {
               _tag: "Dpop" as const,
               accessToken: cached.value.accessToken,
+              expiresAtEpochMs: cached.value.expiresAtEpochMs,
             },
           };
         }
@@ -249,7 +253,7 @@ export const make = Effect.gen(function* () {
         "connection.remote_token_cache": "miss",
       });
       const bootstrap = yield* input.obtainBootstrap;
-      const descriptor = yield* fetchDescriptor(bootstrap.endpoint.httpBaseUrl).pipe(
+      const descriptor = yield* fetchDescriptor(bootstrap.endpoint.httpBaseUrl, "relay").pipe(
         Effect.provideService(HttpClient.HttpClient, httpClient),
         Effect.withSpan("environment.authorization.descriptor"),
       );
@@ -305,6 +309,7 @@ export const make = Effect.gen(function* () {
         httpAuthorization: {
           _tag: "Dpop" as const,
           accessToken: token.accessToken,
+          expiresAtEpochMs: token.expiresAtEpochMs,
         },
       };
     },
