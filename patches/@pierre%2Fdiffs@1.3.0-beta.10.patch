@@ -60,6 +60,18 @@ index e9f62f5..af82a46 100644
  	};
  	return merged;
  }
+diff --git a/dist/renderers/FileRenderer.js b/dist/renderers/FileRenderer.js
+--- a/dist/renderers/FileRenderer.js
++++ b/dist/renderers/FileRenderer.js
+@@ -163,6 +163,8 @@
+ 		if (this.renderCache == null) return;
+ 		const { file, result } = this.renderCache;
+ 		if (result == null) return;
++		this.workerManager?.cleanUpTasks(this);
++		if (file.cacheKey != null) this.workerManager?.evictFileFromCache(file.cacheKey);
+ 		const lineCache = this.lineCache != null && isLineCacheForFile(this.lineCache, file) ? this.lineCache : void 0;
+ 		for (const [line, tokens] of dirtyLines) {
+ 			if (lineCache != null && line < lineCache.lines.length) {
 diff --git a/package.json b/package.json
 index ff61c90..1e170e5 100644
 --- a/package.json
