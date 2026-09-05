@@ -391,6 +391,48 @@ function toSummaryWithOptionalUpdatedAt(
   return Option.isSome(updatedAt) ? { ...summary, updatedAt } : summary;
 }
 
+function normalizeProjectPath(value: string): string {
+  const segments: Array<string> = [];
+  for (const segment of value.split("/")) {
+    const trimmed = segment.trim();
+    // GitLab web URLs continue past the project with `/-/tree/main` and the like.
+    if (trimmed === "-") {
+      break;
+    }
+    if (trimmed.length > 0) {
+      segments.push(trimmed);
+    }
+  }
+  const path = segments.join("/");
+  return path.endsWith(".git") ? path.slice(0, -".git".length) : path;
+}
+
+/**
+ * Accepts the `group/project` path the GitLab API expects or a pasted
+ * repository URL (`https://host/group/project`, `git@host:group/project.git`,
+ * `ssh://git@host/group/project`). A URL also yields its host so the lookup
+ * targets that instance instead of glab's default host.
+ */
+export function parseRepositoryReference(repository: string): {
+  readonly host: string | null;
+  readonly path: string;
+} {
+  const trimmed = repository.trim();
+  const scpMatch = /^[A-Za-z0-9._-]+@([^:/\s]+):(.+)$/.exec(trimmed);
+  if (scpMatch?.[1] && scpMatch[2]) {
+    return { host: scpMatch[1], path: normalizeProjectPath(scpMatch[2]) };
+  }
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed)) {
+    try {
+      const url = new URL(trimmed);
+      return { host: url.host, path: normalizeProjectPath(url.pathname) };
+    } catch {
+      // Let glab report the malformed input.
+    }
+  }
+  return { host: null, path: normalizeProjectPath(trimmed) };
+}
+
 function parseRepositoryPath(repository: string): {
   readonly namespacePath: string | null;
   readonly projectPath: string;
@@ -517,10 +559,15 @@ export const make = Effect.gen(function* () {
           ),
         ),
       ),
-    getRepositoryCloneUrls: (input) =>
-      execute({
+    getRepositoryCloneUrls: (input) => {
+      const reference = parseRepositoryReference(input.repository);
+      return execute({
         cwd: input.cwd,
-        args: ["api", `projects/${encodeURIComponent(input.repository)}`],
+        args: [
+          "api",
+          ...(reference.host ? ["--hostname", reference.host] : []),
+          `projects/${encodeURIComponent(reference.path)}`,
+        ],
       }).pipe(
         Effect.map((result) => result.stdout.trim()),
         Effect.flatMap((raw) =>
@@ -538,7 +585,8 @@ export const make = Effect.gen(function* () {
           ),
         ),
         Effect.map(normalizeRepositoryCloneUrls),
-      ),
+      );
+    },
     createRepository: (input) => {
       const { namespacePath, projectPath } = parseRepositoryPath(input.repository);
       const namespaceId: Effect.Effect<number | null, GitLabCliError> = namespacePath

@@ -184,6 +184,45 @@ layer("GitLabCli.layer", (it) => {
     }),
   );
 
+  it.effect("looks up a pasted repository URL by project path on that host", () =>
+    Effect.gen(function* () {
+      mockedRun.mockReturnValueOnce(
+        Effect.succeed(
+          processOutput(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify({
+              path_with_namespace: "group/project",
+              web_url: "https://sourcecontrol.example.com/group/project",
+              http_url_to_repo: "https://sourcecontrol.example.com/group/project.git",
+              ssh_url_to_repo: "git@sourcecontrol.example.com:group/project.git",
+            }),
+          ),
+        ),
+      );
+
+      const result = yield* Effect.gen(function* () {
+        const glab = yield* GitLabCli.GitLabCli;
+        return yield* glab.getRepositoryCloneUrls({
+          cwd: "/repo",
+          repository: "https://sourcecontrol.example.com/group/project",
+        });
+      });
+
+      expect(mockedRun).toHaveBeenCalledWith(
+        expect.objectContaining({
+          command: "glab",
+          cwd: "/repo",
+          args: ["api", "--hostname", "sourcecontrol.example.com", "projects/group%2Fproject"],
+        }),
+      );
+      assert.deepStrictEqual(result, {
+        nameWithOwner: "group/project",
+        url: "https://sourcecontrol.example.com/group/project",
+        sshUrl: "git@sourcecontrol.example.com:group/project.git",
+      });
+    }),
+  );
+
   it.effect("creates merge requests through the GitLab API without placing the body in argv", () =>
     Effect.gen(function* () {
       mockedRun.mockReturnValueOnce(Effect.succeed(processOutput("{}")));
@@ -386,4 +425,32 @@ layer("GitLabCli.layer", (it) => {
       assert.strictEqual(error.cause, cause);
     }),
   );
+});
+
+it("parses repository references into a GitLab host and project path", () => {
+  const cases: ReadonlyArray<[string, { host: string | null; path: string }]> = [
+    ["group/project", { host: null, path: "group/project" }],
+    [" group/sub/project.git/ ", { host: null, path: "group/sub/project" }],
+    [
+      "https://sourcecontrol.example.com/group/project",
+      { host: "sourcecontrol.example.com", path: "group/project" },
+    ],
+    ["https://gitlab.com/group/sub/project.git", { host: "gitlab.com", path: "group/sub/project" }],
+    ["https://gitlab.com/group/project/-/tree/main", { host: "gitlab.com", path: "group/project" }],
+    [
+      "http://gitlab.internal:8080/group/project",
+      { host: "gitlab.internal:8080", path: "group/project" },
+    ],
+    [
+      "git@sourcecontrol.example.com:group/project.git",
+      { host: "sourcecontrol.example.com", path: "group/project" },
+    ],
+    [
+      "ssh://git@sourcecontrol.example.com/group/project.git",
+      { host: "sourcecontrol.example.com", path: "group/project" },
+    ],
+  ];
+  for (const [input, expected] of cases) {
+    expect(GitLabCli.parseRepositoryReference(input), input).toEqual(expected);
+  }
 });
