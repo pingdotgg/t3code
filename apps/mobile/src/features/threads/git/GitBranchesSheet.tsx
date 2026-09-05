@@ -114,7 +114,8 @@ export function GitBranchesSheet(_props: GitBranchesSheetProps) {
               onPress={() => {
                 const branch = sanitizeFeatureBranchName(newBranchName.trim());
                 if (branch.length === 0) return;
-                void gitActions.onCreateSelectedThreadBranch(branch).then(() => {
+                void gitActions.onCreateSelectedThreadBranch(branch).then((result) => {
+                  if (result === null) return;
                   setNewBranchName("");
                   navigation.goBack();
                 });
@@ -161,7 +162,8 @@ export function GitBranchesSheet(_props: GitBranchesSheetProps) {
                 if (baseBranch.length === 0 || newBranch.length === 0) return;
                 void gitActions
                   .onCreateSelectedThreadWorktree({ baseBranch, newBranch })
-                  .then(() => {
+                  .then((result) => {
+                  if (result === null) return;
                     setWorktreeBranchName("");
                     navigation.goBack();
                   });
@@ -206,7 +208,8 @@ export function GitBranchesSheet(_props: GitBranchesSheetProps) {
                   accessibilityState={{ selected: branch.current, disabled: busy || disabled }}
                   disabled={!canWriteSourceControl || busy || disabled}
                   onPress={() => {
-                    void gitActions.onCheckoutSelectedThreadBranch(branch.name).then(() => {
+                    void gitActions.onCheckoutSelectedThreadBranch(branch.name).then((result) => {
+                  if (result === null) return;
                       navigation.goBack();
                     });
                   }}
