@@ -234,7 +234,7 @@ const UsageLedgerAggregate = Schema.Struct({
   pricedTotals: UsageLedgerTotals,
   savingsTotals: UsageLedgerTotals,
   /** Null-cost rows whose cache writes remain dynamically priceable. */
-  cacheWriteTotals: UsageLedgerTotals,
+  cacheWriteTotals: Schema.optional(UsageLedgerTotals),
 });
 const UsageLedgerFileV1 = Schema.Struct({
   version: Schema.Literal(1),
@@ -472,7 +472,6 @@ function ledgerAggregateFromRecord(entry: {
     // cost. Unknown models are counted as unpriced at read time.
     unpricedRecords: 0,
     savingsTotals: record.totals,
-    cacheWriteTotals: record.reportedCostUsd === null ? record.totals : EMPTY_TOTALS,
     dynamicPricing: record.reportedCostUsd === null,
     legacyPricing: record.reportedCostUsd === null,
     legacyPricingRecords: record.reportedCostUsd === null ? 1 : 0,
@@ -498,7 +497,9 @@ function mergeLedgerAggregate(
     totals: addTotals(existing.totals, incoming.totals),
     pricedTotals: addTotals(existing.pricedTotals, incoming.pricedTotals),
     savingsTotals: addTotals(existing.savingsTotals, incoming.savingsTotals),
-    cacheWriteTotals: addTotals(existing.cacheWriteTotals, incoming.cacheWriteTotals),
+    ...(existing.cacheWriteTotals === undefined || incoming.cacheWriteTotals === undefined
+      ? {}
+      : { cacheWriteTotals: addTotals(existing.cacheWriteTotals, incoming.cacheWriteTotals) }),
     dynamicPricing: existing.dynamicPricing || incoming.dynamicPricing,
     legacyPricing: existing.legacyPricing || incoming.legacyPricing,
     legacyPricingRecords: existing.legacyPricingRecords + incoming.legacyPricingRecords,
@@ -523,7 +524,7 @@ interface LedgerAggregate {
   readonly totals: UsageRecord["totals"];
   readonly pricedTotals: UsageRecord["totals"];
   readonly savingsTotals: UsageRecord["totals"];
-  readonly cacheWriteTotals: UsageRecord["totals"];
+  readonly cacheWriteTotals?: UsageRecord["totals"];
   readonly dynamicPricing: boolean;
   readonly legacyPricing: boolean;
   readonly legacyPricingRecords: number;
@@ -874,8 +875,9 @@ export const make = Effect.gen(function* () {
             totals: entry.totals,
             pricedTotals: entry.pricedTotals,
             savingsTotals: entry.savingsTotals ?? entry.totals,
-            cacheWriteTotals:
-              "cacheWriteTotals" in entry ? entry.cacheWriteTotals : entry.pricedTotals,
+            ...("cacheWriteTotals" in entry && entry.cacheWriteTotals !== undefined
+              ? { cacheWriteTotals: entry.cacheWriteTotals }
+              : {}),
             dynamicPricing: "dynamicPricing" in entry ? entry.dynamicPricing : false,
             legacyPricing: entry.legacyPricing ?? false,
             legacyPricingRecords: entry.legacyPricingRecords ?? 0,

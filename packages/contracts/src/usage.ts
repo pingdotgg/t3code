@@ -32,8 +32,9 @@ export const USAGE_CONTRACT_VERSION = 13 as const;
  * v10 adds optional cache-write costs; v11 adds optional cache-write TTL counters;
  * v12 adds server-side thread filtering before the breakdown row cap; v13 adds
  * explicit coverage metadata and the authoritative refresh-summary RPC.
- * v4 Claude/Codex buckets remain valid, so mixed-version environments keep those
- * totals instead of treating every older server as stale.
+ * v4 and newer summaries remain decodable for mixed-version clients. Only
+ * summaries with bounded coverage contribute totals; older unbounded results
+ * are reported as stale rather than being presented as complete.
  */
 export const USAGE_MERGE_COMPATIBLE_SINCE = 4 as const;
 /** First contract version that explicitly distinguishes outside from unknown attribution. */

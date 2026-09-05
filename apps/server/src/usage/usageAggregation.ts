@@ -418,10 +418,13 @@ export class UsageAggregator {
       aggregate.savingsTotals,
       this.#options.priceOverrides,
     );
-    const cacheWriteTotals = hasPriceOverride
-      ? aggregate.totals
-      : (aggregate.cacheWriteTotals ?? aggregate.pricedTotals);
-    if (cacheWriteTotals.cacheCreationTokens > 0) {
+    const cacheWriteTotals = hasPriceOverride ? aggregate.totals : aggregate.cacheWriteTotals;
+    if (cacheWriteTotals === undefined && aggregate.totals.cacheCreationTokens > 0) {
+      // Pre-v4 ledgers did not retain cache-write TTL provenance. Keep their
+      // usage and overall cost, but do not present a base-rate guess as a
+      // complete cache-write estimate.
+      bucket.cacheWriteComplete = false;
+    } else if (cacheWriteTotals !== undefined && cacheWriteTotals.cacheCreationTokens > 0) {
       const cacheWritePricing = priceUsage(
         this.#options.rates,
         aggregate.model,

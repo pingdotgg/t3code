@@ -228,6 +228,32 @@ describe("UsageAggregator", () => {
     expect(writeFree.buckets[0]?.cacheWriteUsd).toBe(0);
   });
 
+  it("marks cache-write cost unavailable when a legacy aggregate lacks TTL provenance", () => {
+    const aggregator = new UsageAggregator({
+      timeZone: "UTC",
+      sinceDay: "2026-08-01",
+      untilDay: "2026-08-31",
+      resolution: "day",
+      rates,
+    });
+    const item = record();
+    aggregator.addAggregate({
+      bucketStartMs: item.timestampMs,
+      provider: item.provider,
+      model: item.model,
+      totals: item.totals,
+      pricedTotals: item.totals,
+      savingsTotals: item.totals,
+      reportedCostUsd: 0,
+      records: 1,
+      unpricedRecords: 0,
+      providerReportedRecords: 0,
+      sessions: [item.sessionId],
+    });
+
+    expect(aggregator.finish().buckets[0]?.cacheWriteUsd).toBeUndefined();
+  });
+
   it("counts tokens but not cost for a model with no rate", () => {
     const result = aggregate([record({ model: "kimi-k3" })]);
 
