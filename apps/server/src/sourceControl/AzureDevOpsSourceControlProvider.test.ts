@@ -24,6 +24,7 @@ it.effect("maps Azure DevOps PR summaries into provider-neutral change requests"
           headRefName: "feature/source-control",
           state: "open",
           updatedAt: Option.none(),
+          isCrossRepository: false,
         }),
     });
 
@@ -42,6 +43,43 @@ it.effect("maps Azure DevOps PR summaries into provider-neutral change requests"
       state: "open",
       updatedAt: Option.none(),
       isCrossRepository: false,
+    });
+  }),
+);
+
+it.effect("preserves Azure DevOps fork provenance in provider-neutral change requests", () =>
+  Effect.gen(function* () {
+    const provider = yield* makeProvider({
+      getPullRequest: () =>
+        Effect.succeed({
+          number: 43,
+          title: "Add Azure fork support",
+          url: "https://dev.azure.com/acme/target-project/_git/repo/pullrequest/43",
+          baseRefName: "main",
+          headRefName: "feature/from-fork",
+          state: "open",
+          updatedAt: Option.none(),
+          isCrossRepository: true,
+          headRepositoryNameWithOwner: "fork-project/repo-fork",
+        }),
+    });
+
+    const changeRequest = yield* provider.getChangeRequest({
+      cwd: "/repo",
+      reference: "43",
+    });
+
+    assert.deepStrictEqual(changeRequest, {
+      provider: "azure-devops",
+      number: 43,
+      title: "Add Azure fork support",
+      url: "https://dev.azure.com/acme/target-project/_git/repo/pullrequest/43",
+      baseRefName: "main",
+      headRefName: "feature/from-fork",
+      state: "open",
+      updatedAt: Option.none(),
+      isCrossRepository: true,
+      headRepositoryNameWithOwner: "fork-project/repo-fork",
     });
   }),
 );

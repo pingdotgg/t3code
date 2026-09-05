@@ -92,6 +92,115 @@ describe("AzureDevOpsCli.layer", () => {
     }).pipe(Effect.provide(layer)),
   );
 
+  it.effect("preserves fork provenance from pull request view output", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(
+        Effect.succeed(
+          processOutput(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify({
+              pullRequestId: 43,
+              title: "Add Azure fork support",
+              repository: {
+                name: "repo",
+                project: { name: "target-project" },
+              },
+              sourceRefName: "refs/pull/43/source",
+              targetRefName: "refs/heads/main",
+              status: "active",
+              forkSource: {
+                name: "refs/heads/feature/from-fork",
+                repository: {
+                  name: "repo-fork",
+                  project: { name: "fork-project" },
+                },
+              },
+            }),
+          ),
+        ),
+      );
+
+      const az = yield* AzureDevOpsCli.AzureDevOpsCli;
+      const result = yield* az.getPullRequest({
+        cwd: "/repo",
+        reference: "43",
+      });
+
+      expect(result).toMatchObject({
+        headRefName: "feature/from-fork",
+        isCrossRepository: true,
+        headRepositoryNameWithOwner: "fork-project/repo-fork",
+      });
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("marks incomplete Azure fork metadata as cross-repository", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(
+        Effect.succeed(
+          processOutput(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify({
+              pullRequestId: 44,
+              title: "Add Azure fork support",
+              sourceRefName: "refs/pull/44/source",
+              targetRefName: "refs/heads/main",
+              status: "active",
+              forkSource: {
+                name: null,
+                repository: {
+                  name: null,
+                  project: null,
+                },
+              },
+            }),
+          ),
+        ),
+      );
+
+      const az = yield* AzureDevOpsCli.AzureDevOpsCli;
+      const result = yield* az.getPullRequest({ cwd: "/repo", reference: "44" });
+
+      expect(result).toMatchObject({
+        headRefName: "refs/pull/44/source",
+        isCrossRepository: true,
+      });
+      expect(result).not.toHaveProperty("headRepositoryNameWithOwner");
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("accepts a null Azure fork repository", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(
+        Effect.succeed(
+          processOutput(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify({
+              pullRequestId: 45,
+              title: "Add Azure fork support",
+              sourceRefName: "refs/pull/45/source",
+              targetRefName: "refs/heads/main",
+              status: "active",
+              forkSource: {
+                name: "refs/heads/feature/from-fork",
+                repository: null,
+              },
+            }),
+          ),
+        ),
+      );
+
+      const az = yield* AzureDevOpsCli.AzureDevOpsCli;
+      const result = yield* az.getPullRequest({ cwd: "/repo", reference: "45" });
+
+      expect(result).toMatchObject({
+        headRefName: "feature/from-fork",
+        isCrossRepository: true,
+      });
+      expect(result).not.toHaveProperty("headRepositoryNameWithOwner");
+    }).pipe(Effect.provide(layer)),
+  );
+
   it.effect("builds a web URL when Azure returns only the pull request REST URL", () =>
     Effect.gen(function* () {
       mockRun.mockReturnValueOnce(
@@ -217,6 +326,51 @@ describe("AzureDevOpsCli.layer", () => {
         nameWithOwner: "project/repo",
         url: "https://dev.azure.com/acme/project/_git/repo",
         sshUrl: "git@ssh.dev.azure.com:v3/acme/project/repo",
+      });
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("looks up a fork repository in its Azure project", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(
+        Effect.succeed(
+          processOutput(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify({
+              name: "repo-fork",
+              webUrl: "https://dev.azure.com/acme/fork-project/_git/repo-fork",
+              remoteUrl: "https://dev.azure.com/acme/fork-project/_git/repo-fork",
+              sshUrl: "git@ssh.dev.azure.com:v3/acme/fork-project/repo-fork",
+              project: { name: "fork-project" },
+            }),
+          ),
+        ),
+      );
+
+      const az = yield* AzureDevOpsCli.AzureDevOpsCli;
+      yield* az.getRepositoryCloneUrls({
+        cwd: "/repo",
+        repository: "fork-project/repo-fork",
+      });
+
+      expect(mockRun).toHaveBeenCalledWith({
+        operation: "AzureDevOpsCli.execute",
+        command: "az",
+        args: [
+          "repos",
+          "show",
+          "--detect",
+          "true",
+          "--repository",
+          "repo-fork",
+          "--project",
+          "fork-project",
+          "--only-show-errors",
+          "--output",
+          "json",
+        ],
+        cwd: "/repo",
+        timeoutMs: 30_000,
       });
     }).pipe(Effect.provide(layer)),
   );

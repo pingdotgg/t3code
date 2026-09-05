@@ -461,10 +461,19 @@ export const make = Effect.gen(function* () {
           ),
         ),
       ),
-    getRepositoryCloneUrls: (input) =>
-      executeJson({
+    getRepositoryCloneUrls: (input) => {
+      const repository = parseRepositorySpecifier(input.repository);
+      return executeJson({
         cwd: input.cwd,
-        args: ["repos", "show", "--detect", "true", "--repository", input.repository],
+        args: [
+          "repos",
+          "show",
+          "--detect",
+          "true",
+          "--repository",
+          repository.name,
+          ...(repository.project ? ["--project", repository.project] : []),
+        ],
       }).pipe(
         Effect.map((result) => result.stdout.trim()),
         Effect.flatMap((raw) =>
@@ -476,7 +485,8 @@ export const make = Effect.gen(function* () {
           ),
         ),
         Effect.map(normalizeRepositoryCloneUrls),
-      ),
+      );
+    },
     createRepository: (input) => {
       const repository = parseRepositorySpecifier(input.repository);
       // Azure Repos access is governed by project/organization permissions.

@@ -19,6 +19,7 @@ import { expect } from "vite-plus/test";
 import type {
   GitActionProgressEvent,
   GitPreparePullRequestThreadInput,
+  SourceControlProviderKind,
   ThreadId,
 } from "@t3tools/contracts";
 
@@ -34,6 +35,7 @@ import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as GitHubSourceControlProvider from "../sourceControl/GitHubSourceControlProvider.ts";
+import * as SourceControlProvider from "../sourceControl/SourceControlProvider.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as ServerConfig from "../config.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
@@ -618,8 +620,31 @@ function preparePullRequestThread(
   return manager.preparePullRequestThread(input);
 }
 
+/**
+ * Reports the GitHub-backed fake provider as another host. The fake `gh` still answers the
+ * change-request lookups, so the only thing that changes is the host a change request is
+ * reported to come from — which is what decides the ref namespace its head is fetched from.
+ */
+function withProviderKind(
+  provider: SourceControlProvider.SourceControlProvider["Service"],
+  kind: SourceControlProviderKind | undefined,
+): SourceControlProvider.SourceControlProvider["Service"] {
+  if (kind === undefined) {
+    return provider;
+  }
+  return {
+    ...provider,
+    kind,
+    getChangeRequest: (getInput) =>
+      provider
+        .getChangeRequest(getInput)
+        .pipe(Effect.map((changeRequest) => ({ ...changeRequest, provider: kind }))),
+  };
+}
+
 function makeManager(input?: {
   ghScenario?: FakeGhScenario;
+  providerKind?: SourceControlProviderKind;
   textGeneration?: Partial<FakeGitTextGeneration>;
   serverSettings?: Parameters<typeof ServerSettings.layerTest>[0];
   setupScriptRunner?: ProjectSetupScriptRunner.ProjectSetupScriptRunner["Service"];
@@ -660,6 +685,7 @@ function makeManager(input?: {
   const sourceControlRegistryLayer = Layer.effect(
     SourceControlProviderRegistry.SourceControlProviderRegistry,
     GitHubSourceControlProvider.make.pipe(
+      Effect.map((githubProvider) => withProviderKind(githubProvider, input?.providerKind)),
       Effect.map((provider) =>
         SourceControlProviderRegistry.SourceControlProviderRegistry.of({
           get: () => Effect.succeed(provider),
@@ -4272,6 +4298,127 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
     }),
   );
 
+  it.effect("prepares GitLab merge request worktrees from the merge request ref", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/mr-worktree"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "merge-request.txt"), "merge request\n");
+      yield* runGit(repoDir, ["add", "merge-request.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "MR worktree branch"]);
+      // GitLab publishes the head at refs/merge-requests/<iid>/head, never under refs/pull, and
+      // here that ref is the only thing on the remote that names it.
+      yield* runGit(repoDir, ["push", "origin", "HEAD:refs/merge-requests/533/head"]);
+      const mergeRequestHead = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+      yield* runGit(repoDir, ["checkout", "main"]);
+      yield* runGit(repoDir, ["branch", "-D", "feature/mr-worktree"]);
+
+      const { manager } = yield* makeManager({
+        providerKind: "gitlab",
+        ghScenario: {
+          pullRequest: {
+            number: 533,
+            title: "Worktree MR",
+            url: "https://gitlab.example.test/group/repo/-/merge_requests/533",
+            baseRefName: "main",
+            headRefName: "feature/mr-worktree",
+            state: "open",
+          },
+        },
+      });
+
+      const created = yield* preparePullRequestThread(manager, {
+        cwd: repoDir,
+        reference: "533",
+        mode: "worktree",
+      });
+
+      expect(created.branch).toBe("feature/mr-worktree");
+      const worktreePath = created.worktreePath as string;
+      expect(NodeFS.existsSync(worktreePath)).toBe(true);
+      expect((yield* runGit(worktreePath, ["rev-parse", "HEAD"])).stdout.trim()).toBe(
+        mergeRequestHead,
+      );
+
+      // And the same ref again when the reused worktree is refreshed onto a moved head.
+      yield* runGit(repoDir, ["fetch", "origin", "refs/merge-requests/533/head"]);
+      yield* runGit(repoDir, ["checkout", "-b", "mr-author", "FETCH_HEAD"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "merge-request.txt"), "merge request again\n");
+      yield* runGit(repoDir, ["add", "merge-request.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "New merge request head"]);
+      yield* runGit(repoDir, ["push", "origin", "mr-author:refs/merge-requests/533/head"]);
+      const updatedHead = (yield* runGit(repoDir, ["rev-parse", "mr-author"])).stdout.trim();
+      yield* runGit(repoDir, ["checkout", "main"]);
+
+      const refreshed = yield* preparePullRequestThread(manager, {
+        cwd: repoDir,
+        reference: "533",
+        mode: "worktree",
+      });
+
+      expect(refreshed.worktreePath && NodeFS.realpathSync.native(refreshed.worktreePath)).toBe(
+        NodeFS.realpathSync.native(worktreePath),
+      );
+      expect(refreshed.isOnPullRequestHead).toBe(true);
+      expect((yield* runGit(worktreePath, ["rev-parse", "HEAD"])).stdout.trim()).toBe(updatedHead);
+    }),
+  );
+
+  it.effect("prepares worktrees from the head branch on hosts that publish no head ref", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/bitbucket-worktree"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "bitbucket.txt"), "bitbucket\n");
+      yield* runGit(repoDir, ["add", "bitbucket.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Bitbucket PR branch"]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/bitbucket-worktree"]);
+      const pullRequestHead = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+      // Nothing local names the head, and Bitbucket publishes no ref for it either: the branch
+      // on the remote is all there is.
+      yield* runGit(repoDir, ["checkout", "main"]);
+      yield* runGit(repoDir, ["branch", "-D", "feature/bitbucket-worktree"]);
+      yield* runGit(repoDir, [
+        "update-ref",
+        "-d",
+        "refs/remotes/origin/feature/bitbucket-worktree",
+      ]);
+
+      const { manager } = yield* makeManager({
+        providerKind: "bitbucket",
+        ghScenario: {
+          pullRequest: {
+            number: 612,
+            title: "Worktree Bitbucket PR",
+            url: "https://bitbucket.org/workspace/repo/pull-requests/612",
+            baseRefName: "main",
+            headRefName: "feature/bitbucket-worktree",
+            state: "open",
+          },
+        },
+      });
+
+      const result = yield* preparePullRequestThread(manager, {
+        cwd: repoDir,
+        reference: "612",
+        mode: "worktree",
+      });
+
+      expect(result.branch).toBe("feature/bitbucket-worktree");
+      const worktreePath = result.worktreePath as string;
+      expect(NodeFS.existsSync(worktreePath)).toBe(true);
+      expect((yield* runGit(worktreePath, ["rev-parse", "HEAD"])).stdout.trim()).toBe(
+        pullRequestHead,
+      );
+    }),
+  );
+
   it.effect("preserves both branch materialization failures when the fallback also fails", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
@@ -4329,6 +4476,46 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       ]);
       expect(error.cause.cause).toBe(error.cause.errors[0]);
     }),
+  );
+
+  it.effect(
+    "surfaces the unresolvable cross-repository head explanation on hosts with no head ref",
+    () =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(repoDir);
+        const remoteDir = yield* createBareRemote();
+        yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+        yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+
+        // A cross-repository head on a host that publishes no change-request ref, where the
+        // repository it was opened from cannot be resolved either: nothing names the head.
+        const { manager } = yield* makeManager({
+          providerKind: "bitbucket",
+          ghScenario: {
+            pullRequest: {
+              number: 613,
+              title: "Cross-repository Bitbucket PR",
+              url: "https://bitbucket.org/workspace/repo/pull-requests/613",
+              baseRefName: "main",
+              headRefName: "feature/unresolvable-head",
+              state: "open",
+              isCrossRepository: true,
+            },
+          },
+        });
+
+        const error = yield* preparePullRequestThread(manager, {
+          cwd: repoDir,
+          reference: "613",
+          mode: "worktree",
+        }).pipe(Effect.flip);
+
+        if (error._tag !== "GitManagerError") {
+          return yield* Effect.die(error);
+        }
+        expect(error.message).toContain("This host publishes no ref for the change request head");
+      }),
   );
 
   it.effect("launches setup when creating a new PR worktree", () =>
