@@ -74,7 +74,7 @@ with OpenAI support.
 
 With Codex 0.153.2 or later, ask Codex to watch a CI job, log, or other changing
 source and react when something happens. It can leave a watcher running after
-its response finishes and subscribe to its events with the built-in monitoring
+its response finishes using the built-in monitoring
 tools. No special prompt syntax is needed. On web and desktop, the thread shows
 **Monitoring** between turns and wakes when the watcher reports an event.
 Ordinary background commands do not wake the agent just because they print output.

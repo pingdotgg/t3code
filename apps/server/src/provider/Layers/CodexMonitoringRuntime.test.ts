@@ -9,7 +9,7 @@ import * as Schema from "effect/Schema";
 import * as Fiber from "effect/Fiber";
 import * as TestClock from "effect/testing/TestClock";
 import * as Stream from "effect/Stream";
-import { ThreadId, type ProviderEvent } from "@t3tools/contracts";
+import { ThreadId, type ProviderEvent, type RuntimeMode } from "@t3tools/contracts";
 import * as MonitorSession from "../../mcp/MonitorSession.ts";
 import { makeCodexSessionRuntime } from "./CodexSessionRuntime.ts";
 
@@ -19,11 +19,24 @@ const decodeInspection = Schema.decodeUnknownSync(
       wakes: Schema.Array(Schema.Struct({ name: Schema.String, output: Schema.String })),
       cleanCount: Schema.Number,
       interrupted: Schema.Number,
+      terminatedMonitors: Schema.Number,
+      monitorExecutions: Schema.Array(
+        Schema.Struct({
+          command: Schema.Array(Schema.String),
+          processId: Schema.String,
+          sandboxPolicy: Schema.Struct({ type: Schema.String }),
+          streamStdoutStderr: Schema.Boolean,
+        }),
+      ),
     }),
   ),
 );
 
-const setup = Effect.fn("setup")(function* (version = "0.153.2", mcp = false) {
+const setup = Effect.fn("setup")(function* (
+  version = "0.153.2",
+  mcp = false,
+  runtimeMode: RuntimeMode = "full-access",
+) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-monitor-runtime-test-" });
@@ -38,7 +51,7 @@ const setup = Effect.fn("setup")(function* (version = "0.153.2", mcp = false) {
     mcpProviderSessionId: cwd,
     ...(mcp ? { appServerArgs: ["-c", "mcp_servers.t3-code.url=http://localhost/mcp"] } : {}),
     cwd,
-    runtimeMode: "full-access",
+    runtimeMode,
     environment: { ...process.env, T3_MONITOR_TEST_VERSION: version },
   });
   const events = yield* Queue.unbounded<ProviderEvent>();
@@ -63,8 +76,69 @@ const setup = Effect.fn("setup")(function* (version = "0.153.2", mcp = false) {
     }),
   );
   const subscribe = (yield* MonitorSession.MonitorSessions).invoke(cwd, "subscribe", "42");
-  return { runtime, until, inspect, subscribe };
+  const sessions = yield* MonitorSession.MonitorSessions;
+  const startMonitor = (command: ReadonlyArray<string>) => sessions.start(cwd, command);
+  return { runtime, until, inspect, subscribe, startMonitor };
 });
+
+it.effect(
+  "starts and subscribes atomically, captures immediate output, and terminates on Stop",
+  () =>
+    Effect.gen(function* () {
+      const { runtime, until, inspect, startMonitor } = yield* setup();
+      yield* runtime.sendTurn({ input: "watch" });
+      yield* until("turn/completed");
+      const monitor = yield* startMonitor(["watch-ci"]);
+      assert.equal(monitor.status, "scheduled");
+      yield* until("turn/completed");
+      const snapshot = yield* inspect;
+      assert.deepStrictEqual(snapshot.monitorExecutions, [
+        {
+          command: ["watch-ci"],
+          processId: monitor.monitorId,
+          sandboxPolicy: { type: "dangerFullAccess" },
+          streamStdoutStderr: true,
+        },
+      ]);
+      assert.include(snapshot.wakes[0]!.output, "Immediate monitor event");
+      yield* runtime.interruptTurn();
+      assert.equal((yield* inspect).terminatedMonitors, 1);
+      assert.equal((yield* inspect).wakes.length, 1);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(Layer.mergeAll(NodeServices.layer, MonitorSession.layer)),
+    ),
+);
+
+it.effect("stops a quiet monitor before its first output and preserves the thread sandbox", () =>
+  Effect.gen(function* () {
+    const { runtime, until, inspect, startMonitor } = yield* setup(
+      "0.153.2",
+      false,
+      "approval-required",
+    );
+    yield* runtime.sendTurn({ input: "watch" });
+    yield* until("turn/completed");
+    yield* startMonitor(["quiet"]);
+    yield* runtime.interruptTurn();
+    const snapshot = yield* inspect;
+    assert.equal(snapshot.terminatedMonitors, 1);
+    assert.equal(snapshot.wakes.length, 0);
+    assert.deepStrictEqual(snapshot.monitorExecutions[0]?.sandboxPolicy, { type: "readOnly" });
+    assert.equal((yield* startMonitor(["quiet"]).pipe(Effect.result))._tag, "Failure");
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, MonitorSession.layer))),
+);
+
+it.effect("reports a launch failure through the monitor wake", () =>
+  Effect.gen(function* () {
+    const { runtime, until, inspect, startMonitor } = yield* setup();
+    yield* runtime.sendTurn({ input: "watch" });
+    yield* until("turn/completed");
+    yield* startMonitor(["fail"]);
+    yield* until("turn/completed");
+    assert.include((yield* inspect).wakes[0]!.output, "Watcher failed to start or execute");
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, MonitorSession.layer))),
+);
 
 it.effect("wakes an idle thread from tool output and stops without a shutdown wake", () =>
   Effect.gen(function* () {

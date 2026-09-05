@@ -342,7 +342,7 @@ it.effect("HTTP tool discovery only advertises monitors to monitoring credential
         .filter((name) => name.startsWith("monitor_"));
       expect(monitorNames).toEqual(
         capabilities.some((capability) => capability === "monitor")
-          ? ["monitor_subscribe", "monitor_unsubscribe"]
+          ? ["monitor_start", "monitor_unsubscribe"]
           : [],
       );
     }
