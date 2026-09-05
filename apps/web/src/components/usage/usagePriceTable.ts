@@ -16,6 +16,14 @@ export interface UsagePriceDraft {
   readonly removed?: boolean;
 }
 
+export function isEmptyUsagePriceDraft(draft: UsagePriceDraft) {
+  return (
+    draft.isNew &&
+    draft.model.trim() === "" &&
+    Object.values(draft.values).every((value) => value.trim() === "")
+  );
+}
+
 function modelPrice(target: UsagePriceTarget, model: string) {
   return target.prices && Object.hasOwn(target.prices, model) ? target.prices[model] : undefined;
 }
@@ -46,6 +54,7 @@ export function usagePriceTableChanges(
   const changes: UsagePriceChange[] = [];
   const errors = new Map<string, string>();
   for (const draft of drafts) {
+    if (isEmptyUsagePriceDraft(draft)) continue;
     const model = draft.model.trim();
     if (draft.removed) {
       if (modelPrice(target, model)) changes.push({ model, price: null });

@@ -119,6 +119,30 @@ describe("price table edits", () => {
     expect(missing.errors.has("model:example")).toBe(true);
   });
 
+  it("ignores empty new rows without blocking other edits", () => {
+    const environment = target("a", { example: price });
+    const empty: UsagePriceDraft = {
+      id: "new:1",
+      model: " ",
+      isNew: true,
+      values: { inputCostPerMillionTokens: " " },
+    };
+    const plan = usagePriceTableChanges(environment, [
+      draft({ inputCostPerMillionTokens: "3" }),
+      empty,
+    ]);
+    expect(plan.errors.size).toBe(0);
+    expect(plan.changes).toEqual([
+      { model: "example", price: { ...price, inputCostPerMillionTokens: 3 } },
+    ]);
+    expect(usagePriceTableChanges(environment, [empty]).changes).toEqual([]);
+    expect(
+      usagePriceTableChanges(environment, [
+        { ...empty, values: { inputCostPerMillionTokens: "0" } },
+      ]).errors.get(empty.id),
+    ).toBe("Enter a model ID.");
+  });
+
   it.each(["Offline", "Read-only access", "Update server to edit prices"])(
     "does not let %s destinations block a valid edit elsewhere",
     (unavailable) => {

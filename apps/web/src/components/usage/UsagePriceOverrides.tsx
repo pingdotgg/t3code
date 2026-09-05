@@ -16,7 +16,7 @@ import {
   resolvePrimaryOperateAccess,
   resolveRemoteOperateAccess,
 } from "../settings/ProviderSettingsPanel.logic";
-import { Button, buttonVariants } from "../ui/button";
+import { Button } from "../ui/button";
 import {
   Dialog,
   DialogDescription,
@@ -33,6 +33,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from ".
 import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
 import { USAGE_PRICE_FIELDS } from "./usagePriceForm";
 import {
+  isEmptyUsagePriceDraft,
   usagePriceCell,
   usagePriceTableChanges,
   usagePriceTableErrors,
@@ -141,8 +142,9 @@ export function UsagePriceOverrides({
       ),
     ...drafts.filter((draft) => draft.isNew),
   ];
-  const errors = usagePriceTableErrors(selected, drafts);
-  for (const draft of drafts) {
+  const stagedDrafts = drafts.filter((draft) => !isEmptyUsagePriceDraft(draft));
+  const errors = usagePriceTableErrors(selected, stagedDrafts);
+  for (const draft of stagedDrafts) {
     if (!draft.isNew) continue;
     if (draft.model.trim() === "") errors.set(draft.id, "Enter a model ID.");
     else if (
@@ -157,7 +159,7 @@ export function UsagePriceOverrides({
       (destination) => attempt.results.get(destination.environmentId)?.status === "failed",
     ) ?? [];
   const locked = pending || failedDestinations.length > 0;
-  const hasChanges = drafts.length > 0;
+  const hasChanges = stagedDrafts.length > 0;
   const destinationLabel =
     selected.length === 1 ? selected[0]!.label : `${selected.length} environments`;
   const selectionLabel = selectedIds === null ? "All environments" : destinationLabel;
@@ -194,7 +196,7 @@ export function UsagePriceOverrides({
   const save = async (retry = false) => {
     if (pending) return;
     const destinations = retry ? failedDestinations : selected;
-    const edits = retry && attempt ? attempt.drafts : drafts;
+    const edits = retry && attempt ? attempt.drafts : stagedDrafts;
     if (destinations.length === 0 || edits.length === 0) return;
     const targets = destinations.map(
       (destination) =>
@@ -258,9 +260,9 @@ export function UsagePriceOverrides({
               </Label>
               <Menu>
                 <MenuTrigger
+                  render={<Button variant="outline" size="sm" className="min-w-0" />}
                   aria-labelledby="usage-prices-apply-label usage-prices-selection"
                   disabled={pending || hasChanges}
-                  className={cn(buttonVariants({ variant: "outline", size: "sm" }), "min-w-0")}
                 >
                   <span id="usage-prices-selection" className="truncate">
                     {selectionLabel}
@@ -427,7 +429,7 @@ export function UsagePriceOverrides({
                                     }
                                     autoComplete="off"
                                     disabled={locked}
-                                    className="bg-transparent shadow-none tabular-nums"
+                                    className="tabular-nums"
                                     onChange={(event) =>
                                       editCell(row, field.key, event.target.value)
                                     }
