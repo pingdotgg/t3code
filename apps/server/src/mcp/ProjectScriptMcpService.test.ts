@@ -650,7 +650,7 @@ describe("ProjectScriptMcpService", () => {
           Effect.provideService(ThreadManagementService, threads),
           Effect.provideService(ProjectService.ProjectService, projects),
           Effect.provideService(TerminalManager.TerminalManager, queuedManager),
-          Effect.provideService(ThreadDispatchLockV2, threadDispatch),
+          Effect.provideService(ThreadCommandExecutor, threadDispatch),
         );
         const queuedScriptService = yield* ProjectScriptMcpService.make.pipe(
           Effect.provideService(TerminalMcpService.TerminalMcpService, queuedTerminalService),
