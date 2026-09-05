@@ -60,7 +60,7 @@ export function retainUsageStatuses<T extends RetainableUsageStatus>(
   const visible = retainedAny ? withRetained : current;
   const settled = visible.some((status) => status.summary !== null)
     ? { rangeKey, statuses: visible }
-    : previous;
+    : null;
 
   return { visible, settled };
 }

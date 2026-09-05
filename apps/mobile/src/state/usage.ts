@@ -79,7 +79,7 @@ export interface UsageView {
    * improve by waiting on them, so they must not read as "still reporting".
    */
   readonly isPartial: boolean;
-  readonly refresh: () => void;
+  readonly refresh: (requestedInput?: UsageSummaryInput) => void;
 }
 
 export function useUsage(input: UsageSummaryInput): UsageView {
@@ -154,29 +154,35 @@ export function useUsage(input: UsageSummaryInput): UsageView {
   // Each environment refetches model pricing first, so a model released since
   // its last daily fetch gets priced by the rescan. The rescan runs whether or
   // not the refetch succeeds: an offline environment still recounts tokens.
-  const refresh = useCallback(() => {
-    const nextToken = makeUsageRefreshToken(answered);
-    const currentInput = JSON.parse(windowKey) as UsageSummaryInput;
-    const rateRefreshes = environments.map(({ environmentId }) =>
-      runAtomCommand(
-        appAtomRegistry,
-        serverEnvironment.refreshUsageRates,
-        { environmentId, input: {} },
-        { reportFailure: false },
-      ),
-    );
-    void Promise.allSettled(rateRefreshes).then(() => {
-      if (nextToken !== undefined && nextToken !== refreshToken) {
-        setRefreshToken(nextToken);
-        return;
-      }
-      for (const { environmentId } of environments) {
-        appAtomRegistry.refresh(
-          serverEnvironment.usageSummary({ environmentId, input: currentInput }),
-        );
-      }
-    });
-  }, [answered, environments, refreshToken, windowKey]);
+  const refresh = useCallback(
+    (requestedInput?: UsageSummaryInput) => {
+      const nextToken = makeUsageRefreshToken(answered);
+      const currentInput =
+        requestedInput === undefined
+          ? (JSON.parse(windowKey) as UsageSummaryInput)
+          : { ...requestedInput, refreshToken };
+      const rateRefreshes = environments.map(({ environmentId }) =>
+        runAtomCommand(
+          appAtomRegistry,
+          serverEnvironment.refreshUsageRates,
+          { environmentId, input: {} },
+          { reportFailure: false },
+        ),
+      );
+      void Promise.allSettled(rateRefreshes).then(() => {
+        if (nextToken !== undefined && nextToken !== refreshToken) {
+          setRefreshToken(nextToken);
+          return;
+        }
+        for (const { environmentId } of environments) {
+          appAtomRegistry.refresh(
+            serverEnvironment.usageSummary({ environmentId, input: currentInput }),
+          );
+        }
+      });
+    },
+    [answered, environments, refreshToken, windowKey],
+  );
 
   const merged = useMemo(() => mergeUsage(answered, USAGE_CONTRACT_VERSION), [answered]);
 
