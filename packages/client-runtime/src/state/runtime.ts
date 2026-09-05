@@ -54,6 +54,10 @@ interface EnvironmentQueryAtomOptions<Input, A, E, R> extends EnvironmentAtomOpt
   readonly refreshIntervalMs?: number;
   /** Revalidate settled failures without adding a refresh loop for successes. */
   readonly refreshOnFailureMs?: number;
+  readonly refreshTrigger?: (target: {
+    readonly environmentId: EnvironmentIdType;
+    readonly input: Input;
+  }) => Atom.Atom<unknown> | undefined;
 }
 
 interface EnvironmentSubscriptionAtomOptions<Input, A, E, R> {
@@ -629,10 +633,15 @@ export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
               { initialValueTarget: queryAtom },
             ),
           );
-    return (
+    const intervalQuery =
       options.refreshIntervalMs === undefined
         ? refreshableQueryAtom
-        : refreshableQueryAtom.pipe(Atom.withRefresh(options.refreshIntervalMs))
+        : refreshableQueryAtom.pipe(Atom.withRefresh(options.refreshIntervalMs));
+    const refreshTrigger = options.refreshTrigger?.(target);
+    return (
+      refreshTrigger === undefined
+        ? intervalQuery
+        : intervalQuery.pipe(Atom.makeRefreshOnSignal(refreshTrigger))
     ).pipe(Atom.setIdleTTL(idleTtlMs), Atom.withLabel(`${options.label}:${key}`));
   });
   return (target) => family(environmentRpcKey(target));
@@ -680,6 +689,10 @@ export function createEnvironmentRpcQueryAtomFamily<R, ER, TTag extends Environm
     readonly idleTtlMs?: number;
     readonly refreshIntervalMs?: number;
     readonly refreshOnFailureMs?: number;
+    readonly refreshTrigger?: (target: {
+      readonly environmentId: EnvironmentIdType;
+      readonly input: EnvironmentRpcInput<TTag>;
+    }) => Atom.Atom<unknown> | undefined;
   },
 ) {
   return createEnvironmentQueryAtomFamily(runtime, {
@@ -692,6 +705,7 @@ export function createEnvironmentRpcQueryAtomFamily<R, ER, TTag extends Environm
     ...(options.refreshOnFailureMs === undefined
       ? {}
       : { refreshOnFailureMs: options.refreshOnFailureMs }),
+    ...(options.refreshTrigger === undefined ? {} : { refreshTrigger: options.refreshTrigger }),
     execute: (input: EnvironmentRpcInput<TTag>) => request(options.tag, input),
   });
 }

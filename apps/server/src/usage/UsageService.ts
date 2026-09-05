@@ -22,8 +22,10 @@ import {
   UsageDay,
   UsageSummary as UsageSummarySchema,
   UsageSource as UsageSourceSchema,
+  type ServerSettings as ServerSettingsValue,
   type UsageProviderKind,
   type UsageSource,
+  type UsagePricing,
   type UsageSummary,
   type UsageSummaryInput,
   UsageReadError,
@@ -50,10 +52,14 @@ import { expandHomePath } from "../pathExpansion.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { resolveClaudeHomePath } from "../provider/Drivers/ClaudeHome.ts";
 import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
-import { UsageAggregator } from "./usageAggregation.ts";
-import { makeDayFormatter } from "./usageAggregation.ts";
+import { makeDayFormatter, UsageAggregator } from "./usageAggregation.ts";
 import { addTotals, EMPTY_TOTALS, type UsageRecord } from "./usageTranscripts.ts";
-import { parseRateTable, priceUsage, type RateTable } from "./usagePricing.ts";
+import {
+  createOverrideRateTable,
+  parseRateTable,
+  priceUsage,
+  type RateTable,
+} from "./usagePricing.ts";
 import {
   listTranscriptFilesDetailed,
   readDirectoryVolumeIdDetailed,
@@ -72,6 +78,9 @@ const LITELLM_RATES_URL =
 
 /** Rates move rarely; a day-old table keeps the page working offline. */
 const RATES_TTL_MS = 24 * 60 * 60 * 1000;
+
+/** An explicit refresh ignores the TTL, but not a table fetched this recently. */
+const RATES_REFRESH_FLOOR_MS = 60 * 1000;
 
 /**
  * Files are filtered by mtime before opening. The slack covers a session whose
@@ -243,7 +252,10 @@ function formatInstant(epochMs: number): string {
   return DateTime.formatIso(DateTime.makeUnsafe(epochMs));
 }
 
-function snapshotKey(input: UsageSummaryInput): string {
+function snapshotKey(
+  input: UsageSummaryInput,
+  priceOverrides: ServerSettingsValue["usagePriceOverrides"],
+): string {
   return JSON.stringify([
     input.timeZone,
     input.sinceDay,
@@ -251,6 +263,7 @@ function snapshotKey(input: UsageSummaryInput): string {
     input.resolution ?? "day",
     input.sinceTime ?? null,
     input.untilTime ?? null,
+    priceOverrides,
   ]);
 }
 
@@ -447,8 +460,17 @@ export class UsageService extends Context.Service<
       input: UsageSummaryInput,
     ) => Effect.Effect<UsageSummary, UsageReadError>;
     readonly startBackgroundRefresh: Effect.Effect<void>;
+    /** Refetches the rate table ahead of its TTL. See `ensureRates`. */
+    readonly refreshRates: Effect.Effect<UsagePricing>;
   }
 >()("t3/usage/UsageService") {}
+
+const EMPTY_PRICING: UsagePricing = {
+  status: "unavailable",
+  source: LITELLM_RATES_URL,
+  fetchedAt: null,
+  knownModels: 0,
+};
 
 /** Empty summary, for suites that only need the RPC surface to resolve. */
 export const layerTest = Layer.succeed(
@@ -463,12 +485,7 @@ export const layerTest = Layer.succeed(
         untilDay: input.untilDay,
         buckets: [],
         sources: [],
-        pricing: {
-          status: "unavailable",
-          source: LITELLM_RATES_URL,
-          fetchedAt: null,
-          knownModels: 0,
-        },
+        pricing: EMPTY_PRICING,
         coverage: {
           availableThroughDay: input.untilDay,
           availableThroughTime: null,
@@ -481,6 +498,7 @@ export const layerTest = Layer.succeed(
       Effect.fail(
         new UsageReadError({ reason: "scanFailed", detail: "Usage refresh is unavailable." }),
       ),
+    refreshRates: Effect.succeed(EMPTY_PRICING),
   }),
 );
 
@@ -509,16 +527,32 @@ export const make = Effect.gen(function* () {
   let usageLedgerDirty = false;
   let rates: RateTable = new Map();
   let ratesFetchedAtMs: number | null = null;
-  let ratesStatus: UsageSummary["pricing"]["status"] = "unavailable";
+  let ratesStatus: UsagePricing["status"] = "unavailable";
+  // One fetch at a time. A burst of refreshes from several clients waits on
+  // the first fetch and then sees a table young enough to skip its own.
+  const ratesLock = yield* Semaphore.make(1);
+
+  const pricing = (): UsagePricing => ({
+    status: ratesStatus,
+    source: LITELLM_RATES_URL,
+    fetchedAt:
+      ratesFetchedAtMs === null ? null : DateTime.formatIso(DateTime.makeUnsafe(ratesFetchedAtMs)),
+    knownModels: rates.size,
+  });
 
   /**
    * Loads the LiteLLM rate table, preferring a fresh copy and falling back to
    * the on-disk snapshot. With neither, every model reports as unpriced rather
-   * than the page failing.
+   * than the page failing. `force` refetches inside the TTL so a model that
+   * LiteLLM added since the last fetch gets priced now.
    */
-  const ensureRates = Effect.fn("UsageService.ensureRates")(function* (allowNetwork = true) {
+  const loadRates = Effect.fn("UsageService.loadRates")(function* (
+    force: boolean,
+    allowNetwork: boolean,
+  ) {
     const now = yield* Clock.currentTimeMillis;
-    if (ratesFetchedAtMs !== null && now - ratesFetchedAtMs < RATES_TTL_MS) return;
+    const maxAgeMs = force ? RATES_REFRESH_FLOOR_MS : RATES_TTL_MS;
+    if (ratesFetchedAtMs !== null && now - ratesFetchedAtMs < maxAgeMs) return;
 
     if (ratesFetchedAtMs === null) {
       const fromDisk = yield* fileSystem.readFileString(ratesCachePath).pipe(
@@ -531,7 +565,7 @@ export const make = Effect.gen(function* () {
           rates = parsed;
           ratesFetchedAtMs = fromDisk.fetchedAtMs;
           ratesStatus = "cached";
-          if (now - fromDisk.fetchedAtMs < RATES_TTL_MS) return;
+          if (now - fromDisk.fetchedAtMs < maxAgeMs) return;
         }
       }
     }
@@ -564,6 +598,14 @@ export const make = Effect.gen(function* () {
     );
   });
 
+  const ensureRates = (force: boolean, allowNetwork = true) =>
+    ratesLock.withPermit(loadRates(force, allowNetwork));
+
+  const refreshRates = ensureRates(true).pipe(
+    Effect.map(pricing),
+    Effect.withSpan("UsageService.refreshRates"),
+  );
+
   /**
    * Claude's config dir is the home itself when overridden, but a default
    * install nests transcripts under `~/.claude/projects`. Probe both.
@@ -577,24 +619,22 @@ export const make = Effect.gen(function* () {
       return nestedExists ? nested : path.join(homePath, "projects");
     });
 
-  /** Resolves the transcript directory for each provider. */
-  const resolveTranscriptDirs = Effect.fn("UsageService.resolveTranscriptDirs")(function* () {
-    // A settings failure must surface as an error: swallowing it here would
-    // present "zero usage from every provider" as a valid answer.
-    const settings = yield* settingsService.getSettings.pipe(
-      Effect.catchCause(
-        (cause) =>
-          new UsageReadError({
-            reason: "scanFailed",
-            // Bounded description; the squashed failure travels as the cause.
-            // Squashed, not the Cause tree: a full tree in a Defect field is
-            // the unbounded wire payload the bounded detail exists to avoid.
-            detail: "Server settings could not be read.",
-            cause: Cause.squash(cause),
-          }),
-      ),
-    );
+  // A settings failure must not silently discard custom rates or transcript homes.
+  const readSettings = settingsService.getSettings.pipe(
+    Effect.catchCause(
+      (cause) =>
+        new UsageReadError({
+          reason: "scanFailed",
+          detail: "Server settings could not be read.",
+          cause: Cause.squash(cause),
+        }),
+    ),
+  );
 
+  /** Resolves the transcript directory for each provider. */
+  const resolveTranscriptDirs = Effect.fn("UsageService.resolveTranscriptDirs")(function* (
+    settings: ServerSettingsValue,
+  ) {
     const claudeHome = yield* resolveClaudeHomePath(settings.providers.claudeAgent);
     const claudeDir = yield* resolveClaudeTranscriptDir(claudeHome);
     const codexLayout = yield* resolveCodexHomeLayout(settings.providers.codex);
@@ -842,10 +882,15 @@ export const make = Effect.gen(function* () {
     readonly complete: boolean;
   }
 
-  const collectDirs = Effect.fn("UsageService.collectDirs")(function* (windowStartMs: number) {
+  const collectDirs = Effect.fn("UsageService.collectDirs")(function* (
+    windowStartMs: number,
+    settings: ServerSettingsValue,
+  ) {
     // The home resolvers ask for `Path` themselves; satisfy them from the
     // instance we already hold so the scan stays context-free.
-    const dirs = yield* resolveTranscriptDirs().pipe(Effect.provideService(Path.Path, path));
+    const dirs = yield* resolveTranscriptDirs(settings).pipe(
+      Effect.provideService(Path.Path, path),
+    );
     const scanned: ScannedDir[] = [];
     for (const { provider, dir, fileName } of dirs) {
       const volume = yield* Effect.promise(() => readDirectoryVolumeIdDetailed(dir));
@@ -896,7 +941,10 @@ export const make = Effect.gen(function* () {
     return scanned;
   });
 
-  const scanSummary = Effect.fn("UsageService.scanSummary")(function* (input: UsageSummaryInput) {
+  const scanSummary = Effect.fn("UsageService.scanSummary")(function* (
+    input: UsageSummaryInput,
+    settings: ServerSettingsValue,
+  ) {
     if (input.sinceDay > input.untilDay) {
       return yield* new UsageReadError({
         reason: "invalidWindow",
@@ -946,9 +994,10 @@ export const make = Effect.gen(function* () {
     // Pricing only matters once records are aggregated, so the rate table
     // loads while transcripts stream instead of gating them: a cold rates
     // fetch on a slow network no longer delays the scan by its own timeout.
-    const [, scannedDirs] = yield* Effect.all([ensureRates(), collectDirs(windowStartMs)], {
-      concurrency: 2,
-    });
+    const [, scannedDirs] = yield* Effect.all(
+      [ensureRates(false), collectDirs(windowStartMs, settings)],
+      { concurrency: 2 },
+    );
 
     const aggregator = new UsageAggregator({
       timeZone: input.timeZone,
@@ -960,6 +1009,7 @@ export const make = Effect.gen(function* () {
       resolution: input.resolution ?? "day",
       ...hourlyWindow,
       rates,
+      priceOverrides: createOverrideRateTable(settings.usagePriceOverrides),
     });
 
     const sources: UsageSource[] = [];
@@ -1110,15 +1160,7 @@ export const make = Effect.gen(function* () {
         untilDay: input.untilDay,
         buckets: aggregated.buckets,
         sources,
-        pricing: {
-          status: ratesStatus,
-          source: LITELLM_RATES_URL,
-          fetchedAt:
-            ratesFetchedAtMs === null
-              ? null
-              : DateTime.formatIso(DateTime.makeUnsafe(ratesFetchedAtMs)),
-          knownModels: rates.size,
-        },
+        pricing: pricing(),
         coverage: {
           availableThroughDay,
           availableThroughTime,
@@ -1133,7 +1175,7 @@ export const make = Effect.gen(function* () {
   });
 
   /**
-   * In-flight scans by window, so concurrent identical requests (the usage
+   * In-flight scans by window and custom prices, so concurrent identical requests (the usage
    * page open on two clients at once) share one scan instead of racing over
    * the same corpus twice.
    */
@@ -1146,41 +1188,45 @@ export const make = Effect.gen(function* () {
   const scanKey = snapshotKey;
 
   const scanAndPersist = (input: UsageSummaryInput) => {
-    const scan = (isCanonicalLedgerInput(input) ? ensureUsageLedgerLoaded : Effect.void).pipe(
-      Effect.andThen(scanSummary(input)),
-      Effect.tap((result) =>
-        Effect.sync(() => {
-          const summary = result.summary;
-          usageSnapshots.set(scanKey(input), summary);
-          while (usageSnapshots.size > MAX_USAGE_SNAPSHOTS) {
-            const oldest = [...usageSnapshots.entries()].toSorted(([, left], [, right]) =>
-              (left.coverage?.generatedAt ?? left.readAt).localeCompare(
-                right.coverage?.generatedAt ?? right.readAt,
-              ),
-            )[0];
-            if (oldest === undefined) break;
-            usageSnapshots.delete(oldest[0]);
-          }
-          snapshotsDirty = true;
-          if (
-            isCanonicalLedgerInput(input) &&
-            isWithinLedgerRetention(input, result.scanStartedAtMs)
-          ) {
-            // A complete canonical scan is a replacement, not a merge. This
-            // removes records for deleted or rewritten transcripts while the
-            // last-good file remains intact if the scan failed above.
-            usageLedger.clear();
-            usageLedgerSources.clear();
-            for (const aggregate of result.ledgerAggregates) {
-              usageLedger.set(ledgerAggregateKey(aggregate), aggregate);
-            }
-            for (const source of result.ledgerSources) {
-              usageLedgerSources.set(sourceKey(source.fingerprint), source);
-            }
-            usageLedgerGeneratedAtMs = result.scanStartedAtMs;
-            usageLedgerDirty = true;
-          }
-        }).pipe(Effect.andThen(persistUsageSnapshots), Effect.andThen(persistUsageLedger)),
+    const scan = readSettings.pipe(
+      Effect.flatMap((settings) =>
+        (isCanonicalLedgerInput(input) ? ensureUsageLedgerLoaded : Effect.void).pipe(
+          Effect.andThen(scanSummary(input, settings)),
+          Effect.tap((result) =>
+            Effect.sync(() => {
+              const summary = result.summary;
+              usageSnapshots.set(scanKey(input, settings.usagePriceOverrides), summary);
+              while (usageSnapshots.size > MAX_USAGE_SNAPSHOTS) {
+                const oldest = [...usageSnapshots.entries()].toSorted(([, left], [, right]) =>
+                  (left.coverage?.generatedAt ?? left.readAt).localeCompare(
+                    right.coverage?.generatedAt ?? right.readAt,
+                  ),
+                )[0];
+                if (oldest === undefined) break;
+                usageSnapshots.delete(oldest[0]);
+              }
+              snapshotsDirty = true;
+              if (
+                isCanonicalLedgerInput(input) &&
+                isWithinLedgerRetention(input, result.scanStartedAtMs)
+              ) {
+                // A complete canonical scan is a replacement, not a merge. This
+                // removes records for deleted or rewritten transcripts while the
+                // last-good file remains intact if the scan failed above.
+                usageLedger.clear();
+                usageLedgerSources.clear();
+                for (const aggregate of result.ledgerAggregates) {
+                  usageLedger.set(ledgerAggregateKey(aggregate), aggregate);
+                }
+                for (const source of result.ledgerSources) {
+                  usageLedgerSources.set(sourceKey(source.fingerprint), source);
+                }
+                usageLedgerGeneratedAtMs = result.scanStartedAtMs;
+                usageLedgerDirty = true;
+              }
+            }).pipe(Effect.andThen(persistUsageSnapshots), Effect.andThen(persistUsageLedger)),
+          ),
+        ),
       ),
     );
     // Reject malformed day ranges before entering the serialized lane. This
@@ -1219,26 +1265,26 @@ export const make = Effect.gen(function* () {
                 : Effect.succeed(summary);
 
             if (canonicalRefreshWaiter !== null) {
-              const summary = yield* restore(awaitCanonicalRefresh());
-              return yield* summary === null
-                ? Effect.fail(
-                    new UsageReadError({
-                      reason: "scanFailed",
-                      detail: "The canonical usage refresh did not complete.",
-                    }),
-                  )
-                : readPresetFromLedger(input).pipe(
-                    Effect.flatMap((requested) =>
-                      requested === null
-                        ? Effect.fail(
-                            new UsageReadError({
-                              reason: "scanFailed",
-                              detail: "The canonical usage refresh did not complete.",
-                            }),
-                          )
-                        : Effect.succeed(requested),
-                    ),
-                  );
+              const completed = yield* restore(awaitCanonicalRefresh());
+              if (completed === null) {
+                return yield* new UsageReadError({
+                  reason: "scanFailed",
+                  detail: "The canonical usage refresh did not complete.",
+                });
+              }
+              if (Exit.isFailure(completed)) return yield* Effect.failCause(completed.cause);
+              return yield* readPresetFromLedger(input).pipe(
+                Effect.flatMap((requested) =>
+                  requested === null
+                    ? Effect.fail(
+                        new UsageReadError({
+                          reason: "scanFailed",
+                          detail: "The canonical usage refresh did not complete.",
+                        }),
+                      )
+                    : Effect.succeed(requested),
+                ),
+              );
             }
 
             const waiter = Deferred.makeUnsafe<Exit.Exit<UsageSummary, UsageReadError>, never>();
@@ -1262,18 +1308,13 @@ export const make = Effect.gen(function* () {
   };
 
   const awaitCanonicalRefresh = () =>
-    canonicalRefreshWaiter === null
-      ? Effect.succeed(null)
-      : Deferred.await(canonicalRefreshWaiter).pipe(
-          Effect.flatMap((exit) =>
-            Exit.isSuccess(exit) ? Effect.succeed(exit.value) : Effect.succeed(null),
-          ),
-        );
+    canonicalRefreshWaiter === null ? Effect.succeed(null) : Deferred.await(canonicalRefreshWaiter);
 
   /** Derives a requested preset from the durable normalized record ledger. */
   const readPresetFromLedger = Effect.fn("UsageService.readPresetFromLedger")(function* (
     input: UsageSummaryInput,
   ) {
+    const settings = yield* readSettings;
     yield* ensureUsageLedgerLoaded;
     if (usageLedgerGeneratedAtMs <= 0 && canonicalRefreshWaiter !== null) {
       yield* awaitCanonicalRefresh();
@@ -1285,20 +1326,24 @@ export const make = Effect.gen(function* () {
     // Preset reads are foreground-fast and may use a durable cached rate
     // table, but never perform a network fetch. Background/manual scans own
     // rate refreshes.
-    yield* ensureRates(false);
+    yield* ensureRates(false, false);
 
     const generatedAtMs = usageLedgerGeneratedAtMs;
     const completeThroughDay = previousCalendarDay(input.timeZone, generatedAtMs);
     let hourlyWindow: { readonly sinceTimeMs: number; readonly untilTimeMs: number } | null = null;
+    let hourlyCoverageMs: number | null = null;
     if (input.resolution === "hour") {
       if (input.sinceTime === undefined || input.untilTime === undefined) return null;
       const sinceTimeMs = Date.parse(input.sinceTime);
       const observedUntilMs = Math.min(Date.parse(input.untilTime), generatedAtMs);
-      if (!Number.isFinite(sinceTimeMs) || observedUntilMs <= sinceTimeMs) return null;
-      const completeHours = Math.floor((observedUntilMs - sinceTimeMs) / (60 * 60 * 1000));
+      if (!Number.isFinite(sinceTimeMs) || !Number.isFinite(observedUntilMs)) return null;
+      const completeHours = Math.max(
+        0,
+        Math.floor((observedUntilMs - sinceTimeMs) / (60 * 60 * 1000)),
+      );
       const untilTimeMs = sinceTimeMs + completeHours * 60 * 60 * 1000;
-      if (untilTimeMs <= sinceTimeMs) return null;
       hourlyWindow = { sinceTimeMs, untilTimeMs };
+      hourlyCoverageMs = observedUntilMs <= sinceTimeMs ? observedUntilMs : untilTimeMs;
     }
 
     const effectiveUntil =
@@ -1314,6 +1359,7 @@ export const make = Effect.gen(function* () {
       resolution: input.resolution ?? "day",
       ...(hourlyWindow ?? {}),
       rates,
+      priceOverrides: createOverrideRateTable(settings.usagePriceOverrides),
     });
     const sessions = new Map<string, Set<string>>();
     for (const entry of usageLedger.values()) {
@@ -1325,8 +1371,7 @@ export const make = Effect.gen(function* () {
     }
     const aggregated = aggregator.finish();
     const readAt = yield* DateTime.now;
-    const availableThroughTime =
-      hourlyWindow === null ? null : formatInstant(hourlyWindow.untilTimeMs);
+    const availableThroughTime = hourlyCoverageMs === null ? null : formatInstant(hourlyCoverageMs);
     const sourceEntries = new Map<string, UsageSource>();
     for (const [key, source] of usageLedgerSources) {
       sourceEntries.set(key, {
@@ -1370,8 +1415,8 @@ export const make = Effect.gen(function* () {
       },
       coverage: {
         availableThroughDay:
-          input.resolution === "hour"
-            ? UsageDay.make(makeDayFormatter(input.timeZone)(hourlyWindow!.untilTimeMs - 1))
+          hourlyCoverageMs !== null
+            ? UsageDay.make(makeDayFormatter(input.timeZone)(hourlyCoverageMs - 1))
             : effectiveUntil,
         availableThroughTime,
         generatedAt: formatInstant(generatedAtMs),
@@ -1381,7 +1426,8 @@ export const make = Effect.gen(function* () {
   });
 
   const readSummary = Effect.fn("UsageService.readSummary")(function* (input: UsageSummaryInput) {
-    const key = scanKey(input);
+    const settings = yield* readSettings;
+    const key = scanKey(input, settings.usagePriceOverrides);
     if (isCommonPreset(input)) {
       const normalized = yield* readPresetFromLedger(input);
       if (normalized !== null) return normalized;
@@ -1390,9 +1436,11 @@ export const make = Effect.gen(function* () {
       // canonical ledger data above.
       const cached = usageSnapshots.get(key);
       if (cached !== undefined) return cached;
+      const nowMs = yield* Clock.currentTimeMillis;
+      if (isWithinLedgerRetention(input, nowMs)) return yield* runBackgroundRefresh(input);
       return yield* new UsageReadError({
         reason: "scanFailed",
-        detail: "Usage preset is waiting for the next background snapshot.",
+        detail: "No completed usage snapshot covers this preset.",
       });
     }
     const cached = usageSnapshots.get(key);
@@ -1475,7 +1523,7 @@ export const make = Effect.gen(function* () {
   });
 
   yield* Effect.uninterruptible(ensureUsageSnapshotsLoaded);
-  return { readSummary, refreshSummary, startBackgroundRefresh } as const;
+  return { readSummary, refreshSummary, startBackgroundRefresh, refreshRates } as const;
 });
 
 export const layer = Layer.effect(UsageService, make);

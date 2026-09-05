@@ -1,14 +1,20 @@
 import {
+  ANTIGRAVITY_DEFAULT_MODEL,
+  CheckpointRef,
   EnvironmentId,
   MessageId,
   ProjectId,
+  ProviderDriverKind,
   ProviderInstanceId,
+  type ServerProvider,
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-import type { Thread, ThreadShell } from "../types";
+import type { Thread, ThreadShell, TurnDiffSummary } from "../types";
+import type { TimelineEntry } from "../session-logic";
+import { deriveProviderInstanceEntries, NO_PROVIDER_MODEL_SELECTION } from "../providerInstances";
 import type { CodexArtifactTemplate } from "@t3tools/client-runtime/codex-artifact-templates";
 import type { RightPanelSurface } from "../rightPanelStore";
 import {
@@ -18,20 +24,24 @@ import {
   branchMismatchKey,
   buildExpiredTerminalContextToastCopy,
   buildLoadingThreadFromShell,
+  buildRevertTurnCountByUserMessageId,
   buildThreadTurnInterruptInput,
   createLocalDispatchSnapshot,
   deriveComposerSendState,
   dismissBranchMismatchForSession,
   ENVIRONMENT_RECONNECT_WARNING_GRACE_MS,
+  getAntigravitySendBlockReason,
   getStartedThreadModelChangeBlockReason,
-  isVideoPreviewRequestCurrent,
   hasEnvironmentReconnectWarningGraceElapsed,
   hasServerAcknowledgedLocalDispatch,
   isBranchMismatchDismissedForSession,
   reconcileMountedTerminalThreadIds,
   reconcileRetainedMountedThreadIds,
   resolveBackgroundDraftWorkspaceOptions,
+  resolveComposerInteractionMode,
+  resolveComposerProviderSelection,
   resolveDraftPromotionNavigationTarget,
+  resolveProactiveTurnDiffAction,
   resolveThreadMetadataUpdateForNextTurn,
   resolveSendEnvMode,
   resolveDraftHeroState,
@@ -42,6 +52,7 @@ import {
   shouldReleaseTimelineAnchorForToolActivity,
   shouldOpenProactivePullRequest,
   shouldOpenProactiveTurnDiff,
+  shouldRenderPreviewMiniPlayer,
   shouldShowBranchMismatchBanner,
   shouldShowPlanFollowUpPrompt,
   shouldWriteThreadErrorToCurrentServerThread,
@@ -82,6 +93,27 @@ describe("agent browser close confirmation", () => {
         "tab-2": { controller: "agent" },
       }),
     ).toContain("Close 2 browsers");
+  });
+});
+
+describe("floating browser preview", () => {
+  it("only hides the duplicate while the same browser is rendered in the panel", () => {
+    expect(shouldRenderPreviewMiniPlayer(null, null)).toBe(false);
+    expect(
+      shouldRenderPreviewMiniPlayer("tab-1", {
+        id: "browser:one",
+        kind: "preview",
+        resourceId: "tab-1",
+      }),
+    ).toBe(false);
+    expect(
+      shouldRenderPreviewMiniPlayer("tab-1", {
+        id: "browser:two",
+        kind: "preview",
+        resourceId: "tab-2",
+      }),
+    ).toBe(true);
+    expect(shouldRenderPreviewMiniPlayer("tab-1", { id: "diff", kind: "diff" })).toBe(true);
   });
 });
 
@@ -128,13 +160,79 @@ describe("proactive panels", () => {
       }),
     ).toBe(false);
   });
-});
 
-describe("isVideoPreviewRequestCurrent", () => {
-  it("rejects changed threads and replaced previews", () => {
-    expect(isVideoPreviewRequestCurrent("thread-1", "thread-2", 1, 1)).toBe(false);
-    expect(isVideoPreviewRequestCurrent("thread-1", "thread-1", 1, 2)).toBe(false);
-    expect(isVideoPreviewRequestCurrent("thread-1", "thread-1", 2, 2)).toBe(true);
+  it("opens a completed turn diff only for changed files", () => {
+    const changedCheckpoint = {
+      status: "ready",
+      files: [{ path: "src/app.ts", kind: "modified", additions: 1, deletions: 0 }],
+    } satisfies Pick<TurnDiffSummary, "status" | "files">;
+    const unchangedCheckpoint = {
+      status: "ready",
+      files: [],
+    } satisfies Pick<TurnDiffSummary, "status" | "files">;
+
+    expect(
+      resolveProactiveTurnDiffAction({
+        checkpoint: changedCheckpoint,
+        isGitRepo: true,
+        activeSurfaceKind: null,
+      }),
+    ).toBe("open");
+    expect(
+      resolveProactiveTurnDiffAction({
+        checkpoint: unchangedCheckpoint,
+        isGitRepo: true,
+        activeSurfaceKind: null,
+      }),
+    ).toBe("ignore");
+  });
+
+  it("waits for definitive checkpoint and repository state", () => {
+    const missingCheckpoint = {
+      status: "missing",
+      files: [],
+    } satisfies Pick<TurnDiffSummary, "status" | "files">;
+    const changedCheckpoint = {
+      status: "ready",
+      files: [{ path: "src/app.ts", kind: "modified", additions: 1, deletions: 0 }],
+    } satisfies Pick<TurnDiffSummary, "status" | "files">;
+
+    expect(
+      resolveProactiveTurnDiffAction({
+        checkpoint: undefined,
+        isGitRepo: true,
+        activeSurfaceKind: null,
+      }),
+    ).toBe("defer");
+    expect(
+      resolveProactiveTurnDiffAction({
+        checkpoint: missingCheckpoint,
+        isGitRepo: true,
+        activeSurfaceKind: null,
+      }),
+    ).toBe("defer");
+    expect(
+      resolveProactiveTurnDiffAction({
+        checkpoint: changedCheckpoint,
+        isGitRepo: undefined,
+        activeSurfaceKind: null,
+      }),
+    ).toBe("defer");
+  });
+
+  it("keeps an active pull request above a completed turn diff", () => {
+    const changedCheckpoint = {
+      status: "ready",
+      files: [{ path: "src/app.ts", kind: "modified", additions: 1, deletions: 0 }],
+    } satisfies Pick<TurnDiffSummary, "status" | "files">;
+
+    expect(
+      resolveProactiveTurnDiffAction({
+        checkpoint: changedCheckpoint,
+        isGitRepo: true,
+        activeSurfaceKind: "pull-request",
+      }),
+    ).toBe("ignore");
   });
 });
 
@@ -667,6 +765,329 @@ describe("buildThreadTurnInterruptInput", () => {
     expect(buildThreadTurnInterruptInput(makeThread({ session: readySession }))).toEqual({
       threadId,
     });
+  });
+});
+
+describe("resolveComposerProviderSelection", () => {
+  const catalogModels: ServerProvider["models"] = [
+    { slug: "gemini-pro", name: "Gemini Pro", isCustom: false, capabilities: null },
+  ];
+
+  function entry(driver: string, instanceId = driver, overrides: Partial<ServerProvider> = {}) {
+    return deriveProviderInstanceEntries([
+      {
+        driver: ProviderDriverKind.make(driver),
+        instanceId: ProviderInstanceId.make(instanceId),
+        enabled: true,
+        installed: true,
+        status: "ready",
+        auth: { status: "authenticated" },
+        version: null,
+        checkedAt: now,
+        models: [],
+        slashCommands: [],
+        skills: [],
+        ...overrides,
+      },
+    ])[0]!;
+  }
+
+  it("uses the custom instance's capability instead of the default instance", () => {
+    const defaultEntry = entry("antigravity", "antigravity", {
+      showInteractionModeToggle: true,
+    });
+    const customEntry = entry("antigravity", "google_work", {
+      showInteractionModeToggle: false,
+    });
+    const selection = resolveComposerProviderSelection({
+      entries: [defaultEntry, customEntry],
+      candidateInstanceIds: [customEntry.instanceId],
+      lockedProvider: null,
+      lockedInstanceId: null,
+    });
+
+    expect(selection.selectedProviderEntry?.instanceId).toBe(customEntry.instanceId);
+    expect(
+      resolveComposerInteractionMode({
+        provider: selection.selectedProviderEntry?.snapshot,
+        planModeEnabled: true,
+        interactionMode: "plan",
+      }),
+    ).toEqual({ enabled: false, interactionMode: "default" });
+  });
+
+  it("uses the fallback provider's plan capability after the draft's instance is disabled", () => {
+    const disabledEntry = entry("antigravity", "antigravity", {
+      enabled: false,
+      showInteractionModeToggle: false,
+    });
+    const fallbackEntry = entry("codex");
+    const selection = resolveComposerProviderSelection({
+      entries: [disabledEntry, fallbackEntry],
+      candidateInstanceIds: [disabledEntry.instanceId],
+      lockedProvider: null,
+      lockedInstanceId: null,
+    });
+
+    expect(selection.selectedProviderEntry?.instanceId).toBe(fallbackEntry.instanceId);
+    expect(
+      resolveComposerInteractionMode({
+        provider: selection.selectedProviderEntry?.snapshot,
+        planModeEnabled: true,
+        interactionMode: "plan",
+      }),
+    ).toEqual({ enabled: true, interactionMode: "plan" });
+  });
+
+  it("keeps a signed-out selection instead of silently switching providers", () => {
+    const signedOutEntry = entry("antigravity", "google_work", {
+      status: "error",
+      auth: { status: "unauthenticated" },
+      models: catalogModels,
+    });
+    const selection = resolveComposerProviderSelection({
+      entries: [entry("codex"), signedOutEntry],
+      candidateInstanceIds: [signedOutEntry.instanceId],
+      lockedProvider: null,
+      lockedInstanceId: null,
+    });
+
+    expect(selection.selectedProviderEntry?.instanceId).toBe(signedOutEntry.instanceId);
+    expect(
+      getAntigravitySendBlockReason(selection.selectedProviderEntry?.snapshot, "gemini-pro"),
+    ).toBe("Sign in to Antigravity in provider settings before sending.");
+  });
+
+  it("blocks sends until the selected Antigravity profile is installed", () => {
+    const provider = entry("antigravity", "google_work", {
+      installed: false,
+      models: catalogModels,
+    }).snapshot;
+
+    expect(getAntigravitySendBlockReason(provider, "gemini-pro")).toBe(
+      "Install Antigravity in provider settings before sending.",
+    );
+  });
+
+  it("lets Antigravity check saved credentials when resuming after a restart", () => {
+    const provider = entry("antigravity", "google_work", {
+      status: "warning",
+      auth: { status: "unknown" },
+      models: [],
+    }).snapshot;
+
+    expect(getAntigravitySendBlockReason(provider, "gemini-pro")).toBeNull();
+    expect(getAntigravitySendBlockReason(provider, ANTIGRAVITY_DEFAULT_MODEL)).toBeNull();
+    expect(
+      getAntigravitySendBlockReason({ ...provider, models: catalogModels }, "gemini-pro"),
+    ).toBeNull();
+    expect(getAntigravitySendBlockReason(provider, "")).toBe(
+      "Choose an Antigravity model before sending.",
+    );
+  });
+
+  it("blocks saved model sends until Antigravity loads its account catalog", () => {
+    expect(getAntigravitySendBlockReason(entry("antigravity").snapshot, "gemini-pro")).toBe(
+      "Refresh Antigravity models in provider settings before sending.",
+    );
+  });
+
+  it("blocks an empty Antigravity selection after the catalog has loaded", () => {
+    const provider = entry("antigravity", "google_work", { models: catalogModels }).snapshot;
+
+    expect(getAntigravitySendBlockReason(provider, "")).toBe(
+      "Choose an Antigravity model before sending.",
+    );
+  });
+
+  it("blocks a saved model that a ready catalog no longer lists", () => {
+    const provider = entry("antigravity", "google_work", {
+      status: "ready",
+      models: catalogModels,
+    }).snapshot;
+
+    expect(getAntigravitySendBlockReason(provider, "saved-model-not-in-current-catalog")).toBe(
+      "That Antigravity model is no longer available. Choose another model.",
+    );
+    expect(getAntigravitySendBlockReason(provider, "gemini-pro")).toBeNull();
+  });
+
+  it("allows a saved native model to retry after a provider error without changing it", () => {
+    const provider = entry("antigravity", "google_work", {
+      status: "error",
+      models: catalogModels,
+    }).snapshot;
+
+    expect(
+      getAntigravitySendBlockReason(provider, "saved-model-not-in-current-catalog"),
+    ).toBeNull();
+  });
+
+  it("keeps existing send behavior for other providers", () => {
+    const provider = entry("codex", "codex", {
+      installed: false,
+      auth: { status: "unknown" },
+      models: [],
+    }).snapshot;
+
+    expect(getAntigravitySendBlockReason(provider, "gpt-model")).toBeNull();
+  });
+
+  it("does not continue an existing Antigravity thread in another profile after deletion", () => {
+    const missingInstanceId = ProviderInstanceId.make("google_work");
+    const selection = resolveComposerProviderSelection({
+      entries: [entry("antigravity")],
+      candidateInstanceIds: [missingInstanceId],
+      lockedProvider: ProviderDriverKind.make("antigravity"),
+      lockedInstanceId: missingInstanceId,
+    });
+
+    expect(selection.selectedProviderEntry).toBeUndefined();
+    expect(selection.unavailableProviderInstanceId).toBe(missingInstanceId);
+  });
+
+  it("does not treat the empty draft placeholder as a provider setup target", () => {
+    const selection = resolveComposerProviderSelection({
+      entries: [entry("antigravity", "antigravity", { enabled: false })],
+      candidateInstanceIds: [NO_PROVIDER_MODEL_SELECTION.instanceId],
+      lockedProvider: null,
+      lockedInstanceId: null,
+    });
+
+    expect(selection.selectedProviderEntry).toBeUndefined();
+    expect(selection.unavailableProviderInstanceId).toBeUndefined();
+  });
+
+  it("keeps the session's continuation group when another instance was selected", () => {
+    const sessionEntry = entry("antigravity", "google_work", {
+      enabled: false,
+      continuation: { groupKey: "work-profile" },
+    });
+    const anotherEntry = entry("antigravity", "google_personal", {
+      continuation: { groupKey: "personal-profile" },
+    });
+    const selection = resolveComposerProviderSelection({
+      entries: [sessionEntry, anotherEntry],
+      candidateInstanceIds: [anotherEntry.instanceId, sessionEntry.instanceId],
+      lockedProvider: ProviderDriverKind.make("antigravity"),
+      lockedInstanceId: sessionEntry.instanceId,
+    });
+
+    expect(selection.selectedProviderEntry).toBeUndefined();
+  });
+});
+
+describe("resolveComposerInteractionMode", () => {
+  it("resets a restored plan draft when the selected instance does not support plan mode", () => {
+    expect(
+      resolveComposerInteractionMode({
+        planModeEnabled: true,
+        provider: { showInteractionModeToggle: false },
+        interactionMode: "plan",
+      }),
+    ).toEqual({ enabled: false, interactionMode: "default" });
+  });
+
+  it("keeps legacy plan behavior for providers that omit the capability", () => {
+    expect(
+      resolveComposerInteractionMode({
+        planModeEnabled: true,
+        provider: {},
+        interactionMode: "plan",
+      }),
+    ).toEqual({ enabled: true, interactionMode: "plan" });
+  });
+
+  it("resets a restored plan draft when the beta setting is off", () => {
+    expect(
+      resolveComposerInteractionMode({
+        planModeEnabled: false,
+        provider: { showInteractionModeToggle: true },
+        interactionMode: "plan",
+      }),
+    ).toEqual({ enabled: false, interactionMode: "default" });
+  });
+
+  it("disables plan mode until the selected provider is available", () => {
+    expect(
+      resolveComposerInteractionMode({
+        planModeEnabled: true,
+        provider: null,
+        interactionMode: "plan",
+      }),
+    ).toEqual({ enabled: false, interactionMode: "default" });
+  });
+});
+
+describe("buildRevertTurnCountByUserMessageId", () => {
+  const userMessageId = MessageId.make("rewind-user-message");
+  const assistantMessageId = MessageId.make("rewind-assistant-message");
+  const turnId = TurnId.make("rewind-turn");
+  const timelineEntries = [
+    {
+      id: userMessageId,
+      kind: "message",
+      createdAt: now,
+      message: {
+        id: userMessageId,
+        role: "user",
+        text: "Update the file",
+        turnId,
+        createdAt: now,
+        updatedAt: now,
+        streaming: false,
+      },
+    },
+    {
+      id: assistantMessageId,
+      kind: "message",
+      createdAt: now,
+      message: {
+        id: assistantMessageId,
+        role: "assistant",
+        text: "Updated the file",
+        turnId,
+        createdAt: now,
+        updatedAt: now,
+        streaming: false,
+      },
+    },
+  ] satisfies ReadonlyArray<TimelineEntry>;
+  const turnDiffSummaryByAssistantMessageId = new Map<MessageId, TurnDiffSummary>([
+    [
+      assistantMessageId,
+      {
+        turnId,
+        checkpointTurnCount: 1,
+        checkpointRef: CheckpointRef.make("refs/t3/checkpoints/rewind-turn"),
+        status: "ready",
+        files: [],
+        assistantMessageId,
+        completedAt: now,
+      },
+    ],
+  ]);
+
+  it("offers the checkpoint before the user message when conversation rollback is supported", () => {
+    expect(
+      buildRevertTurnCountByUserMessageId({
+        supportsConversationRollback: true,
+        timelineEntries,
+        turnDiffSummaryByAssistantMessageId,
+        inferredCheckpointTurnCountByTurnId: {},
+      }),
+    ).toEqual(new Map([[userMessageId, 0]]));
+  });
+
+  it("offers no rewind action when file checkpoints exist but conversation rollback is unsupported", () => {
+    expect(
+      buildRevertTurnCountByUserMessageId({
+        supportsConversationRollback: false,
+        timelineEntries,
+        turnDiffSummaryByAssistantMessageId,
+        inferredCheckpointTurnCountByTurnId: {},
+      }).size,
+    ).toBe(0);
   });
 });
 
@@ -1227,6 +1648,42 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
 
     expect(hasServerAcknowledgedLocalDispatch({ ...common, hasPendingApproval: true })).toBe(true);
     expect(hasServerAcknowledgedLocalDispatch({ ...common, hasPendingUserInput: true })).toBe(true);
+    expect(
+      hasServerAcknowledgedLocalDispatch({
+        ...common,
+        latestTurnStartFailureId: "turn-start-failure-1",
+      }),
+    ).toBe(true);
     expect(hasServerAcknowledgedLocalDispatch({ ...common, threadError: "failed" })).toBe(true);
+  });
+
+  it("acknowledges only a new turn-start failure", () => {
+    const localDispatch = {
+      ...createLocalDispatchSnapshot(makeThread()),
+      latestTurnStartFailureId: "turn-start-failure-old",
+    };
+    const common = {
+      localDispatch,
+      phase: "ready" as const,
+      latestTurn: null,
+      latestUserMessageId: localDispatch.latestUserMessageId,
+      session: null,
+      hasPendingApproval: false,
+      hasPendingUserInput: false,
+      threadError: null,
+    };
+
+    expect(
+      hasServerAcknowledgedLocalDispatch({
+        ...common,
+        latestTurnStartFailureId: "turn-start-failure-old",
+      }),
+    ).toBe(false);
+    expect(
+      hasServerAcknowledgedLocalDispatch({
+        ...common,
+        latestTurnStartFailureId: "turn-start-failure-new",
+      }),
+    ).toBe(true);
   });
 });

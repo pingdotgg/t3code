@@ -2726,7 +2726,12 @@ layer("GitHubPullRequestCli.layer", (it) => {
         // One request, because both answers hang off the same repository object.
         assert.strictEqual(mockedExecute.mock.calls.length, 1);
         expect(callAt(0).args).toContain("number=7");
-        expect(access).toEqual({ canWrite: false, canUpdate: true, didAuthor: true });
+        expect(access).toEqual({
+          canWrite: false,
+          canTriage: false,
+          canUpdate: true,
+          didAuthor: true,
+        });
       }),
   );
 
@@ -2889,7 +2894,12 @@ layer("GitHubPullRequestCli.layer", (it) => {
       });
 
       assert.strictEqual(mockedExecute.mock.calls.length, 2);
-      expect(access).toEqual({ canWrite: false, canUpdate: true, didAuthor: true });
+      expect(access).toEqual({
+        canWrite: false,
+        canTriage: false,
+        canUpdate: true,
+        didAuthor: true,
+      });
       yield* TestClock.setTime(Date.parse("2100-01-01T00:00:00Z"));
     }),
   );
@@ -3027,6 +3037,58 @@ layer("GitHubPullRequestCli.layer", (it) => {
         ["octocat", true],
         ["hubot", false],
       ]);
+    }),
+  );
+
+  it.effect("puts labels on by posting to the issue's own collection, all at once", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValue(Effect.succeed(output("[]")));
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+
+      yield* cli.setLabels({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        number: 7,
+        labels: ["bug", "size:XL"],
+        applied: true,
+      });
+
+      assert.strictEqual(mockedExecute.mock.calls.length, 1);
+      const call = callAt(0);
+      expect(call.args).toEqual([
+        "api",
+        "--method",
+        "POST",
+        "--hostname",
+        "github.com",
+        "repos/acme/web/issues/7/labels",
+        "--input",
+        "-",
+      ]);
+      // @effect-diagnostics-next-line preferSchemaOverJson:off - asserting the raw gh request body.
+      expect(JSON.parse(call.stdin ?? "")).toEqual({ labels: ["bug", "size:XL"] });
+    }),
+  );
+
+  it.effect("takes labels off one at a time, naming each in the path encoded", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValue(Effect.succeed(output("[]")));
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+
+      yield* cli.setLabels({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        number: 7,
+        labels: ["good first issue", "area/web"],
+        applied: false,
+      });
+
+      assert.strictEqual(mockedExecute.mock.calls.length, 2);
+      expect(callAt(0).args).toContain("repos/acme/web/issues/7/labels/good%20first%20issue");
+      expect(callAt(0).args).toContain("DELETE");
+      expect(callAt(1).args).toContain("repos/acme/web/issues/7/labels/area%2Fweb");
     }),
   );
 });

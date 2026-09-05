@@ -108,6 +108,9 @@ export function useUsage(input: UsageSummaryInput): UsageView {
   const refreshUsageSummary = useAtomCommand(serverEnvironment.refreshUsageSummary, {
     reportFailure: false,
   });
+  const refreshUsageRates = useAtomCommand(serverEnvironment.refreshUsageRates, {
+    reportFailure: false,
+  });
   const [manualRefreshState, setManualRefreshState] = useState<UsageRefreshState>({
     windowKey,
     requestId: 0,
@@ -115,9 +118,11 @@ export function useUsage(input: UsageSummaryInput): UsageView {
     error: null as string | null,
   });
   const currentWindowKey = useRef(windowKey);
-  currentWindowKey.current = windowKey;
   const currentRefreshId = useRef(0);
   const pendingRefreshWindowKey = useRef(windowKey);
+  useEffect(() => {
+    currentWindowKey.current = windowKey;
+  }, [windowKey]);
   useEffect(() => {
     // A refresh started while selecting the next window already targets this
     // committed key. Keep its request id and state so the completion can settle
@@ -158,7 +163,10 @@ export function useUsage(input: UsageSummaryInput): UsageView {
       setManualRefreshState(nextRefreshState);
       void Promise.all(
         environments.map((environment) =>
-          refreshUsageSummary({ environmentId: environment.environmentId, input }),
+          refreshUsageRates({ environmentId: environment.environmentId, input: {} }).then(
+            () => refreshUsageSummary({ environmentId: environment.environmentId, input }),
+            () => refreshUsageSummary({ environmentId: environment.environmentId, input }),
+          ),
         ),
       )
         .then((results) => {
@@ -184,7 +192,7 @@ export function useUsage(input: UsageSummaryInput): UsageView {
           if (nextState !== null) setManualRefreshState(nextState);
         });
     },
-    [environments, refreshUsageSummary, windowKey],
+    [environments, refreshUsageRates, refreshUsageSummary, windowKey],
   );
 
   const merged = useMemo(() => {

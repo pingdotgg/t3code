@@ -37,9 +37,14 @@ import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { makeCodexAdapter } from "../Layers/CodexAdapter.ts";
 import {
+  CODEX_RESET_CREDIT_TIMEOUT,
+  CodexResetCreditCoordinator,
+} from "../Layers/codexResetCredit.ts";
+import {
   checkCodexProviderStatus,
   makePendingCodexProvider,
   probeCodexSkillsForCwd,
+  withCodexAppServerClient,
 } from "../Layers/CodexProvider.ts";
 import { resolveCodexLaunchArgs } from "../Layers/codexLaunchArgs.ts";
 import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
@@ -81,6 +86,7 @@ const UPDATE = makePackageManagedProviderMaintenanceResolver({
 export type CodexDriverEnv =
   | BackgroundPolicy.BackgroundPolicy
   | ChildProcessSpawner.ChildProcessSpawner
+  | CodexResetCreditCoordinator
   | Crypto.Crypto
   | FileSystem.FileSystem
   | HttpClient.HttpClient
@@ -101,6 +107,7 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
   create: ({ instanceId, displayName, accentColor, environment, enabled, config }) =>
     Effect.gen(function* () {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const resetCreditCoordinator = yield* CodexResetCreditCoordinator;
       const httpClient = yield* HttpClient.HttpClient;
       const serverSettings = yield* ServerSettingsService;
       const eventLoggers = yield* ProviderEventLoggers;
@@ -229,6 +236,68 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
               ),
             );
 
+      // Redemption spends something on the user's account. It serialises on
+      // the account (instances sharing a Codex home share the credit), keeps
+      // one idempotency key until Codex reports an outcome, and is bounded so
+      // a hung app-server cannot hold the account lock.
+      // Keyed on the directory holding auth.json: an auth-overlay instance has
+      // its own account under `effectiveHomePath`, while plain instances share
+      // the common home. The continuation key would conflate the two.
+      const accountKey = homeLayout.effectiveHomePath ?? homeLayout.sharedHomePath;
+      const consumeResetCredit: NonNullable<ProviderInstance["consumeResetCredit"]> = () =>
+        resetCreditCoordinator
+          .redeem(accountKey, (idempotencyKey) =>
+            Effect.gen(function* () {
+              const { client } = yield* withCodexAppServerClient({
+                binaryPath: effectiveConfig.binaryPath,
+                homePath: effectiveConfig.homePath,
+                launchArgs: resolveCodexLaunchArgs(effectiveConfig.launchArgs, processEnv),
+                // Account-level request; any directory serves, same as the status probe.
+                cwd: process.cwd(),
+                environment: processEnv,
+              });
+              const response = yield* client.request("account/rateLimitResetCredit/consume", {
+                idempotencyKey,
+              });
+              return response.outcome;
+            }).pipe(Effect.scoped, Effect.timeout(CODEX_RESET_CREDIT_TIMEOUT)),
+          )
+          .pipe(
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+            Effect.mapError(
+              (cause) =>
+                new ProviderDriverError({
+                  driver: DRIVER_KIND,
+                  instanceId,
+                  detail: "Codex could not redeem the reset credit.",
+                  cause,
+                }),
+            ),
+            // The windows just changed; re-probe so the snapshot says so. A
+            // failed probe republishes the pre-redemption limits rather than
+            // marking them failed, so "confirmed" means `checkedAt` moved
+            // past what was published before the redemption started.
+            Effect.tap(() =>
+              Effect.gen(function* () {
+                const before = (yield* snapshot.getSnapshot).usageLimits?.checkedAt;
+                const refreshed = yield* snapshot.refresh;
+                const after = refreshed.usageLimits?.checkedAt;
+                if (
+                  after === undefined ||
+                  after === before ||
+                  refreshed.usageLimits?.unavailable?.reason === "probeFailed"
+                ) {
+                  return yield* new ProviderDriverError({
+                    driver: DRIVER_KIND,
+                    instanceId,
+                    detail:
+                      "The reset was applied, but Codex could not confirm the new limits. Refresh to check.",
+                  });
+                }
+              }),
+            ),
+          );
+
       return {
         instanceId,
         driverKind: DRIVER_KIND,
@@ -238,6 +307,7 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
         enabled,
         snapshot,
         snapshotForCwd,
+        consumeResetCredit,
         adapter,
         textGeneration,
       } satisfies ProviderInstance;

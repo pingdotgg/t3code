@@ -3,15 +3,17 @@ import type {
   PullRequestCheck,
   PullRequestChecksState,
   PullRequestRef,
+  ScopedThreadRef,
 } from "@t3tools/contracts";
 
-import { readLocalApi } from "~/localApi";
+import { useOpenLink } from "~/browser/useOpenLink";
 import { cn } from "~/lib/utils";
 import { pullRequestEnvironment } from "~/state/pullRequests";
 import { useEnvironmentQuery } from "~/state/query";
 
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { toastManager } from "../ui/toast";
 import {
   PullRequestCheckStatusIcon,
   pullRequestCheckStatusLabel,
@@ -27,9 +29,11 @@ import {
 function LazyChecksBody({
   environmentId,
   reference,
+  threadRef,
 }: {
   environmentId: EnvironmentId;
   reference: PullRequestRef;
+  threadRef: ScopedThreadRef | null;
 }) {
   const detailQuery = useEnvironmentQuery(
     pullRequestEnvironment.detail({ environmentId, input: reference }),
@@ -44,10 +48,17 @@ function LazyChecksBody({
       </p>
     );
   }
-  return <ChecksBody checks={detailQuery.data.checks} />;
+  return <ChecksBody checks={detailQuery.data.checks} threadRef={threadRef} />;
 }
 
-function ChecksBody({ checks }: { checks: ReadonlyArray<PullRequestCheck> }) {
+function ChecksBody({
+  checks,
+  threadRef,
+}: {
+  checks: ReadonlyArray<PullRequestCheck>;
+  threadRef: ScopedThreadRef | null;
+}) {
+  const openLink = useOpenLink(threadRef);
   if (checks.length === 0) {
     return <p className="text-muted-foreground text-xs">No checks reported</p>;
   }
@@ -71,7 +82,13 @@ function ChecksBody({ checks }: { checks: ReadonlyArray<PullRequestCheck> }) {
             <button
               type="button"
               className="shrink-0 text-primary hover:underline"
-              onClick={() => void readLocalApi()?.shell.openExternal(check.url ?? "")}
+              onClick={() => {
+                if (!check.url) return;
+                void openLink(check.url).catch((error: unknown) => {
+                  console.error(error);
+                  toastManager.add({ type: "error", title: "Unable to open check details" });
+                });
+              }}
             >
               Details
             </button>
@@ -94,6 +111,7 @@ export function PullRequestChecksPopover({
   checks,
   environmentId,
   reference,
+  threadRef = null,
   className,
 }: {
   checksState: PullRequestChecksState;
@@ -101,6 +119,8 @@ export function PullRequestChecksPopover({
   checks?: ReadonlyArray<PullRequestCheck>;
   environmentId?: EnvironmentId;
   reference?: PullRequestRef;
+  /** Thread the popover sits beside; a listing row has none. */
+  threadRef?: ScopedThreadRef | null;
   className?: string;
 }) {
   const presentation = pullRequestChecksStatePresentation(checksState);
@@ -129,9 +149,13 @@ export function PullRequestChecksPopover({
         <p className="mb-2 font-medium text-sm">{presentation.label}</p>
         {summary === null ? null : <p className="mb-2 text-muted-foreground text-xs">{summary}</p>}
         {checks !== undefined ? (
-          <ChecksBody checks={checks} />
+          <ChecksBody checks={checks} threadRef={threadRef} />
         ) : environmentId !== undefined && reference !== undefined ? (
-          <LazyChecksBody environmentId={environmentId} reference={reference} />
+          <LazyChecksBody
+            environmentId={environmentId}
+            reference={reference}
+            threadRef={threadRef}
+          />
         ) : null}
       </PopoverPopup>
     </Popover>

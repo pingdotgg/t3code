@@ -9,12 +9,15 @@ export interface ServerConfigProjection {
 
 /**
  * Cached config keeps the provider and model catalog available across reconnects.
- * Published themes are current machine state, so a cache could restore themes
- * that the machine no longer publishes. Replay sends themes as a separate event.
+ * Published themes and usage-limit sources are current machine state, so a
+ * cache could restore a set the machine no longer reports. Replay sends both
+ * as separate events.
  */
 export function withoutEnvironmentThemes(config: ServerConfig): ServerConfig {
-  if (config.environmentThemes === undefined) return config;
-  const { environmentThemes: _ephemeral, ...rest } = config;
+  if (config.environmentThemes === undefined && config.usageLimitSources === undefined) {
+    return config;
+  }
+  const { environmentThemes: _themes, usageLimitSources: _sources, ...rest } = config;
   return rest;
 }
 
@@ -27,13 +30,21 @@ export function applyServerConfigProjection(
       // Wire snapshots never contain published themes. Keep the previous set
       // until a capable server sends its authoritative theme event. A legacy
       // server cannot send a later removal, so a downgrade must clear the set.
-      const carried =
-        event.config.environment.capabilities.environmentThemes === true && Option.isSome(current)
+      const capabilities = event.config.environment.capabilities;
+      const carriedThemes =
+        capabilities.environmentThemes === true && Option.isSome(current)
           ? current.value.config.environmentThemes
           : undefined;
+      const carriedSources =
+        capabilities.usageLimitSources === true && Option.isSome(current)
+          ? current.value.config.usageLimitSources
+          : undefined;
       return Option.some({
-        config:
-          carried === undefined ? event.config : { ...event.config, environmentThemes: carried },
+        config: {
+          ...event.config,
+          ...(carriedThemes === undefined ? {} : { environmentThemes: carriedThemes }),
+          ...(carriedSources === undefined ? {} : { usageLimitSources: carriedSources }),
+        },
         latestEvent: event,
         source: "live" as const,
       });
@@ -71,6 +82,15 @@ export function applyServerConfigProjection(
         config: {
           ...projection.config,
           environmentThemes: event.payload.themes.length > 0 ? event.payload.themes : undefined,
+        },
+        latestEvent: event,
+        source: "live",
+      }));
+    case "usageLimitSourcesUpdated":
+      return Option.map(current, (projection) => ({
+        config: {
+          ...projection.config,
+          usageLimitSources: event.payload.sources.length > 0 ? event.payload.sources : undefined,
         },
         latestEvent: event,
         source: "live",

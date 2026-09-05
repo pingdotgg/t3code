@@ -4,6 +4,7 @@ import type {
   PullRequestComment,
   PullRequestDetailView,
   PullRequestRef,
+  ScopedThreadRef,
 } from "@t3tools/contracts";
 import {
   ArrowDownUpIcon,
@@ -23,7 +24,7 @@ import { useRef, useState, type ReactNode } from "react";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { pullRequestEnvironment } from "~/state/pullRequests";
 import { cn } from "~/lib/utils";
-import { readLocalApi } from "~/localApi";
+import { useOpenLink } from "~/browser/useOpenLink";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
 
 import { Button } from "../ui/button";
@@ -41,6 +42,7 @@ import {
   pullRequestReviewOutcomeRingClassName,
   pullRequestReviewOutcomeStaleLabel,
 } from "./pullRequestPresentation";
+import { PullRequestLabelPicker } from "./PullRequestLabelPicker";
 import { PullRequestReviewerPicker } from "./PullRequestReviewerPicker";
 import { PullRequestActivityUnavailableState } from "./PullRequestActivityUnavailableState";
 import {
@@ -92,6 +94,7 @@ function reviewStateLabel(state: string): string {
 interface CommentEditing {
   readonly cwd: string;
   readonly environmentId: EnvironmentId;
+  readonly threadRef: ScopedThreadRef | null;
   readonly canEdit: (comment: PullRequestComment) => boolean;
   readonly editingId: string | null;
   readonly saving: boolean;
@@ -119,6 +122,7 @@ function CommentBody({
         value={comment.body}
         cwd={editing.cwd}
         environmentId={editing.environmentId}
+        threadRef={editing.threadRef}
         label="Edit comment"
         saving={editing.saving}
         onSave={(body) => editing.onSave(comment, body)}
@@ -133,6 +137,7 @@ function CommentBody({
         text={comment.body}
         cwd={editing.cwd}
         environmentId={editing.environmentId}
+        threadRef={editing.threadRef}
       />
       {editing.canEdit(comment) ? (
         <Button
@@ -422,6 +427,7 @@ const COMMENT_PAGE = 30;
 
 export function PullRequestSummaryTab({
   environmentId,
+  threadRef,
   reference,
   detail,
   activityPending,
@@ -435,6 +441,7 @@ export function PullRequestSummaryTab({
   onRefresh,
 }: {
   environmentId: EnvironmentId;
+  threadRef: ScopedThreadRef | null;
   reference: PullRequestRef;
   detail: PullRequestDetailView;
   activityPending: boolean;
@@ -461,6 +468,18 @@ export function PullRequestSummaryTab({
   const hiddenCommentCount = detail.comments.length - recentComments.length;
   const [commentOrder, setCommentOrder] = useState<"newest" | "oldest">("newest");
   const visibleComments = orderPullRequestComments(recentComments, commentOrder);
+  const showOldestCommentsButton =
+    hiddenCommentCount > 0 ? (
+      <Button
+        size="sm"
+        variant="outline"
+        className="w-full"
+        onClick={() => setShown({ url: detail.url, count: shownComments + COMMENT_PAGE })}
+      >
+        Show {Math.min(hiddenCommentCount, COMMENT_PAGE)} oldest{" "}
+        {hiddenCommentCount === 1 ? "comment" : "comments"}
+      </Button>
+    ) : null;
   // Read from the whole conversation, not the window shown below it: a verdict older than the
   // last thirty comments still stands.
   const reviewOutcomes = latestPullRequestReviewOutcomes(detail.comments, detail.commits);
@@ -507,8 +526,12 @@ export function PullRequestSummaryTab({
     ),
   );
 
+  const openLink = useOpenLink(threadRef);
   const openCheck = (url: string) => {
-    void readLocalApi()?.shell.openExternal(url);
+    void openLink(url).catch((error: unknown) => {
+      console.error(error);
+      toastManager.add({ type: "error", title: "Unable to open check details" });
+    });
   };
 
   const update = useAtomCommand(pullRequestEnvironment.update, { reportFailure: false });
@@ -546,6 +569,7 @@ export function PullRequestSummaryTab({
   const commentEditing: CommentEditing = {
     cwd: detail.workspaceRoot,
     environmentId,
+    threadRef,
     canEdit: (comment) => canEditPullRequestComment(detail, comment),
     editingId: editingCommentId,
     saving: commentSaving,
@@ -664,25 +688,39 @@ export function PullRequestSummaryTab({
               ) : null}
             </span>
           </MetaRow>
-          {detail.labels.length > 0 ? (
+          {/* The row is shown empty only where a label could be put on it from here; on a host
+              with none to offer, an empty row is a row about nothing. */}
+          {detail.labels.length > 0 || detail.capabilities.labels === true ? (
             <MetaRow icon={<TagIcon className="size-3.5" />} label="Labels">
               <span className="flex min-w-0 flex-wrap items-center gap-1">
-                {detail.labels.map((label) => {
-                  const dot = pullRequestLabelColor(label.color);
-                  return (
-                    <span
-                      key={label.name}
-                      className="inline-flex max-w-48 items-center gap-1.5 rounded-full border border-border/70 bg-muted/40 py-0.5 pl-1.5 pr-2 text-xs"
-                    >
+                {detail.labels.length === 0 ? (
+                  <span className="text-muted-foreground">None</span>
+                ) : (
+                  detail.labels.map((label) => {
+                    const dot = pullRequestLabelColor(label.color);
+                    return (
                       <span
-                        aria-hidden
-                        className="size-2 shrink-0 rounded-full bg-muted-foreground"
-                        {...(dot ? { style: { backgroundColor: dot } } : {})}
-                      />
-                      <span className="truncate">{label.name}</span>
-                    </span>
-                  );
-                })}
+                        key={label.name}
+                        className="inline-flex max-w-48 items-center gap-1.5 rounded-full border border-border/70 bg-muted/40 py-0.5 pl-1.5 pr-2 text-xs"
+                      >
+                        <span
+                          aria-hidden
+                          className="size-2 shrink-0 rounded-full bg-muted-foreground"
+                          {...(dot ? { style: { backgroundColor: dot } } : {})}
+                        />
+                        <span className="truncate">{label.name}</span>
+                      </span>
+                    );
+                  })
+                )}
+                {detail.capabilities.labels === true ? (
+                  <PullRequestLabelPicker
+                    environmentId={environmentId}
+                    reference={reference}
+                    allowed={detail.viewerPermissions.labels !== false}
+                    onChanged={onRefresh}
+                  />
+                ) : null}
               </span>
             </MetaRow>
           ) : null}
@@ -707,6 +745,7 @@ export function PullRequestSummaryTab({
               value={detail.body}
               cwd={detail.workspaceRoot}
               environmentId={environmentId}
+              threadRef={threadRef}
               label="Pull request description"
               placeholder="Describe this pull request"
               saving={bodySaving}
@@ -720,6 +759,7 @@ export function PullRequestSummaryTab({
                 text={detail.body.trim().length > 0 ? detail.body : "_No description provided._"}
                 cwd={detail.workspaceRoot}
                 environmentId={environmentId}
+                threadRef={threadRef}
               />
               {canEditPullRequestChangeRequest(detail) ? (
                 <Button
@@ -836,22 +876,7 @@ export function PullRequestSummaryTab({
               <p className="py-2 text-xs text-muted-foreground">No comments yet.</p>
             ) : (
               <div className="space-y-3">
-                {hiddenCommentCount > 0 ? (
-                  // Hundreds of comments are hundreds of markdown renders, and the ones worth
-                  // opening a pull request for are the recent ones. The rest are one press away and
-                  // stay rendered once asked for.
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="w-full"
-                    onClick={() =>
-                      setShown({ url: detail.url, count: shownComments + COMMENT_PAGE })
-                    }
-                  >
-                    Show {Math.min(hiddenCommentCount, COMMENT_PAGE)} earlier{" "}
-                    {hiddenCommentCount === 1 ? "comment" : "comments"}
-                  </Button>
-                ) : null}
+                {commentOrder === "oldest" ? showOldestCommentsButton : null}
                 {visibleComments.map((comment) => {
                   const thread = threadByCommentId.get(comment.id);
                   const body = visibleBody(comment.body);
@@ -963,6 +988,7 @@ export function PullRequestSummaryTab({
                     </article>
                   );
                 })}
+                {commentOrder === "newest" ? showOldestCommentsButton : null}
               </div>
             )}
           </>
