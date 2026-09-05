@@ -141,8 +141,19 @@ export const VcsCreateWorktreeInput = Schema.Struct({
   newRefName: Schema.optional(TrimmedNonEmptyStringSchema),
   baseRefName: Schema.optional(TrimmedNonEmptyStringSchema),
   path: Schema.NullOr(TrimmedNonEmptyStringSchema),
-  /** Creates the worktree at `<rootDir>/<branch>`. Ignored when `path` is set. */
-  rootDir: Schema.optional(TrimmedNonEmptyStringSchema),
+  /**
+   * Creates the worktree at `<rootDir>/<branch>`. Ignored when `path` is set.
+   * Absolute only — POSIX, Windows drive or UNC — because a relative root is
+   * joined and handed to Git, which would resolve it against the repository
+   * being branched from and place the worktree outside any managed location.
+   * Already `~`-expanded: a project's root is resolved before it gets here.
+   */
+  rootDir: Schema.optional(
+    TrimmedNonEmptyStringSchema.check(
+      Schema.isMaxLength(1024),
+      Schema.isPattern(/^(?:\/|\\\\|[A-Za-z]:[/\\])/),
+    ),
+  ),
 });
 export type VcsCreateWorktreeInput = typeof VcsCreateWorktreeInput.Type;
 

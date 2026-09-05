@@ -44,6 +44,39 @@ describe("VcsCreateWorktreeInput", () => {
 
     expect(parsed.baseRefName).toBe("origin/main");
   });
+
+  it("accepts an absolute rootDir on either platform", () => {
+    expect(
+      decodeCreateWorktreeInput({
+        cwd: "/repo",
+        refName: "feature/new",
+        path: null,
+        rootDir: "/custom/worktrees",
+      }).rootDir,
+    ).toBe("/custom/worktrees");
+
+    expect(
+      decodeCreateWorktreeInput({
+        cwd: "C:\\repo",
+        refName: "feature/new",
+        path: null,
+        rootDir: "C:\\worktrees",
+      }).rootDir,
+    ).toBe("C:\\worktrees");
+  });
+
+  it("rejects a relative rootDir that Git would resolve against the repository", () => {
+    for (const rootDir of ["../outside", "worktrees", "./worktrees", "~/worktrees"]) {
+      expect(() =>
+        decodeCreateWorktreeInput({
+          cwd: "/repo",
+          refName: "feature/new",
+          path: null,
+          rootDir,
+        }),
+      ).toThrow();
+    }
+  });
 });
 
 describe("GitPreparePullRequestThreadInput", () => {
