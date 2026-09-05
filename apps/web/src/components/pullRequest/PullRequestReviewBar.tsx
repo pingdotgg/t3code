@@ -9,7 +9,7 @@ import { CheckIcon, MessageSquareIcon, XCircleIcon } from "lucide-react";
 import { useState, type ReactNode } from "react";
 
 import { pullRequestEnvironment } from "~/state/pullRequests";
-import { useAtomCommand } from "~/state/use-atom-command";
+import { useSourceControlCommand } from "~/state/use-source-control-command";
 
 import { Button } from "../ui/button";
 import { Textarea } from "../ui/textarea";
@@ -68,7 +68,7 @@ export function PullRequestReviewBar({
   const removeComments = usePullRequestReviewStore((store) => store.removeComments);
   const setSummary = usePullRequestReviewStore((store) => store.setSummary);
   const clearSummary = usePullRequestReviewStore((store) => store.clearSummary);
-  const submitReview = useAtomCommand(pullRequestEnvironment.submitReview, {
+  const submitReview = useSourceControlCommand(pullRequestEnvironment.submitReview, {
     reportFailure: false,
   });
 

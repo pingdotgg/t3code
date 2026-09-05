@@ -21,7 +21,7 @@ import {
 } from "lucide-react";
 import { useRef, useState, type ReactNode } from "react";
 
-import { useAtomCommand } from "~/state/use-atom-command";
+import { useSourceControlCommand } from "~/state/use-source-control-command";
 import { pullRequestEnvironment } from "~/state/pullRequests";
 import { cn } from "~/lib/utils";
 import { useOpenLink } from "~/browser/useOpenLink";
@@ -330,7 +330,9 @@ function CommentComposer({
 }) {
   const [body, setBody] = useState("");
   const [submitting, setSubmitting] = useState<"comment" | "close" | "reopen" | null>(null);
-  const postComment = useAtomCommand(pullRequestEnvironment.comment, { reportFailure: false });
+  const postComment = useSourceControlCommand(pullRequestEnvironment.comment, {
+    reportFailure: false,
+  });
   const followUpAction =
     detail.state === "open" &&
     detail.capabilities.actions.includes("close") &&
@@ -534,8 +536,8 @@ export function PullRequestSummaryTab({
     });
   };
 
-  const update = useAtomCommand(pullRequestEnvironment.update, { reportFailure: false });
-  const updateComment = useAtomCommand(pullRequestEnvironment.updateComment, {
+  const update = useSourceControlCommand(pullRequestEnvironment.update, { reportFailure: false });
+  const updateComment = useSourceControlCommand(pullRequestEnvironment.updateComment, {
     reportFailure: false,
   });
   // Keyed by the pull request, like the comment window above it, so an editor left open never

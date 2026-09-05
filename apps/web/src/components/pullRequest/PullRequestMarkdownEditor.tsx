@@ -1,7 +1,12 @@
 import { useState } from "react";
-import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
+import {
+  AuthSourceControlWriteScope,
+  type EnvironmentId,
+  type ScopedThreadRef,
+} from "@t3tools/contracts";
 
 import { cn } from "~/lib/utils";
+import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
 
 import { Button } from "../ui/button";
 import { Textarea } from "../ui/textarea";
@@ -43,6 +48,7 @@ export function PullRequestMarkdownEditor({
   readonly onSave: (next: string) => void;
   readonly onCancel: () => void;
 }) {
+  const canWriteSourceControl = useEnvironmentScope(environmentId, AuthSourceControlWriteScope);
   const [draft, setDraft] = useState(value);
   const [preview, setPreview] = useState(false);
   // The words this draft started from. React keeps a component instance wherever the same
@@ -109,8 +115,16 @@ export function PullRequestMarkdownEditor({
         <Button
           size="xs"
           variant="outline"
-          disabled={saving || (empty && !allowEmpty)}
-          onClick={() => onSave(draft)}
+          disabled={!canWriteSourceControl || saving || (empty && !allowEmpty)}
+          onClick={() => {
+            if (
+              !readEnvironmentScope(environmentId, AuthSourceControlWriteScope) ||
+              saving ||
+              (empty && !allowEmpty)
+            )
+              return;
+            onSave(draft);
+          }}
         >
           {saving ? "Saving..." : "Save"}
         </Button>
