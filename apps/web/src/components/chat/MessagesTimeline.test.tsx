@@ -1,12 +1,39 @@
 import { CheckpointRef, EnvironmentId, MessageId, TurnId } from "@t3tools/contracts";
 import { codexFeedbackMessage } from "@t3tools/client-runtime/state/threads";
-import { act, createRef, useLayoutEffect, type ReactNode, type Ref } from "react";
+import {
+  act,
+  createRef,
+  useLayoutEffect,
+  type ReactNode,
+  type Ref,
+  type ComponentProps,
+} from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { beforeAll, describe, expect, it, vi } from "vite-plus/test";
 import type { LegendListRef, MaintainScrollAtEndOptions } from "@legendapp/list/react";
 import { shouldUseRestingComposerLayout } from "../composerFooterLayout";
 import { useComposerFocusState } from "./useComposerFocusState";
+import {
+  deriveTimelineEntriesWithState,
+  type TimelineEntriesProjection,
+} from "../../session-logic";
+import type { ChatMessage, TurnDiffSummary } from "../../types";
+
+vi.mock("../ui/tooltip", async () => {
+  const { cloneElement, isValidElement } = await import("react");
+  return {
+    Tooltip: ({ children }: { children: ReactNode }) => <>{children}</>,
+    TooltipTrigger({
+      render,
+      children,
+    }: ComponentProps<typeof import("../ui/tooltip").TooltipTrigger>) {
+      if (!isValidElement(render)) return <>{children}</>;
+      return children === undefined ? render : cloneElement(render, undefined, children);
+    },
+    TooltipPopup: () => null,
+  };
+});
 
 vi.mock("@legendapp/list/react", async () => {
   const legendListTestId = "legend-list";
@@ -154,6 +181,7 @@ beforeAll(async () => {
     clear: () => {},
   });
   vi.stubGlobal("window", {
+    localStorage,
     matchMedia,
     addEventListener: () => {},
     removeEventListener: () => {},
@@ -184,11 +212,11 @@ function buildProps() {
     listRef: createRef<LegendListRef | null>(),
     latestTurn: null,
     runningTurnId: null,
-    turnDiffSummaryByAssistantMessageId: new Map(),
+    turnDiffSummaries: [],
     routeThreadKey: "environment-local:thread-1",
     onOpenTurnDiff: () => {},
-    revertTurnCountByUserMessageId: new Map(),
-    onRevertUserMessage: () => {},
+    supportsConversationRollback: false,
+    onRevertToTurnCount: () => {},
     isRevertingCheckpoint: false,
     onImageExpand: () => {},
     activeThreadEnvironmentId: ACTIVE_THREAD_ENVIRONMENT_ID,
@@ -328,6 +356,131 @@ describe("MessagesTimeline", () => {
     },
   );
 
+  it("keeps code controls through streaming and recovery, then uses the current revert target", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    const { getSyntaxHighlighterPromise } = await import("../../lib/syntaxHighlighting");
+    const highlighter = await getSyntaxHighlighterPromise("text");
+    const codeToHtml = highlighter.codeToHtml.bind(highlighter);
+    let fail = true;
+    const highlight = vi.spyOn(highlighter, "codeToHtml").mockImplementation((...args) => {
+      if (fail) throw new Error("Temporary highlighter failure");
+      return codeToHtml(...args);
+    });
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const onRevertToTurnCount = vi.fn();
+    const props = buildProps();
+    const turnId = TurnId.make("streamed-checkpoint");
+    const user: ChatMessage = buildUserTimelineEntry("Update the file").message;
+    const assistant: ChatMessage = {
+      ...buildAssistantTimelineEntry("").message,
+      id: MessageId.make("streamed-assistant"),
+      turnId,
+      createdAt: "2026-03-17T19:12:29.000Z",
+    };
+    let timeline: TimelineEntriesProjection | null = null;
+    const render = (
+      text: string,
+      streaming = true,
+      summaries: ReadonlyArray<TurnDiffSummary> = [],
+    ) => {
+      timeline = deriveTimelineEntriesWithState(
+        [user, { ...assistant, text, streaming }],
+        [],
+        [],
+        timeline,
+      );
+      return (
+        <MessagesTimeline
+          {...props}
+          timelineEntries={timeline.entries}
+          turnDiffSummaries={summaries}
+          supportsConversationRollback
+          onRevertToTurnCount={onRevertToTurnCount}
+          isWorking={streaming}
+          latestTurn={{
+            turnId,
+            state: streaming ? "running" : "completed",
+            startedAt: MESSAGE_CREATED_AT,
+            completedAt: streaming ? null : assistant.createdAt,
+          }}
+          runningTurnId={streaming ? turnId : null}
+        />
+      );
+    };
+    let renderer: ReactTestRenderer | undefined;
+    try {
+      await act(async () => {
+        renderer = create(render("```text\nInitial code\n```\n\nResponse"));
+      });
+      const mounted = renderer!;
+      const codeBlock = mounted.root.findByProps({ "data-language": "text" });
+      const initiallyWrapped = codeBlock.props["data-wrap"] === "true";
+      const wrap = mounted.root
+        .findAllByType("button")
+        .find(
+          (button) =>
+            button.props["aria-label"] === (initiallyWrapped ? "Disable line wrap" : "Wrap lines"),
+        );
+      if (!wrap) throw new Error("Missing code wrap control");
+      await act(() => wrap.props.onClick());
+      const initialHighlightCount = highlight.mock.calls.length;
+      expect(initialHighlightCount).toBeGreaterThan(0);
+      for (let index = 0; index < 10; index += 1) {
+        await act(async () => {
+          mounted.update(render(`\`\`\`text\nInitial code\n\`\`\`\n\nResponse ${index}`));
+        });
+      }
+      expect(highlight).toHaveBeenCalledTimes(initialHighlightCount);
+      expect(mounted.root.findByProps({ "data-language": "text" })).toBe(codeBlock);
+      expect(codeBlock.props["data-wrap"]).toBe(String(!initiallyWrapped));
+
+      fail = false;
+      const finalText = "```text\nRecovered code\n```\n\nComplete";
+      await act(async () => {
+        mounted.update(render(finalText));
+      });
+      const recoveredHighlightCount = highlight.mock.calls.length;
+      expect(recoveredHighlightCount).toBeGreaterThan(initialHighlightCount);
+      expect(mounted.root.findByProps({ "data-language": "text" })).toBe(codeBlock);
+      expect(codeBlock.props["data-wrap"]).toBe(String(!initiallyWrapped));
+      const summary: TurnDiffSummary = {
+        turnId,
+        assistantMessageId: assistant.id,
+        checkpointTurnCount: 2,
+        checkpointRef: CheckpointRef.make("refs/t3/checkpoints/streamed"),
+        status: "ready",
+        files: [],
+        completedAt: assistant.createdAt,
+      };
+      await act(async () => {
+        mounted.update(render(finalText, false, [summary]));
+      });
+      const revert = () => {
+        const button = mounted.root
+          .findAllByType("button")
+          .find((entry) => entry.props["aria-label"] === "Revert to this message");
+        if (!button) throw new Error("Missing revert action");
+        button.props.onClick();
+      };
+      await act(revert);
+      expect(onRevertToTurnCount).toHaveBeenLastCalledWith(1);
+      await act(async () => {
+        mounted.update(render(finalText, false, [{ ...summary, checkpointTurnCount: 4 }]));
+      });
+      await act(revert);
+      expect(onRevertToTurnCount).toHaveBeenLastCalledWith(3);
+      expect(highlight).toHaveBeenCalledTimes(recoveredHighlightCount);
+      expect(mounted.root.findByProps({ "data-language": "text" })).toBe(codeBlock);
+      expect(codeBlock.props["data-wrap"]).toBe(String(!initiallyWrapped));
+    } finally {
+      await act(() => renderer?.unmount());
+      highlight.mockRestore();
+      error.mockRestore();
+      warn.mockRestore();
+    }
+  });
+
   it("renders a feedback command and its pending response as normal thread messages", () => {
     const submission = {
       id: MessageId.make("feedback-command"),
@@ -448,22 +601,17 @@ describe("MessagesTimeline", () => {
             },
           },
         ]}
-        turnDiffSummaryByAssistantMessageId={
-          new Map([
-            [
-              assistantMessageId,
-              {
-                turnId,
-                checkpointTurnCount: 1,
-                checkpointRef: CheckpointRef.make("checkpoint-with-files"),
-                status: "ready",
-                files: [{ path: "README.md", kind: "modified", additions: 2, deletions: 1 }],
-                assistantMessageId,
-                completedAt: MESSAGE_CREATED_AT,
-              },
-            ],
-          ])
-        }
+        turnDiffSummaries={[
+          {
+            turnId,
+            checkpointTurnCount: 1,
+            checkpointRef: CheckpointRef.make("checkpoint-with-files"),
+            status: "ready",
+            files: [{ path: "README.md", kind: "modified", additions: 2, deletions: 1 }],
+            assistantMessageId,
+            completedAt: MESSAGE_CREATED_AT,
+          },
+        ]}
       />,
     );
 
