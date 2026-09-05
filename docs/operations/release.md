@@ -13,11 +13,12 @@ This document covers the unified release workflow for stable and nightly desktop
   - manual `workflow_dispatch` for either channel
 - Runs lint, typecheck, and tests alongside artifact builds. Publishing waits for every check.
 - Reads the shared production T3 Connect relay URL and Clerk client configuration before packaging clients.
-- Builds four artifacts in parallel for both channels:
+- Builds five artifacts in parallel for both channels:
   - macOS `arm64` DMG
   - macOS `x64` DMG
   - Linux `x64` AppImage
   - Windows `x64` NSIS installer
+  - Windows `arm64` NSIS installer
 - Publishes one GitHub Release with all produced files.
   - Stable tags with a suffix after `X.Y.Z` (for example `1.2.3-alpha.1`) are published as GitHub prereleases.
   - Only plain stable `X.Y.Z` releases are marked as the repository's latest release.
