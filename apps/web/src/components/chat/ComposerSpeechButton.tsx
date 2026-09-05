@@ -53,7 +53,10 @@ export function ComposerSpeechButton(props: {
                 if (recording) props.onStop();
                 else props.onStart();
               }}
-              className={cn("relative", inactive && "cursor-not-allowed opacity-64")}
+              className={cn(
+                "relative",
+                inactive && "cursor-not-allowed opacity-64 hover:bg-transparent!",
+              )}
             >
               {recording ? (
                 <>

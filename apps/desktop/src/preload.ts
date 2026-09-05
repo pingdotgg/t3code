@@ -320,28 +320,6 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       };
     },
   },
-  speech: {
-    getStatus: () => ipcRenderer.invoke(IpcChannels.SPEECH_GET_STATUS_CHANNEL),
-    getMicrophones: () => ipcRenderer.invoke(IpcChannels.SPEECH_GET_MICROPHONES_CHANNEL),
-    setMicrophone: (deviceName) =>
-      ipcRenderer.invoke(IpcChannels.SPEECH_SET_MICROPHONE_CHANNEL, deviceName),
-    prepare: () => ipcRenderer.invoke(IpcChannels.SPEECH_PREPARE_CHANNEL),
-    cancelPreparation: () => ipcRenderer.invoke(IpcChannels.SPEECH_CANCEL_PREPARATION_CHANNEL),
-    startRecording: () => ipcRenderer.invoke(IpcChannels.SPEECH_START_RECORDING_CHANNEL),
-    stopRecording: () => ipcRenderer.invoke(IpcChannels.SPEECH_STOP_RECORDING_CHANNEL),
-    cancelRecording: () => ipcRenderer.invoke(IpcChannels.SPEECH_CANCEL_RECORDING_CHANNEL),
-    transcribe: (uri) => ipcRenderer.invoke(IpcChannels.SPEECH_TRANSCRIBE_CHANNEL, uri),
-    deleteRecording: (uri) => ipcRenderer.invoke(IpcChannels.SPEECH_DELETE_RECORDING_CHANNEL, uri),
-    removeModel: () => ipcRenderer.invoke(IpcChannels.SPEECH_REMOVE_MODEL_CHANNEL),
-    onEvent: (listener) => {
-      const wrappedListener = (_event: Electron.IpcRendererEvent, speechEvent: unknown) => {
-        if (typeof speechEvent !== "object" || speechEvent === null) return;
-        listener(speechEvent as Parameters<typeof listener>[0]);
-      };
-      ipcRenderer.on(IpcChannels.SPEECH_EVENT_CHANNEL, wrappedListener);
-      return () => ipcRenderer.removeListener(IpcChannels.SPEECH_EVENT_CHANNEL, wrappedListener);
-    },
-  },
   preview: {
     setForwardedShortcuts: (shortcuts) =>
       ipcRenderer.invoke(IpcChannels.PREVIEW_SET_FORWARDED_SHORTCUTS_CHANNEL, shortcuts),

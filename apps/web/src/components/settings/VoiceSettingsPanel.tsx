@@ -1,53 +1,75 @@
-import type { DesktopMicrophoneSettings, DesktopSpeechStatus } from "@t3tools/contracts";
+import {
+  getEnvironmentSpeechStatus,
+  removeEnvironmentSpeechModel,
+} from "@t3tools/client-runtime/voice-input";
+import type { EnvironmentSpeechStatus } from "@t3tools/contracts";
+import * as Option from "effect/Option";
 import { RefreshCwIcon } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
+import { useClientSettings, useUpdateClientSettings } from "../../hooks/useSettings";
+import { runtime } from "../../lib/runtime";
+import { usePrimaryEnvironmentId } from "../../state/environments";
+import { usePreparedConnection } from "../../state/session";
 import { Button } from "../ui/button";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
+import { toastManager } from "../ui/toast";
 import { searchableSetting } from "./settingsSearch";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
 
-const SYSTEM_DEFAULT = "__system_default__";
+const SYSTEM_DEFAULT = "system-default";
+const deviceValue = (id: string) => `device:${id}`;
 
 export function VoiceSettingsPanel() {
-  const speech = window.desktopBridge?.speech;
-  const [status, setStatus] = useState<DesktopSpeechStatus | null>(null);
-  const [microphones, setMicrophones] = useState<DesktopMicrophoneSettings | null>(null);
+  const environmentId = usePrimaryEnvironmentId();
+  const prepared = Option.getOrNull(usePreparedConnection(environmentId));
+  const selectedMicrophone = useClientSettings((settings) => settings.voiceMicrophone);
+  const updateClientSettings = useUpdateClientSettings();
+  const [status, setStatus] = useState<EnvironmentSpeechStatus | null>(null);
+  const [microphones, setMicrophones] = useState<MediaDeviceInfo[]>([]);
   const [loadingMicrophones, setLoadingMicrophones] = useState(false);
+  const [removingModel, setRemovingModel] = useState(false);
 
   const refreshMicrophones = useCallback(async () => {
-    if (!speech) return;
+    if (!navigator.mediaDevices?.enumerateDevices) return;
     setLoadingMicrophones(true);
     try {
-      setMicrophones(await speech.getMicrophones());
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      setMicrophones(devices.filter((device) => device.kind === "audioinput"));
+    } catch (error) {
+      toastManager.add({
+        type: "error",
+        title: "Could not list microphones",
+        description: error instanceof Error ? error.message : String(error),
+      });
     } finally {
       setLoadingMicrophones(false);
     }
-  }, [speech]);
+  }, []);
+
+  const refreshStatus = useCallback(async () => {
+    if (!prepared) return;
+    try {
+      setStatus(await runtime.runPromise(getEnvironmentSpeechStatus(prepared)));
+    } catch {
+      setStatus(null);
+    }
+  }, [prepared]);
 
   useEffect(() => {
-    if (!speech) return;
-    void speech.getStatus().then(setStatus);
     void refreshMicrophones();
-    return speech.onEvent((event) => {
-      if (event.type === "status") setStatus(event.status);
-    });
-  }, [refreshMicrophones, speech]);
+    void refreshStatus();
+    const mediaDevices = navigator.mediaDevices;
+    if (!mediaDevices) return;
+    const handleDeviceChange = () => void refreshMicrophones();
+    mediaDevices.addEventListener("devicechange", handleDeviceChange);
+    return () => mediaDevices.removeEventListener("devicechange", handleDeviceChange);
+  }, [refreshMicrophones, refreshStatus]);
 
-  if (!speech) {
-    return (
-      <SettingsPageContainer>
-        <SettingsSection title="Voice">
-          <p className="px-1 text-sm text-muted-foreground">
-            Local voice input settings are available in the desktop app.
-          </p>
-        </SettingsSection>
-      </SettingsPageContainer>
-    );
-  }
-
-  const selected = microphones?.selected ?? "";
-  const selectedIsUnavailable = Boolean(selected && !microphones?.devices.includes(selected));
+  const selectedIsUnavailable = Boolean(
+    selectedMicrophone && !microphones.some((device) => device.deviceId === selectedMicrophone),
+  );
+  const currentStatus = prepared ? status : null;
 
   return (
     <SettingsPageContainer>
@@ -56,19 +78,19 @@ export function VoiceSettingsPanel() {
           {...searchableSetting("microphone")}
           description={
             selectedIsUnavailable
-              ? "The selected microphone is disconnected. Voice input will use the system default until it returns."
-              : "Choose the microphone used for local voice input."
+              ? "The selected microphone is unavailable. Select another microphone to record."
+              : "Choose the microphone used by this browser or app."
           }
           control={
             <div className="flex w-full max-w-80 items-center gap-1.5">
               <Select
-                value={selected || SYSTEM_DEFAULT}
-                disabled={!microphones || loadingMicrophones}
+                value={selectedMicrophone ? deviceValue(selectedMicrophone) : SYSTEM_DEFAULT}
+                disabled={loadingMicrophones}
                 onValueChange={(value) => {
                   if (!value) return;
-                  void speech
-                    .setMicrophone(value === SYSTEM_DEFAULT ? "" : value)
-                    .then(setMicrophones);
+                  updateClientSettings({
+                    voiceMicrophone: value === SYSTEM_DEFAULT ? "" : value.slice("device:".length),
+                  });
                 }}
               >
                 <SelectTrigger size="sm" aria-label="Microphone" className="min-w-0 flex-1">
@@ -76,14 +98,16 @@ export function VoiceSettingsPanel() {
                     placeholder={loadingMicrophones ? "Finding microphones…" : "Microphone"}
                   />
                 </SelectTrigger>
-                <SelectPopup>
+                <SelectPopup align="end" alignItemWithTrigger={false}>
                   <SelectItem value={SYSTEM_DEFAULT}>System default</SelectItem>
                   {selectedIsUnavailable ? (
-                    <SelectItem value={selected}>{selected} (Unavailable)</SelectItem>
+                    <SelectItem value={deviceValue(selectedMicrophone)}>
+                      Selected microphone (Unavailable)
+                    </SelectItem>
                   ) : null}
-                  {microphones?.devices.map((device) => (
-                    <SelectItem key={device} value={device}>
-                      {device}
+                  {microphones.map((device, index) => (
+                    <SelectItem key={device.deviceId} value={deviceValue(device.deviceId)}>
+                      {device.label || `Microphone ${index + 1}`}
                     </SelectItem>
                   ))}
                 </SelectPopup>
@@ -101,34 +125,46 @@ export function VoiceSettingsPanel() {
             </div>
           }
         />
-        {status?.supported ? (
-          <SettingsRow
-            {...searchableSetting("local-voice-input")}
-            description={
-              status.state === "missing-model"
-                ? "Downloads a 48 MiB English model on first use. Audio stays on this device."
-                : "Moonshine Streaming Tiny is stored locally. Microphone audio is not saved."
-            }
-            control={
-              status.state === "missing-model" ? (
-                <span className="text-xs text-muted-foreground">Download on first use</span>
-              ) : (
-                <Button
-                  variant="destructive-outline"
-                  size="sm"
-                  disabled={
-                    status.state === "recording" ||
-                    status.state === "transcribing" ||
-                    status.state === "downloading"
-                  }
-                  onClick={() => void speech.removeModel().then(setStatus)}
-                >
-                  Remove model
-                </Button>
-              )
-            }
-          />
-        ) : null}
+        <SettingsRow
+          {...searchableSetting("local-voice-input")}
+          description={
+            currentStatus?.supported
+              ? currentStatus.state === "missing-model"
+                ? "Downloads a 48 MiB English model on first use. Recordings are sent to this T3 environment and deleted after transcription."
+                : `${currentStatus.model} is installed on this T3 environment.`
+              : (currentStatus?.reason ?? "Connect to a current T3 environment to use voice input.")
+          }
+          control={
+            currentStatus?.supported && currentStatus.state !== "missing-model" ? (
+              <Button
+                variant="destructive-outline"
+                size="sm"
+                disabled={removingModel || currentStatus.state === "transcribing"}
+                onClick={() => {
+                  if (!prepared) return;
+                  setRemovingModel(true);
+                  void runtime
+                    .runPromise(removeEnvironmentSpeechModel(prepared))
+                    .then(setStatus)
+                    .catch((error) =>
+                      toastManager.add({
+                        type: "error",
+                        title: "Could not remove speech model",
+                        description: error instanceof Error ? error.message : String(error),
+                      }),
+                    )
+                    .finally(() => setRemovingModel(false));
+                }}
+              >
+                Remove model
+              </Button>
+            ) : (
+              <span className="text-xs text-muted-foreground">
+                {currentStatus?.supported ? "Download on first use" : "Unavailable"}
+              </span>
+            )
+          }
+        />
       </SettingsSection>
     </SettingsPageContainer>
   );

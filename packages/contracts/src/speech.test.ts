@@ -1,49 +1,25 @@
 import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
 
-import {
-  DesktopMicrophoneSettingsSchema,
-  DesktopSpeechPreparationSchema,
-  DesktopSpeechEventSchema,
-  DesktopSpeechStatusSchema,
-} from "./speech.ts";
+import { EnvironmentSpeechStatus, EnvironmentSpeechTranscriptionResult } from "./speech.ts";
 
-const decodeStatus = Schema.decodeUnknownSync(DesktopSpeechStatusSchema);
-const decodeEvent = Schema.decodeUnknownSync(DesktopSpeechEventSchema);
+const decodeStatus = Schema.decodeUnknownSync(EnvironmentSpeechStatus);
+const decodeTranscription = Schema.decodeUnknownSync(EnvironmentSpeechTranscriptionResult);
 
-describe("desktop speech contracts", () => {
-  it("accepts a ready status", () => {
-    expect(decodeStatus({ supported: true, state: "ready" })).toEqual({
+describe("environment speech contracts", () => {
+  it("accepts supported and unsupported statuses", () => {
+    expect(decodeStatus({ supported: true, state: "ready", model: "Moonshine" })).toEqual({
       supported: true,
       state: "ready",
+      model: "Moonshine",
+    });
+    expect(decodeStatus({ supported: false, reason: "unsupported platform" })).toEqual({
+      supported: false,
+      reason: "unsupported platform",
     });
   });
 
-  it("rejects negative model progress", () => {
-    expect(() =>
-      decodeEvent({
-        type: "download-progress",
-        downloaded: -1,
-        total: 10,
-      }),
-    ).toThrow();
-  });
-
-  it("accepts desktop microphone settings", () => {
-    expect(
-      Schema.decodeUnknownSync(DesktopMicrophoneSettingsSchema)({
-        devices: ["Built-in Microphone", "USB Microphone"],
-        selected: "USB Microphone",
-      }),
-    ).toEqual({
-      devices: ["Built-in Microphone", "USB Microphone"],
-      selected: "USB Microphone",
-    });
-  });
-
-  it("accepts desktop transcription preparation", () => {
-    expect(Schema.decodeUnknownSync(DesktopSpeechPreparationSchema)({ locale: "en" })).toEqual({
-      locale: "en",
-    });
+  it("accepts a transcription result", () => {
+    expect(decodeTranscription({ text: "hello" })).toEqual({ text: "hello" });
   });
 });

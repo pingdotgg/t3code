@@ -73,7 +73,6 @@ import {
   completeLegacyLocalStorage,
   takeLegacyLocalStorage,
 } from "./methods/legacyLocalStorage.ts";
-import * as SpeechIpc from "./methods/speech.ts";
 import { getWslState, setWslBackendEnabled, setWslDistro, setWslOnly } from "./methods/wsl.ts";
 import {
   getCliCommandState,
@@ -85,7 +84,6 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   const ipc = yield* DesktopIpc.DesktopIpc;
   yield* installNotificationBadge();
   yield* PreviewIpc.installPreviewEventForwarding();
-  yield* SpeechIpc.installSpeechEventForwarding();
 
   yield* ipc.handle(AppActivationIpc.setReady);
   yield* ipc.handle(AppActivationIpc.complete);
@@ -160,17 +158,6 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handle(getCliCommandState);
   yield* ipc.handle(installCliCommand);
   yield* ipc.handle(uninstallCliCommand);
-  yield* ipc.handle(SpeechIpc.getSpeechStatus);
-  yield* ipc.handle(SpeechIpc.getSpeechMicrophones);
-  yield* ipc.handle(SpeechIpc.setSpeechMicrophone);
-  yield* ipc.handle(SpeechIpc.prepareSpeech);
-  yield* ipc.handle(SpeechIpc.cancelSpeechPreparation);
-  yield* ipc.handle(SpeechIpc.startSpeechRecording);
-  yield* ipc.handle(SpeechIpc.stopSpeechRecording);
-  yield* ipc.handle(SpeechIpc.cancelSpeechRecording);
-  yield* ipc.handle(SpeechIpc.transcribeSpeech);
-  yield* ipc.handle(SpeechIpc.deleteSpeechRecording);
-  yield* ipc.handle(SpeechIpc.removeSpeechModelMethod);
   for (const previewMethod of PreviewIpc.methods) {
     // Explicit types preserve the error/service union of these heterogeneous preview methods.
     yield* ipc.handle<

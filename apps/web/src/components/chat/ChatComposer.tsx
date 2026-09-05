@@ -230,7 +230,8 @@ import { pendingDraftWork } from "./pendingDraftWork";
 import { importComposerThreadAttachment } from "./composerThreadImport";
 import { observeResize } from "~/lib/observeResize";
 import { ComposerSpeechButton } from "./ComposerSpeechButton";
-import { useDesktopSpeechInput } from "../../speech/useDesktopSpeechInput";
+import { useEnvironmentSpeechInput } from "../../speech/useEnvironmentSpeechInput";
+
 
 const isEnvironmentRequestInvalidError = Schema.is(EnvironmentRequestInvalidError);
 import { toastManager } from "../ui/toast";
@@ -1836,7 +1837,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   };
   const readComposerSnapshotStable = useStableCallback(readComposerSnapshot);
 
-  const speechInput = useDesktopSpeechInput({
+  const speechInput = useEnvironmentSpeechInput({
+    environmentId,
     ownerKey: JSON.stringify(composerDraftTarget),
     draftText: prompt,
     readDraft: () => {
@@ -1858,6 +1860,19 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       window.requestAnimationFrame(() => composerEditorRef.current?.focusAt(cursor));
     },
   });
+  const voiceSendDisabledReason = speechInput.blocksSubmission
+    ? "Finish or discard voice input before sending"
+    : sendDisabledReason;
+  const isSubmissionDisabled = isSendDisabled || speechInput.blocksSubmission;
+  const collapsedComposerPrimaryActionDisabled =
+    phase === "running" ||
+    isSendBusy ||
+    isSubmissionDisabled ||
+    isConnecting ||
+    noProviderAvailable ||
+    projectSelectionRequired ||
+    environmentUnavailable !== null ||
+    !composerSendState.hasSendableContent;
 
   const resolveActiveComposerTrigger = (): {
     snapshot: { value: string; cursor: number; expandedCursor: number };
@@ -2079,7 +2094,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     if (!isSoftwareKeyboardOpen) return false;
     if (
       isSendBusy ||
-      isSendDisabled ||
+      isSubmissionDisabled ||
       noProviderAvailable ||
       environmentUnavailable !== null ||
       phase === "running"
@@ -2099,7 +2114,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   ) => {
     if (
       noProviderAvailable ||
-      isSendDisabled ||
+      isSubmissionDisabled ||
       !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)
     ) {
       event?.preventDefault();
@@ -3460,7 +3475,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     disabled={
                       projectSelectionRequired ||
                       isChoiceOnlyPendingQuestion ||
-                      activePendingIsResponding
+                      activePendingIsResponding ||
+                      speechInput.freezesEditor
                     }
                   />
                 </ComposerContextActionsContext>
@@ -3478,7 +3494,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       showPlanFollowUpPrompt={false}
                       promptHasText={false}
                       isSendBusy={isSendBusy}
-                      sendDisabledReason={sendDisabledReason}
+                      sendDisabledReason={voiceSendDisabledReason}
                       isEnvironmentUnavailable={
                         environmentUnavailable !== null ||
                         noProviderAvailable ||
@@ -3572,7 +3588,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     }
                     promptHasText={prompt.trim().length > 0}
                     isSendBusy={isSendBusy}
-                    sendDisabledReason={sendDisabledReason}
+                    sendDisabledReason={voiceSendDisabledReason}
                     isEnvironmentUnavailable={
                       environmentUnavailable !== null ||
                       noProviderAvailable ||

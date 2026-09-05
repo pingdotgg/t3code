@@ -37,6 +37,9 @@ describe("shouldBundleCliDependency", () => {
       "@yuuang/ffi-rs-win32-x64-msvc",
       "@ff-labs/fff-node",
       "@napi-rs/keyring",
+      "transcribe-cpp",
+      "@transcribe-cpp/win32-x64-cpu-vulkan",
+      "koffi",
       "@clerk/electron-passkeys",
       "node-addon-api",
     ]) {
@@ -47,6 +50,25 @@ describe("shouldBundleCliDependency", () => {
   it("treats prefix-matched siblings as external", () => {
     assert.strictEqual(shouldBundleCliDependency("node-gyp-build-optional-packages"), false);
   });
+});
+
+describe("selectCliRuntimeExternalDependencies", () => {
+  it("keeps only runtime-external dependency roots for the Windows sidecar", () => {
+    assert.deepStrictEqual(
+      selectCliRuntimeExternalDependencies({
+        "@ff-labs/fff-node": "2.0.0",
+        effect: "3.0.0",
+        "node-pty": "4.0.0",
+        "transcribe-cpp": "5.0.0",
+      }),
+      {
+        "@ff-labs/fff-node": "2.0.0",
+        "node-pty": "4.0.0",
+        "transcribe-cpp": "5.0.0",
+      },
+    );
+  });
+
 });
 
 it.layer(NodeServices.layer)("external package dependency closure", (it) => {

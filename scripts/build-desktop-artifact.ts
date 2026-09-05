@@ -2845,7 +2845,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
           },
         ],
         NSMicrophoneUsageDescription:
-          "T3 Code uses your microphone for local voice input. Audio is processed on this device.",
+          "T3 Code uses your microphone for voice input. Audio is transcribed on your T3 environment.",
       },
       protocols: [
         {
