@@ -1600,15 +1600,20 @@ export const make = Effect.gen(function* () {
             const canonicalInput = isCanonicalLedgerInput(input)
               ? input
               : (yield* defaultDailyInputs)[0]!;
-            yield* refreshHooks.beforeCanonicalScan;
-            const summary = yield* restore(scanAndPersist(forceSourceRefresh(canonicalInput))).pipe(
+            // The scan outlives the requesting RPC. A second client can keep
+            // waiting on the same canonical refresh if the leader disconnects.
+            yield* refreshHooks.beforeCanonicalScan.pipe(
+              Effect.andThen(scanAndPersist(forceSourceRefresh(canonicalInput))),
               Effect.onExit((exit) =>
                 Effect.sync(() => {
                   if (canonicalRefreshWaiter === waiter) canonicalRefreshWaiter = null;
                 }).pipe(Effect.andThen(Deferred.succeed(waiter, exit))),
               ),
+              Effect.forkDetach,
             );
-            return yield* canonicalSummary(summary);
+            const completed = yield* restore(Deferred.await(waiter));
+            if (Exit.isFailure(completed)) return yield* Effect.failCause(completed.cause);
+            return yield* canonicalSummary(completed.value);
           }),
         );
       }),
@@ -2244,7 +2249,11 @@ function pathMatchesWorktree(
   if (firstSegment === undefined) return false;
   if (provider === "claude") {
     for (const worktree of worktrees) {
-      if (firstSegment === worktree.replaceAll(/[^A-Za-z0-9]/g, "-")) return true;
+      const encodedWorktree = worktree.replaceAll(/[^A-Za-z0-9]/g, "-");
+      const windowsWorktree = /^[a-z]:\//i.test(worktree);
+      const encodedPath = windowsWorktree ? firstSegment.toLowerCase() : firstSegment;
+      const comparableWorktree = windowsWorktree ? encodedWorktree.toLowerCase() : encodedWorktree;
+      if (encodedPath === comparableWorktree) return true;
     }
     return false;
   }

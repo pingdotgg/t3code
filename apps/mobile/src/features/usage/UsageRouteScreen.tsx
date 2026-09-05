@@ -542,6 +542,7 @@ function UsageCoverageNotice(props: {
     duplicateSources.length === 0 &&
     !props.isPartial &&
     !props.isRefreshing &&
+    !props.refreshError &&
     !hasCoverage
   ) {
     return null;

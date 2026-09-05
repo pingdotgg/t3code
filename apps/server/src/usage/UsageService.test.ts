@@ -1532,44 +1532,46 @@ describe("UsageService", () => {
     }).pipe(Effect.scoped),
   );
 
-  it.live("clears an interrupted canonical waiter so the next refresh can run", () =>
+  it.live("keeps a shared canonical scan alive when its first caller is interrupted", () =>
     Effect.gen(function* () {
-      const { settings, home } = yield* setup;
-      const beforeScanGate = yield* Deferred.make<void>();
-      const beforeScanStarted = yield* Deferred.make<void>();
-      const manualPreset: UsageSummaryInput = {
-        timeZone: "UTC",
-        sinceDay: UsageDay.make("2026-08-01"),
-        untilDay: UsageDay.make("2026-08-07"),
-      };
+      const { transcript, settings, home } = yield* setup;
+      yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
+      const ratesGate = yield* Deferred.make<void>();
+      const ratesStarted = yield* Deferred.make<void>();
+      let canonicalScans = 0;
       const service = yield* UsageService.make.pipe(
         Effect.provide(
           serviceLayers({
             prefix: "usage-service-canonical-interrupt-test",
             home,
             settings,
+            ratesGate,
+            ratesStarted,
           }),
         ),
         Effect.provideService(UsageService.UsageRefreshHooks, {
-          beforeCanonicalScan: Effect.gen(function* () {
-            yield* Deferred.succeed(beforeScanStarted, undefined);
-            yield* Deferred.await(beforeScanGate);
+          beforeCanonicalScan: Effect.sync(() => {
+            canonicalScans += 1;
           }),
         }),
       );
-      const refresh = yield* service.refreshSummary(manualPreset).pipe(Effect.forkChild);
-      yield* Deferred.await(beforeScanStarted);
-      const interrupt = yield* Fiber.interrupt(refresh).pipe(Effect.forkDetach);
-      yield* Effect.yieldNow;
-      yield* Deferred.succeed(beforeScanGate, undefined);
+      const canonical = currentCanonicalWindow();
+      const leader = yield* service.refreshSummary(canonical).pipe(Effect.forkChild);
+      yield* Deferred.await(ratesStarted);
+      const follower = yield* service.refreshSummary(canonical).pipe(Effect.forkChild);
+      const interrupt = yield* Fiber.interrupt(leader).pipe(Effect.forkDetach);
       yield* Effect.yieldNow;
       yield* Fiber.join(interrupt).pipe(Effect.timeout("5 seconds"));
+      assert.isUndefined(follower.pollUnsafe());
 
-      const result = yield* service
-        .refreshSummary(currentCanonicalWindow())
-        .pipe(Effect.timeout("5 seconds"), Effect.exit);
-      assert.isTrue(Exit.isSuccess(result));
-      if (Exit.isSuccess(result)) assert.strictEqual(totalOutputTokens(result.value), 0);
+      yield* Deferred.succeed(ratesGate, undefined);
+      const result = yield* Fiber.join(follower).pipe(Effect.timeout("5 seconds"));
+      assert.strictEqual(totalOutputTokens(result), 5);
+      assert.strictEqual(canonicalScans, 1);
+
+      const next = yield* service.refreshSummary(canonical).pipe(Effect.timeout("5 seconds"));
+      assert.strictEqual(totalOutputTokens(next), 5);
+      assert.strictEqual(canonicalScans, 2);
     }).pipe(Effect.scoped),
   );
 
@@ -2350,6 +2352,26 @@ describe("transcriptFileMayMatchThread", () => {
     assert.isTrue(
       matches("grok", "/grok/%2Fwork%2Fapp%2F.wt%2Fthread-1/legacy-session/updates.jsonl", "/grok"),
     );
+  });
+
+  it("matches encoded Claude worktrees case-insensitively only for Windows paths", () => {
+    const windowsTarget: UsageService.ThreadTranscriptTarget = {
+      sessionIds: new Map(),
+      worktrees: new Set(["C:/Users/Alex/App/.wt/Thread-1"]),
+    };
+    const matchesTarget = (filePath: string, target: UsageService.ThreadTranscriptTarget) =>
+      UsageService.transcriptFileMayMatchThread({
+        path: NodePath,
+        provider: "claude",
+        filePath,
+        root: "/claude",
+        target,
+      });
+
+    assert.isTrue(
+      matchesTarget("/claude/C--Users-Alex-App--wt-thread-1/legacy-session.jsonl", windowsTarget),
+    );
+    assert.isFalse(matchesTarget("/claude/-Work-App--wt-thread-1/legacy-session.jsonl", target));
   });
 
   it("selects Codex rollouts from their bounded session metadata", () => {
