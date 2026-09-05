@@ -127,10 +127,19 @@ it.effect("Stop drops queued events and still interrupts if terminal cleanup fai
     yield* until("thread/name/updated");
     const result = yield* runtime.interruptTurn().pipe(Effect.result);
     assert.equal(result._tag, "Failure");
+    const stopped = yield* until("backgroundTask/changed");
+    assert.deepStrictEqual(stopped.payload, {
+      taskId: "watch-command",
+      description: "watch-ci",
+      status: "stopped",
+    });
     yield* until("turn/completed");
     const final = yield* inspect;
     assert.equal(final.interrupted, 1);
     assert.equal(final.wakes.length, 0);
+    yield* runtime.sendTurn({ input: "resume" });
+    yield* until("turn/completed");
+    assert.equal((yield* subscribe.pipe(Effect.result))._tag, "Failure");
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 

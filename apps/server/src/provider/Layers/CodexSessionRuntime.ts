@@ -2723,16 +2723,16 @@ export const makeCodexSessionRuntime = (
                         ),
                       ),
                     );
-                    for (const task of backgroundTasks.stop()) {
-                      yield* emitEvent({
-                        kind: "notification",
-                        threadId: options.threadId,
-                        method: "backgroundTask/changed",
-                        payload: task,
-                      });
-                    }
                   }),
                 );
+                for (const task of backgroundTasks.stop()) {
+                  yield* emitEvent({
+                    kind: "notification",
+                    threadId: options.threadId,
+                    method: "backgroundTask/changed",
+                    payload: task,
+                  });
+                }
                 const effectiveTurnId = turnId ?? (yield* Ref.get(sessionRef)).activeTurnId;
                 if (effectiveTurnId) {
                   yield* client.request("turn/interrupt", {
