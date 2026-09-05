@@ -468,9 +468,15 @@ it.effect("rejects a parent command receipt with the wrong type before deleting 
       const failure = yield* service
         .delete({ commandId, projectId, force: true })
         .pipe(Effect.flip);
-      assert.instanceOf(failure, ProjectService.ProjectOperationError);
-      if (failure._tag !== "ProjectOperationError") return assert.fail("Expected receipt conflict");
-      assert.equal(failure.operation, "dispatch-project-command");
+      assert.instanceOf(failure, ProjectService.ProjectCommandReceiptConflictError);
+      if (failure._tag !== "ProjectCommandReceiptConflictError") {
+        return assert.fail("Expected receipt conflict");
+      }
+      assert.equal(failure.commandId, commandId);
+      assert.equal(failure.projectId, projectId);
+      assert.equal(failure.receiptAggregateKind, "project");
+      assert.equal(failure.receiptAggregateId, projectId);
+      assert.equal(failure.receiptCommandType, "project.meta.update");
       assert.isTrue(Option.isSome(yield* service.getById(projectId)));
       assert.isNull((yield* projections.getThreadProjection(threadId)).thread.deletedAt);
       const deletionEvents = yield* sql`
@@ -576,7 +582,7 @@ it.effect("prevents either commit order from orphaning a V2 thread", () =>
       const blockedDelete = yield* engine
         .dispatch({ type: "project.delete", commandId, projectId, force: true })
         .pipe(Effect.flip);
-      assert.equal(blockedDelete._tag, "PersistenceSqlError");
+      assert.equal(blockedDelete._tag, "OrchestrationProjectHasActiveThreadsError");
       assert.isTrue(Option.isSome(yield* service.getById(projectId)));
 
       const deleted = yield* service.delete({ commandId, projectId, force: true });

@@ -1,4 +1,4 @@
-import { ThreadId } from "@t3tools/contracts";
+import { ProjectId, ThreadId } from "@t3tools/contracts";
 import * as SchemaIssue from "effect/SchemaIssue";
 import * as Schema from "effect/Schema";
 
@@ -59,6 +59,15 @@ export const OrchestrationCommandRejection = Schema.Union([
 export type OrchestrationCommandRejection = typeof OrchestrationCommandRejection.Type;
 export const isOrchestrationCommandRejection = Schema.is(OrchestrationCommandRejection);
 
+export class OrchestrationProjectHasActiveThreadsError extends Schema.TaggedErrorClass<OrchestrationProjectHasActiveThreadsError>()(
+  "OrchestrationProjectHasActiveThreadsError",
+  { projectId: ProjectId },
+) {
+  override get message(): string {
+    return `Project ${this.projectId} still has active V2 threads.`;
+  }
+}
+
 export class OrchestrationCommandPreviouslyRejectedError extends Schema.TaggedErrorClass<OrchestrationCommandPreviouslyRejectedError>()(
   "OrchestrationCommandPreviouslyRejectedError",
   {
@@ -118,6 +127,7 @@ export class OrchestrationListenerCallbackError extends Schema.TaggedErrorClass<
 export type OrchestrationDispatchError =
   | ProjectionRepositoryError
   | OrchestrationCommandRejection
+  | OrchestrationProjectHasActiveThreadsError
   | OrchestrationCommandIdConflictError
   | OrchestrationCommandPreviouslyRejectedError
   | OrchestrationProjectorDecodeError

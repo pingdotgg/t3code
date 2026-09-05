@@ -3,6 +3,7 @@ import {
   type OrchestrationV2Run,
   OrchestrationV2DomainEvent,
   OrchestrationV2StoredEvent,
+  ProjectId,
   ProviderThreadId,
   RunAttemptId,
   RunId,
@@ -37,7 +38,6 @@ import {
 import { EventStoreV2 } from "./EventStore.ts";
 import {
   ORCHESTRATION_V2_PROJECTION_SCHEMA_VERSION,
-  ProjectionStoreApplyEventError,
   ProjectionStoreV2,
 } from "./ProjectionStore.ts";
 import {
@@ -73,6 +73,15 @@ export class EventSinkStreamError extends Schema.TaggedErrorClass<EventSinkStrea
     return this.threadId === undefined
       ? "Failed to stream orchestration V2 events."
       : `Failed to stream orchestration V2 events for thread ${this.threadId}.`;
+  }
+}
+
+class ThreadProjectDeletedError extends Schema.TaggedErrorClass<ThreadProjectDeletedError>()(
+  "ThreadProjectDeletedError",
+  { projectId: ProjectId },
+) {
+  override get message(): string {
+    return `Cannot create a thread for deleted project ${this.projectId}.`;
   }
 }
 
@@ -282,10 +291,7 @@ const baseLayer: Layer.Layer<
           `;
           const project = projects[0];
           if (project !== undefined && project.deleted_at !== null) {
-            return yield* new ProjectionStoreApplyEventError({
-              eventType: "thread.created",
-              cause: `Cannot create a thread for deleted project ${projectId}.`,
-            });
+            return yield* new ThreadProjectDeletedError({ projectId });
           }
         }
         yield* Effect.forEach(storedEvents, (stored) => projectionStore.apply(stored.event), {

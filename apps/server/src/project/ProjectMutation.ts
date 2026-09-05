@@ -1,14 +1,12 @@
 import { type ProjectMutation } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
-import { type ProjectService } from "./ProjectService.ts";
-
-type ProjectMutations = Pick<ProjectService["Service"], "create" | "delete" | "update">;
+import * as ProjectService from "./ProjectService.ts";
 
 export const projectMutationOperation = Effect.fn("projectMutationOperation")(function* (
-  projects: ProjectMutations,
   mutation: ProjectMutation,
 ) {
+  const projects = yield* ProjectService.ProjectService;
   switch (mutation.type) {
     case "project.create":
       return yield* projects.create({

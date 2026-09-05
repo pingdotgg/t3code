@@ -28,7 +28,7 @@ import {
   orchestrationCommandsTotal,
   orchestrationCommandDuration,
 } from "../../observability/Metrics.ts";
-import { PersistenceSqlError, toPersistenceSqlError } from "../../persistence/Errors.ts";
+import { toPersistenceSqlError } from "../../persistence/Errors.ts";
 import { OrchestrationEventStore } from "../../persistence/Services/OrchestrationEventStore.ts";
 import { OrchestrationCommandReceiptRepository } from "../../persistence/Services/OrchestrationCommandReceipts.ts";
 import {
@@ -36,6 +36,7 @@ import {
   OrchestrationCommandIdConflictError,
   OrchestrationCommandInvariantError,
   OrchestrationCommandPreviouslyRejectedError,
+  OrchestrationProjectHasActiveThreadsError,
   type OrchestrationDispatchError,
   type OrchestrationProjectorDecodeError,
 } from "../Errors.ts";
@@ -209,9 +210,8 @@ const makeOrchestrationEngine = Effect.gen(function* () {
                     LIMIT 1
                   `;
                   if (activeV2Threads.length > 0) {
-                    return yield* new PersistenceSqlError({
-                      operation: "OrchestrationEngine.commitProjectDeletion",
-                      detail: `Project ${nextEvent.payload.projectId} still has active V2 threads.`,
+                    return yield* new OrchestrationProjectHasActiveThreadsError({
+                      projectId: nextEvent.payload.projectId,
                     });
                   }
                 }

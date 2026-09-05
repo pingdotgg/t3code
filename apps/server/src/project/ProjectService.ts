@@ -1,5 +1,5 @@
 import {
-  type CommandId,
+  CommandId,
   ModelSelection,
   ProjectId,
   type Project,
@@ -25,7 +25,7 @@ import {
   layer as threadCommandExecutorLayer,
 } from "../orchestration-v2/ThreadCommandExecutor.ts";
 import { planThreadDeletion } from "../orchestration-v2/ThreadDeletion.ts";
-import { OrchestrationCommandReceiptRepository } from "../persistence/Services/OrchestrationCommandReceipts.ts";
+import * as OrchestrationCommandReceipts from "../persistence/Services/OrchestrationCommandReceipts.ts";
 import * as ProjectionProjects from "../persistence/Services/ProjectionProjects.ts";
 import { ProjectEnrichmentService, type ProjectEnrichment } from "./ProjectEnrichmentService.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
@@ -92,6 +92,21 @@ export class ProjectNotEmptyError extends Schema.TaggedErrorClass<ProjectNotEmpt
   }
 }
 
+export class ProjectCommandReceiptConflictError extends Schema.TaggedErrorClass<ProjectCommandReceiptConflictError>()(
+  "ProjectCommandReceiptConflictError",
+  {
+    commandId: CommandId,
+    projectId: ProjectId,
+    receiptAggregateKind: Schema.String,
+    receiptAggregateId: Schema.String,
+    receiptCommandType: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Command ${this.commandId} was already used for ${this.receiptCommandType} on ${this.receiptAggregateKind} ${this.receiptAggregateId}; it cannot delete project ${this.projectId}.`;
+  }
+}
+
 export class ProjectOperationError extends Schema.TaggedErrorClass<ProjectOperationError>()(
   "ProjectOperationError",
   {
@@ -118,6 +133,7 @@ export type ProjectServiceError =
   | ProjectNotFoundError
   | ProjectConflictError
   | ProjectNotEmptyError
+  | ProjectCommandReceiptConflictError
   | ProjectOperationError;
 
 export class ProjectService extends Context.Service<
@@ -146,7 +162,7 @@ export class ProjectService extends Context.Service<
 
 export const make = Effect.gen(function* () {
   const engine = yield* OrchestrationEngineService;
-  const commandReceipts = yield* OrchestrationCommandReceiptRepository;
+  const commandReceipts = yield* OrchestrationCommandReceipts.OrchestrationCommandReceiptRepository;
   const projects = yield* ProjectionProjects.ProjectionProjectRepository;
   const projectEnrichment = yield* ProjectEnrichmentService;
   const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
@@ -412,10 +428,12 @@ export const make = Effect.gen(function* () {
       receipt.aggregateId !== input.projectId ||
       receipt.commandType !== "project.delete"
     ) {
-      return yield* new ProjectOperationError({
-        operation: "dispatch-project-command",
+      return yield* new ProjectCommandReceiptConflictError({
+        commandId: input.commandId,
         projectId: input.projectId,
-        cause: `Command ${input.commandId} belongs to ${receipt.aggregateKind} ${receipt.aggregateId} (${receipt.commandType}), not project ${input.projectId} (project.delete).`,
+        receiptAggregateKind: receipt.aggregateKind,
+        receiptAggregateId: receipt.aggregateId,
+        receiptCommandType: receipt.commandType,
       });
     }
     return Option.some(

@@ -1266,7 +1266,9 @@ const makeWsRpcLayer = (
       });
 
       const mutateProject = Effect.fn("ws.projects.mutate")(function* (mutation: ProjectMutation) {
-        return yield* projectMutationOperation(projectService, mutation);
+        return yield* projectMutationOperation(mutation).pipe(
+          Effect.provideService(ProjectService.ProjectService, projectService),
+        );
       });
 
       const handlers = ServerWsRpcGroup.of({
@@ -2142,7 +2144,8 @@ const makeWsRpcLayer = (
                   new ProjectMutationError({
                     commandId: mutation.commandId,
                     message:
-                      cause._tag === "ProjectNotEmptyError"
+                      cause._tag === "ProjectNotEmptyError" ||
+                      cause._tag === "ProjectCommandReceiptConflictError"
                         ? cause.message
                         : "Failed to mutate project.",
                     cause,
