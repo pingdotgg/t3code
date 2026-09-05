@@ -4335,6 +4335,58 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     );
   }
 
+  it.effect("requires maintenance and diagnostics grants before retrying telemetry", () =>
+    Effect.gen(function* () {
+      let retries = 0;
+      yield* buildAppUnderTest({
+        layers: {
+          nativeTelemetryClient: {
+            retry: Effect.sync(() => {
+              retries += 1;
+              return true;
+            }),
+          },
+        },
+      });
+      for (const scope of [
+        "environment:maintain",
+        "diagnostics:read",
+        "environment:maintain diagnostics:read",
+      ]) {
+        const token = yield* exchangeAccessToken(defaultDesktopBootstrapToken, { scope });
+        assert.equal(token.response.status, 200);
+        const ticketResponse = yield* HttpClient.post("/api/auth/websocket-ticket", {
+          headers: { authorization: `Bearer ${token.body.access_token ?? ""}` },
+        });
+        const { ticket } = yield* responseJsonEffect<{ readonly ticket: string }>(ticketResponse);
+        const wsUrl = `${yield* getWsServerUrl("/ws", { authenticated: false })}?wsTicket=${encodeURIComponent(ticket)}`;
+        yield* Effect.scoped(
+          withWsRpcClient(wsUrl, (client) =>
+            Effect.gen(function* () {
+              const retry = client[WS_METHODS.serverRetryResourceTelemetry]({});
+              if (scope === "environment:maintain diagnostics:read") {
+                const result = yield* retry;
+                assert.equal(result.accepted, true);
+                assert.ok(result.snapshot.health);
+                assert.equal(retries, 1);
+              } else {
+                const error = yield* Effect.flip(retry);
+                if (error._tag !== "EnvironmentAuthorizationError") {
+                  assert.fail(`Expected an authorization error, got ${String(error)}`);
+                }
+                assert.equal(
+                  error.requiredScope,
+                  scope === "environment:maintain" ? "diagnostics:read" : "environment:maintain",
+                );
+                assert.equal(retries, 0);
+              }
+            }),
+          ),
+        );
+      }
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("includes CORS headers on remote auth success responses", () =>
     Effect.gen(function* () {
       yield* buildAppUnderTest();
