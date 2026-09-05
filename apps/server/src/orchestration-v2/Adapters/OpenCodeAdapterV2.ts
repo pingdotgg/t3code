@@ -2559,8 +2559,10 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
           Effect.exit,
           Effect.flatMap((exit) =>
             Effect.gen(function* () {
-              if (abortController.signal.aborted || Exit.isSuccess(exit)) return;
-              const detail = openCodeRuntimeErrorDetail(Cause.squash(exit.cause));
+              if (abortController.signal.aborted) return;
+              const detail = Exit.isFailure(exit)
+                ? openCodeRuntimeErrorDetail(Cause.squash(exit.cause))
+                : "OpenCode event stream ended unexpectedly. Send another message to reconnect.";
               yield* updateProviderSession("error", detail);
               for (const state of threads.values()) {
                 if (state.activeTurn !== null)
