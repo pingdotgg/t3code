@@ -545,7 +545,17 @@ describe("makeUsageRefreshToken", () => {
 });
 
 describe("retainUsageStatuses", () => {
-  const status = (id: string, usageSummary: UsageSummary | null, isPending = false) => ({
+  const status = (
+    id: string,
+    usageSummary: UsageSummary | null,
+    isPending = false,
+  ): {
+    readonly environmentId: EnvironmentId;
+    readonly label: string;
+    readonly isPending: boolean;
+    readonly error: string | null;
+    readonly summary: UsageSummary | null;
+  } => ({
     environmentId: id as EnvironmentId,
     label: id,
     isPending,
@@ -593,5 +603,27 @@ describe("retainUsageStatuses", () => {
     });
 
     expect(result.visible[0]?.summary).toBeNull();
+  });
+
+  it("does not revive a settled summary after every environment fails", () => {
+    const old = summary([bucket({ costUsd: 2 })], []);
+    const previous = {
+      rangeKey: "range-a",
+      statuses: [status("env-a", old)],
+    };
+    const failed = retainUsageStatuses(
+      "range-a",
+      [{ ...status("env-a", null), error: "could not report usage" }],
+      previous,
+    );
+    const retrying = retainUsageStatuses("range-a", [status("env-a", null, true)], failed.settled);
+
+    expect(failed.visible[0]).toMatchObject({
+      error: "could not report usage",
+      summary: null,
+    });
+    expect(failed.settled).toBeNull();
+    expect(retrying.visible[0]).toMatchObject({ isPending: true, error: null, summary: null });
+    expect(retrying.settled).toBeNull();
   });
 });
