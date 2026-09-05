@@ -52,6 +52,7 @@ import React, {
   Children,
   Suspense,
   type CSSProperties,
+  type ComponentProps,
   type ClipboardEvent as ReactClipboardEvent,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
@@ -357,6 +358,55 @@ type MarkdownImageHastNode = {
   children?: MarkdownImageHastNode[];
 };
 
+function meaningfulHastChildren(node: MarkdownImageHastNode): MarkdownImageHastNode[] {
+  return (node.children ?? []).filter(
+    (child) => !(child.type === "text" && (child as { value?: string }).value?.trim() === ""),
+  );
+}
+
+/**
+ * An image that is the only content of its block (optionally wrapped in a
+ * link) is almost always a screenshot or figure, so it gets a reserved slot
+ * while it loads. Images mixed with text or other images — badge rows, icons
+ * in a sentence — stay inline at their natural size, since a placeholder taller
+ * than the image would move the page more than the image itself does.
+ */
+/** Containers whose sole child image reads as a figure rather than part of a sentence. */
+const STANDALONE_IMAGE_BLOCKS = new Set([
+  "p",
+  "div",
+  "li",
+  "td",
+  "th",
+  "figure",
+  "center",
+  "blockquote",
+]);
+
+function soleImageDescendant(node: MarkdownImageHastNode): MarkdownImageHastNode | undefined {
+  const children = meaningfulHastChildren(node);
+  if (children.length !== 1) return undefined;
+  const only = children[0];
+  if (only?.type !== "element") return undefined;
+  if (only.tagName === "img") return only;
+  // A link, emphasis, or similar inline wrapper around the image still counts
+  // as long as nothing else shares the block.
+  return only.tagName === "a" || only.tagName === "strong" || only.tagName === "em"
+    ? soleImageDescendant(only)
+    : undefined;
+}
+
+function markStandaloneImages(node: MarkdownImageHastNode) {
+  // A raw `<img>` on its own line reaches the root without a paragraph.
+  if (node.type === "root" || (node.tagName && STANDALONE_IMAGE_BLOCKS.has(node.tagName))) {
+    const image = soleImageDescendant(node);
+    if (image) image.properties = { ...image.properties, dataStandalone: true };
+  }
+  node.children?.forEach((child) => {
+    if (child.type === "element") markStandaloneImages(child);
+  });
+}
+
 /** Carries authored image source metadata through the sanitizer to the image renderer. */
 function rehypePreserveImageSourceMeta() {
   return (tree: MarkdownImageHastNode) => {
@@ -374,6 +424,7 @@ function rehypePreserveImageSourceMeta() {
     };
 
     visit(tree);
+    markStandaloneImages(tree);
   };
 }
 
@@ -386,7 +437,12 @@ const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
     blockquote: [...(defaultSchema.attributes?.blockquote ?? []), "dataAlert"],
     div: [...(defaultSchema.attributes?.div ?? []), ...CODEX_ARTIFACT_TEMPLATE_HAST_PROPERTIES],
     a: [...(defaultSchema.attributes?.a ?? []), "dataPullRequestAutolink"],
-    img: [...(defaultSchema.attributes?.img ?? []), "dataLocalSrc", "dataMarkdownTitle"],
+    img: [
+      ...(defaultSchema.attributes?.img ?? []),
+      "dataLocalSrc",
+      "dataMarkdownTitle",
+      "dataStandalone",
+    ],
   },
   protocols: {
     ...defaultSchema.protocols,
@@ -1200,7 +1256,6 @@ function authoredImageSizeStyle(
 }
 
 const CHAT_MARKDOWN_WORKSPACE_IMAGE_CLASS_NAME = cn(
-  CHAT_MARKDOWN_IMAGE_SIZE_CLASS_NAME,
   CHAT_MARKDOWN_MEDIA_LAYOUT_CLASS_NAME,
   CHAT_MARKDOWN_MEDIA_FRAME_CLASS_NAME,
 );
@@ -1242,13 +1297,26 @@ function expandableMarkdownImageProps(
   };
 }
 
+function ChatMarkdownMediaUnavailableLabel(props: {
+  readonly alt: string;
+  readonly kind?: "image" | "video" | undefined;
+}) {
+  const label = props.kind === "video" ? "Video unavailable" : "Image unavailable";
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <TriangleAlertIcon aria-hidden className="size-3.5 shrink-0" />
+      {props.alt.length > 0 ? `${label} · ${props.alt}` : label}
+    </span>
+  );
+}
+
+/** Inline chip for an image that sits in a line of text or can never load. */
 function ChatMarkdownImageFallback(props: {
   readonly alt: string;
   readonly copyMarkdown?: string | undefined;
   readonly kind?: "image" | "video";
-  readonly actionsSource?: MediaActionSource;
+  readonly actionsSource?: MediaActionSource | undefined;
 }) {
-  const label = props.kind === "video" ? "Video unavailable" : "Image unavailable";
   const content = (
     <span
       data-markdown-copy={props.copyMarkdown}
@@ -1257,16 +1325,151 @@ function ChatMarkdownImageFallback(props: {
         "rounded-md border border-border/40 bg-muted/40 px-2 py-1 text-xs text-muted-foreground",
       )}
     >
-      <span className="inline-flex items-center gap-1.5">
-        <TriangleAlertIcon aria-hidden className="size-3.5 shrink-0" />
-        {props.alt.length > 0 ? `${label} · ${props.alt}` : label}
-      </span>
+      <ChatMarkdownMediaUnavailableLabel alt={props.alt} kind={props.kind} />
     </span>
   );
   return props.actionsSource ? (
     <MediaActions source={props.actionsSource}>{content}</MediaActions>
   ) : (
     content
+  );
+}
+
+const CHAT_MARKDOWN_IMAGE_FRAME_CLASS_NAME = cn(
+  "aspect-video w-full overflow-hidden bg-muted/60",
+  CHAT_MARKDOWN_MEDIA_MAX_WIDTH_CLASS_NAME,
+  CHAT_MARKDOWN_MEDIA_FRAME_CLASS_NAME,
+);
+
+/**
+ * A standalone image holds a 16:9 slot (or its authored size) until it has
+ * decoded, and keeps that slot if it fails, so a timeline row moves at most
+ * once: when the natural size arrives. A bare `<img>` is zero height until
+ * then. Once decoded the image renders bare again so its box, hit area, and
+ * alignment are exactly the image's own. Inline images (badges, icons in a
+ * sentence) skip the slot: a placeholder taller than the image would move the
+ * page more than the image does.
+ *
+ * Callers key this on the file's identity, not its URL: a re-signed URL for
+ * the same file keeps the decoded image on screen while the new bytes arrive,
+ * and a different file starts from the slot again.
+ */
+function ChatMarkdownImage(props: {
+  /** Null while the URL is being resolved; the last decoded image stays up. */
+  readonly src: string | null;
+  readonly sourceFailed?: boolean | undefined;
+  readonly alt: string;
+  readonly copyMarkdown: string | undefined;
+  readonly standalone: boolean;
+  readonly className?: string | undefined;
+  readonly style?: CSSProperties | undefined;
+  /** Sanitized authored attributes (`id`, `align`, …) that fragment links and layout rely on. */
+  readonly imageProps?:
+    | Omit<ComponentProps<"img">, "src" | "alt" | "className" | "style">
+    | undefined;
+  readonly actionsSource: MediaActionSource;
+  readonly originalUrl?: string | undefined;
+  readonly onImageExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
+}) {
+  const [loadedSrc, setLoadedSrc] = useState<string | null>(null);
+  const [failedSrc, setFailedSrc] = useState<string | null>(null);
+  const src = props.src ?? loadedSrc;
+  const failed = props.sourceFailed === true || (src !== null && failedSrc === src);
+  // A failure forgets the decoded image so the next URL loads behind the slot.
+  const settled = src !== null && !failed && (!props.standalone || loadedSrc !== null);
+  // Cached images are complete before `onLoad` can fire.
+  const markLoadedIfComplete = useCallback((image: HTMLImageElement | null) => {
+    if (image?.complete && image.naturalWidth > 0) setLoadedSrc(image.currentSrc || image.src);
+  }, []);
+  const imageEvents = (loadingSrc: string) => ({
+    onLoad: () => {
+      setLoadedSrc(loadingSrc);
+      setFailedSrc(null);
+    },
+    onError: () => {
+      setFailedSrc(loadingSrc);
+      setLoadedSrc(null);
+    },
+  });
+
+  if (settled) {
+    return (
+      <MediaActions source={props.actionsSource}>
+        <img
+          {...props.imageProps}
+          ref={markLoadedIfComplete}
+          src={src}
+          alt={props.alt}
+          data-markdown-copy={props.copyMarkdown}
+          decoding="async"
+          draggable={false}
+          className={cn(
+            CHAT_MARKDOWN_IMAGE_SIZE_CLASS_NAME,
+            props.className,
+            props.onImageExpand && "cursor-zoom-in",
+          )}
+          style={props.style}
+          {...expandableMarkdownImageProps(
+            props.onImageExpand,
+            src,
+            props.alt,
+            props.originalUrl,
+            props.actionsSource,
+          )}
+          {...imageEvents(src)}
+        />
+      </MediaActions>
+    );
+  }
+  if (!props.standalone) {
+    return failed ? (
+      <ChatMarkdownImageFallback
+        alt={props.alt}
+        copyMarkdown={props.copyMarkdown}
+        actionsSource={props.actionsSource}
+      />
+    ) : (
+      <span
+        id={props.imageProps?.id}
+        data-markdown-copy={props.copyMarkdown}
+        role="status"
+        aria-label="Loading image"
+        className={CHAT_MARKDOWN_MEDIA_LAYOUT_CLASS_NAME}
+      />
+    );
+  }
+  return (
+    <MediaActions source={props.actionsSource}>
+      <span
+        id={props.imageProps?.id}
+        data-markdown-copy={props.copyMarkdown}
+        className={cn(
+          CHAT_MARKDOWN_MEDIA_LAYOUT_CLASS_NAME,
+          CHAT_MARKDOWN_IMAGE_FRAME_CLASS_NAME,
+          "relative",
+        )}
+        style={props.style}
+        {...(failed
+          ? { role: "alert" as const }
+          : { role: "status" as const, "aria-label": "Loading image" })}
+      >
+        {failed ? (
+          <span className="flex size-full items-center justify-center p-2 text-center text-xs text-muted-foreground">
+            <ChatMarkdownMediaUnavailableLabel alt={props.alt} />
+          </span>
+        ) : src !== null ? (
+          <img
+            ref={markLoadedIfComplete}
+            src={src}
+            alt={props.alt}
+            decoding="async"
+            draggable={false}
+            className="invisible absolute inset-0 size-full"
+            {...imageEvents(src)}
+          />
+        ) : null}
+      </span>
+    </MediaActions>
   );
 }
 
@@ -1316,13 +1519,14 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
   readonly alt: string;
   readonly copyMarkdown?: string;
   readonly srcFragment?: string;
+  /** Reserve a slot while loading; off for images that share a line with text. */
+  readonly standalone?: boolean | undefined;
   readonly style?: CSSProperties | undefined;
   readonly workspaceRoot?: string | undefined;
   readonly onImageExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
 }) {
   const assetUrl = useAssetUrlState(props.environmentId, props.resource);
   const refreshAssetUrl = useAssetUrlRefresh(props.environmentId, props.resource);
-  const [failedUrl, setFailedUrl] = useState<string | null>(null);
   const resource = props.resource;
   const path =
     resource._tag === "media-file"
@@ -1367,56 +1571,19 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
     );
   }
 
-  if (assetUrl._tag === "Failure" || (assetUrl._tag === "Success" && failedUrl === assetUrl.url)) {
-    return (
-      <ChatMarkdownImageFallback
-        alt={props.alt}
-        copyMarkdown={props.copyMarkdown}
-        kind={props.kind ?? "image"}
-        actionsSource={actionsSource}
-      />
-    );
-  }
-  if (assetUrl._tag !== "Success") {
-    return (
-      <MediaActions source={actionsSource}>
-        <span
-          data-markdown-copy={props.copyMarkdown}
-          role="status"
-          aria-label="Loading image"
-          className={cn(
-            CHAT_MARKDOWN_MEDIA_LAYOUT_CLASS_NAME,
-            "aspect-video w-64 max-w-full rounded-lg bg-muted/60",
-            CHAT_MARKDOWN_MEDIA_BOUNDS_CLASS_NAME,
-          )}
-          style={props.style}
-        />
-      </MediaActions>
-    );
-  }
   return (
-    <MediaActions source={actionsSource}>
-      <img
-        src={src ?? undefined}
-        alt={props.alt}
-        data-markdown-copy={props.copyMarkdown}
-        loading="lazy"
-        draggable={false}
-        className={cn(
-          CHAT_MARKDOWN_WORKSPACE_IMAGE_CLASS_NAME,
-          props.onImageExpand && "cursor-zoom-in",
-        )}
-        style={props.style}
-        {...expandableMarkdownImageProps(
-          props.onImageExpand,
-          src ?? assetUrl.url,
-          props.alt,
-          undefined,
-          actionsSource,
-        )}
-        onError={() => setFailedUrl(assetUrl.url)}
-      />
-    </MediaActions>
+    <ChatMarkdownImage
+      key={JSON.stringify([props.environmentId, props.resource, props.srcFragment])}
+      src={src}
+      sourceFailed={assetUrl._tag === "Failure"}
+      alt={props.alt}
+      copyMarkdown={props.copyMarkdown}
+      standalone={props.standalone ?? true}
+      className={CHAT_MARKDOWN_WORKSPACE_IMAGE_CLASS_NAME}
+      style={props.style}
+      actionsSource={actionsSource}
+      onImageExpand={props.onImageExpand}
+    />
   );
 });
 
@@ -2772,6 +2939,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
     const imageExpand = use(MarkdownLinkContext) ? undefined : expandMedia;
     const localSrc = node?.properties?.dataLocalSrc;
     const markdownTitle = node?.properties?.dataMarkdownTitle;
+    const standalone = node?.properties?.dataStandalone === true;
     const authoredSrc = typeof localSrc === "string" ? localSrc : src;
     const authoredTitle = typeof markdownTitle === "string" ? markdownTitle : title;
     const srcString =
@@ -2780,7 +2948,8 @@ const CHAT_MARKDOWN_COMPONENTS = {
       typeof localSrc === "string" ? srcString.replaceAll("\\", "/") : srcString;
     const altText = alt ?? "";
     const copyMarkdown = markdownImageCopy(altText, srcString, authoredTitle);
-    const authoredSizeStyle = authoredImageSizeStyle(props.width, props.height);
+    const { className, style: _style, width, height, ...imageProps } = props;
+    const authoredSizeStyle = authoredImageSizeStyle(width, height);
     const imageSource = classifyMarkdownImageSource(classifiedSrc, imageBaseDir ?? cwd);
     const kind = mediaKindFromPath(classifiedSrc) ?? "image";
     if (imageSource._tag === "Direct") {
@@ -2807,27 +2976,19 @@ const CHAT_MARKDOWN_COMPONENTS = {
         );
       }
       return (
-        <MediaActions source={actionsSource}>
-          <img
-            {...props}
-            src={mediaSrc}
-            alt={altText}
-            loading="lazy"
-            className={cn(
-              props.className,
-              CHAT_MARKDOWN_IMAGE_SIZE_CLASS_NAME,
-              imageExpand && "cursor-zoom-in",
-            )}
-            style={authoredSizeStyle}
-            {...expandableMarkdownImageProps(
-              imageExpand,
-              mediaSrc,
-              altText,
-              originalUrl,
-              actionsSource,
-            )}
-          />
-        </MediaActions>
+        <ChatMarkdownImage
+          key={mediaSrc}
+          src={mediaSrc}
+          alt={altText}
+          copyMarkdown={copyMarkdown}
+          standalone={standalone}
+          className={className}
+          style={authoredSizeStyle}
+          imageProps={imageProps}
+          actionsSource={actionsSource}
+          originalUrl={originalUrl}
+          onImageExpand={imageExpand}
+        />
       );
     }
     if (imageSource._tag === "WorkspaceFile" && threadRef) {
@@ -2843,6 +3004,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
           kind={kind}
           copyMarkdown={copyMarkdown}
           srcFragment={markdownImageSourceFragment(classifiedSrc)}
+          standalone={standalone}
           style={authoredSizeStyle}
           workspaceRoot={cwd}
           onImageExpand={imageExpand}

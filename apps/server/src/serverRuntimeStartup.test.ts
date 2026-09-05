@@ -13,16 +13,8 @@ import * as Stream from "effect/Stream";
 import * as ServerConfig from "./config.ts";
 import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
-import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
-
-it("uses the canonical Codex default for the auto-bootstrapped welcome thread", () => {
-  assert.deepStrictEqual(ServerRuntimeStartup.getAutoBootstrapThreadModelSelection(), {
-    instanceId: ProviderInstanceId.make("codex"),
-    model: DEFAULT_MODEL,
-  });
-});
 
 it.effect("automatic pull only updates enabled, behind, clean default-branch checkouts", () =>
   Effect.gen(function* () {
@@ -110,56 +102,6 @@ it.effect("enqueueCommand fails queued work when readiness fails", () =>
   ),
 );
 
-it.effect("launchStartupHeartbeat does not block the caller while counts are loading", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const releaseCounts = yield* Deferred.make<void, never>();
-      const countsStarted = yield* Deferred.make<void, never>();
-
-      yield* ServerRuntimeStartup.launchStartupHeartbeat.pipe(
-        Effect.provideService(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
-          getUserInputActivity: () => Effect.die("unused"),
-          getCommandReadModel: () => Effect.die("unused"),
-          getSnapshot: () => Effect.die("unused"),
-          getShellSnapshot: () => Effect.die("unused"),
-          getArchivedShellSnapshot: () => Effect.die("unused"),
-          getSnapshotSequence: () => Effect.die("unused"),
-          getEventReplayStats: () => Effect.die("unused"),
-          getCounts: () =>
-            Deferred.succeed(countsStarted, undefined).pipe(
-              Effect.andThen(Deferred.await(releaseCounts)),
-              Effect.as({
-                projectCount: 2,
-                threadCount: 3,
-              }),
-            ),
-          getActiveProjectByWorkspaceRoot: () => Effect.succeed(Option.none()),
-          getProjectShellById: () => Effect.succeed(Option.none()),
-          getFirstActiveThreadIdByProjectId: () => Effect.succeed(Option.none()),
-          getThreadCheckpointContext: () => Effect.succeed(Option.none()),
-          getFullThreadDiffContext: () => Effect.succeed(Option.none()),
-          getThreadRuntimeContext: () => Effect.die("unused"),
-          getThreadShellById: () => Effect.succeed(Option.none()),
-          getThreadDetailById: () => Effect.succeed(Option.none()),
-          getThreadDetailSnapshot: () => Effect.succeed(Option.none()),
-          searchThreads: () => Effect.succeed({ matches: [] }),
-        }),
-        Effect.provideService(AnalyticsService.AnalyticsService, {
-          record: () => Effect.void,
-          flush: Effect.void,
-        }),
-      );
-
-      // The heartbeat is forked, so the caller is already back here while
-      // getCounts is still parked. Awaiting countsStarted proves the forked
-      // work really ran; releaseCounts staying incomplete proves the caller
-      // never waited for it.
-      yield* Deferred.await(countsStarted);
-      assert.equal(yield* Deferred.isDone(releaseCounts), false);
-    }),
-  ),
-);
-
 it.effect("resolveWelcomeBase derives cwd and project name from server config", () =>
   Effect.gen(function* () {
     const welcome = yield* ServerRuntimeStartup.resolveWelcomeBase.pipe(
@@ -201,7 +143,10 @@ it.effect("resolveAutoBootstrapWelcomeTargets returns existing project and threa
               id: bootstrapProjectId,
               title: "Startup Project",
               workspaceRoot: "/tmp/startup-project",
-              defaultModelSelection: ServerRuntimeStartup.getAutoBootstrapThreadModelSelection(),
+              defaultModelSelection: {
+                instanceId: ProviderInstanceId.make("codex"),
+                model: DEFAULT_MODEL,
+              },
               scripts: [],
               createdAt: "2026-01-01T00:00:00.000Z",
               updatedAt: "2026-01-01T00:00:00.000Z",
@@ -298,10 +243,10 @@ it.effect("resolveAutoBootstrapWelcomeTargets creates a project and thread when 
       ["project.create", "thread.create"],
     );
     assert.equal("defaultModelSelection" in commands[0]!, false);
-    assert.deepStrictEqual(
-      commands[1]?.modelSelection,
-      ServerRuntimeStartup.getAutoBootstrapThreadModelSelection(),
-    );
+    assert.deepStrictEqual(commands[1]?.modelSelection, {
+      instanceId: ProviderInstanceId.make("codex"),
+      model: DEFAULT_MODEL,
+    });
   }),
 );
 

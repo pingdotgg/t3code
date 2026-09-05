@@ -1010,10 +1010,12 @@ export function rankPullRequestMatches<Entry extends PullRequestListEntry>(
  * verdict, then everything else still open. Drafts stay in that third tier because their author
  * has not made them mergeable yet. Finished work follows open work when all states are visible. A
  * known conflict is never ready, whatever its checks, review or state say, so it stays at the
- * bottom. Recency breaks ties, so optional diff counts never move the queue beneath the reader.
+ * bottom. Within each tier, smaller measured diffs come first, then unknown sizes. Recency
+ * breaks ties between equally sized diffs.
  */
 export function rankPullRequestsByMergeReadiness<Entry extends PullRequestListEntry>(
   entries: ReadonlyArray<Entry>,
+  hasMeasuredSize: (entry: Entry) => boolean = (entry) => entry.additions + entry.deletions > 0,
 ): ReadonlyArray<Entry> {
   const tier = (entry: Entry) => {
     if (entry.mergeability === "conflicting") return 4;
@@ -1026,7 +1028,9 @@ export function rankPullRequestsByMergeReadiness<Entry extends PullRequestListEn
   return entries.toSorted((left, right) => {
     const byTier = tier(left) - tier(right);
     if (byTier !== 0) return byTier;
-    return right.updatedAt.localeCompare(left.updatedAt);
+    const measured = Number(hasMeasuredSize(right)) - Number(hasMeasuredSize(left));
+    const sized = left.additions + left.deletions - (right.additions + right.deletions);
+    return measured || sized || right.updatedAt.localeCompare(left.updatedAt);
   });
 }
 
@@ -1042,7 +1046,7 @@ export function sortPullRequestGroups<Entry extends PullRequestListEntry>(
 
   if (sort === "ready") {
     return searchText.trim().length === 0
-      ? sortWithinGroups(rankPullRequestsByMergeReadiness)
+      ? sortWithinGroups((entries) => rankPullRequestsByMergeReadiness(entries, hasMeasuredSize))
       : groups;
   }
   if (sort === "updated") return groups;

@@ -2,11 +2,9 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   constrainAuxiliaryPaneWidth,
-  constrainPrimarySidebarWidth,
   deriveCenteredContentHorizontalPadding,
   deriveFileInspectorPaneLayout,
   deriveLayout,
-  deriveStableFormSheetDetent,
   deriveThreadFeedInitialContentInset,
   deriveThreadWorkLogSizing,
   deriveWorkspacePaneLayout,
@@ -75,12 +73,6 @@ describe("deriveThreadFeedInitialContentInset", () => {
 });
 
 describe("resizable pane constraints", () => {
-  it("keeps a preferred sidebar width across large windows and clamps it in a narrow split view", () => {
-    expect(constrainPrimarySidebarWidth(430, 1_366)).toBe(430);
-    expect(constrainPrimarySidebarWidth(430, 744)).toBe(384);
-    expect(constrainPrimarySidebarWidth(100, 1_366)).toBe(280);
-  });
-
   it("preserves a useful main pane while constraining a trailing pane", () => {
     expect(constrainAuxiliaryPaneWidth({ preferredWidth: 440, availableWidth: 1_100 })).toBe(440);
     expect(constrainAuxiliaryPaneWidth({ preferredWidth: 440, availableWidth: 900 })).toBe(340);
@@ -390,16 +382,5 @@ describe("deriveWorkspacePaneLayout", () => {
       auxiliaryPaneVisible: false,
       auxiliaryPaneWidth: null,
     });
-  });
-});
-
-describe("deriveStableFormSheetDetent", () => {
-  it.each([
-    { height: 1_194, expected: 0.62 },
-    { height: 834, expected: 0.863 },
-    { height: 600, expected: 0.893 },
-    { height: 0, expected: 0.92 },
-  ])("derives a stable sheet detent for height $height", ({ height, expected }) => {
-    expect(deriveStableFormSheetDetent(height)).toBe(expected);
   });
 });

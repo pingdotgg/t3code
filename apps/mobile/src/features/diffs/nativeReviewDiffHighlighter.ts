@@ -247,15 +247,16 @@ function createHighlighterHandle(
       while (start < lines.length) {
         if (signal?.aborted) return [];
 
-        // Skipping this line leaves its ending grammar state unknown. Keep the
-        // rest of this contiguous segment plain instead of guessing its syntax.
+        // Skipping this line leaves its ending grammar state unknown. Resume
+        // from a fresh state rather than leaving the rest of the segment plain:
+        // highlighted rows are cached for the sheet's lifetime, so a plain tail
+        // would stick, and which rows it covered would depend on where the
+        // first visible window happened to start.
         if (lines[start]!.length > NATIVE_REVIEW_DIFF_TOKENIZE_MAX_LINE_LENGTH) {
-          highlighted.push(
-            ...lines
-              .slice(start)
-              .map((content) => [{ content: content || " ", color: null, fontStyle: null }]),
-          );
-          break;
+          highlighted.push([{ content: lines[start] || " ", color: null, fontStyle: null }]);
+          grammarState = undefined;
+          start += 1;
+          continue;
         }
 
         let end = start;

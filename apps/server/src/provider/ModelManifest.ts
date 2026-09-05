@@ -138,7 +138,7 @@ export const BUNDLED_MODEL_MANIFEST: ModelManifestData =
   Schema.decodeUnknownSync(ModelManifestSchema)(bundledManifestJson);
 
 /** Epoch millis of the manifest's `updatedAt`, or 0 when absent or unparsable. */
-export function manifestUpdatedAtMs(manifest: ModelManifestData): number {
+function manifestUpdatedAtMs(manifest: ModelManifestData): number {
   if (manifest.updatedAt === undefined) return 0;
   const parsed = Date.parse(manifest.updatedAt);
   return Number.isNaN(parsed) ? 0 : parsed;
