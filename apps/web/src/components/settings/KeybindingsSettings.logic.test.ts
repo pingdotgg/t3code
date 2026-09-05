@@ -85,7 +85,14 @@ describe("KeybindingsSettings.logic", () => {
     // Numpad digits map to numbers when NumLock is on (key is "3")
     expect(
       keybindingFromKeyboardEvent(
-        { key: "3", code: "Numpad3", metaKey: false, ctrlKey: true, altKey: false, shiftKey: false },
+        {
+          key: "3",
+          code: "Numpad3",
+          metaKey: false,
+          ctrlKey: true,
+          altKey: false,
+          shiftKey: false,
+        },
         "Win32",
       ),
     ).toBe("mod+3");
@@ -93,7 +100,14 @@ describe("KeybindingsSettings.logic", () => {
     // Numpad navigation when NumLock is off (key is "End") preserves navigation
     expect(
       keybindingFromKeyboardEvent(
-        { key: "End", code: "Numpad1", metaKey: false, ctrlKey: true, altKey: false, shiftKey: false },
+        {
+          key: "End",
+          code: "Numpad1",
+          metaKey: false,
+          ctrlKey: true,
+          altKey: false,
+          shiftKey: false,
+        },
         "Win32",
       ),
     ).toBe("mod+end");
@@ -101,7 +115,14 @@ describe("KeybindingsSettings.logic", () => {
     // BracketLeft / BracketRight shortcuts with shift
     expect(
       keybindingFromKeyboardEvent(
-        { key: "{", code: "BracketLeft", metaKey: true, ctrlKey: false, altKey: false, shiftKey: true },
+        {
+          key: "{",
+          code: "BracketLeft",
+          metaKey: true,
+          ctrlKey: false,
+          altKey: false,
+          shiftKey: true,
+        },
         "MacIntel",
       ),
     ).toBe("mod+shift+[");
