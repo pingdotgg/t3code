@@ -267,7 +267,7 @@ export class VoiceInputController {
           this.streaming = await this.transcription.startStreaming({
             signal: abortController.signal,
             onTranscript: (text) => {
-              receivedStreamingTranscript = true;
+              receivedStreamingTranscript ||= text.trim().length > 0;
               if (this.isCurrent(operationToken)) this.updateLiveTranscript(text);
             },
             onError: (message) => {

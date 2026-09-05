@@ -60,6 +60,8 @@ export async function startVoiceStreaming(
   const sessionId = `voice-${++sessionSequence}`;
   let status: ReturnType<VoiceStreamingSession["getStatus"]> = null;
   let cancelPromise: Promise<void> | null = null;
+  let startupError: string | null = null;
+  let started = false;
   let closed = false;
   const subscription = module.addListener("onVoiceInput", (event) => {
     if (closed || options.signal.aborted || event.sessionId !== sessionId) return;
@@ -71,7 +73,10 @@ export async function startVoiceStreaming(
         metering: event.metering,
       };
     }
-    if (event.error) options.onError(event.error);
+    if (event.error) {
+      if (started) options.onError(event.error);
+      else startupError ??= event.error;
+    }
     if (event.ended) options.onEnd();
   });
   const close = () => {
@@ -93,6 +98,8 @@ export async function startVoiceStreaming(
   try {
     await module.start(sessionId, locale, limitSeconds);
     throwIfVoiceTranscriptionAborted(options.signal);
+    if (startupError) throw new Error(startupError);
+    started = true;
     options.signal.addEventListener("abort", onAbort, { once: true });
     return {
       getStatus: () => status,

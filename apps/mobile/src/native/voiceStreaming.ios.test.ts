@@ -95,6 +95,35 @@ it("cancels native capture before reporting a startup failure", async () => {
   expect(native.remove).toHaveBeenCalledOnce();
 });
 
+it("turns an error event during startup into a rejection after native cleanup", async () => {
+  const started = deferred<void>();
+  const cancellationEntered = deferred<void>();
+  const cancelled = deferred<void>();
+  native.start.mockReturnValue(started.promise);
+  native.cancel.mockImplementation(() => {
+    cancellationEntered.resolve();
+    return cancelled.promise;
+  });
+  const callbacks = options();
+  const settled = vi.fn();
+  const result = startVoiceStreaming("en-AU", 300, callbacks).then(settled, (error: unknown) => {
+    settled();
+    return error;
+  });
+  const emit = native.addListener.mock.calls[0]![1];
+  const sessionId = native.start.mock.calls[0]![0];
+
+  emit({ sessionId, error: "Live dictation was interrupted." });
+  expect(callbacks.onError).not.toHaveBeenCalled();
+  started.resolve();
+  await cancellationEntered.promise;
+  expect(native.cancel).toHaveBeenCalledOnce();
+  expect(settled).not.toHaveBeenCalled();
+  cancelled.resolve();
+
+  await expect(result).resolves.toMatchObject({ message: "Live dictation was interrupted." });
+});
+
 it("cancels native capture once and immediately suppresses late events", async () => {
   const abort = new AbortController();
   const callbacks = { ...options(), signal: abort.signal };

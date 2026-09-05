@@ -574,7 +574,8 @@ describe("live voice input", () => {
           locale: "en-US",
           transcribe,
           prepareFileFallback,
-          startStreaming: async () => {
+          startStreaming: async (options) => {
+            options.onTranscript("   ");
             throw new Error("live capture unavailable");
           },
         }),
