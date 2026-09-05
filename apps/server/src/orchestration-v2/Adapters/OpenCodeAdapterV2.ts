@@ -49,6 +49,7 @@ import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Random from "effect/Random";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
@@ -869,6 +870,34 @@ function isMessageAbortedError(event: Extract<OpenCodeEvent, { type: "session.er
   return event.properties.error?.name === "MessageAbortedError";
 }
 
+function isOpenCodeNotFound(cause: unknown): boolean {
+  const seen = new Set<unknown>();
+  const queue: Array<unknown> = [cause];
+  for (let steps = 0; queue.length > 0 && steps < 32; steps += 1) {
+    const node = queue.shift();
+    if (node === null || typeof node !== "object" || seen.has(node)) continue;
+    seen.add(node);
+    const record = node as Record<string, unknown>;
+    const response = record.response;
+    const statuses = [
+      record.status,
+      record.statusCode,
+      response !== null && typeof response === "object"
+        ? (response as { readonly status?: unknown }).status
+        : undefined,
+    ].filter((status): status is number => typeof status === "number");
+    if (statuses.includes(404)) return true;
+    if (statuses.length > 0) continue;
+    if (typeof record.name === "string" && record.name.toLowerCase() === "notfounderror") {
+      return true;
+    }
+    for (const key of ["cause", "body", "error", "data"] as const) {
+      if (record[key] !== undefined) queue.push(record[key]);
+    }
+  }
+  return false;
+}
+
 function unwrapData<A>(operation: string, result: { readonly data?: A }): NonNullable<A> {
   if (result.data === undefined) {
     throw new OpenCodeRuntimeError({
@@ -989,6 +1018,100 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
               }),
             ),
           );
+
+        const abortOpenCodeDescendants = Effect.fn("OpenCodeAdapterV2.abortOpenCodeDescendants")(
+          function* (rootSessionId: string) {
+            const visited = new Set([rootSessionId]);
+            const requestSemaphore = Semaphore.makeUnsafe(8);
+            const boundedRequest = <A>(
+              operation: "session.abort" | "session.children",
+              sessionId: string,
+              request: Effect.Effect<A, OpenCodeRuntimeError>,
+            ) =>
+              request.pipe(
+                Effect.timeoutOrElse({
+                  duration: "5 seconds",
+                  orElse: () =>
+                    Effect.fail(
+                      new OpenCodeRuntimeError({
+                        operation,
+                        detail: `OpenCode ${operation} did not complete for session ${sessionId} within 5 seconds.`,
+                      }),
+                    ),
+                }),
+              );
+            const visit = (
+              sessionId: string,
+              abortSession: boolean,
+            ): Effect.Effect<OpenCodeRuntimeError | undefined> =>
+              Effect.gen(function* () {
+                let firstFailure: OpenCodeRuntimeError | undefined;
+                if (abortSession) {
+                  const abortResult = yield* requestSemaphore
+                    .withPermit(
+                      boundedRequest(
+                        "session.abort",
+                        sessionId,
+                        sdkCall("session.abort", { sessionID: sessionId }, (signal) =>
+                          client.session.abort({ sessionID: sessionId }, { signal }),
+                        ).pipe(Effect.catchIf(isOpenCodeNotFound, () => Effect.void)),
+                      ),
+                    )
+                    .pipe(Effect.result);
+                  if (abortResult._tag === "Failure") firstFailure = abortResult.failure;
+                }
+
+                const childrenResult = yield* requestSemaphore
+                  .withPermit(
+                    boundedRequest(
+                      "session.children",
+                      sessionId,
+                      sdkCall("session.children", { sessionID: sessionId }, (signal) =>
+                        client.session.children({ sessionID: sessionId }, { signal }),
+                      ).pipe(Effect.catchIf(isOpenCodeNotFound, () => Effect.void)),
+                    ),
+                  )
+                  .pipe(Effect.result);
+                if (childrenResult._tag === "Failure") {
+                  return firstFailure ?? childrenResult.failure;
+                }
+                const fresh = (childrenResult.success?.data ?? []).filter((child) => {
+                  if (visited.has(child.id)) return false;
+                  visited.add(child.id);
+                  return true;
+                });
+                const childFailures = yield* Effect.forEach(
+                  fresh,
+                  (child) => visit(child.id, true),
+                  { concurrency: 8 },
+                );
+                firstFailure ??= childFailures.find((failure) => failure !== undefined);
+                return firstFailure;
+              });
+
+            const firstFailure = yield* visit(rootSessionId, false);
+            if (firstFailure !== undefined) return yield* firstFailure;
+          },
+        );
+
+        if (connection.external) {
+          yield* Scope.addFinalizer(
+            scope,
+            Effect.suspend(() =>
+              Effect.forEach(
+                Array.from(threads.keys()),
+                (sessionId) =>
+                  Effect.gen(function* () {
+                    yield* sdkCall("session.abort", { sessionID: sessionId }, (signal) =>
+                      client.session.abort({ sessionID: sessionId }, { signal }),
+                    ).pipe(Effect.timeout("1 second"), Effect.ignore({ log: true }));
+                    yield* abortOpenCodeDescendants(sessionId).pipe(Effect.ignore({ log: true }));
+                  }),
+                { concurrency: 8, discard: true },
+              ).pipe(Effect.timeout("2 seconds"), Effect.ignore({ log: true })),
+            ),
+          );
+        }
 
         const updateProviderSession = (
           status: OrchestrationV2ProviderSession["status"],
@@ -3101,8 +3224,8 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
                   Effect.ignore,
                 );
               }
-              yield* sdkCall("session.abort", { sessionID: sessionId }, () =>
-                client.session.abort({ sessionID: sessionId }),
+              yield* sdkCall("session.abort", { sessionID: sessionId }, (signal) =>
+                client.session.abort({ sessionID: sessionId }, { signal }),
               ).pipe(
                 Effect.timeout("10 seconds"),
                 // The turn can settle while the abort is in flight, and
@@ -3119,35 +3242,9 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
                 ),
               );
               // Child agents run in their own sessions and outlive a root
-              // abort (#9005). Best-effort: walk session.children and abort
-              // each descendant; the root abort above already settled the
-              // interrupt contract.
-              yield* Effect.gen(function* () {
-                const visited = new Set([sessionId]);
-                const abortDescendants = (parentId: string): Effect.Effect<void> =>
-                  Effect.gen(function* () {
-                    const children = yield* sdkCall(
-                      "session.children",
-                      { sessionID: parentId },
-                      () => client.session.children({ sessionID: parentId }),
-                    ).pipe(Effect.option);
-                    const rows = Option.isSome(children) ? (children.value.data ?? []) : [];
-                    const fresh = rows.filter((child) => {
-                      if (visited.has(child.id)) return false;
-                      visited.add(child.id);
-                      return true;
-                    });
-                    yield* Effect.forEach(
-                      fresh,
-                      (child) =>
-                        sdkCall("session.abort", { sessionID: child.id }, () =>
-                          client.session.abort({ sessionID: child.id }),
-                        ).pipe(Effect.ignore, Effect.andThen(abortDescendants(child.id))),
-                      { concurrency: 8, discard: true },
-                    );
-                  });
-                yield* abortDescendants(sessionId);
-              }).pipe(Effect.timeout("15 seconds"), Effect.ignore);
+              // abort (#9005). Stop must wait for the full known tree and
+              // surface a traversal or abort failure to its caller.
+              yield* abortOpenCodeDescendants(sessionId).pipe(Effect.timeout("15 seconds"));
             }).pipe(
               Effect.mapError(
                 (cause) =>

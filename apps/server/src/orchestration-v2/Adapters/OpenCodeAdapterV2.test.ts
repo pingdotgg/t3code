@@ -507,6 +507,7 @@ describe("OpenCodeAdapterV2", () => {
             abortCalled.resolve();
             return { data: true };
           },
+          children: async () => ({ data: [] }),
         },
         mcp: { add: async () => ({ data: true }) },
       };
@@ -798,6 +799,7 @@ describe("OpenCodeAdapterV2", () => {
             abortCalled.resolve();
             return { data: true };
           },
+          children: async () => ({ data: [] }),
         },
         mcp: { add: async () => ({ data: true }) },
       };
@@ -918,6 +920,153 @@ describe("OpenCodeAdapterV2", () => {
             (event.type === "provider_session.updated" && event.providerSession.status === "error"),
         ),
       );
+    }).pipe(Effect.provide(idAllocatorLayer), Effect.scoped),
+  );
+
+  it.effect.each(["failure", "timeout"] as const)(
+    "fails an interrupt on a descendant $0 after attempting its siblings",
+    (failureMode) =>
+      Effect.gen(function* () {
+        const nativeEvents = asyncEventStream();
+        const abortCalls: Array<string> = [];
+        const childAbortStarted = promiseGate<AbortSignal>();
+        let cleanupReady = false;
+        const harness = yield* makeOpenCodeRuntimeHarness(
+          `descendant-abort-${failureMode}`,
+          `native-opencode-descendant-abort-${failureMode}`,
+          {
+            event: {
+              subscribe: async (_input: unknown, options: { signal?: AbortSignal }) => {
+                options.signal?.addEventListener("abort", () => nativeEvents.close(), {
+                  once: true,
+                });
+                return { stream: nativeEvents.stream };
+              },
+            },
+            session: {
+              create: async () => ({
+                data: {
+                  id: `native-opencode-descendant-abort-${failureMode}`,
+                  time: { created: 1, updated: 1 },
+                },
+              }),
+              promptAsync: async () => ({ data: true }),
+              messages: async () => ({ data: [] }),
+              abort: async (input: { sessionID: string }, options: { signal: AbortSignal }) => {
+                abortCalls.push(input.sessionID);
+                if (!cleanupReady && input.sessionID === "native-opencode-failing-child") {
+                  childAbortStarted.resolve(options.signal);
+                  if (failureMode === "failure") throw new Error("child abort failed");
+                  await new Promise<void>(() => {});
+                }
+                return { data: true };
+              },
+              children: async (input: { sessionID: string }) => ({
+                data:
+                  input.sessionID === `native-opencode-descendant-abort-${failureMode}`
+                    ? [
+                        { id: "native-opencode-failing-child" },
+                        { id: "native-opencode-surviving-sibling" },
+                      ]
+                    : [],
+              }),
+            },
+          },
+        );
+        yield* harness.startTurn();
+        const snapshot = yield* harness.runtime.readThreadSnapshot({
+          providerThread: harness.providerThread,
+        });
+        const result = yield* harness.runtime
+          .interruptTurn({
+            providerThread: harness.providerThread,
+            providerTurnId: snapshot.providerTurns.at(-1)!.id,
+          })
+          .pipe(Effect.exit, Effect.forkScoped);
+        const childSignal = yield* Effect.promise(() => childAbortStarted.promise);
+        if (failureMode === "timeout") yield* TestClock.adjust("5 seconds");
+
+        assert.isTrue(Exit.isFailure(yield* Fiber.join(result)));
+        assert.include(abortCalls, "native-opencode-failing-child");
+        assert.include(abortCalls, "native-opencode-surviving-sibling");
+        if (failureMode === "timeout") assert.isTrue(childSignal.aborted);
+        cleanupReady = true;
+      }).pipe(Effect.provide(idAllocatorLayer), Effect.scoped),
+  );
+
+  it.effect("aborts external OpenCode work when its adapter scope closes", () =>
+    Effect.gen(function* () {
+      const nativeEvents = asyncEventStream();
+      const abortCalls: Array<string> = [];
+      const firstAbortStarted = promiseGate<AbortSignal>();
+      const secondAbortStarted = promiseGate<void>();
+      let createCalls = 0;
+      const release = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const harness = yield* makeOpenCodeRuntimeHarness(
+            "external-release",
+            "native-opencode-external-release-1",
+            {
+              event: {
+                subscribe: async (_input: unknown, options: { signal?: AbortSignal }) => {
+                  options.signal?.addEventListener("abort", () => nativeEvents.close(), {
+                    once: true,
+                  });
+                  return { stream: nativeEvents.stream };
+                },
+              },
+              session: {
+                create: async () => {
+                  createCalls += 1;
+                  return {
+                    data: {
+                      id: `native-opencode-external-release-${createCalls}`,
+                      time: { created: 1, updated: 1 },
+                    },
+                  };
+                },
+                abort: async (input: { sessionID: string }, options: { signal: AbortSignal }) => {
+                  abortCalls.push(input.sessionID);
+                  if (input.sessionID === "native-opencode-external-release-1") {
+                    firstAbortStarted.resolve(options.signal);
+                    await new Promise<void>(() => {});
+                  }
+                  if (input.sessionID === "native-opencode-external-release-2") {
+                    secondAbortStarted.resolve();
+                  }
+                  return { data: true };
+                },
+                children: async (input: { sessionID: string }) => ({
+                  data:
+                    input.sessionID === "native-opencode-external-release-2"
+                      ? [{ id: "native-opencode-release-child" }]
+                      : [],
+                }),
+              },
+            },
+          );
+          yield* harness.runtime.ensureThread({
+            threadId: ThreadId.make("thread-opencode-external-release-2"),
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("opencode-external-release"),
+              model: "anthropic/claude-sonnet",
+              options: [],
+            },
+            runtimePolicy: harness.policy,
+          });
+        }),
+      ).pipe(Effect.forkScoped);
+
+      const firstSignal = yield* Effect.promise(() => firstAbortStarted.promise);
+      yield* Effect.promise(() => secondAbortStarted.promise);
+      assert.isFalse(firstSignal.aborted);
+      yield* TestClock.adjust("2 seconds");
+      yield* Fiber.join(release);
+
+      assert.isTrue(firstSignal.aborted);
+      assert.include(abortCalls, "native-opencode-external-release-1");
+      assert.include(abortCalls, "native-opencode-external-release-2");
+      assert.include(abortCalls, "native-opencode-release-child");
     }).pipe(Effect.provide(idAllocatorLayer), Effect.scoped),
   );
 
