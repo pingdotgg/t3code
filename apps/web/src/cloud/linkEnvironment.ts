@@ -16,7 +16,6 @@ import {
   WS_METHODS,
 } from "@t3tools/contracts";
 import {
-  type RelayClientEnvironmentRecord,
   type RelayEnvironmentLinkResponse,
   type RelayManagedEndpointProviderKind,
 } from "@t3tools/contracts/relay";
@@ -32,14 +31,6 @@ import {
   reportRelayClientInstallProgress,
   requestRelayClientInstallConfirmation,
 } from "./relayClientInstallDialog";
-
-export function normalizeRelayBaseUrl(value: string | null | undefined): string | null {
-  const trimmed = value?.trim();
-  if (!trimmed) {
-    return null;
-  }
-  return trimmed.replace(/\/+$/g, "");
-}
 
 function relayUrl(): string | null {
   return resolveCloudPublicConfig().relayUrl;
@@ -193,53 +184,6 @@ export interface CloudLinkTarget {
 }
 
 export type CloudLinkState = EnvironmentCloudLinkStateResult;
-
-export function collectCloudLinkTargets(input: {
-  readonly primary: CloudLinkTarget | null;
-  readonly saved: ReadonlyArray<CloudLinkTarget>;
-}): ReadonlyArray<CloudLinkTarget> {
-  const byId = new Map<string, CloudLinkTarget>();
-  if (input.primary) {
-    byId.set(input.primary.environmentId, input.primary);
-  }
-  for (const environment of input.saved) {
-    if (!byId.has(environment.environmentId)) {
-      byId.set(environment.environmentId, environment);
-    }
-  }
-  return [...byId.values()];
-}
-
-export function listManagedCloudEnvironments(input: {
-  readonly clerkToken: string;
-}): Effect.Effect<
-  ReadonlyArray<RelayClientEnvironmentRecord>,
-  CloudEnvironmentLinkError,
-  ManagedRelay.ManagedRelayClient
-> {
-  return Effect.gen(function* () {
-    const configuredRelayUrl = relayUrl();
-    if (!configuredRelayUrl) {
-      return yield* new CloudEnvironmentLinkError({
-        message: "T3CODE_RELAY_URL is not configured.",
-      });
-    }
-    const relayClient = yield* ManagedRelay.ManagedRelayClient;
-    return yield* relayClient
-      .listEnvironments({
-        clerkToken: input.clerkToken,
-      })
-      .pipe(
-        Effect.mapError(
-          (cause) =>
-            new CloudEnvironmentLinkError({
-              message: "Could not list relay-managed environments.",
-              cause,
-            }),
-        ),
-      );
-  });
-}
 
 export function readPrimaryCloudLinkState(input: {
   readonly target: CloudLinkTarget;
