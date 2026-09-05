@@ -53,7 +53,7 @@ import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { newProjectId, randomUUID } from "../../lib/utils";
 import { resolveDefaultProviderModelSelection } from "../../providerInstances";
 import { agentSessionImport, agentSessionScan } from "../../state/agentSessions";
-import { useProjects } from "../../state/entities";
+import { readProjects, useProjects } from "../../state/entities";
 import { useEnvironments, usePrimaryEnvironment } from "../../state/environments";
 import { useEnvironmentQuery } from "../../state/query";
 import { projectEnvironment } from "../../state/projects";
@@ -994,6 +994,7 @@ function AgentInstallTerminal({
             onSessionExited={onClose}
             focusRequestId={1}
             autoFocus
+            visible
             resizeEpoch={0}
             drawerHeight={256}
             keybindings={keybindings}
@@ -1044,8 +1045,6 @@ function ImportStep({
   const importedProjectsRef = useRef(new Map<string, ScopedProjectRef>());
   const projectsWithImportedHistoryRef = useRef(new Map<string, ScopedProjectRef>());
   const lastImportSelectionRef = useRef<ReadonlyArray<string>>([]);
-  const projectsRef = useRef(projects);
-  projectsRef.current = projects;
   const projectAttemptsRef = useRef(
     new Map<string, { readonly projectId: ProjectId; readonly commandId: CommandId }>(),
   );
@@ -1071,6 +1070,7 @@ function ImportStep({
   useEffect(() => {
     if (
       landingProject !== null &&
+      landingProject.environmentId === environmentId &&
       projects.some(
         (project) =>
           project.id === landingProject.projectId &&
@@ -1082,7 +1082,7 @@ function ImportStep({
         if (!completed) setIsImporting(false);
       });
     }
-  }, [landingProject, onDone, projects]);
+  }, [environmentId, landingProject, onDone, projects]);
 
   const { available: candidates, recent } = useMemo(
     () => partitionOnboardingProjects(scan.data?.candidates ?? []),
@@ -1135,11 +1135,7 @@ function ImportStep({
         return;
       }
       if (importedProjects.has(candidate.path)) continue;
-      let projectId = resolveOnboardingProjectId(
-        projectsRef.current,
-        environmentId,
-        candidate.path,
-      );
+      let projectId = resolveOnboardingProjectId(readProjects(), environmentId, candidate.path);
       if (projectId === null) {
         let attempt = projectAttempts.get(candidate.path);
         if (attempt === undefined) {
@@ -1431,34 +1427,10 @@ function CommandBlock({
   readonly className?: string;
   readonly prominent?: boolean;
 }) {
-  // Plain HTTP has no Clipboard API, so its fallback must run during the click gesture.
-  const [fallbackCopied, setFallbackCopied] = useState(false);
   const { copyToClipboard, isCopied } = useCopyToClipboard({
     timeout: 1500,
     target: "command",
   });
-  useEffect(() => {
-    if (!fallbackCopied) return;
-    const timer = window.setTimeout(() => setFallbackCopied(false), 1500);
-    return () => window.clearTimeout(timer);
-  }, [fallbackCopied]);
-  const copied = isCopied || fallbackCopied;
-  const copyCommand = () => {
-    if (typeof navigator.clipboard !== "undefined") {
-      copyToClipboard(command, undefined);
-      return;
-    }
-
-    const scratch = document.createElement("textarea");
-    scratch.value = command;
-    scratch.style.cssText =
-      "position:fixed;top:0;left:0;width:1px;height:1px;opacity:0;pointer-events:none";
-    document.body.append(scratch);
-    scratch.select();
-    const didCopy = document.execCommand("copy");
-    scratch.remove();
-    if (didCopy) setFallbackCopied(true);
-  };
   return (
     <div
       className={cn(
@@ -1471,8 +1443,13 @@ function CommandBlock({
         <span className="mr-2 text-muted-foreground">$</span>
         {command}
       </span>
-      <Button size="icon-xs" variant="ghost" aria-label="Copy command" onClick={copyCommand}>
-        {copied ? <CheckIcon className="size-3.5" /> : <CopyIcon className="size-3.5" />}
+      <Button
+        size="icon-xs"
+        variant="ghost"
+        aria-label="Copy command"
+        onClick={() => copyToClipboard(command, undefined)}
+      >
+        {isCopied ? <CheckIcon className="size-3.5" /> : <CopyIcon className="size-3.5" />}
       </Button>
     </div>
   );

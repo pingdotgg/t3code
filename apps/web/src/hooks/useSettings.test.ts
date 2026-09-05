@@ -275,7 +275,9 @@ describe("onboarding completion persistence", () => {
     expect(getClientSettings().onboardingCompletedAt).toBeNull();
 
     const completedSettings = { ...existingSettings, onboardingCompletedAt };
-    await expect(persistClientSettingsUpdate(complete, persist)).resolves.toEqual(completedSettings);
+    await expect(persistClientSettingsUpdate(complete, persist)).resolves.toEqual(
+      completedSettings,
+    );
     expect(getClientSettings()).toEqual(completedSettings);
     expect(persist).toHaveBeenLastCalledWith(completedSettings);
   });

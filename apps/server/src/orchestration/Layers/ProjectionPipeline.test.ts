@@ -166,12 +166,39 @@ it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-import-shell-")
 
         yield* projectionPipeline.bootstrap;
 
-        const rows = yield* sql<{ readonly latestUserMessageAt: string | null }>`
+        const readLatestUserMessageAt = sql<{ readonly latestUserMessageAt: string | null }>`
         SELECT latest_user_message_at AS "latestUserMessageAt"
         FROM projection_threads
         WHERE thread_id = ${threadId}
       `;
-        assert.deepEqual(rows, [{ latestUserMessageAt: null }]);
+        assert.deepEqual(yield* readLatestUserMessageAt, [{ latestUserMessageAt: null }]);
+
+        const sessionEvent = yield* eventStore.append({
+          type: "thread.session-set",
+          eventId: EventId.make("evt-import-shell-session"),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: createdAt,
+          commandId: CommandId.make("cmd-import-shell-session"),
+          causationEventId: null,
+          correlationId: CommandId.make("cmd-import-shell-session"),
+          metadata: {},
+          payload: {
+            threadId,
+            session: {
+              threadId,
+              status: "ready",
+              providerName: "codex",
+              providerInstanceId: ProviderInstanceId.make("codex"),
+              runtimeMode: "full-access",
+              activeTurnId: null,
+              lastError: null,
+              updatedAt: createdAt,
+            },
+          },
+        });
+        yield* projectionPipeline.projectEvent(sessionEvent);
+        assert.deepEqual(yield* readLatestUserMessageAt, [{ latestUserMessageAt: null }]);
       }),
     );
   },

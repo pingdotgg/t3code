@@ -1,5 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { describe, expect, it } from "@effect/vitest";
+import { describe, expect, it, vi } from "@effect/vitest";
 import {
   CommandId,
   MessageId,
@@ -10,15 +10,19 @@ import {
   type OrchestrationCommand,
   type OrchestrationProjectShell,
   type OrchestrationThread,
+  type ProviderSendTurnInput,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 
+import { makeTestProviderAdapterHarness } from "../../integration/TestProviderAdapter.integration.ts";
 import { ServerConfig } from "../config.ts";
+import { GitWorkflowService } from "../git/GitWorkflowService.ts";
 import { OrchestrationCommandReceiptRepositoryLive } from "../persistence/Layers/OrchestrationCommandReceipts.ts";
 import { OrchestrationEventStoreLive } from "../persistence/Layers/OrchestrationEventStore.ts";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
@@ -26,17 +30,29 @@ import * as ProviderSessionRuntime from "../persistence/ProviderSessionRuntime.t
 import { OrchestrationEngineLive } from "../orchestration/Layers/OrchestrationEngine.ts";
 import { OrchestrationProjectionPipelineLive } from "../orchestration/Layers/ProjectionPipeline.ts";
 import { OrchestrationProjectionSnapshotQueryLive } from "../orchestration/Layers/ProjectionSnapshotQuery.ts";
+import { ProviderCommandReactorLive } from "../orchestration/Layers/ProviderCommandReactor.ts";
 import { OrchestrationCommandInvariantError } from "../orchestration/Errors.ts";
 import * as ThreadBackgroundLiveness from "../orchestration/ThreadBackgroundLiveness.ts";
 import * as ThreadPlanProgress from "../orchestration/ThreadPlanProgress.ts";
 import * as OrchestrationEngine from "../orchestration/Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { ProviderCommandReactor } from "../orchestration/Services/ProviderCommandReactor.ts";
+import { ProviderSessionDirectoryLive } from "../provider/Layers/ProviderSessionDirectory.ts";
+import { makeProviderServiceLive } from "../provider/Layers/ProviderService.ts";
 import {
-  makeProviderSessionDirectoryLive,
-  ProviderSessionDirectoryLive,
-} from "../provider/Layers/ProviderSessionDirectory.ts";
+  NoOpProviderEventLoggers,
+  ProviderEventLoggers,
+} from "../provider/Layers/ProviderEventLoggers.ts";
 import { ProviderSessionDirectoryPersistenceError } from "../provider/Errors.ts";
+import { ProviderAdapterRegistry } from "../provider/Services/ProviderAdapterRegistry.ts";
+import { ProviderAuthService } from "../provider/Services/ProviderAuthService.ts";
 import * as ProviderSessionDirectory from "../provider/Services/ProviderSessionDirectory.ts";
+import { makeAdapterRegistryMock } from "../provider/testUtils/providerAdapterRegistryMock.ts";
+import { makeProviderRegistryLayer } from "../provider/testUtils/providerRegistryMock.ts";
+import { ServerSettingsService } from "../serverSettings.ts";
+import * as AnalyticsService from "../telemetry/AnalyticsService.ts";
+import { TextGeneration } from "../textGeneration/TextGeneration.ts";
+import { VcsStatusBroadcaster } from "../vcs/VcsStatusBroadcaster.ts";
 import * as RepositoryIdentityResolver from "./RepositoryIdentityResolver.ts";
 import { importRecentAgentThreads } from "./AgentSessionImporter.ts";
 import * as AgentSessionScanner from "./AgentSessionScanner.ts";
@@ -179,7 +195,10 @@ it.layer(NodeServices.layer)("AgentSessionImporter", (it) => {
         const engine = OrchestrationEngine.OrchestrationEngineService.of({
           dispatch: (command) => Effect.sync(() => ({ sequence: commands.push(command) })),
           readEvents: () => Stream.empty,
+          readThreadEvents: () => Stream.empty,
+          getThreadReplayStats: () => Effect.die("unused"),
           streamDomainEvents: Stream.empty,
+          subscribeDomainEvents: Effect.succeed(Stream.empty),
           latestSequence: Effect.succeed(0),
         });
         const directory = ProviderSessionDirectory.ProviderSessionDirectory.of({
@@ -248,7 +267,10 @@ it.layer(NodeServices.layer)("AgentSessionImporter", (it) => {
         const engine = OrchestrationEngine.OrchestrationEngineService.of({
           dispatch: () => Effect.die("must not dispatch for a scanner skip"),
           readEvents: () => Stream.empty,
+          readThreadEvents: () => Stream.empty,
+          getThreadReplayStats: () => Effect.die("unused"),
           streamDomainEvents: Stream.empty,
+          subscribeDomainEvents: Effect.succeed(Stream.empty),
           latestSequence: Effect.succeed(0),
         });
         const directory = ProviderSessionDirectory.ProviderSessionDirectory.of({
@@ -309,7 +331,10 @@ it.layer(NodeServices.layer)("AgentSessionImporter", (it) => {
             return Effect.succeed({ sequence: 1 });
           },
           readEvents: () => Stream.empty,
+          readThreadEvents: () => Stream.empty,
+          getThreadReplayStats: () => Effect.die("unused"),
           streamDomainEvents: Stream.empty,
+          subscribeDomainEvents: Effect.succeed(Stream.empty),
           latestSequence: Effect.succeed(0),
         });
         const directory = ProviderSessionDirectory.ProviderSessionDirectory.of({
@@ -375,7 +400,10 @@ it.layer(NodeServices.layer)("AgentSessionImporter", (it) => {
         const engine = OrchestrationEngine.OrchestrationEngineService.of({
           dispatch: () => Effect.die("must not replay history or settle active work"),
           readEvents: () => Stream.empty,
+          readThreadEvents: () => Stream.empty,
+          getThreadReplayStats: () => Effect.die("unused"),
           streamDomainEvents: Stream.empty,
+          subscribeDomainEvents: Effect.succeed(Stream.empty),
           latestSequence: Effect.succeed(0),
         });
 
@@ -413,7 +441,10 @@ it.layer(NodeServices.layer)("AgentSessionImporter", (it) => {
         const engine = OrchestrationEngine.OrchestrationEngineService.of({
           dispatch: (command) => Effect.sync(() => ({ sequence: commands.push(command) })),
           readEvents: () => Stream.empty,
+          readThreadEvents: () => Stream.empty,
+          getThreadReplayStats: () => Effect.die("unused"),
           streamDomainEvents: Stream.empty,
+          subscribeDomainEvents: Effect.succeed(Stream.empty),
           latestSequence: Effect.succeed(0),
         });
         const directory = ProviderSessionDirectory.ProviderSessionDirectory.of({
@@ -553,6 +584,155 @@ it.layer(integrationLayer)("AgentSessionImporter integration", (it) => {
     }),
   );
 
+  for (const source of ["codex", "claudeAgent"] as const) {
+    it.effect(`resumes imported ${source} history only after the first prompt`, () =>
+      Effect.gen(function* () {
+        const engine = yield* OrchestrationEngine.OrchestrationEngineService;
+        const snapshots = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
+        const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const workspaceRoot = yield* fileSystem.makeTempDirectoryScoped();
+        const projectId = ProjectId.make(`project-import-resume-${source}`);
+        const sourceThread = {
+          ...makeThread(source),
+          providerSessionId: source === "codex" ? "codex-first-resume" : CLAUDE_SESSION_ID,
+        };
+        const threadId = ThreadId.make(
+          `import:${sourceThread.providerInstanceId}:${sourceThread.providerSessionId}`,
+        );
+        const resumeCursor =
+          source === "codex"
+            ? { threadId: sourceThread.providerSessionId }
+            : { threadId, resume: sourceThread.providerSessionId };
+        const provider = ProviderDriverKind.make(source);
+        const harness = yield* makeTestProviderAdapterHarness({ provider });
+        const importSettled = yield* Deferred.make<void>();
+        const turnSent = yield* Deferred.make<void>();
+        const startSession = vi.fn(harness.adapter.startSession);
+        const sendTurn = vi.fn((input: ProviderSendTurnInput) =>
+          harness.adapter
+            .sendTurn(input)
+            .pipe(Effect.tap(() => Deferred.succeed(turnSent, undefined))),
+        );
+        const providerLayer = makeProviderServiceLive().pipe(
+          Layer.provide(
+            Layer.succeed(
+              ProviderAdapterRegistry,
+              makeAdapterRegistryMock({
+                [provider]: { ...harness.adapter, startSession, sendTurn },
+              }),
+            ),
+          ),
+          Layer.provide(
+            Layer.succeed(ProviderSessionDirectory.ProviderSessionDirectory, directory),
+          ),
+          Layer.provide(Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers)),
+          Layer.provide(AnalyticsService.layerTest),
+        );
+        const reactorLayer = ProviderCommandReactorLive.pipe(
+          Layer.provideMerge(providerLayer),
+          Layer.provide(
+            Layer.succeed(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
+              ...snapshots,
+              // Acknowledge the imported settlement before draining the reactor.
+              getThreadShellById: (requestedThreadId) =>
+                snapshots
+                  .getThreadShellById(requestedThreadId)
+                  .pipe(
+                    Effect.tap(() =>
+                      requestedThreadId === threadId
+                        ? Deferred.succeed(importSettled, undefined)
+                        : Effect.void,
+                    ),
+                  ),
+            }),
+          ),
+          Layer.provide(
+            Layer.mock(ProviderAuthService)({
+              tryHandlePromptCommand: () => Effect.succeed(false),
+            }),
+          ),
+          Layer.provide(makeProviderRegistryLayer()),
+          Layer.provide(Layer.mock(GitWorkflowService)({})),
+          Layer.provide(Layer.mock(VcsStatusBroadcaster)({})),
+          Layer.provide(Layer.mock(TextGeneration)({})),
+          Layer.provide(ServerSettingsService.layerTest()),
+        );
+
+        yield* engine.dispatch({
+          type: "project.create",
+          commandId: CommandId.make(`create-import-resume-project-${source}`),
+          projectId,
+          title: "Import resume",
+          workspaceRoot,
+          defaultModelSelection: null,
+          createdAt: "2026-08-24T09:00:00.000Z",
+        });
+        yield* harness.queueTurnResponseForNextSession({ events: [] });
+
+        yield* Effect.gen(function* () {
+          const reactor = yield* ProviderCommandReactor;
+          yield* reactor.start();
+          expect(yield* importRecentAgentThreads({ projectId })).toEqual({
+            importedCount: 1,
+            skippedCount: 0,
+          });
+          yield* Deferred.await(importSettled);
+          yield* reactor.drain;
+          expect(startSession).not.toHaveBeenCalled();
+          expect(sendTurn).not.toHaveBeenCalled();
+          const importedThread = Option.getOrThrow(yield* snapshots.getThreadDetailById(threadId));
+          expect(importedThread.session).toBeNull();
+          expect(importedThread.latestTurn).toBeNull();
+
+          yield* engine.dispatch({
+            type: "thread.turn.start",
+            commandId: CommandId.make(`resume-imported-${source}`),
+            threadId,
+            message: {
+              messageId: MessageId.make(`resume-imported-message-${source}`),
+              role: "user",
+              text: "Continue this session",
+              attachments: [],
+            },
+            modelSelection: importedThread.modelSelection,
+            runtimeMode: importedThread.runtimeMode,
+            interactionMode: importedThread.interactionMode,
+            createdAt: "2026-08-24T10:02:00.000Z",
+          });
+          yield* Deferred.await(turnSent);
+          yield* reactor.drain;
+          expect(startSession).toHaveBeenCalledExactlyOnceWith(
+            expect.objectContaining({
+              threadId,
+              provider,
+              providerInstanceId: sourceThread.providerInstanceId,
+              resumeCursor,
+              cwd: workspaceRoot,
+            }),
+          );
+          expect(sendTurn).toHaveBeenCalledExactlyOnceWith(
+            expect.objectContaining({ threadId, input: "Continue this session" }),
+          );
+          expect(Option.getOrThrow(yield* directory.getBinding(threadId))).toMatchObject({
+            provider,
+            providerInstanceId: sourceThread.providerInstanceId,
+            resumeCursor,
+          });
+        }).pipe(
+          Effect.provide(reactorLayer),
+          Effect.provideService(
+            AgentSessionScanner.AgentSessionScanner,
+            AgentSessionScanner.AgentSessionScanner.of({
+              scan: Effect.die("unused"),
+              recentThreads: () => Stream.succeed({ _tag: "Importable", thread: sourceThread }),
+            }),
+          ),
+        );
+      }),
+    );
+  }
+
   it.effect("persists the resume cursor before publishing a new imported thread", () =>
     Effect.gen(function* () {
       const engine = yield* OrchestrationEngine.OrchestrationEngineService;
@@ -585,7 +765,7 @@ it.layer(integrationLayer)("AgentSessionImporter integration", (it) => {
       });
       const importerDirectory = yield* ProviderSessionDirectory.ProviderSessionDirectory.pipe(
         Effect.provide(
-          makeProviderSessionDirectoryLive().pipe(
+          Layer.fresh(ProviderSessionDirectoryLive).pipe(
             Layer.provide(
               Layer.succeed(
                 ProviderSessionRuntime.ProviderSessionRuntimeRepository,
@@ -680,7 +860,7 @@ it.layer(integrationLayer)("AgentSessionImporter integration", (it) => {
       });
       const importerDirectory = yield* ProviderSessionDirectory.ProviderSessionDirectory.pipe(
         Effect.provide(
-          makeProviderSessionDirectoryLive().pipe(
+          Layer.fresh(ProviderSessionDirectoryLive).pipe(
             Layer.provide(
               Layer.succeed(
                 ProviderSessionRuntime.ProviderSessionRuntimeRepository,

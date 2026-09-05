@@ -380,6 +380,40 @@ describe("applyThreadDetailEvent", () => {
       }
     });
 
+    it("keeps imported replies turnless when delivered again", () => {
+      const event = {
+        ...baseEventFields,
+        sequence: 6,
+        occurredAt: "2026-04-01T06:00:00.000Z",
+        aggregateKind: "thread",
+        aggregateId: baseThread.id,
+        type: "thread.message-sent",
+        payload: {
+          threadId: baseThread.id,
+          messageId: MessageId.make("import:codex:session-1:000001"),
+          role: "assistant",
+          text: "Imported reply",
+          turnId: null,
+          streaming: false,
+          createdAt: "2026-03-01T06:00:00.000Z",
+          updatedAt: "2026-03-01T06:00:00.000Z",
+        },
+      } as const;
+
+      const imported = applyThreadDetailEvent(baseThread, event);
+      expect(imported.kind).toBe("updated");
+      if (imported.kind !== "updated") return;
+      expect(imported.thread.latestTurn).toBeNull();
+      expect(imported.thread.checkpoints).toBe(baseThread.checkpoints);
+
+      const repeated = applyThreadDetailEvent(imported.thread, { ...event, sequence: 7 });
+      expect(repeated.kind).toBe("updated");
+      if (repeated.kind !== "updated") return;
+      expect(repeated.thread.messages).toEqual(imported.thread.messages);
+      expect(repeated.thread.latestTurn).toBeNull();
+      expect(repeated.thread.checkpoints).toBe(baseThread.checkpoints);
+    });
+
     it("appends text for streaming messages", () => {
       const threadWithMessage: OrchestrationThread = {
         ...baseThread,

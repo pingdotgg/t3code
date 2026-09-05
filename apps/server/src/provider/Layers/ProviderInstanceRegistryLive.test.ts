@@ -24,7 +24,6 @@
  */
 import { describe, expect, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import * as Path from "effect/Path";
 import {
   type ClaudeSettings,
   type CodexSettings,

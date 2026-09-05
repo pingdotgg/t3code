@@ -17,6 +17,9 @@ import {
 } from "./terminal.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 
+const encodeTerminalError = Schema.encodeUnknownSync(TerminalError);
+const decodeTerminalError = Schema.decodeUnknownSync(TerminalError);
+
 function decodeSync<S extends Schema.Top>(schema: S, input: unknown): Schema.Schema.Type<S> {
   return Schema.decodeUnknownSync(schema as never)(input) as Schema.Schema.Type<S>;
 }
@@ -37,8 +40,8 @@ describe("TerminalProviderEnvironmentError", () => {
       providerInstanceId: ProviderInstanceId.make("codex_work"),
       cause,
     });
-    const encoded = Schema.encodeUnknownSync(TerminalError)(error);
-    const decoded = Schema.decodeUnknownSync(TerminalError)(encoded);
+    const encoded = encodeTerminalError(error);
+    const decoded = decodeTerminalError(encoded);
 
     expect(decoded).toMatchObject({
       _tag: "TerminalProviderEnvironmentError",

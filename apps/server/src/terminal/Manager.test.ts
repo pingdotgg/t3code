@@ -7,12 +7,14 @@ import {
   type TerminalMetadataStreamEvent,
   type TerminalOpenInput,
   type TerminalRestartInput,
+  ProviderDriverKind,
   ProviderInstanceId,
   ServerSettingsError,
   TerminalProviderInstanceNotFoundError,
 } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Data from "effect/Data";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Encoding from "effect/Encoding";
@@ -31,6 +33,9 @@ import * as TestClock from "effect/testing/TestClock";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { expect } from "vite-plus/test";
 
+import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import * as ServerConfig from "../config.ts";
+import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as TerminalManager from "./Manager.ts";
@@ -220,10 +225,9 @@ interface CreateManagerOptions {
   maxRetainedInactiveSessions?: number;
   historyByteLimit?: number;
   ptyAdapter?: FakePtyAdapter;
-  resolveProviderInstanceEnvironment?: (
-    providerInstanceId: string,
-    env: Record<string, string> | undefined,
-  ) => Effect.Effect<Record<string, string>, TerminalProviderInstanceNotFoundError>;
+  resolveProviderInstanceEnvironment?: Parameters<
+    typeof TerminalManager.makeWithOptions
+  >[0]["resolveProviderInstanceEnvironment"];
 }
 
 interface ManagerFixture {
@@ -2046,6 +2050,85 @@ it.layer(
       expect(ptyAdapter.spawnInputs).toHaveLength(2);
       expect(ptyAdapter.spawnInputs[1]?.env.PROVIDER_SECRET).toBe("second-secret");
     }),
+  );
+
+  it.effect("restarts with current provider secrets and clears bounded history", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettings.ServerSettingsService;
+      const path = yield* Path.Path;
+      const providerInstanceId = ProviderInstanceId.make("codex_restart");
+      const { manager, ptyAdapter, logsDir } = yield* createManager(2, {
+        historyByteLimit: 8,
+        resolveProviderInstanceEnvironment: (rawProviderInstanceId, env) =>
+          TerminalManager.resolveProviderInstanceTerminalEnvironment({
+            serverSettings,
+            path,
+            rawProviderInstanceId,
+            env,
+          }),
+      });
+      const homePath = path.join(logsDir, "codex");
+      const updateSecret = (value: string) =>
+        serverSettings.updateSettings({
+          providerInstances: {
+            [providerInstanceId]: {
+              driver: ProviderDriverKind.make("codex"),
+              config: { homePath },
+              environment: [{ name: "PROVIDER_SECRET", value, sensitive: true }],
+            },
+          },
+        });
+      const input = {
+        providerInstanceId,
+        env: { CLIENT_FLAG: "1", PROVIDER_SECRET: "client-value" },
+      };
+      const outputProcessed = yield* Deferred.make<void>();
+      const unsubscribe = yield* manager.subscribe((event) =>
+        event.type === "output"
+          ? Deferred.succeed(outputProcessed, undefined).pipe(Effect.asVoid)
+          : Effect.void,
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
+
+      yield* updateSecret("first-secret");
+      yield* manager.restart(restartInput(input));
+      const firstProcess = ptyAdapter.processes[0]!;
+      expect(ptyAdapter.spawnInputs[0]?.env.PROVIDER_SECRET).toBe("first-secret");
+      firstProcess.emitData("discarded\nold-one\nold-two\n");
+      yield* Deferred.await(outputProcessed);
+      expect((yield* manager.open(openInput(input))).history).toBe("old-two\n");
+
+      yield* updateSecret("second-secret");
+      const restarted = yield* manager.restart(restartInput(input));
+
+      expect(firstProcess.killed).toBe(true);
+      expect(ptyAdapter.spawnInputs).toHaveLength(2);
+      expect(ptyAdapter.spawnInputs[1]?.env).toMatchObject({
+        PROVIDER_SECRET: "second-secret",
+        CODEX_HOME: homePath,
+        CLIENT_FLAG: "1",
+      });
+      expect(restarted.history).toBe("");
+      expect(restarted.status).toBe("running");
+      expect(restarted).not.toHaveProperty("env");
+      expect(restarted).not.toHaveProperty("providerInstanceId");
+      const logPath = yield* historyLogPath(logsDir);
+      expect(yield* readFileString(logPath)).toBe("");
+
+      ptyAdapter.processes[1]!.emitData("discarded again\nnew-one\nnew-two\n");
+      yield* manager.close({ threadId: "thread-1" });
+      expect(yield* readFileString(logPath)).toBe("new-two\n");
+    }).pipe(
+      Effect.provide(
+        ServerSettings.layer.pipe(
+          Layer.provide(ServerSecretStore.layer),
+          Layer.provide(SqlitePersistenceMemory),
+          Layer.provide(
+            ServerConfig.layerTest(process.cwd(), { prefix: "t3code-terminal-provider-restart-" }),
+          ),
+        ),
+      ),
+    ),
   );
 
   it.effect("attaches to a running provider terminal without resolving the provider again", () =>
