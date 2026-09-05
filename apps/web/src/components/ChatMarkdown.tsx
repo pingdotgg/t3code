@@ -1538,6 +1538,12 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
   const reference = path ? mediaFileReference(path, props.workspaceRoot) : undefined;
   const relativePath = reference?.relativePath;
   const src = assetUrl._tag === "Success" ? assetUrl.url + (props.srcFragment ?? "") : null;
+  // The server reads the pixel size from the file header, so the slot can be
+  // the image's final box instead of a 16:9 guess. An authored size still wins.
+  const knownSize = assetUrl._tag === "Success" ? assetUrl.imageDimensions : undefined;
+  const style =
+    props.style ??
+    (knownSize ? authoredImageSizeStyle(knownSize.width, knownSize.height) : undefined);
   const actionsSource: MediaActionSource = {
     kind: props.kind ?? "image",
     name: props.alt || (props.kind ?? "image"),
@@ -1581,7 +1587,7 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
       copyMarkdown={props.copyMarkdown}
       standalone={props.standalone ?? true}
       className={CHAT_MARKDOWN_WORKSPACE_IMAGE_CLASS_NAME}
-      style={props.style}
+      style={style}
       actionsSource={actionsSource}
       onImageExpand={props.onImageExpand}
     />
