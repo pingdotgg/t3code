@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 import type { ServerProviderUsageLimits, ServerProviderUsageWindow } from "@t3tools/contracts";
-import { modelUsageAvailability } from "./usageLimits";
+import { modelUsageAvailability } from "./usageLimits.ts";
 
 const now = Date.parse("2026-09-05T12:00:00Z");
 const window = (
@@ -9,7 +9,7 @@ const window = (
   resetsAt = "2026-09-05T13:00:00Z",
 ): ServerProviderUsageWindow => ({ id, usedPercent, resetsAt, label: id, kind: "session" });
 const limits = (...windows: ServerProviderUsageWindow[]): ServerProviderUsageLimits => ({
-  checkedAt: new Date(now).toISOString(),
+  checkedAt: "2026-09-05T12:00:00Z",
   windows,
 });
 
