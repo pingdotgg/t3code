@@ -52,6 +52,7 @@ export const QueuedThreadMessageSchema = Schema.Struct({
   text: Schema.String,
   attachments: Schema.Array(DraftComposerAttachmentSchema),
   modelSelection: Schema.optional(ModelSelection),
+  // Optional additions need no version bump: older readers drop unknown keys.
   modelSelectionId: Schema.optional(Schema.String),
   runtimeMode: Schema.optional(RuntimeMode),
   interactionMode: Schema.optional(ProviderInteractionMode),
