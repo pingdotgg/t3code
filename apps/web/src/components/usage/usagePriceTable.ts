@@ -70,3 +70,15 @@ export function usagePriceTableChanges(
   }
   return { changes, errors };
 }
+
+/** Unavailable destinations report a save failure without blocking writable environments. */
+export function usagePriceTableErrors(
+  targets: readonly UsagePriceTarget[],
+  drafts: readonly UsagePriceDraft[],
+) {
+  return new Map(
+    targets
+      .filter((target) => target.unavailable === null && target.prices !== null)
+      .flatMap((target) => [...usagePriceTableChanges(target, drafts).errors]),
+  );
+}

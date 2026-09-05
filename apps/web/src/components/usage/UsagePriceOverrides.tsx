@@ -35,6 +35,7 @@ import { USAGE_PRICE_FIELDS } from "./usagePriceForm";
 import {
   usagePriceCell,
   usagePriceTableChanges,
+  usagePriceTableErrors,
   type UsagePriceDraft,
   type UsagePriceField,
 } from "./usagePriceTable";
@@ -140,14 +141,7 @@ export function UsagePriceOverrides({
       ),
     ...drafts.filter((draft) => draft.isNew),
   ];
-  const plans = new Map(
-    selected.map((target) => [target.environmentId, usagePriceTableChanges(target, drafts)]),
-  );
-  const errors = new Map(
-    selected
-      .filter((target) => target.prices !== null)
-      .flatMap((target) => [...plans.get(target.environmentId)!.errors]),
-  );
+  const errors = usagePriceTableErrors(selected, drafts);
   for (const draft of drafts) {
     if (!draft.isNew) continue;
     if (draft.model.trim() === "") errors.set(draft.id, "Enter a model ID.");

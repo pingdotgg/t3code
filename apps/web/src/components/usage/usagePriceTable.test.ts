@@ -1,6 +1,11 @@
 import { EnvironmentId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
-import { usagePriceCell, usagePriceTableChanges, type UsagePriceDraft } from "./usagePriceTable";
+import {
+  usagePriceCell,
+  usagePriceTableChanges,
+  usagePriceTableErrors,
+  type UsagePriceDraft,
+} from "./usagePriceTable";
 import type { UsagePriceTarget } from "./usagePriceTargets";
 
 const price = { inputCostPerMillionTokens: 2, outputCostPerMillionTokens: 8 };
@@ -91,6 +96,17 @@ describe("price table edits", () => {
     expect(missing.changes).toEqual([]);
     expect(missing.errors.has("model:example")).toBe(true);
   });
+
+  it.each(["Offline", "Read-only access", "Update server to edit prices"])(
+    "does not let %s destinations block a valid edit elsewhere",
+    (unavailable) => {
+      const edits = [draft({ inputCostPerMillionTokens: "3" })];
+      const writable = target("writable", { example: price });
+      const other = target("other", {});
+      expect(usagePriceTableErrors([writable, { ...other, unavailable }], edits).size).toBe(0);
+      expect(usagePriceTableErrors([writable, other], edits).has("model:example")).toBe(true);
+    },
+  );
 
   it("does not write unchanged rates and rejects invalid edited cells", () => {
     const environment = target("a", { example: price });
