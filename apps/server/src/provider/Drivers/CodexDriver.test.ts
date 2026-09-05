@@ -18,11 +18,19 @@ import { layerTest as codexResetCreditLayerTest } from "../Layers/codexResetCred
 import { NoOpProviderEventLoggers, ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
 import * as ModelManifest from "../ModelManifest.ts";
 import { CodexDriver } from "./CodexDriver.ts";
+import { CodexAppServerClientFactory } from "../../orchestration-v2/Adapters/CodexAdapterV2.ts";
+import { layer as idAllocatorLayer } from "../../orchestration-v2/IdAllocator.ts";
 
 const testLayer = ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-codex-driver-maintenance-",
 }).pipe(
   Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(idAllocatorLayer),
+  Layer.provideMerge(
+    Layer.mock(CodexAppServerClientFactory)({
+      open: () => Effect.die("Maintenance resolution must not open a Codex session"),
+    }),
+  ),
   Layer.provideMerge(ServerSettingsService.layerTest()),
   Layer.provideMerge(ModelManifest.layerTest),
   Layer.provideMerge(codexResetCreditLayerTest),

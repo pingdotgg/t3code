@@ -1,0 +1,7 @@
+f6db4206258b0ef30e8dd8949627acfd209bf338 fix(web): reset automatic pull to default (#9763)
+45bd3b631bf1e84520c90ebdfdd1b135871ced14 fix(sidebar): mute background working threads (#9759)
+d115a96763b76d00f06b06272688cf68eebe8206 fix(web): stop empty diffs replacing pull requests (#9753)
+bc03c3640d6d3bb44e5fb477bfd78d7484cd0e00 fix(models): make GPT-6-Astra current (#9762)
+15eda897d37aad232fca5089f5eb6ef7b726c31c perf(web): defer image URL requests for thread history (#9760)
+6365919f2e5bcfb4fa4020b95e19af26ae40979f perf(server): skip history reads for metadata commands (#9758)
+77b655c47b82c9b2aad09e447117b7618a16e21d perf(mobile): defer file preview highlighter startup (#9752)

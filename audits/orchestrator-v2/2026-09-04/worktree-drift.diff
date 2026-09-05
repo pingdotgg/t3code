@@ -1,0 +1,561 @@
+--- initial/apps/server/src/orchestration-v2/ProjectionSettlement.test.ts
++++ current/apps/server/src/orchestration-v2/ProjectionSettlement.test.ts
+@@ -34,6 +34,7 @@
+ const old = DateTime.subtract(now, { days: 10 });
+ const providerInstanceId = ProviderInstanceId.make("codex");
+ const modelSelection = { instanceId: providerInstanceId, model: "test-model" };
++const encodeNumbers = Schema.encodeSync(Schema.fromJsonString(Schema.Array(Schema.Number)));
+ 
+ const createThread = Effect.fn(function* (
+   name: string,
+@@ -314,12 +315,12 @@
+       yield* sql`INSERT INTO orchestration_v2_projection_turn_items
+       SELECT 'history:' || value, i.thread_id, i.run_id, i.node_id, i.provider_thread_id, i.provider_turn_id,
+         i.parent_item_id, i.ordinal + value, i.type, i.status, i.updated_at, i.payload_json
+-      FROM orchestration_v2_projection_turn_items i, json_each(${Schema.encodeSync(Schema.fromJsonString(Schema.Array(Schema.Number)))(Array.from({ length: 2000 }, (_, i) => i + 1))})
++      FROM orchestration_v2_projection_turn_items i, json_each(${encodeNumbers(Array.from({ length: 2000 }, (_, i) => i + 1))})
+       WHERE i.thread_id = ${threadId}`;
+-      const queries: Array<string> = [];
++      const queries: Array<readonly [string, ReadonlyArray<unknown>]> = [];
+       const record: Statement.Transformer = (statement) =>
+         Effect.sync(() => {
+-          queries.push(statement.compile()[0]);
++          queries.push(statement.compile());
+           return statement;
+         });
+       const candidates = yield* store
+@@ -329,19 +330,18 @@
+         candidates.map((thread) => thread.id),
+         [threadId],
+       );
+-      assert.isTrue(queries.every((query) => !query.includes("COUNT(")));
+-      const pendingQuery = queries.find((query) =>
++      assert.isTrue(queries.every(([query]) => !query.includes("COUNT(")));
++      const pendingQuery = queries.find(([query]) =>
+         query.includes("FROM orchestration_v2_projection_turn_items"),
+       );
+       assert.isDefined(pendingQuery);
+       const metadata = yield* store.getThread(threadId);
+       assert.equal(metadata.id, threadId);
+       assert.equal((yield* store.getThreadProjection(threadId).pipe(Effect.exit))._tag, "Failure");
+-      const plan = yield* sql<{ readonly detail: string }>`EXPLAIN QUERY PLAN
+-      SELECT i.payload_json FROM orchestration_v2_projection_turn_items i
+-      WHERE i.thread_id = ${threadId}
+-        AND i.type IN ('command_execution', 'dynamic_tool', 'subagent')
+-        AND i.status NOT IN ('completed', 'interrupted', 'failed', 'cancelled')`;
++      const plan = yield* sql.unsafe<{ readonly detail: string }>(
++        `EXPLAIN QUERY PLAN ${pendingQuery![0]}`,
++        pendingQuery![1],
++      );
+       assert.isTrue(plan.some((row) => row.detail.includes("turn_items_shell_pending_idx")));
+       const countsPlan = yield* sql<{ readonly detail: string }>`EXPLAIN QUERY PLAN
+       SELECT thread_id, run_id, COUNT(*) FROM orchestration_v2_projection_turn_items
+--- initial/apps/server/src/relay/AgentAwarenessRelay.test.ts
++++ current/apps/server/src/relay/AgentAwarenessRelay.test.ts
+@@ -19,7 +19,7 @@
+ import * as TestClock from "effect/testing/TestClock";
+ import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
+ 
+-import { ServerSecretStore } from "../auth/ServerSecretStore.ts";
++import { SecretStoreReadError, ServerSecretStore } from "../auth/ServerSecretStore.ts";
+ import {
+   PUBLISH_AGENT_ACTIVITY_SECRET,
+   RELAY_ENVIRONMENT_CREDENTIAL_SECRET,
+@@ -89,7 +89,12 @@
+ const decodePublishPayload = Schema.decodeUnknownSync(Schema.fromJsonString(PublishPayload));
+ const unused = () => Effect.die("Unexpected test dependency call");
+ 
+-const makeTestRelay = Effect.fnUntraced(function* () {
++const makeTestRelay = Effect.fnUntraced(function* (
++  options: {
++    readonly respond?: (attempt: number) => Response;
++    readonly failSecretRead?: (name: string) => boolean;
++  } = {},
++) {
+   const values = new Map<string, Uint8Array>([
+     [PUBLISH_AGENT_ACTIVITY_SECRET, new TextEncoder().encode("true")],
+     [RELAY_URL_SECRET, new TextEncoder().encode("https://relay.example.test")],
+@@ -99,9 +104,14 @@
+   const secretReads: string[] = [];
+   const secrets = ServerSecretStore.of({
+     get: (name) =>
+-      Effect.sync(() => {
++      Effect.suspend(() => {
+         secretReads.push(name);
+-        return Option.fromUndefinedOr(values.get(name));
++        if (options.failSecretRead?.(name)) {
++          return Effect.fail(
++            new SecretStoreReadError({ resource: name, cause: "temporary read failure" }),
++          );
++        }
++        return Effect.succeed(Option.fromUndefinedOr(values.get(name)));
+       }),
+     create: (name, value) => Effect.sync(() => void values.set(name, value)),
+     set: (name, value) => Effect.sync(() => void values.set(name, value)),
+@@ -152,7 +162,9 @@
+         authorization: new Headers(init?.headers).get("authorization"),
+         state: payload.state,
+       });
+-      return Promise.resolve(Response.json({ ok: true, deliveries: [] }));
++      return Promise.resolve(
++        options.respond?.(publications.length) ?? Response.json({ ok: true, deliveries: [] }),
++      );
+     },
+     { preconnect: () => {} },
+   );
+@@ -318,6 +330,207 @@
+     }),
+   );
+ 
++  it.effect("retries a failed final state without another thread event", () =>
++    Effect.gen(function* () {
++      const { relay, currentShell, shellReads, publications } = yield* makeTestRelay({
++        respond: (attempt) =>
++          attempt === 2
++            ? new Response("relay unavailable", { status: 503 })
++            : Response.json({ ok: true, deliveries: [] }),
++      });
++      yield* relay.publishThread(THREAD_ID);
++      yield* Ref.set(currentShell, shell({ status: "completed" }));
++      yield* relay.publishThread(THREAD_ID);
++      assert.equal(publications.length, 2);
++      yield* TestClock.adjust("1 second");
++      yield* relay.drain;
++      assert.equal(publications.length, 3);
++      assert.equal(publications[2]?.state?.phase, "completed");
++      yield* TestClock.adjust("1 minute");
++      yield* relay.drain;
++      assert.equal(shellReads.length, 3);
++    }),
++  );
++
++  it.effect("retries the latest shell and credentials with first-completion confirmation", () =>
++    Effect.gen(function* () {
++      const { relay, secrets, currentShell, publications } = yield* makeTestRelay({
++        respond: (attempt) =>
++          attempt === 1
++            ? new Response("relay unavailable", { status: 503 })
++            : Response.json({ ok: true, deliveries: [] }),
++      });
++      yield* relay.publishThread(THREAD_ID);
++      yield* Ref.set(currentShell, shell({ status: "completed", title: "Final title" }));
++      yield* secrets.set(
++        RELAY_ENVIRONMENT_CREDENTIAL_SECRET,
++        new TextEncoder().encode("credential-2"),
++      );
++      yield* TestClock.adjust("1 second");
++      yield* relay.drain;
++      assert.equal(publications.length, 1);
++      yield* TestClock.adjust("5 seconds");
++      yield* relay.drain;
++      assert.equal(publications.length, 2);
++      assert.equal(publications[1]?.authorization, "Bearer credential-2");
++      assert.equal(publications[1]?.state?.phase, "completed");
++      assert.equal(publications[1]?.state?.threadTitle, "Final title");
++    }),
++  );
++
++  it.effect("cancels a stale retry when a newer update publishes successfully", () =>
++    Effect.gen(function* () {
++      const { relay, currentShell, shellReads, publications } = yield* makeTestRelay({
++        respond: (attempt) =>
++          attempt === 1
++            ? new Response("relay unavailable", { status: 503 })
++            : Response.json({ ok: true, deliveries: [] }),
++      });
++      yield* relay.publishThread(THREAD_ID);
++      yield* Ref.set(currentShell, shell({ title: "New title" }));
++      yield* relay.publishThread(THREAD_ID);
++      assert.equal(publications.length, 2);
++      assert.equal(publications[1]?.state?.threadTitle, "New title");
++      yield* TestClock.adjust("1 minute");
++      yield* relay.drain;
++      assert.equal(shellReads.length, 2);
++    }),
++  );
++
++  it.effect.each(["disable", "unlink"] as const)(
++    "stops retries before shell reads after %s",
++    (change) =>
++      Effect.gen(function* () {
++        const { relay, secrets, shellReads, publications } = yield* makeTestRelay({
++          respond: () => new Response("relay unavailable", { status: 503 }),
++        });
++        yield* relay.publishThread(THREAD_ID);
++        if (change === "disable") {
++          yield* secrets.set(PUBLISH_AGENT_ACTIVITY_SECRET, new TextEncoder().encode("false"));
++        } else {
++          yield* secrets.remove(RELAY_ENVIRONMENT_CREDENTIAL_SECRET);
++        }
++        yield* TestClock.adjust("1 second");
++        yield* relay.drain;
++        yield* TestClock.adjust("1 minute");
++        yield* relay.drain;
++        assert.equal(publications.length, 1);
++        assert.equal(shellReads.length, 1);
++      }),
++  );
++
++  it.effect("recovers from a transient configuration read failure", () =>
++    Effect.gen(function* () {
++      let failRead = false;
++      const { relay, shellReads, publications } = yield* makeTestRelay({
++        failSecretRead: (name) => failRead && name === PUBLISH_AGENT_ACTIVITY_SECRET,
++      });
++      failRead = true;
++      yield* relay.publishThread(THREAD_ID);
++      assert.equal(shellReads.length, 0);
++      failRead = false;
++      yield* TestClock.adjust("1 second");
++      yield* relay.drain;
++      assert.equal(publications.length, 1);
++      assert.equal(publications[0]?.state?.phase, "running");
++    }),
++  );
++
++  it.effect("bounds retry attempts and resets the budget for a newer update", () =>
++    Effect.gen(function* () {
++      const { relay, currentShell, shellReads, publications } = yield* makeTestRelay({
++        respond: () => new Response("relay unavailable", { status: 503 }),
++      });
++      yield* relay.publishThread(THREAD_ID);
++      let attempts = 1;
++      for (const delay of [1_000, 2_000, 4_000, 8_000, 16_000]) {
++        yield* TestClock.adjust(delay - 1);
++        yield* relay.drain;
++        assert.equal(publications.length, attempts);
++        yield* TestClock.adjust(1);
++        yield* relay.drain;
++        attempts += 1;
++        assert.equal(publications.length, attempts);
++      }
++      yield* TestClock.adjust("1 minute");
++      yield* relay.drain;
++      assert.equal(publications.length, 6);
++      assert.equal(shellReads.length, 6);
++      yield* Ref.set(currentShell, shell({ title: "New update" }));
++      yield* relay.publishThread(THREAD_ID);
++      yield* TestClock.adjust("1 second");
++      yield* relay.drain;
++      assert.equal(publications.length, 8);
++      assert.equal(publications[7]?.state?.threadTitle, "New update");
++    }),
++  );
++
++  it.effect("retries a confirmed completion without restarting its confirmation window", () =>
++    Effect.gen(function* () {
++      const { relay, currentShell, publications } = yield* makeTestRelay({
++        respond: (attempt) =>
++          attempt <= 2
++            ? new Response("relay unavailable", { status: 503 })
++            : Response.json({ ok: true, deliveries: [] }),
++      });
++      yield* Ref.set(currentShell, shell({ status: "completed" }));
++      yield* relay.publishThread(THREAD_ID);
++      yield* TestClock.adjust("5 seconds");
++      yield* relay.drain;
++      assert.equal(publications.length, 1);
++      yield* TestClock.adjust("1 second");
++      yield* relay.drain;
++      assert.equal(publications.length, 2);
++      yield* TestClock.adjust("2 seconds");
++      yield* relay.drain;
++      assert.equal(publications.length, 3);
++      assert.isTrue(publications.every((publication) => publication.state?.phase === "completed"));
++      yield* TestClock.adjust("1 minute");
++      yield* relay.drain;
++      assert.equal(publications.length, 3);
++    }),
++  );
++
++  it.effect("does not reset an exhausted retry budget for old confirmation timers", () =>
++    Effect.gen(function* () {
++      let unavailable = false;
++      const { relay, currentShell, shellReads, publications } = yield* makeTestRelay({
++        respond: () =>
++          unavailable
++            ? new Response("relay unavailable", { status: 503 })
++            : Response.json({ ok: true, deliveries: [] }),
++      });
++      yield* relay.publishThread(THREAD_ID);
++      // Leave six obsolete confirmations at 5,000 through 5,005 milliseconds.
++      for (let i = 0; i < 6; i++) {
++        yield* Ref.set(currentShell, null);
++        yield* relay.publishThread(THREAD_ID);
++        yield* Ref.set(currentShell, shell());
++        yield* relay.publishThread(THREAD_ID);
++        yield* TestClock.adjust(1);
++      }
++      unavailable = true;
++      yield* Ref.set(currentShell, shell({ status: "failed" }));
++      yield* relay.publishThread(THREAD_ID);
++      yield* TestClock.adjust(1_000);
++      yield* relay.drain;
++      yield* TestClock.adjust(2_000);
++      yield* relay.drain;
++      yield* TestClock.adjust(1_994);
++      yield* relay.drain;
++      for (let i = 0; i < 5; i++) {
++        yield* TestClock.adjust(1);
++        yield* relay.drain;
++      }
++      const attempts = publications.length;
++      const reads = shellReads.length;
++      yield* TestClock.adjust("1 minute");
++      yield* relay.drain;
++      assert.equal(publications.length, attempts);
++      assert.equal(shellReads.length, reads);
++    }),
++  );
++
+   it.effect("confirms tombstones and cancels stale confirmations when activity recovers", () =>
+     Effect.gen(function* () {
+       const { relay, currentShell, publications } = yield* makeTestRelay();
+--- initial/apps/server/src/relay/AgentAwarenessRelay.ts
++++ current/apps/server/src/relay/AgentAwarenessRelay.ts
+@@ -23,6 +23,7 @@
+ import * as Crypto from "effect/Crypto";
+ import * as DateTime from "effect/DateTime";
+ import * as Effect from "effect/Effect";
++import * as Fiber from "effect/Fiber";
+ import * as Layer from "effect/Layer";
+ import * as Option from "effect/Option";
+ import * as Ref from "effect/Ref";
+@@ -152,6 +153,7 @@
+ 
+ const RELAY_AGENT_ACTIVITY_DETAIL_MAX_LENGTH = 160;
+ const REDACTED_RELAY_AGENT_FAILURE_DETAIL = "The agent run failed.";
++const RELAY_AGENT_ACTIVITY_RETRY_DELAYS_MS = [1_000, 2_000, 4_000, 8_000, 16_000] as const;
+ 
+ export function sanitizeRelayAgentActivityState(
+   state: RelayAgentActivityState | null,
+@@ -330,6 +332,7 @@
+   const threads = yield* ThreadManagement.ThreadManagementService;
+   const projects = yield* ProjectService.ProjectService;
+   const crypto = yield* Crypto.Crypto;
++  const scope = yield* Effect.scope;
+   const cloudLinkKeyPair = yield* getOrCreateEnvironmentKeyPairFromSecretStore(secrets);
+   const activeSnapshotPublishedRef = yield* Ref.make(false);
+   const publishedStateByThreadRef = yield* Ref.make(new Map<ThreadId, string>());
+@@ -377,6 +380,19 @@
+   // clears the deadline. Assigned after the worker exists.
+   const publishConfirmDeadlines = new Map<ThreadId, number>();
+   let schedulePublishConfirm: (threadId: ThreadId) => Effect.Effect<void> = () => Effect.void;
++  const publishRetries = new Map<
++    ThreadId,
++    { readonly attempts: number; timer: Fiber.Fiber<void> | undefined }
++  >();
++  const cancelPublishRetry = Effect.fnUntraced(function* (threadId: ThreadId) {
++    const retry = publishRetries.get(threadId);
++    publishRetries.delete(threadId);
++    if (retry?.timer !== undefined) yield* Fiber.interrupt(retry.timer);
++  });
++  const cancelPublishRetries = Effect.suspend(() =>
++    Effect.forEach([...publishRetries.keys()], cancelPublishRetry, { discard: true }),
++  );
++  let schedulePublishRetry: (threadId: ThreadId) => Effect.Effect<void> = () => Effect.void;
+   const resetPublishedConnection = Effect.gen(function* () {
+     publishedRelayConfig = undefined;
+     cachedRelayClient = undefined;
+@@ -385,18 +401,18 @@
+   });
+ 
+   const publishThreadUnsafe = Effect.fn("publishThreadUnsafe")(function* (threadId: ThreadId) {
+-    const publishAgentActivity = yield* readPublishAgentActivityEnabled.pipe(
+-      Effect.orElseSucceed(() => false),
+-    );
++    const publishAgentActivity = yield* readPublishAgentActivityEnabled;
+     if (!publishAgentActivity) {
++      yield* cancelPublishRetries;
+       yield* resetPublishedConnection;
+       yield* Effect.logDebug("agent activity publish skipped; publication disabled", {
+         threadId,
+       });
+       return;
+     }
+-    const relayConfig = yield* readRelayConfig.pipe(Effect.orElseSucceed(() => null));
++    const relayConfig = yield* readRelayConfig;
+     if (!relayConfig) {
++      yield* cancelPublishRetries;
+       yield* resetPublishedConnection;
+       yield* Effect.logDebug("agent activity publish skipped; relay link credentials unavailable", {
+         threadId,
+@@ -525,7 +541,6 @@
+       if (nowMs < deadline) {
+         return;
+       }
+-      publishConfirmDeadlines.delete(threadId);
+       yield* Effect.logInfo("agent activity deferred publish confirmed", {
+         environmentId,
+         threadId,
+@@ -555,6 +570,7 @@
+       state: snapshot.state,
+       reason: snapshot.reason,
+     });
++    publishConfirmDeadlines.delete(threadId);
+     yield* Ref.update(publishedStateByThreadRef, (publishedStates) => {
+       const nextPublishedStates = new Map(publishedStates);
+       nextPublishedStates.set(threadId, publishIdentity);
+@@ -562,21 +578,63 @@
+     });
+   });
+ 
+-  const processThreadPublish = (threadId: ThreadId) =>
+-    publishThreadUnsafe(threadId).pipe(
++  const processThreadPublish = Effect.fnUntraced(function* (threadId: ThreadId) {
++    const retry = publishRetries.get(threadId);
++    if (retry?.timer !== undefined) {
++      const timer = retry.timer;
++      retry.timer = undefined;
++      yield* Fiber.interrupt(timer);
++    }
++    yield* publishThreadUnsafe(threadId).pipe(
++      Effect.tap(() => cancelPublishRetry(threadId)),
+       Effect.catchCause((cause) => {
++        if (Cause.hasInterruptsOnly(cause)) return Effect.void;
+         return Effect.logWarning("agent activity publish failed", {
+           threadId,
+           cause: Cause.pretty(cause),
+-        });
++        }).pipe(Effect.andThen(schedulePublishRetry(threadId)));
+       }),
+       Effect.withSpan("AgentAwarenessRelay.publishThread"),
+       withRelayClientTracing,
+     );
++  });
+ 
+   const worker = yield* makeAgentAwarenessPublishWorker(processThreadPublish);
++  const enqueueThreadPublish = (threadId: ThreadId) =>
++    cancelPublishRetry(threadId).pipe(Effect.andThen(worker.enqueue(threadId)));
+   const publishThread: AgentAwarenessRelay["Service"]["publishThread"] = (threadId) =>
+-    worker.enqueue(threadId).pipe(Effect.andThen(worker.drain));
++    enqueueThreadPublish(threadId).pipe(Effect.andThen(worker.drain));
++
++  schedulePublishRetry = Effect.fnUntraced(function* (threadId: ThreadId) {
++    const attempts = publishRetries.get(threadId)?.attempts ?? 0;
++    const delayMs = RELAY_AGENT_ACTIVITY_RETRY_DELAYS_MS[attempts];
++    if (delayMs === undefined) {
++      // Keep the exhausted budget until fresh activity or a successful publish
++      // clears it; an old confirmation timer must not start another retry series.
++      yield* Effect.logWarning("agent activity publish retry budget exhausted", { threadId });
++      return;
++    }
++    const retry = {
++      attempts: attempts + 1,
++      timer: undefined as Fiber.Fiber<void> | undefined,
++    };
++    publishRetries.set(threadId, retry);
++    const timer = yield* Effect.sleep(delayMs).pipe(
++      Effect.andThen(
++        Effect.suspend(() => {
++          if (publishRetries.get(threadId) !== retry) return Effect.void;
++          retry.timer = undefined;
++          return worker.enqueue(threadId);
++        }),
++      ),
++      Effect.forkIn(scope),
++    );
++    if (publishRetries.get(threadId) !== retry) {
++      yield* Fiber.interrupt(timer);
++    } else {
++      retry.timer = timer;
++    }
++  });
+ 
+   const publishActiveThreadsUnsafe = Effect.gen(function* () {
+     const publishAgentActivity = yield* readPublishAgentActivityEnabled.pipe(
+@@ -608,7 +666,7 @@
+     yield* Effect.logInfo("publishing active agent activity snapshot", {
+       count: activeThreadIds.length,
+     });
+-    yield* Effect.forEach(activeThreadIds, worker.enqueue, { discard: true });
++    yield* Effect.forEach(activeThreadIds, enqueueThreadPublish, { discard: true });
+     yield* worker.drain;
+     return true;
+   });
+@@ -631,7 +689,6 @@
+       }
+     });
+ 
+-  const scope = yield* Effect.scope;
+   schedulePublishConfirm = (threadId) =>
+     Effect.forkIn(
+       Effect.sleep("5 seconds").pipe(
+@@ -685,7 +742,7 @@
+           return Effect.logDebug("agent activity publishing queued thread publish", {
+             eventType: event.type,
+             threadId,
+-          }).pipe(Effect.andThen(worker.enqueue(threadId)));
++          }).pipe(Effect.andThen(enqueueThreadPublish(threadId)));
+         }),
+       );
+     },
+--- initial/docs/internals/mobile-development.md
++++ current/docs/internals/mobile-development.md
+@@ -48,3 +48,14 @@
+ `vp run dev:client:reset` from `apps/mobile`. pnpm gives patched packages new
+ filesystem paths, and cached transforms can otherwise retain references to the
+ previous package. Ordinary development starts should retain the transform cache.
++
++The expo-notifications patch protects `NotificationCenterManager`'s delegate and pending-response
++arrays with a lock. React runtimes can register and remove delegates concurrently during reloads
++or native scene startup. Delivery takes a snapshot under the lock and invokes delegates after
++releasing it, allowing callbacks to register other delegates. Pending-response replay removes
++only the responses it saw so a response arriving during a callback remains available.
++
++Changes to this native patch require a fresh dependency install, CocoaPods refresh, and an iOS
++rebuild. `vp test run apps/mobile/scripts/notification-center-manager.test.ts` compiles the
++installed dependency with a small native harness on macOS and runs concurrent registration and
++delivery checks under ThreadSanitizer without launching a simulator.
+--- initial/docs/internals/performance-regressions.md
++++ current/docs/internals/performance-regressions.md
+@@ -50,3 +50,37 @@
+ 
+ The focused regression coverage lives in `OrchestrationEventStore.sequence.test.ts`,
+ `ProjectionRecovery.test.ts`, and the provider runtime recovery tests under `apps/server/src`.
++
++## Background work and navigation
++
++The settlement worker reads active, unpinned threads without explicit settlement overrides from
++`ProjectionStore.getSettlementCandidates`. It reads the latest run and user-message timestamps,
++rejects active runs and pending requests, and checks background work using the same derivation as
++the shell. It does not load archived histories, fork ancestry, transcript counts, or provider
++sessions. The orchestrator still validates the current thread before applying settlement.
++
++Read receipts use `ProjectionStore.getThread` to load only canonical thread metadata. A visit
++advances `lastVisitedAt` monotonically without changing `updatedAt` or decoding history. Shell
++queries use a covering thread/run index for item counts and a partial index for nonterminal
++background items, including idle items. Latest user-message reads use an index ordered by update
++time.
++
++Command palette results keep live VCS and linked pull-request queries leased to the visible
++viewport, including a small overscan region. Cached badges remain available while leases are
++released. Local Git status reads skip divergence calculations; callers that need ahead/behind
++counts keep the full status path. Cached fetch failures share the existing backoff and log only
++the actual failed attempt. Unchanged desktop environment bootstrap reads retain their array
++identity so polling does not invalidate subscribers.
++
++Relay awareness queues one pending publication per thread and retains a follow-up when the thread
++changes during a send. Transcript deltas and tool output do not enqueue awareness work. Run,
++request, and relevant thread metadata events do. Configuration is checked before shell reads, and
++connection changes invalidate published identities so relinking can publish unchanged state.
++Failed publications retry the latest state up to five times with exponential delays. A new
++relevant event resets the budget; successful publication, disabling, or unlinking cancels retries.
++After the budget is exhausted, publication waits for another relevant event instead of generating
++continuous traffic during an outage.
++
++Focused coverage: `ProjectionSettlement.test.ts`, `ThreadSettlementService.test.ts`,
++`runtimeLayer.test.ts`, `AgentAwarenessRelay.test.ts`, `GitVcsDriverCore.test.ts`,
++`ThreadStatusIndicators.subscriptions.test.tsx`, and `desktopLocal.test.ts`.
+--- initial/docs/internals/providers.md
++++ current/docs/internals/providers.md
+@@ -69,6 +69,9 @@
+ 
+ Codex thread resume requests exclude historical turns when only the thread identity and update time
+ are needed. The adapter decodes those metadata fields without loading a duplicate transcript.
++Its initialization capabilities opt out of `turn/diff/updated`: T3 derives diffs from checkpoints
++and does not consume the provider's cumulative diff notifications. The logger also filters those
++notifications before traversal when an older provider still sends them.
+ 
+ ## Registry and routing
+ 

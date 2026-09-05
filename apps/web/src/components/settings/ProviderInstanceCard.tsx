@@ -40,7 +40,7 @@ import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Switch } from "../ui/switch";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import type { DriverOption } from "./providerDriverMeta";
+import type { DriverOption, ProviderEnvironmentFieldDefinition } from "./providerDriverMeta";
 import { ProviderSettingsForm } from "./ProviderSettingsForm";
 import { ProviderModelsSection } from "./ProviderModelsSection";
 import { ProviderInstanceIcon, providerInstanceInitials } from "../chat/ProviderInstanceIcon";
@@ -166,6 +166,102 @@ function ProviderAuthEmail(props: { readonly email: string | undefined }) {
       hideTooltip="Click to hide email"
       className="max-w-full truncate"
     />
+  );
+}
+
+export function readProviderEnvironmentVariable(
+  environment: ReadonlyArray<ProviderInstanceEnvironmentVariable> | undefined,
+  name: string,
+): ProviderInstanceEnvironmentVariable | undefined {
+  return environment?.find((variable) => variable.name === name);
+}
+
+export function providerEnvironmentWithoutNames(
+  environment: ReadonlyArray<ProviderInstanceEnvironmentVariable> | undefined,
+  names: ReadonlySet<string>,
+): ReadonlyArray<ProviderInstanceEnvironmentVariable> {
+  return (environment ?? []).filter((variable) => !names.has(variable.name));
+}
+
+export function nextProviderEnvironmentWithFieldValue(
+  environment: ReadonlyArray<ProviderInstanceEnvironmentVariable> | undefined,
+  field: ProviderEnvironmentFieldDefinition,
+  value: string,
+): ReadonlyArray<ProviderInstanceEnvironmentVariable> {
+  const trimmed = value.trim();
+  const next: ProviderInstanceEnvironmentVariable[] = [];
+  let found = false;
+
+  for (const variable of environment ?? []) {
+    if (variable.name !== field.name) {
+      next.push(variable);
+      continue;
+    }
+    found = true;
+    if (trimmed.length > 0) {
+      next.push({
+        name: variable.name,
+        value: trimmed,
+        sensitive: field.sensitive ?? true,
+      });
+    }
+  }
+
+  if (!found && trimmed.length > 0) {
+    next.push({
+      name: field.name,
+      value: trimmed,
+      sensitive: field.sensitive ?? true,
+    });
+  }
+
+  return next;
+}
+
+function ProviderEnvironmentFieldRow(props: {
+  readonly field: ProviderEnvironmentFieldDefinition;
+  readonly variable: ProviderInstanceEnvironmentVariable | undefined;
+  readonly idPrefix: string;
+  readonly onCommit: (field: ProviderEnvironmentFieldDefinition, value: string) => void;
+  readonly onRemove: (field: ProviderEnvironmentFieldDefinition) => void;
+}) {
+  const inputId = `${props.idPrefix}-environment-${props.field.name}`;
+  const value = props.variable?.valueRedacted ? "" : (props.variable?.value ?? "");
+  const placeholder = props.variable?.valueRedacted
+    ? "Stored secret - enter a new value to replace"
+    : props.field.placeholder;
+
+  return (
+    <label htmlFor={inputId} className="block">
+      <span className="text-xs font-medium text-foreground">{props.field.label}</span>
+      <div className="mt-1.5 flex min-w-0 items-center gap-2">
+        <DraftInput
+          id={inputId}
+          className="min-w-0 flex-1"
+          type={props.field.sensitive === false ? undefined : "password"}
+          autoComplete="off"
+          value={value}
+          onCommit={(next) => props.onCommit(props.field, next)}
+          placeholder={placeholder}
+          spellCheck={false}
+        />
+        {props.variable ? (
+          <Button
+            type="button"
+            size="icon-sm"
+            variant="ghost"
+            className="size-8 shrink-0 text-muted-foreground hover:text-destructive"
+            onClick={() => props.onRemove(props.field)}
+            aria-label={`Clear ${props.field.label}`}
+          >
+            <XIcon className="size-3.5" />
+          </Button>
+        ) : null}
+      </div>
+      {props.field.description ? (
+        <span className="mt-1 block text-xs text-muted-foreground">{props.field.description}</span>
+      ) : null}
+    </label>
   );
 }
 
@@ -528,6 +624,28 @@ export function ProviderInstanceCard({
         : (rest as ProviderInstanceConfig),
     );
   };
+  // Drivers that need a named secret (Cursor's API key) get a dedicated field;
+  // the generic editor only shows the remaining variables.
+  const environmentFields = driverOption?.environmentFields ?? [];
+  const environmentFieldNames = new Set(environmentFields.map((field) => field.name));
+  const genericEnvironment = providerEnvironmentWithoutNames(
+    instance.environment,
+    environmentFieldNames,
+  );
+  const updateGenericEnvironment = (
+    environment: ReadonlyArray<ProviderInstanceEnvironmentVariable>,
+  ) => {
+    const dedicatedEnvironment = (instance.environment ?? []).filter((variable) =>
+      environmentFieldNames.has(variable.name),
+    );
+    updateEnvironment([...dedicatedEnvironment, ...environment]);
+  };
+  const updateEnvironmentField = (field: ProviderEnvironmentFieldDefinition, value: string) => {
+    updateEnvironment(nextProviderEnvironmentWithFieldValue(instance.environment, field, value));
+  };
+  const removeEnvironmentField = (field: ProviderEnvironmentFieldDefinition) => {
+    updateEnvironment(providerEnvironmentWithoutNames(instance.environment, new Set([field.name])));
+  };
 
   const titleIconNode = driverKind ? (
     <ProviderInstanceIcon
@@ -852,13 +970,27 @@ export function ProviderInstanceCard({
         aria-disabled={readOnly || undefined}
         className={readOnly ? "opacity-50 select-none" : undefined}
       >
+        {environmentFields.length > 0 ? (
+          <div className="grid gap-3 px-3 py-3 sm:px-4">
+            {environmentFields.map((field) => (
+              <ProviderEnvironmentFieldRow
+                key={field.name}
+                field={field}
+                variable={readProviderEnvironmentVariable(instance.environment, field.name)}
+                idPrefix={`provider-instance-${instanceId}`}
+                onCommit={updateEnvironmentField}
+                onRemove={removeEnvironmentField}
+              />
+            ))}
+          </div>
+        ) : null}
         <SettingsRow
           title="Variables"
           description="API keys, base URLs, and other per-instance CLI settings."
         >
           <ProviderEnvironmentSection
-            environment={instance.environment ?? []}
-            onChange={updateEnvironment}
+            environment={genericEnvironment}
+            onChange={updateGenericEnvironment}
           />
         </SettingsRow>
       </SettingsSection>

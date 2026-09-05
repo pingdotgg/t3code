@@ -1,0 +1,310 @@
+{
+  "capturedAt": "2026-09-04T19:12:05.098110+00:00",
+  "head": "8af5734365f7c45bc08b57066dbae42f9f7d4235",
+  "dirtyFiles": 59,
+  "driftFiles": [
+    "apps/server/src/orchestration-v2/ProjectionSettlement.test.ts",
+    "apps/server/src/relay/AgentAwarenessRelay.test.ts",
+    "apps/server/src/relay/AgentAwarenessRelay.ts",
+    "docs/internals/mobile-development.md",
+    "docs/internals/performance-regressions.md",
+    "docs/internals/providers.md"
+  ],
+  "files": {
+    "apps/mobile/scripts/fixtures/NotificationCenterManagerRegression.swift": {
+      "sha256": "9cad9e025396de88f74ee8656149f52033d2389addc482aaf6ad76307075608c",
+      "bytes": 6702,
+      "overlayPath": "worktree-overlay/apps/mobile/scripts/fixtures/NotificationCenterManagerRegression.swift.snapshot"
+    },
+    "apps/mobile/scripts/notification-center-manager.test.ts": {
+      "sha256": "57d6ffe2e8e6ea9750ee7e47d1cebc81524e56968109d9cd800ea8afe33c1c13",
+      "bytes": 2421,
+      "overlayPath": "worktree-overlay/apps/mobile/scripts/notification-center-manager.test.ts.snapshot"
+    },
+    "apps/server/src/git/GitManager.ts": {
+      "sha256": "693fc385a3c2556caafccc771f5e065252d91c67b88750ae60a8fc7f73486e6d",
+      "bytes": 97986,
+      "overlayPath": "worktree-overlay/apps/server/src/git/GitManager.ts.snapshot"
+    },
+    "apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.test.ts": {
+      "sha256": "b9dc88f850b8a70095555c541d28d6a65ae04d63e52c782aac5ec0237ad1da71",
+      "bytes": 141892,
+      "overlayPath": "worktree-overlay/apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.test.ts.snapshot"
+    },
+    "apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.ts": {
+      "sha256": "ff88decb39c96729746004ed5cf5c92b72feec96914d9991460191ca82ad8125",
+      "bytes": 219173,
+      "overlayPath": "worktree-overlay/apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.ts.snapshot"
+    },
+    "apps/server/src/orchestration-v2/Orchestrator.ts": {
+      "sha256": "85672e62e3464aec751ed68119b832ce559c7f3b5e2d59d3b44f957986ea5472",
+      "bytes": 277609,
+      "overlayPath": "worktree-overlay/apps/server/src/orchestration-v2/Orchestrator.ts.snapshot"
+    },
+    "apps/server/src/orchestration-v2/ProjectionSettlement.test.ts": {
+      "sha256": "60564e08840f212e3e3c210f08df2f15daa3a91c9e69567b3c3de8aeb3645937",
+      "bytes": 13715,
+      "overlayPath": "worktree-drift/apps/server/src/orchestration-v2/ProjectionSettlement.test.ts.snapshot"
+    },
+    "apps/server/src/orchestration-v2/ProjectionStore.ts": {
+      "sha256": "c071b0a6132e7e6512bf083537180b806e695731302db98b1e688ee5245c933e",
+      "bytes": 157823,
+      "overlayPath": "worktree-overlay/apps/server/src/orchestration-v2/ProjectionStore.ts.snapshot"
+    },
+    "apps/server/src/orchestration-v2/ProviderTurnControlService.test.ts": {
+      "sha256": "d65aab80d32a565d6c0f10bc972e7538685cb62e49824a0d5ea95410161677a4",
+      "bytes": 10285,
+      "overlayPath": "worktree-overlay/apps/server/src/orchestration-v2/ProviderTurnControlService.test.ts.snapshot"
+    },
+    "apps/server/src/orchestration-v2/ThreadSettlementService.test.ts": {
+      "sha256": "aba58edd845d2393af27db9b8565df60a4a51ae67fb2bc6f23d339fe2ea522f9",
+      "bytes": 26347,
+      "overlayPath": "worktree-overlay/apps/server/src/orchestration-v2/ThreadSettlementService.test.ts.snapshot"
+    },
+    "apps/server/src/orchestration-v2/ThreadSettlementService.ts": {
+      "sha256": "409429553c929e0205932e7b5ba144b7ff47ec1df4ac53baabd32c988dc70094",
+      "bytes": 15478,
+      "overlayPath": "worktree-overlay/apps/server/src/orchestration-v2/ThreadSettlementService.ts.snapshot"
+    },
+    "apps/server/src/orchestration-v2/runtimeLayer.test.ts": {
+      "sha256": "868a2e87f7c6eb809b324c76a03efea36eb378b6d01273bbdd65301305460f2f",
+      "bytes": 66554,
+      "overlayPath": "worktree-overlay/apps/server/src/orchestration-v2/runtimeLayer.test.ts.snapshot"
+    },
+    "apps/server/src/orchestration-v2/testkit/fixtures/message_steering/codex_transcript.ndjson": {
+      "sha256": "a316aa20ee8a26a0efca75c2af3cd4040452c520e9b0db75826a7ec949a5d2ee",
+      "bytes": 16898,
+      "overlayPath": "worktree-overlay/apps/server/src/orchestration-v2/testkit/fixtures/message_steering/codex_transcript.ndjson.snapshot"
+    },
+    "apps/server/src/orchestration-v2/testkit/fixtures/multi_turn/codex_transcript.ndjson": {
+      "sha256": "5b9419d1cb8b071c1cc9f36b0015cf0e1593600d8036e195d2ffad369c6d3cd3",
+      "bytes": 16385,
+      "overlayPath": "worktree-overlay/apps/server/src/orchestration-v2/testkit/fixtures/multi_turn/codex_transcript.ndjson.snapshot"
+    },
+    "apps/server/src/orchestration-v2/testkit/fixtures/plan_questions/codex_transcript.ndjson": {
+      "sha256": "b42c180ee16954924242db7f8adb40aab325001d1fe786a7335a14b022c90440",
+      "bytes": 28613,
+      "overlayPath": "worktree-overlay/apps/server/src/orchestration-v2/testkit/fixtures/plan_questions/codex_transcript.ndjson.snapshot"
+    },
+    "apps/server/src/orchestration-v2/testkit/fixtures/proposed_plan/codex_transcript.ndjson": {
+      "sha256": "6ab96dd5ea94f7215c541c64bd3faf7eef6fb64d032333d77fdfb9ee620374ba",
+      "bytes": 232594,
+      "overlayPath": "worktree-overlay/apps/server/src/orchestration-v2/testkit/fixtures/proposed_plan/codex_transcript.ndjson.snapshot"
+    },
+    "apps/server/src/orchestration-v2/testkit/fixtures/provider_thread_resume/codex_transcript.ndjson": {
+      "sha256": "6811a12c275fa69d8d2a3bebaba15052173021f18f9de9dc3daa0208162d3e24",
+      "bytes": 24937,
+      "overlayPath": "worktree-overlay/apps/server/src/orchestration-v2/testkit/fixtures/provider_thread_resume/codex_transcript.ndjson.snapshot"
+    },
+    "apps/server/src/orchestration-v2/testkit/fixtures/queued_turn/codex_transcript.ndjson": {
+      "sha256": "ee3d33f947e038ab9bb8f5791ce9724cfb646b160ed23f24526ceaa02d52425a",
+      "bytes": 16387,
+      "overlayPath": "worktree-overlay/apps/server/src/orchestration-v2/testkit/fixtures/queued_turn/codex_transcript.ndjson.snapshot"
+    },
+    "apps/server/src/orchestration-v2/testkit/fixtures/simple/codex_transcript.ndjson": {
+      "sha256": "abcbc5a69dec6d42bae11637372c32923ca7a549b8017e168a178ca5b320a3e7",
+      "bytes": 9533,
+      "overlayPath": "worktree-overlay/apps/server/src/orchestration-v2/testkit/fixtures/simple/codex_transcript.ndjson.snapshot"
+    },
+    "apps/server/src/orchestration-v2/testkit/fixtures/subagent/codex_transcript.ndjson": {
+      "sha256": "f44c288981cccbf70f769a69e59404980fa85711143903148c1f6c26ef6fd4df",
+      "bytes": 183171,
+      "overlayPath": "worktree-overlay/apps/server/src/orchestration-v2/testkit/fixtures/subagent/codex_transcript.ndjson.snapshot"
+    },
+    "apps/server/src/orchestration-v2/testkit/fixtures/subagent_continue/codex_transcript.ndjson": {
+      "sha256": "eca073e6fc250a10bd1fac0dd13337fef6b19803be256e2cd5f24438557953a3",
+      "bytes": 11423,
+      "overlayPath": "worktree-overlay/apps/server/src/orchestration-v2/testkit/fixtures/subagent_continue/codex_transcript.ndjson.snapshot"
+    },
+    "apps/server/src/orchestration-v2/testkit/fixtures/subagent_v2/codex_transcript.ndjson": {
+      "sha256": "c5243474180b9c89c794d55d605cb819f204e1c27d7e6fd66fb49d113ba0d767",
+      "bytes": 7152,
+      "overlayPath": "worktree-overlay/apps/server/src/orchestration-v2/testkit/fixtures/subagent_v2/codex_transcript.ndjson.snapshot"
+    },
+    "apps/server/src/orchestration-v2/testkit/fixtures/subagent_v2_nested/codex_transcript.ndjson": {
+      "sha256": "3adf9b93f92b4bfbf554a73c1c04130562beab39a6fbf161c876a85db8c526d4",
+      "bytes": 9518,
+      "overlayPath": "worktree-overlay/apps/server/src/orchestration-v2/testkit/fixtures/subagent_v2_nested/codex_transcript.ndjson.snapshot"
+    },
+    "apps/server/src/orchestration-v2/testkit/fixtures/thread_fork_native/codex_transcript.ndjson": {
+      "sha256": "b3804e921d1c4ed6d4707f783a5b25a0516c6846f7319f85af65d9a1af489ac4",
+      "bytes": 6175,
+      "overlayPath": "worktree-overlay/apps/server/src/orchestration-v2/testkit/fixtures/thread_fork_native/codex_transcript.ndjson.snapshot"
+    },
+    "apps/server/src/orchestration-v2/testkit/fixtures/thread_fork_native_continue/codex_transcript.ndjson": {
+      "sha256": "1218fecab334200622c6d1d7a7fed16ef0a7559ca6d1cb4bf8d2565adf82d901",
+      "bytes": 31674,
+      "overlayPath": "worktree-overlay/apps/server/src/orchestration-v2/testkit/fixtures/thread_fork_native_continue/codex_transcript.ndjson.snapshot"
+    },
+    "apps/server/src/orchestration-v2/testkit/fixtures/thread_fork_native_prior_turn/codex_transcript.ndjson": {
+      "sha256": "99dcffc4d3b2fcbc9796e00d885a1a8a7affeae2aeb922063646cd2a53d21c11",
+      "bytes": 286110,
+      "overlayPath": "worktree-overlay/apps/server/src/orchestration-v2/testkit/fixtures/thread_fork_native_prior_turn/codex_transcript.ndjson.snapshot"
+    },
+    "apps/server/src/orchestration-v2/testkit/fixtures/thread_fork_native_siblings/codex_transcript.ndjson": {
+      "sha256": "5fd7ee66840cdc4f072b652d24949765278ddd7278219ebd5912f626c646fa44",
+      "bytes": 43112,
+      "overlayPath": "worktree-overlay/apps/server/src/orchestration-v2/testkit/fixtures/thread_fork_native_siblings/codex_transcript.ndjson.snapshot"
+    },
+    "apps/server/src/orchestration-v2/testkit/fixtures/thread_merge_back_continue/codex_transcript.ndjson": {
+      "sha256": "3f11be00e9e67ddcabfad00d00d86af1502d5db74256567ab9466c86c99ab547",
+      "bytes": 37612,
+      "overlayPath": "worktree-overlay/apps/server/src/orchestration-v2/testkit/fixtures/thread_merge_back_continue/codex_transcript.ndjson.snapshot"
+    },
+    "apps/server/src/orchestration-v2/testkit/fixtures/thread_merge_back_siblings/codex_transcript.ndjson": {
+      "sha256": "3c60dad0995ef22514873c1bded309d2dd7974ea6abdc56db55b85031a506aa1",
+      "bytes": 60794,
+      "overlayPath": "worktree-overlay/apps/server/src/orchestration-v2/testkit/fixtures/thread_merge_back_siblings/codex_transcript.ndjson.snapshot"
+    },
+    "apps/server/src/orchestration-v2/testkit/fixtures/thread_rollback/codex_transcript.ndjson": {
+      "sha256": "452d53eccc740e1b3cb29733cebf5ccceef0ee0765168eaf3d69c0d57408eccc",
+      "bytes": 32459,
+      "overlayPath": "worktree-overlay/apps/server/src/orchestration-v2/testkit/fixtures/thread_rollback/codex_transcript.ndjson.snapshot"
+    },
+    "apps/server/src/orchestration-v2/testkit/fixtures/todo_list/codex_transcript.ndjson": {
+      "sha256": "3349e46191ffb143477c827f175f945f88f13824fe14384d98543b58e7ace721",
+      "bytes": 37191,
+      "overlayPath": "worktree-overlay/apps/server/src/orchestration-v2/testkit/fixtures/todo_list/codex_transcript.ndjson.snapshot"
+    },
+    "apps/server/src/orchestration-v2/testkit/fixtures/tool_call_read_only_on_request/codex_transcript.ndjson": {
+      "sha256": "97742cacd751f0c83004d1eca8ecda3e33847a2708c934d64fd2a05ec477bff4",
+      "bytes": 21736,
+      "overlayPath": "worktree-overlay/apps/server/src/orchestration-v2/testkit/fixtures/tool_call_read_only_on_request/codex_transcript.ndjson.snapshot"
+    },
+    "apps/server/src/orchestration-v2/testkit/fixtures/tool_call_restricted_granular/codex_transcript.ndjson": {
+      "sha256": "dd4b0e9a1cc61275d47b0f67ab84b3f5756d6b2aab8f66b8fc21a9614c9dd320",
+      "bytes": 46460,
+      "overlayPath": "worktree-overlay/apps/server/src/orchestration-v2/testkit/fixtures/tool_call_restricted_granular/codex_transcript.ndjson.snapshot"
+    },
+    "apps/server/src/orchestration-v2/testkit/fixtures/tool_call_workspace_never/codex_transcript.ndjson": {
+      "sha256": "3dfbafd96734a63a47c6f2604d7da0b07336d7e0e6b59025d06835160de0af04",
+      "bytes": 19068,
+      "overlayPath": "worktree-overlay/apps/server/src/orchestration-v2/testkit/fixtures/tool_call_workspace_never/codex_transcript.ndjson.snapshot"
+    },
+    "apps/server/src/orchestration-v2/testkit/fixtures/turn_interrupt/codex_transcript.ndjson": {
+      "sha256": "a5761cde4262a93e731c4a935f527e4d1400481e64c1d2d4ff76305a7b68e4d2",
+      "bytes": 5813,
+      "overlayPath": "worktree-overlay/apps/server/src/orchestration-v2/testkit/fixtures/turn_interrupt/codex_transcript.ndjson.snapshot"
+    },
+    "apps/server/src/orchestration-v2/testkit/fixtures/turn_interrupt_mid_tool/codex_transcript.ndjson": {
+      "sha256": "c92362c1432111ddb8dc8f4c8b2667783e19e395e210a553edcd5e6aefd73ab8",
+      "bytes": 11566,
+      "overlayPath": "worktree-overlay/apps/server/src/orchestration-v2/testkit/fixtures/turn_interrupt_mid_tool/codex_transcript.ndjson.snapshot"
+    },
+    "apps/server/src/orchestration-v2/testkit/fixtures/web_search/codex_transcript.ndjson": {
+      "sha256": "95f20a210f99ca744003d3250964f3a57e8fd3395d478e28beec3c65f6b2d800",
+      "bytes": 7113,
+      "overlayPath": "worktree-overlay/apps/server/src/orchestration-v2/testkit/fixtures/web_search/codex_transcript.ndjson.snapshot"
+    },
+    "apps/server/src/persistence/Migrations.ts": {
+      "sha256": "4d103bc15c74cf5ccf27e84aa9941d9771f28531c2c0f29a53c9930e6930f37a",
+      "bytes": 10221,
+      "overlayPath": "worktree-overlay/apps/server/src/persistence/Migrations.ts.snapshot"
+    },
+    "apps/server/src/persistence/Migrations/059_OrchestrationV2ShellIndexes.ts": {
+      "sha256": "b72c175833de68f01785cc7769a186cc3c736356eb9da2996562fdd763c1c428",
+      "bytes": 1008,
+      "overlayPath": "worktree-overlay/apps/server/src/persistence/Migrations/059_OrchestrationV2ShellIndexes.ts.snapshot"
+    },
+    "apps/server/src/provider/Layers/EventNdjsonLogger.test.ts": {
+      "sha256": "b0c5c75cdb2fa245127595a8afacf94e15ce07a631db27cb0503f5917e4524e1",
+      "bytes": 29869,
+      "overlayPath": "worktree-overlay/apps/server/src/provider/Layers/EventNdjsonLogger.test.ts.snapshot"
+    },
+    "apps/server/src/provider/Layers/EventNdjsonLogger.ts": {
+      "sha256": "c77e7b7d0d528be5e742dc54944c2241497e9a61144a79cf7311bbc15c53c6f4",
+      "bytes": 26552,
+      "overlayPath": "worktree-overlay/apps/server/src/provider/Layers/EventNdjsonLogger.ts.snapshot"
+    },
+    "apps/server/src/relay/AgentAwarenessRelay.test.ts": {
+      "sha256": "d2c3a409560c273588ccdcc1f82a1fed9c27bc87d881ab1431b40148a3374c0c",
+      "bytes": 22116,
+      "overlayPath": "worktree-drift/apps/server/src/relay/AgentAwarenessRelay.test.ts.snapshot"
+    },
+    "apps/server/src/relay/AgentAwarenessRelay.ts": {
+      "sha256": "19250510d3b875e124c33f2386035f38007592b53338853035ad122d89a4546e",
+      "bytes": 27406,
+      "overlayPath": "worktree-drift/apps/server/src/relay/AgentAwarenessRelay.ts.snapshot"
+    },
+    "apps/server/src/server.ts": {
+      "sha256": "8e65974a03911d42a322e04aa864d58cc2b1f3387bb955c0a6487ac3bb985666",
+      "bytes": 33871,
+      "overlayPath": "worktree-overlay/apps/server/src/server.ts.snapshot"
+    },
+    "apps/server/src/vcs/GitVcsDriver.ts": {
+      "sha256": "6dc2f15294725c8eff128cf29da0ef6d6020a42f9dc10777c3b0fcc5919cc93d",
+      "bytes": 29866,
+      "overlayPath": "worktree-overlay/apps/server/src/vcs/GitVcsDriver.ts.snapshot"
+    },
+    "apps/server/src/vcs/GitVcsDriverCore.test.ts": {
+      "sha256": "ee5f8d95dc326b9e651906d22f7f4b254c3ac9ee917e83d5d290a55ba6240417",
+      "bytes": 86150,
+      "overlayPath": "worktree-overlay/apps/server/src/vcs/GitVcsDriverCore.test.ts.snapshot"
+    },
+    "apps/server/src/vcs/GitVcsDriverCore.ts": {
+      "sha256": "158e93d8acb1f86026efe31e3b7425bde4217284e4b8e9a0871699e032a90151",
+      "bytes": 118521,
+      "overlayPath": "worktree-overlay/apps/server/src/vcs/GitVcsDriverCore.ts.snapshot"
+    },
+    "apps/web/src/components/CommandPalette.tsx": {
+      "sha256": "43289676c4605eecca56d3ceac725abd31d7632236585f195e5e76b2a2106a74",
+      "bytes": 91906,
+      "overlayPath": "worktree-overlay/apps/web/src/components/CommandPalette.tsx.snapshot"
+    },
+    "apps/web/src/components/ThreadStatusIndicators.subscriptions.test.tsx": {
+      "sha256": "7e9afd073410e02d57e2bf08180de818be9328b19bf8366fa2d21e379246f8b1",
+      "bytes": 6352,
+      "overlayPath": "worktree-overlay/apps/web/src/components/ThreadStatusIndicators.subscriptions.test.tsx.snapshot"
+    },
+    "apps/web/src/components/ThreadStatusIndicators.test.ts": {
+      "sha256": "770c0ce42152993676577ee9d6519f28827a24ae23aa866b02311c890cc78017",
+      "bytes": 20742,
+      "overlayPath": "worktree-overlay/apps/web/src/components/ThreadStatusIndicators.test.ts.snapshot"
+    },
+    "apps/web/src/components/ThreadStatusIndicators.tsx": {
+      "sha256": "d7cbb9d3d54e11be727ba0eadb0d28c7719869422ee867df4af637d8709b8959",
+      "bytes": 23069,
+      "overlayPath": "worktree-overlay/apps/web/src/components/ThreadStatusIndicators.tsx.snapshot"
+    },
+    "apps/web/src/connection/desktopLocal.test.ts": {
+      "sha256": "feaf1bb33845837970adfca6a1b4f5ec4914a24d5701ae243aab2eabd029c596",
+      "bytes": 5566,
+      "overlayPath": "worktree-overlay/apps/web/src/connection/desktopLocal.test.ts.snapshot"
+    },
+    "apps/web/src/connection/desktopLocal.ts": {
+      "sha256": "47cd649eca399df82bb9d9bae9929ee6c008c0b94a6a3bedd859e419bbd3502f",
+      "bytes": 4316,
+      "overlayPath": "worktree-overlay/apps/web/src/connection/desktopLocal.ts.snapshot"
+    },
+    "docs/internals/mobile-development.md": {
+      "sha256": "151ba896ca235cabcbba735c6a9152d0d3846457bc4ca70dde49eff09b0dad11",
+      "bytes": 3997,
+      "overlayPath": "worktree-drift/docs/internals/mobile-development.md.snapshot"
+    },
+    "docs/internals/performance-regressions.md": {
+      "sha256": "c9cb5d90c8f2833249cc75bc614688586161a4de5fc626093ceca370fcf5d46f",
+      "bytes": 5312,
+      "overlayPath": "worktree-drift/docs/internals/performance-regressions.md.snapshot"
+    },
+    "docs/internals/providers.md": {
+      "sha256": "306025ee90d75a8b45e359786e91c58cee5e6f9571a72672cc7771c6227e9d3c",
+      "bytes": 27306,
+      "overlayPath": "worktree-drift/docs/internals/providers.md.snapshot"
+    },
+    "patches/expo-notifications@57.0.15.patch": {
+      "sha256": "f89252c2c08dc7b3acb8415f319ebbe15fff8c9f88a64ebe1830cd5ac5c9ac40",
+      "bytes": 4327,
+      "overlayPath": "worktree-overlay/patches/expo-notifications@57.0.15.patch.snapshot"
+    },
+    "pnpm-lock.yaml": {
+      "sha256": "c11bff52e74aaf56861eaa1dd01c3d8ff5224d71150dc70dbb225e8862192265",
+      "bytes": 821015,
+      "overlayPath": "worktree-overlay/pnpm-lock.yaml.snapshot"
+    },
+    "pnpm-workspace.yaml": {
+      "sha256": "b68fd66ae334d694ae9d4d500cb300b1fa0ce0a7513991c7821c4069b5b0b572",
+      "bytes": 6724,
+      "overlayPath": "worktree-overlay/pnpm-workspace.yaml.snapshot"
+    }
+  }
+}

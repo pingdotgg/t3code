@@ -26,6 +26,10 @@ export interface AcpClientOptions {
   readonly logIncoming?: boolean;
   readonly logOutgoing?: boolean;
   readonly logger?: (event: AcpProtocol.AcpProtocolLogEvent) => Effect.Effect<void, never>;
+  readonly onIncomingRequest?: AcpProtocol.AcpPatchedProtocolOptions["onIncomingRequest"];
+  readonly onTermination?: AcpProtocol.AcpPatchedProtocolOptions["onTermination"];
+  readonly onOutgoingResponseFailure?: AcpProtocol.AcpPatchedProtocolOptions["onOutgoingResponseFailure"];
+  readonly onOutgoingResponse?: AcpProtocol.AcpPatchedProtocolOptions["onOutgoingResponse"];
   /** Transforms child output before protocol logging and parsing. */
   readonly transformStdout?: (
     stdout: ChildProcessSpawner.ChildProcessHandle["stdout"],
@@ -34,8 +38,6 @@ export interface AcpClientOptions {
   readonly transformSessionUpdate?: (
     notification: AcpSchema.SessionNotification,
   ) => AcpSchema.SessionNotification;
-  /** Reports input failures and process exits, even between requests. */
-  readonly onTermination?: (error: AcpError.AcpError) => Effect.Effect<void, never, never>;
 }
 
 type AcpClientRaw = {
@@ -413,10 +415,15 @@ export const make = Effect.fn("effect-acp/AcpClient.make")(function* (
     ...(options.logIncoming !== undefined ? { logIncoming: options.logIncoming } : {}),
     ...(options.logOutgoing !== undefined ? { logOutgoing: options.logOutgoing } : {}),
     ...(options.logger ? { logger: options.logger } : {}),
+    ...(options.onIncomingRequest ? { onIncomingRequest: options.onIncomingRequest } : {}),
+    ...(options.onTermination ? { onTermination: options.onTermination } : {}),
+    ...(options.onOutgoingResponseFailure
+      ? { onOutgoingResponseFailure: options.onOutgoingResponseFailure }
+      : {}),
+    ...(options.onOutgoingResponse ? { onOutgoingResponse: options.onOutgoingResponse } : {}),
     ...(options.transformSessionUpdate
       ? { transformSessionUpdate: options.transformSessionUpdate }
       : {}),
-    ...(options.onTermination ? { onTermination: options.onTermination } : {}),
     onNotification: dispatchNotification,
     onExtRequest: dispatchExtRequest,
   });

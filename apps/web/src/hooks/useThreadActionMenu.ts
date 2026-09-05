@@ -144,7 +144,7 @@ export function useThreadActionMenu(input: {
           isSnoozed: supports.snooze && effectiveSnoozed(thread, { now: now.toISOString() }),
           canSnoozeNow: canSnooze(thread, { now: now.toISOString() }),
           isRegeneratingTitle,
-          isRunning: thread.session?.status === "running" && thread.session.activeTurnId != null,
+          isRunning: thread.runtime?.status === "running" && thread.runtime.activeRunId != null,
           supports,
           snoozePresets,
         });
@@ -251,7 +251,10 @@ export function useThreadActionMenu(input: {
             );
             return;
           case "mark-unread":
-            markThreadUnread(scopedThreadKey(threadRef), thread.latestTurn?.completedAt);
+            markThreadUnread(
+              scopedThreadKey(threadRef),
+              thread.latestRun?.completedAt ?? undefined,
+            );
             return;
           case "copy-path": {
             const workspacePath = thread.worktreePath ?? projectCwd;

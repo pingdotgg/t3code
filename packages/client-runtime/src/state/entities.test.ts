@@ -1,53 +1,29 @@
 import {
   EnvironmentId,
-  ProjectId,
-  ProviderInstanceId,
-  ThreadId,
-  type OrchestrationShellSnapshot,
-  type OrchestrationThread,
+  MessageId,
+  NodeId,
+  ProviderSessionId,
+  RunId,
+  RuntimeRequestId,
+  TurnItemId,
 } from "@t3tools/contracts";
-import { describe, expect, it } from "@effect/vitest";
-import * as Option from "effect/Option";
-import { AsyncResult, Atom, AtomRegistry } from "effect/unstable/reactivity";
+import * as DateTime from "effect/DateTime";
+import { describe, expect, it } from "vite-plus/test";
 
-import { PrimaryConnectionTarget } from "../connection/model.ts";
 import {
-  InvalidScopedProjectKeyError,
   InvalidScopedProjectRefCollectionKeyError,
   InvalidScopedThreadKeyError,
-  parseProjectKey,
   parseProjectRefCollectionKey,
   parseThreadKey,
 } from "./entities.ts";
-import type { EnvironmentShellState } from "./shell.ts";
-import { EMPTY_ENVIRONMENT_THREAD_STATE, type EnvironmentThreadState } from "./threads.ts";
-import { createEnvironmentProjectAtoms } from "./projectEntities.ts";
-import { createEnvironmentSnapshotAtom } from "./snapshots.ts";
-import { createEnvironmentThreadDetailAtoms } from "./threadDetail.ts";
-import { mergeEnvironmentThread } from "./threadDetail.ts";
-import { createEnvironmentThreadShellAtoms } from "./threadShell.ts";
-import { applyShellStreamEvent } from "./shellReducer.ts";
+import { presentThreadShell } from "./models.ts";
+import { v2Projection, v2ThreadShell } from "./orchestrationV2TestFixtures.ts";
+import { deriveLatestThreadRun, deriveThreadRuntime } from "./threadExecution.ts";
+import { derivePendingThreadRequests } from "./threadRequests.ts";
 
-const ENVIRONMENT_ID = EnvironmentId.make("environment-1");
-const PROJECT_ID = ProjectId.make("project-1");
-const OTHER_PROJECT_ID = ProjectId.make("project-2");
-const THREAD_ID = ThreadId.make("thread-1");
-const OTHER_THREAD_ID = ThreadId.make("thread-2");
+const environmentId = EnvironmentId.make("environment-v2");
 
 describe("scoped entity keys", () => {
-  it("preserves an invalid project key as structured error data", () => {
-    const key = "missing-project-key-separator";
-    let error: unknown;
-
-    try {
-      parseProjectKey(key);
-    } catch (cause) {
-      error = cause;
-    }
-
-    expect(error).toEqual(new InvalidScopedProjectKeyError({ key }));
-  });
-
   it("preserves an invalid thread key as structured error data", () => {
     const key = "missing-thread-key-separator";
     let error: unknown;
@@ -84,442 +60,450 @@ describe("scoped entity keys", () => {
   });
 });
 
-const THREAD_SHELL = {
-  id: THREAD_ID,
-  projectId: PROJECT_ID,
-  title: "Thread",
-  modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
-  runtimeMode: "full-access",
-  interactionMode: "default",
-  branch: null,
-  worktreePath: null,
-  latestTurn: null,
-  createdAt: "2026-06-01T00:00:00.000Z",
-  updatedAt: "2026-06-01T00:00:00.000Z",
-  archivedAt: null,
-  settledOverride: null,
-  settledAt: null,
-  session: null,
-  latestUserMessageAt: null,
-  hasPendingApprovals: false,
-  hasPendingUserInput: false,
-  hasActionableProposedPlan: false,
-} as const;
+describe("V2 client presentation", () => {
+  it("presents shell timestamps and status without constructing V1 state", () => {
+    const shell = presentThreadShell(environmentId, v2ThreadShell);
+    expect(shell.environmentId).toBe(environmentId);
+    expect(shell.createdAt).toBe("2026-06-20T00:00:00.000Z");
+    expect(shell.runtime).toBeNull();
+    expect(shell.source).toBe(v2ThreadShell);
+  });
 
-const SNAPSHOT: OrchestrationShellSnapshot = {
-  snapshotSequence: 1,
-  updatedAt: "2026-06-01T00:00:00.000Z",
-  projects: [
-    {
-      id: PROJECT_ID,
-      title: "Project",
-      workspaceRoot: "/repo",
-      repositoryIdentity: null,
-      defaultModelSelection: null,
-      scripts: [],
-      createdAt: "2026-06-01T00:00:00.000Z",
-      updatedAt: "2026-06-01T00:00:00.000Z",
-    },
-    {
-      id: OTHER_PROJECT_ID,
-      title: "Other project",
-      workspaceRoot: "/other-repo",
-      repositoryIdentity: null,
-      defaultModelSelection: null,
-      scripts: [],
-      createdAt: "2026-06-01T00:00:00.000Z",
-      updatedAt: "2026-06-01T00:00:00.000Z",
-    },
-  ],
-  threads: [
-    THREAD_SHELL,
-    {
-      ...THREAD_SHELL,
-      id: OTHER_THREAD_ID,
-      projectId: OTHER_PROJECT_ID,
-      title: "Other thread",
-    },
-  ],
-};
+  it("presents provider errors carried by failed thread shells", () => {
+    const runId = RunId.make("run-failed");
+    const shell = presentThreadShell(environmentId, {
+      ...v2ThreadShell,
+      latestRunId: runId,
+      status: "failed",
+      lastError: "provider process exited",
+    });
 
-function shellState(snapshot: OrchestrationShellSnapshot): EnvironmentShellState {
-  return {
-    snapshot: Option.some(snapshot),
-    status: "live",
-    error: Option.none(),
-  };
-}
+    expect(shell.runtime).toMatchObject({
+      status: "failed",
+      lastError: "provider process exited",
+    });
+  });
 
-function makeHarness(environmentIds: ReadonlyArray<EnvironmentId> = [ENVIRONMENT_ID]) {
-  const shellStateAtoms = Atom.family((_environmentId: EnvironmentId) =>
-    Atom.make(AsyncResult.success(shellState(SNAPSHOT))),
-  );
-  const threadStateAtoms = Atom.family((_key: string) =>
-    Atom.make(AsyncResult.success(EMPTY_ENVIRONMENT_THREAD_STATE)),
-  );
-  const catalogValueAtom = Atom.make({
-    isReady: true,
-    entries: new Map(
-      environmentIds.map((environmentId) => [
-        environmentId,
+  it("preserves shell run timestamps for sidebar activity clocks", () => {
+    const runId = RunId.make("run-working-clock");
+    const requestedAt = DateTime.makeUnsafe("2026-06-20T01:00:00.000Z");
+    const startedAt = DateTime.makeUnsafe("2026-06-20T01:00:02.000Z");
+    const shell = presentThreadShell(environmentId, {
+      ...v2ThreadShell,
+      latestRunId: runId,
+      latestRunRequestedAt: requestedAt,
+      latestRunStartedAt: startedAt,
+      latestRunCompletedAt: null,
+      activeRunId: runId,
+      status: "running",
+      updatedAt: DateTime.makeUnsafe("2026-06-20T01:04:45.000Z"),
+    });
+
+    expect(shell.latestRun).toMatchObject({
+      runId,
+      status: "running",
+      requestedAt: "2026-06-20T01:00:00.000Z",
+      startedAt: "2026-06-20T01:00:02.000Z",
+      completedAt: null,
+    });
+  });
+
+  it("parks presented runtime at idle when a settled shell has pending background tasks", () => {
+    const runId = RunId.make("run-completed");
+    const shell = presentThreadShell(environmentId, {
+      ...v2ThreadShell,
+      latestRunId: runId,
+      activeRunId: null,
+      status: "completed",
+      pendingBackgroundTasks: [{ taskId: "bg-1", description: "sleep 20" }],
+    });
+
+    expect(shell.latestRun).toMatchObject({ runId, status: "completed" });
+    expect(shell.runtime).toMatchObject({
+      status: "idle",
+      activeRunId: null,
+    });
+    expect(shell.pendingBackgroundTasks).toEqual([{ taskId: "bg-1", description: "sleep 20" }]);
+  });
+
+  it("keeps terminal runtime completed when there are no pending background tasks", () => {
+    const runId = RunId.make("run-completed");
+    const shell = presentThreadShell(environmentId, {
+      ...v2ThreadShell,
+      latestRunId: runId,
+      activeRunId: null,
+      status: "completed",
+      pendingBackgroundTasks: [],
+    });
+
+    expect(shell.latestRun).toMatchObject({ runId, status: "completed" });
+    expect(shell.runtime).toMatchObject({
+      status: "completed",
+      activeRunId: null,
+    });
+  });
+
+  it("keeps runtime running when there is no background roster", () => {
+    const runId = RunId.make("run-running");
+    const shell = presentThreadShell(environmentId, {
+      ...v2ThreadShell,
+      latestRunId: runId,
+      activeRunId: runId,
+      status: "running",
+      pendingBackgroundTasks: [],
+    });
+
+    expect(shell.latestRun).toMatchObject({ runId, status: "running" });
+    expect(shell.runtime).toMatchObject({
+      status: "running",
+      activeRunId: runId,
+    });
+  });
+
+  it("keeps an older active run visible over a newer cancelled run", () => {
+    const activeRunId = RunId.make("run-active");
+    const cancelledRunId = RunId.make("run-cancelled");
+    const shell = presentThreadShell(environmentId, {
+      ...v2ThreadShell,
+      latestRunId: cancelledRunId,
+      latestRunStartedAt: null,
+      latestRunCompletedAt: DateTime.makeUnsafe("2026-06-20T01:05:00.000Z"),
+      activeRunId,
+      activityRunStatus: "running",
+      status: "cancelled",
+      pendingBackgroundTasks: [],
+    });
+
+    expect(shell.latestRun).toMatchObject({ runId: cancelledRunId, status: "cancelled" });
+    expect(shell.runtime).toMatchObject({
+      status: "running",
+      activeRunId,
+    });
+  });
+
+  it("keeps an older waiting run visible over a newer cancelled run", () => {
+    const shell = presentThreadShell(environmentId, {
+      ...v2ThreadShell,
+      latestRunId: RunId.make("run-cancelled"),
+      activeRunId: null,
+      activityRunStatus: "waiting",
+      status: "cancelled",
+      pendingBackgroundTasks: [],
+    });
+
+    expect(shell.runtime).toMatchObject({ status: "waiting", activeRunId: null });
+  });
+
+  it("keeps a post-settlement background roster ahead of activity status", () => {
+    const activeRunId = RunId.make("run-active");
+    const shell = presentThreadShell(environmentId, {
+      ...v2ThreadShell,
+      latestRunId: RunId.make("run-cancelled"),
+      activeRunId,
+      activityRunStatus: "running",
+      status: "cancelled",
+      pendingBackgroundTasks: [{ taskId: "bg-activity", description: "background work" }],
+    });
+
+    expect(shell.runtime).toMatchObject({ status: "idle", activeRunId });
+  });
+
+  it("parks runtime idle over stale shell running when the roster is nonempty", () => {
+    const runId = RunId.make("run-stale-running");
+    const shell = presentThreadShell(environmentId, {
+      ...v2ThreadShell,
+      latestRunId: runId,
+      activeRunId: runId,
+      // Stale: server already projected a post-settlement roster, but shell
+      // status still says running (packaged orchestrator-v2 bug).
+      status: "running",
+      pendingBackgroundTasks: [{ taskId: "bg-1", description: "sleep 20" }],
+    });
+
+    expect(shell.latestRun).toMatchObject({ runId, status: "running" });
+    expect(shell.runtime).toMatchObject({
+      status: "idle",
+      activeRunId: runId,
+    });
+    expect(shell.pendingBackgroundTasks).toEqual([{ taskId: "bg-1", description: "sleep 20" }]);
+  });
+
+  it("parks runtime idle over stale checkpoint waiting when the roster is nonempty", () => {
+    const runId = RunId.make("run-stale-waiting");
+    const shell = presentThreadShell(environmentId, {
+      ...v2ThreadShell,
+      latestRunId: runId,
+      activeRunId: runId,
+      // Stale: checkpoint-oriented waiting masks post-settlement background work.
+      status: "waiting",
+      pendingBackgroundTasks: [{ taskId: "bg-2", description: "background bash" }],
+    });
+
+    expect(shell.latestRun).toMatchObject({ runId, status: "waiting" });
+    expect(shell.runtime).toMatchObject({
+      status: "idle",
+      activeRunId: runId,
+    });
+    expect(shell.pendingBackgroundTasks).toEqual([
+      { taskId: "bg-2", description: "background bash" },
+    ]);
+  });
+
+  it("derives execution summaries without wrapping or copying the projection", () => {
+    const runId = RunId.make("run-1");
+    const now = DateTime.makeUnsafe("2026-06-20T01:00:00.000Z");
+    const projection = {
+      ...v2Projection,
+      runs: [
         {
-          target: new PrimaryConnectionTarget({
-            environmentId,
-            label: "Environment",
-            httpBaseUrl: "https://example.test",
-            wsBaseUrl: "wss://example.test",
-          }),
-          profile: Option.none(),
+          id: runId,
+          threadId: v2Projection.thread.id,
+          ordinal: 1,
+          providerInstanceId: v2Projection.thread.providerInstanceId,
+          modelSelection: v2Projection.thread.modelSelection,
+          providerThreadId: null,
+          userMessageId: MessageId.make("message-user"),
+          rootNodeId: null,
+          activeAttemptId: null,
+          status: "running" as const,
+          requestedAt: now,
+          startedAt: now,
+          completedAt: null,
+          checkpointId: null,
+          contextHandoffId: null,
         },
-      ]),
-    ),
-  });
-  const snapshotAtom = createEnvironmentSnapshotAtom(shellStateAtoms);
-  const projects = createEnvironmentProjectAtoms({
-    catalogValueAtom,
-    snapshotAtom,
-  });
-  const threadShells = createEnvironmentThreadShellAtoms({
-    catalogValueAtom,
-    snapshotAtom,
-  });
-  const threadDetails = createEnvironmentThreadDetailAtoms((environmentId, threadId) =>
-    threadStateAtoms(`${environmentId}\u0000${threadId}`),
-  );
-
-  return {
-    registry: AtomRegistry.make(),
-    catalogValueAtom,
-    shellStateAtom: shellStateAtoms(ENVIRONMENT_ID),
-    shellStateAtomForEnvironment: shellStateAtoms,
-    threadStateAtom: (threadId: ThreadId) => threadStateAtoms(`${ENVIRONMENT_ID}\u0000${threadId}`),
-    projects,
-    threadShells,
-    threadDetails,
-  };
-}
-
-describe("environment entity projections", () => {
-  it("composes detail collections with authoritative shell workspace metadata", () => {
-    const messages: OrchestrationThread["messages"] = [];
-    const detail = {
-      ...THREAD_SHELL,
-      environmentId: ENVIRONMENT_ID,
-      title: "Cached thread",
-      branch: "stale-branch",
-      worktreePath: "/repo/stale-worktree",
-      deletedAt: null,
-      messages,
-      proposedPlans: [],
-      activities: [],
-      checkpoints: [],
-    } satisfies OrchestrationThread & { readonly environmentId: EnvironmentId };
-    const shell = {
-      ...THREAD_SHELL,
-      environmentId: ENVIRONMENT_ID,
-      title: "Current thread",
-      branch: "current-branch",
-      worktreePath: "/repo/current-worktree",
+      ],
+      messages: [
+        {
+          id: MessageId.make("message-user"),
+          threadId: v2Projection.thread.id,
+          runId,
+          nodeId: null,
+          role: "user" as const,
+          text: "Hello",
+          attachments: [],
+          streaming: false,
+          createdBy: "user" as const,
+          creationSource: "web" as const,
+          createdAt: now,
+          updatedAt: now,
+        },
+      ],
+      updatedAt: now,
     };
 
-    const merged = mergeEnvironmentThread(detail, shell);
-
-    expect(merged).toMatchObject({
-      title: "Current thread",
-      branch: "current-branch",
-      worktreePath: "/repo/current-worktree",
+    expect(deriveLatestThreadRun(projection)).toMatchObject({
+      runId,
+      status: "running",
+      requestedAt: "2026-06-20T01:00:00.000Z",
+      assistantMessageId: null,
     });
-    expect(merged?.messages).toBe(messages);
-  });
-
-  it("preserves untouched project and thread identities across unrelated shell updates", () => {
-    const harness = makeHarness();
-    const projectRefsAtom = harness.projects.environmentProjectRefsAtom(ENVIRONMENT_ID);
-    const threadRefsAtom = harness.threadShells.environmentThreadRefsAtom(ENVIRONMENT_ID);
-    const projectsAtom = harness.projects.projectsAtom;
-    const projectAtom = harness.projects.projectAtom({
-      environmentId: ENVIRONMENT_ID,
-      projectId: PROJECT_ID,
+    expect(deriveThreadRuntime(projection)).toMatchObject({
+      status: "running",
+      activeRunId: runId,
+      providerInstanceId: projection.thread.providerInstanceId,
     });
-    const threadAtom = harness.threadShells.threadShellAtom({
-      environmentId: ENVIRONMENT_ID,
-      threadId: THREAD_ID,
-    });
-    const projectRefs = harness.registry.get(projectRefsAtom);
-    const threadRefs = harness.registry.get(threadRefsAtom);
-    const projects = harness.registry.get(projectsAtom);
-    const project = harness.registry.get(projectAtom);
-    const thread = harness.registry.get(threadAtom);
-
-    harness.registry.set(
-      harness.shellStateAtom,
-      AsyncResult.success(
-        shellState({
-          ...SNAPSHOT,
-          snapshotSequence: 2,
-          threads: SNAPSHOT.threads.map((candidate) =>
-            candidate.id === OTHER_THREAD_ID
-              ? { ...candidate, title: "Renamed other thread" }
-              : candidate,
-          ),
-        }),
-      ),
-    );
-
-    expect(harness.registry.get(projectRefsAtom)).toBe(projectRefs);
-    expect(harness.registry.get(threadRefsAtom)).toBe(threadRefs);
-    expect(harness.registry.get(projectsAtom)).toBe(projects);
-    expect(harness.registry.get(projectAtom)).toBe(project);
-    expect(harness.registry.get(threadAtom)).toBe(thread);
   });
 
-  it("preserves project-scoped thread collections across unrelated project updates", () => {
-    const harness = makeHarness();
-    const projectRef = {
-      environmentId: ENVIRONMENT_ID,
-      projectId: PROJECT_ID,
+  it("parks waiting runtime for a post-settlement roster without hiding active running work", () => {
+    const runId = RunId.make("run-background-presentation");
+    const now = DateTime.makeUnsafe("2026-06-20T01:00:00.000Z");
+    const run = {
+      id: runId,
+      threadId: v2Projection.thread.id,
+      ordinal: 1,
+      providerInstanceId: v2Projection.thread.providerInstanceId,
+      modelSelection: v2Projection.thread.modelSelection,
+      providerThreadId: null,
+      userMessageId: MessageId.make("message-background-presentation"),
+      rootNodeId: null,
+      activeAttemptId: null,
+      status: "waiting" as const,
+      requestedAt: now,
+      startedAt: now,
+      completedAt: null,
+      checkpointId: null,
+      contextHandoffId: null,
     };
-    const refsByProjectAtom =
-      harness.threadShells.environmentThreadRefsByProjectAtom(ENVIRONMENT_ID);
-    const threadsAtom = harness.threadShells.threadShellsForProjectRefsAtom([projectRef]);
-    const membership = harness.registry.get(refsByProjectAtom);
-    const refs = membership.get(PROJECT_ID);
-    const threads = harness.registry.get(threadsAtom);
-
-    expect(threads).toHaveLength(1);
-    expect(threads[0]?.id).toBe(THREAD_ID);
-
-    harness.registry.set(
-      harness.shellStateAtom,
-      AsyncResult.success(
-        shellState({
-          ...SNAPSHOT,
-          snapshotSequence: 2,
-          threads: SNAPSHOT.threads.map((thread) =>
-            thread.id === OTHER_THREAD_ID ? { ...thread, title: "Updated elsewhere" } : thread,
-          ),
-        }),
-      ),
-    );
-
-    expect(harness.registry.get(refsByProjectAtom).get(PROJECT_ID)).toBe(refs);
-    expect(harness.registry.get(refsByProjectAtom)).toBe(membership);
-    expect(harness.registry.get(threadsAtom)).toBe(threads);
-  });
-
-  it("shares list values with point reads without retaining one atom per listed thread", () => {
-    const harness = makeHarness();
-    let snapshot: OrchestrationShellSnapshot = {
-      ...SNAPSHOT,
-      threads: Array.from({ length: 200 }, (_, index) => ({
-        ...THREAD_SHELL,
-        id: ThreadId.make(`listed-${index}`),
-      })),
+    const backgroundItem = {
+      id: TurnItemId.make("item-background-command"),
+      threadId: v2Projection.thread.id,
+      runId,
+      nodeId: null,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: 0,
+      status: "running" as const,
+      title: "Background command",
+      startedAt: now,
+      completedAt: null,
+      updatedAt: now,
+      type: "command_execution" as const,
+      input: "sleep 20",
     };
-    harness.registry.set(harness.shellStateAtom, AsyncResult.success(shellState(snapshot)));
-    const listAtom = harness.threadShells.threadShellsAtom;
-    const projectListAtom = harness.threadShells.threadShellsForProjectRefsAtom([
-      { environmentId: ENVIRONMENT_ID, projectId: PROJECT_ID },
-    ]);
-    const disposeList = harness.registry.mount(listAtom);
-    const disposeProjectList = harness.registry.mount(projectListAtom);
-    try {
-      const before = harness.registry.get(listAtom);
-      expect(before).toHaveLength(200);
-      expect(harness.registry.get(projectListAtom)).toEqual(before);
-      expect(harness.registry.getNodes().size).toBeLessThan(20);
-      const firstAtom = harness.threadShells.threadShellAtom({
-        environmentId: ENVIRONMENT_ID,
-        threadId: snapshot.threads[0]!.id,
-      });
-      expect(harness.registry.get(firstAtom)).toBe(before[0]);
 
-      snapshot = applyShellStreamEvent(snapshot, {
-        kind: "thread-upserted",
-        sequence: 2,
-        thread: { ...snapshot.threads.at(-1)!, title: "Updated last thread" },
-      });
-      harness.registry.set(harness.shellStateAtom, AsyncResult.success(shellState(snapshot)));
-      const after = harness.registry.get(listAtom);
-      expect(after[0]).toBe(before[0]);
-      expect(after.at(-1)).not.toBe(before.at(-1));
-      expect(after.at(-1)?.title).toBe("Updated last thread");
-      expect(harness.registry.get(projectListAtom).at(-1)).toBe(after.at(-1));
-      expect(harness.registry.get(firstAtom)).toBe(after[0]);
-      expect(harness.registry.getNodes().size).toBeLessThan(20);
-    } finally {
-      disposeProjectList();
-      disposeList();
-      harness.registry.dispose();
-    }
-  });
-
-  it("keeps scoped identities and list order across project and environment changes", () => {
-    const remoteEnvironmentId = EnvironmentId.make("remote-environment");
-    const harness = makeHarness([ENVIRONMENT_ID, remoteEnvironmentId]);
-    const listAtom = harness.threadShells.threadShellsAtom;
-    const localRef = { environmentId: ENVIRONMENT_ID, threadId: THREAD_ID };
-    const remoteRef = { environmentId: remoteEnvironmentId, threadId: THREAD_ID };
-    const selectedAtom = harness.threadShells.threadShellsForProjectRefsAtom([
-      { environmentId: remoteEnvironmentId, projectId: PROJECT_ID },
-      { environmentId: ENVIRONMENT_ID, projectId: OTHER_PROJECT_ID },
-      { environmentId: remoteEnvironmentId, projectId: PROJECT_ID },
-      { environmentId: ENVIRONMENT_ID, projectId: PROJECT_ID },
-    ]);
-    const disposeList = harness.registry.mount(listAtom);
-    const disposeSelected = harness.registry.mount(selectedAtom);
-    try {
-      const original = harness.registry.get(listAtom);
-      const local = harness.registry.get(harness.threadShells.threadShellAtom(localRef));
-      const remote = harness.registry.get(harness.threadShells.threadShellAtom(remoteRef));
-      expect(original).toHaveLength(4);
-      expect(original[0]).toBe(local);
-      expect(original[2]).toBe(remote);
-      expect(local).not.toBe(remote);
-      expect(local?.environmentId).toBe(ENVIRONMENT_ID);
-      expect(remote?.environmentId).toBe(remoteEnvironmentId);
-      expect(harness.registry.get(selectedAtom)).toEqual([remote, original[1], local]);
-
-      harness.registry.set(
-        harness.shellStateAtomForEnvironment(remoteEnvironmentId),
-        AsyncResult.success(shellState({ ...SNAPSHOT, threads: SNAPSHOT.threads.toReversed() })),
-      );
-      expect([
-        ...harness.registry
-          .get(harness.threadShells.environmentThreadRefsByProjectAtom(remoteEnvironmentId))
-          .keys(),
-      ]).toEqual([OTHER_PROJECT_ID, PROJECT_ID]);
-      harness.registry.set(
-        harness.shellStateAtomForEnvironment(remoteEnvironmentId),
-        AsyncResult.success(shellState(SNAPSHOT)),
-      );
-
-      let snapshot = applyShellStreamEvent(SNAPSHOT, {
-        kind: "thread-upserted",
-        sequence: 2,
-        thread: { ...THREAD_SHELL, projectId: OTHER_PROJECT_ID, title: "Moved thread" },
-      });
-      harness.registry.set(harness.shellStateAtom, AsyncResult.success(shellState(snapshot)));
-      const moved = harness.registry.get(harness.threadShells.threadShellAtom(localRef));
-      expect(harness.registry.get(selectedAtom)).toEqual([remote, moved, original[1]]);
-      expect(harness.registry.get(listAtom)[2]).toBe(remote);
-
-      snapshot = applyShellStreamEvent(snapshot, {
-        kind: "thread-removed",
-        sequence: 3,
-        threadId: OTHER_THREAD_ID,
-      });
-      harness.registry.set(harness.shellStateAtom, AsyncResult.success(shellState(snapshot)));
-      expect(harness.registry.get(selectedAtom)).toEqual([remote, moved]);
-      expect(
-        harness.registry.get(
-          harness.threadShells.threadShellAtom({
-            environmentId: ENVIRONMENT_ID,
-            threadId: OTHER_THREAD_ID,
-          }),
-        ),
-      ).toBeNull();
-
-      const createdId = ThreadId.make("created-thread");
-      snapshot = applyShellStreamEvent(snapshot, {
-        kind: "thread-upserted",
-        sequence: 4,
-        thread: { ...THREAD_SHELL, id: createdId },
-      });
-      harness.registry.set(harness.shellStateAtom, AsyncResult.success(shellState(snapshot)));
-      const created = harness.registry.get(listAtom)[1];
-      expect(created?.id).toBe(createdId);
-      expect(harness.registry.get(selectedAtom)).toEqual([remote, moved, created]);
-
-      const catalog = harness.registry.get(harness.catalogValueAtom);
-      harness.registry.set(harness.catalogValueAtom, {
-        ...catalog,
-        entries: new Map([...catalog.entries].toReversed()),
-      });
-      expect(harness.registry.get(listAtom)).toEqual([remote, original[3], moved, created]);
-      harness.registry.set(harness.catalogValueAtom, {
-        ...catalog,
-        entries: new Map([[remoteEnvironmentId, catalog.entries.get(remoteEnvironmentId)!]]),
-      });
-      expect(harness.registry.get(listAtom)).toEqual([remote, original[3]]);
-      harness.registry.set(
-        harness.shellStateAtomForEnvironment(remoteEnvironmentId),
-        AsyncResult.success(shellState({ ...SNAPSHOT, threads: [] })),
-      );
-      expect(harness.registry.get(listAtom)).toEqual([]);
-      expect(harness.registry.get(harness.threadShells.threadShellAtom(remoteRef))).toBeNull();
-    } finally {
-      disposeSelected();
-      disposeList();
-      harness.registry.dispose();
-    }
-  });
-
-  it("updates only the requested thread detail and preserves untouched field identities", () => {
-    const harness = makeHarness();
-    const threadRef = {
-      environmentId: ENVIRONMENT_ID,
-      threadId: THREAD_ID,
-    };
-    const otherThreadRef = {
-      environmentId: ENVIRONMENT_ID,
-      threadId: OTHER_THREAD_ID,
-    };
-    const threadDetailAtom = harness.threadDetails.detailAtom(threadRef);
-    const messagesAtom = harness.threadDetails.messagesAtom(threadRef);
-    const activitiesAtom = harness.threadDetails.activitiesAtom(threadRef);
-    const statusAtom = harness.threadDetails.statusAtom(threadRef);
-    const otherThreadDetailAtom = harness.threadDetails.detailAtom(otherThreadRef);
-    const otherValue = harness.registry.get(otherThreadDetailAtom);
-    const detail = {
-      ...THREAD_SHELL,
-      deletedAt: null,
-      messages: [],
-      proposedPlans: [],
-      activities: [],
-      checkpoints: [],
-    } satisfies OrchestrationThread;
-
-    harness.registry.set(
-      harness.threadStateAtom(THREAD_ID),
-      AsyncResult.success<EnvironmentThreadState>({
-        data: Option.some(detail),
-        status: "live",
-        error: Option.none(),
-        page: Option.none(),
+    expect(
+      deriveThreadRuntime({
+        ...v2Projection,
+        runs: [run],
+        turnItems: [backgroundItem],
       }),
-    );
+    ).toMatchObject({
+      status: "idle",
+      activeRunId: null,
+    });
+    expect(
+      deriveThreadRuntime({
+        ...v2Projection,
+        runs: [{ ...run, status: "running" as const }],
+        turnItems: [backgroundItem],
+      }),
+    ).toMatchObject({
+      status: "running",
+      activeRunId: runId,
+    });
+  });
 
-    const scopedDetail = harness.registry.get(threadDetailAtom);
-    const messages = harness.registry.get(messagesAtom);
-    const activities = harness.registry.get(activitiesAtom);
-
-    expect(scopedDetail).toEqual({ ...detail, environmentId: ENVIRONMENT_ID });
-    expect(harness.registry.get(statusAtom)).toBe("live");
-    expect(harness.registry.get(otherThreadDetailAtom)).toBe(otherValue);
-
-    harness.registry.set(
-      harness.threadStateAtom(THREAD_ID),
-      AsyncResult.success<EnvironmentThreadState>({
-        data: Option.some({
-          ...detail,
-          session: {
-            threadId: THREAD_ID,
-            status: "ready",
-            providerName: "codex",
-            runtimeMode: "full-access",
-            activeTurnId: null,
-            lastError: null,
-            updatedAt: "2026-06-01T00:01:00.000Z",
+  it("joins pending request entities to their native turn-item display data", () => {
+    const now = DateTime.makeUnsafe("2026-06-20T01:00:00.000Z");
+    const requestId = RuntimeRequestId.make("request-approval");
+    const item = {
+      id: TurnItemId.make("item-approval"),
+      threadId: v2Projection.thread.id,
+      runId: null,
+      nodeId: NodeId.make("node-root"),
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: 0,
+      status: "completed" as const,
+      title: null,
+      startedAt: now,
+      completedAt: now,
+      updatedAt: now,
+      type: "approval_request" as const,
+      requestId,
+      requestKind: "command" as const,
+      prompt: "Allow command?",
+    };
+    const projection = {
+      ...v2Projection,
+      runtimeRequests: [
+        {
+          id: requestId,
+          nodeId: NodeId.make("node-root"),
+          providerTurnId: null,
+          nativeRequestRef: null,
+          kind: "command" as const,
+          status: "pending" as const,
+          responseCapability: {
+            type: "not_resumable" as const,
+            reason: "provider disconnected",
           },
-        }),
-        status: "live",
-        error: Option.none(),
-        page: Option.none(),
-      }),
-    );
+          createdAt: now,
+          resolvedAt: null,
+        },
+      ],
+      turnItems: [item],
+      updatedAt: now,
+    };
 
-    expect(harness.registry.get(messagesAtom)).toBe(messages);
-    expect(harness.registry.get(activitiesAtom)).toBe(activities);
+    expect(derivePendingThreadRequests(projection).approvals).toEqual([
+      {
+        requestId,
+        requestKind: "command",
+        createdAt: "2026-06-20T01:00:00.000Z",
+        detail: "Allow command?",
+        responseCapability: "not_resumable",
+      },
+    ]);
+    expect(derivePendingThreadRequests(projection).userInputs).toEqual([]);
+  });
+
+  it("preserves structured-question selection mode and defaults legacy payloads", () => {
+    const now = DateTime.makeUnsafe("2026-06-20T01:00:00.000Z");
+    const multiRequestId = RuntimeRequestId.make("request-multi-select");
+    const legacyRequestId = RuntimeRequestId.make("request-legacy-single-select");
+    const runtimeRequests = [multiRequestId, legacyRequestId].map((id) => ({
+      id,
+      nodeId: NodeId.make(`node-${id}`),
+      providerTurnId: null,
+      nativeRequestRef: null,
+      kind: "user_input" as const,
+      status: "pending" as const,
+      responseCapability: {
+        type: "live" as const,
+        providerSessionId: ProviderSessionId.make("provider-session-questions"),
+      },
+      createdAt: now,
+      resolvedAt: null,
+    }));
+    const common = {
+      threadId: v2Projection.thread.id,
+      runId: null,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: 0,
+      status: "completed" as const,
+      title: null,
+      startedAt: now,
+      completedAt: now,
+      updatedAt: now,
+      type: "user_input_request" as const,
+    };
+    const projection = {
+      ...v2Projection,
+      runtimeRequests,
+      turnItems: [
+        {
+          ...common,
+          id: TurnItemId.make("item-multi-select"),
+          nodeId: NodeId.make("node-request-multi-select"),
+          requestId: multiRequestId,
+          questions: [
+            {
+              id: "regions",
+              header: "Regions",
+              question: "Which regions?",
+              options: [
+                { label: "US", description: "United States" },
+                { label: "EU", description: "European Union" },
+              ],
+              multiSelect: true,
+            },
+          ],
+        },
+        {
+          ...common,
+          id: TurnItemId.make("item-legacy-single-select"),
+          nodeId: NodeId.make("node-request-legacy-single-select"),
+          requestId: legacyRequestId,
+          questions: [
+            {
+              id: "target",
+              header: "Target",
+              question: "Which target?",
+              options: [{ label: "Staging", description: "Staging environment" }],
+            },
+          ],
+        },
+      ],
+      updatedAt: now,
+    };
+
+    expect(
+      derivePendingThreadRequests(projection).userInputs.map((input) => ({
+        requestId: input.requestId,
+        multiSelect: input.questions[0]?.multiSelect,
+      })),
+    ).toEqual([
+      { requestId: multiRequestId, multiSelect: true },
+      { requestId: legacyRequestId, multiSelect: false },
+    ]);
   });
 });

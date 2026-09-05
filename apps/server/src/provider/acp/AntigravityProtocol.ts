@@ -350,10 +350,14 @@ export function isAntigravityOpenCommand(toolCall: AcpToolCallState): boolean {
   return toolCall.kind === "execute" && toolCall.status === "inProgress";
 }
 
-/** ACP 1.1.1 exposes subagent invocations as ordinary tools, without child IDs or models. */
+/**
+ * ACP 1.1.1 exposes subagent invocations as ordinary tools, without child IDs
+ * or models. Reads the update's `_meta` from `data.meta`, or from the raw
+ * notification when given.
+ */
 export function classifyAntigravitySubagentToolCall(
   toolCall: AcpToolCallState,
-  rawPayload: unknown,
+  rawPayload?: unknown,
 ): "subagent" | "mcp" | undefined {
   if (
     (toolCall.kind !== undefined && toolCall.kind !== "other") ||
@@ -361,7 +365,7 @@ export function classifyAntigravitySubagentToolCall(
   )
     return undefined;
   const update = Predicate.isObject(rawPayload) ? rawPayload.update : undefined;
-  const meta = Predicate.isObject(update) ? update._meta : undefined;
+  const meta = Predicate.isObject(update) ? update._meta : toolCall.data.meta;
   return Predicate.isObject(meta) && meta.is_mcp_tool_call === true ? "mcp" : "subagent";
 }
 

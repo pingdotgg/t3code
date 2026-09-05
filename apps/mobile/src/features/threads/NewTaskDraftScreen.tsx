@@ -51,6 +51,7 @@ import { SymbolView } from "../../components/AppSymbol";
 import { AppText as Text } from "../../components/AppText";
 import { COMPOSER_LAYOUT_TRANSITION, ComposerSurface } from "./ThreadComposer";
 import { ShimmeringWorkContent } from "./thread-work-log";
+import { deriveThreadTitleSeed } from "@t3tools/client-runtime/operations";
 import { ComposerCommandPopover } from "./ComposerCommandPopover";
 import { useComposerCommandMenu } from "./use-composer-command-menu";
 import {
@@ -89,7 +90,6 @@ import {
   resolveSelectableModelSelection,
 } from "../../lib/modelOptions";
 import { resolveProviderInteractionMode } from "./legacy-plan-mode";
-import { deriveThreadTitleFromPrompt } from "../../lib/projectThreadStartTurn";
 import { armAgentAwarenessLiveActivityForLocalWork } from "../agent-awareness/remoteRegistration";
 import { enqueueThreadOutboxMessage } from "../../state/thread-outbox";
 import { removeThreadOutboxMessage } from "../../state/thread-outbox-removal";
@@ -970,7 +970,10 @@ export function NewTaskDraftScreen(props: {
     // finds no work and ends the card within seconds.
     armAgentAwarenessLiveActivityForLocalWork({
       environmentId: selectedProject.environmentId,
-      threadTitle: deriveThreadTitleFromPrompt(initialMessageText),
+      threadTitle: deriveThreadTitleSeed({
+        text: initialMessageText,
+        attachments: draft.attachments,
+      }),
       projectTitle: selectedProject.title,
     });
     const creationBranch = resolveProjectThreadCreationBranch({

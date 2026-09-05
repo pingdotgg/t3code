@@ -93,7 +93,7 @@
     "expo-image-picker": "~57.0.14",
     "expo-linking": "~57.0.8",
     "expo-network": "~57.0.1",
-    "expo-notifications": "~57.0.15",
+    "expo-notifications": "57.0.15",
     "expo-paste-input": "^0.1.15",
     "expo-quick-actions": "^6.0.2",
     "expo-secure-store": "~57.0.2",

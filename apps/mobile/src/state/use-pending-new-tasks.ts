@@ -1,6 +1,6 @@
 import { useMemo } from "react";
+import { deriveThreadTitleSeed } from "@t3tools/client-runtime/operations";
 
-import { deriveThreadTitleFromPrompt } from "../lib/projectThreadStartTurn";
 import {
   flattenQueuedThreadMessages,
   type QueuedThreadCreation,
@@ -26,7 +26,7 @@ export function usePendingNewTasks(): ReadonlyArray<PendingNewTask> {
       tasks.push({
         message,
         creation: message.creation,
-        title: deriveThreadTitleFromPrompt(message.text),
+        title: deriveThreadTitleSeed({ text: message.text, attachments: message.attachments }),
       });
     }
     tasks.sort((left, right) => right.message.createdAt.localeCompare(left.message.createdAt));

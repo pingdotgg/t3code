@@ -32,6 +32,15 @@ export function parseCodexFeedbackCommand(text: string): { readonly reason?: str
   return reason ? { reason } : {};
 }
 
+export function beginCodexFeedbackSubmission(
+  submissionsInFlight: Set<string>,
+  threadKey: string,
+): (() => void) | null {
+  if (submissionsInFlight.has(threadKey)) return null;
+  submissionsInFlight.add(threadKey);
+  return () => submissionsInFlight.delete(threadKey);
+}
+
 export function codexFeedbackMessage(
   submission: CodexFeedbackSubmission,
   role: "user" | "assistant" = "user",

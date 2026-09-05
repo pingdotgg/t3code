@@ -1,11 +1,10 @@
+import type { ProjectId } from "@t3tools/contracts";
 import type {
   OrchestrationClientOrigin,
   OrchestrationEvent,
   OrchestrationReadModel,
-  ProjectId,
-  ThreadId,
-} from "@t3tools/contracts";
-import { OrchestrationCommand } from "@t3tools/contracts";
+  ProjectOrchestrationCommand,
+} from "@t3tools/contracts/legacy-orchestration";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Crypto from "effect/Crypto";
@@ -55,30 +54,17 @@ const isOrchestrationCommandPreviouslyRejectedError = Schema.is(
 const isOrchestrationCommandIdConflictError = Schema.is(OrchestrationCommandIdConflictError);
 
 interface CommandEnvelope {
-  command: OrchestrationCommand;
+  command: ProjectOrchestrationCommand;
   origin: OrchestrationClientOrigin | undefined;
   result: Deferred.Deferred<{ sequence: number }, OrchestrationDispatchError>;
   startedAtMs: number;
 }
 
-function commandToAggregateRef(command: OrchestrationCommand): {
-  readonly aggregateKind: "project" | "thread";
-  readonly aggregateId: ProjectId | ThreadId;
+function commandToAggregateRef(command: ProjectOrchestrationCommand): {
+  readonly aggregateKind: "project";
+  readonly aggregateId: ProjectId;
 } {
-  switch (command.type) {
-    case "project.create":
-    case "project.meta.update":
-    case "project.delete":
-      return {
-        aggregateKind: "project",
-        aggregateId: command.projectId,
-      };
-    default:
-      return {
-        aggregateKind: "thread",
-        aggregateId: command.threadId,
-      };
-  }
+  return { aggregateKind: "project", aggregateId: command.projectId };
 }
 
 const makeOrchestrationEngine = Effect.gen(function* () {
@@ -126,6 +112,15 @@ const makeOrchestrationEngine = Effect.gen(function* () {
 
       commandReadModel = yield* projectEventsOntoReadModel(commandReadModel, persistedEvents);
 
+      yield* eventStore.publishCommitted(
+        persistedEvents.filter(
+          (event) =>
+            event.type === "project.created" ||
+            event.type === "project.meta-updated" ||
+            event.type === "project.deleted",
+        ),
+      );
+
       for (const persistedEvent of persistedEvents) {
         yield* PubSub.publish(eventPubSub, persistedEvent);
       }
@@ -171,42 +166,9 @@ const makeOrchestrationEngine = Effect.gen(function* () {
           });
         }
 
-        if (
-          envelope.command.type === "thread.auto-settle" &&
-          (yield* eventStore.hasEventAfter({
-            aggregateKind: "thread",
-            aggregateId: envelope.command.threadId,
-            sequenceExclusive: envelope.command.snapshotSequence,
-          }))
-        ) {
-          return yield* new OrchestrationCommandInvariantError({
-            commandType: envelope.command.type,
-            detail: `thread ${envelope.command.threadId} changed before automatic settlement`,
-          });
-        }
-
-        if (
-          envelope.command.type === "thread.auto-settle" &&
-          threadBackgroundLiveness.getThreadBackgroundLiveness(envelope.command.threadId) !== null
-        ) {
-          return yield* new OrchestrationCommandInvariantError({
-            commandType: envelope.command.type,
-            detail: `thread ${envelope.command.threadId} has live background work`,
-          });
-        }
-
-        // Command snapshots omit activities at startup and cap them while running.
-        // Read this request's durable state before deciding how to send the answer.
-        const userInputActivity =
-          envelope.command.type === "thread.user-input.respond"
-            ? yield* projectionSnapshotQuery.getUserInputActivity(envelope.command)
-            : Option.none();
         const eventBase = yield* decideOrchestrationCommand({
           command: envelope.command,
           readModel: commandReadModel,
-          ...(Option.isSome(userInputActivity)
-            ? { userInputActivity: userInputActivity.value }
-            : {}),
         }).pipe(
           Effect.provideService(Crypto.Crypto, crypto),
           Effect.mapError((cause) =>
@@ -256,6 +218,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
                 commandId: envelope.command.commandId,
                 aggregateKind: lastSavedEvent.aggregateKind,
                 aggregateId: lastSavedEvent.aggregateId,
+                commandType: envelope.command.type,
                 acceptedAt: lastSavedEvent.occurredAt,
                 resultSequence: lastSavedEvent.sequence,
                 status: "accepted",
@@ -282,6 +245,14 @@ const makeOrchestrationEngine = Effect.gen(function* () {
         for (const cleanup of committedCommand.attachmentCleanups) {
           yield* cleanup;
         }
+        yield* eventStore.publishCommitted(
+          committedCommand.committedEvents.filter(
+            (event) =>
+              event.type === "project.created" ||
+              event.type === "project.meta-updated" ||
+              event.type === "project.deleted",
+          ),
+        );
         for (const [index, event] of committedCommand.committedEvents.entries()) {
           yield* PubSub.publish(eventPubSub, event);
           if (index === 0) {
@@ -354,6 +325,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
                   commandId: envelope.command.commandId,
                   aggregateKind: aggregateRef.aggregateKind,
                   aggregateId: aggregateRef.aggregateId,
+                  commandType: envelope.command.type,
                   acceptedAt: yield* nowIso,
                   resultSequence: commandReadModel.snapshotSequence,
                   status: "rejected",
@@ -381,19 +353,6 @@ const makeOrchestrationEngine = Effect.gen(function* () {
   const readEvents: OrchestrationEngineShape["readEvents"] = (fromSequenceExclusive, limit) =>
     eventStore.readFromSequence(fromSequenceExclusive, limit);
 
-  const readThreadEvents: OrchestrationEngineShape["readThreadEvents"] = ({ threadId, ...range }) =>
-    eventStore.readAggregateRange({ ...range, aggregateKind: "thread", aggregateId: threadId });
-
-  const getThreadReplayStats: OrchestrationEngineShape["getThreadReplayStats"] = ({
-    threadId,
-    ...range
-  }) =>
-    eventStore.getAggregateReplayStats({
-      ...range,
-      aggregateKind: "thread",
-      aggregateId: threadId,
-    });
-
   const dispatch: OrchestrationEngineShape["dispatch"] = (command, options) =>
     Effect.gen(function* () {
       const result = yield* Deferred.make<{ sequence: number }, OrchestrationDispatchError>();
@@ -408,8 +367,6 @@ const makeOrchestrationEngine = Effect.gen(function* () {
 
   return {
     readEvents,
-    readThreadEvents,
-    getThreadReplayStats,
     dispatch,
     subscribeDomainEvents: PubSub.subscribe(eventPubSub).pipe(Effect.map(Stream.fromSubscription)),
     // Each access creates a fresh PubSub subscription so that multiple

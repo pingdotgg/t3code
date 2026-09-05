@@ -1,11 +1,15 @@
 import { useCallback, useEffect, useMemo } from "react";
 
-import type { EnvironmentId, OrchestrationCheckpointSummary, ThreadId } from "@t3tools/contracts";
+import {
+  deriveThreadCheckpointSummaries,
+  type ThreadCheckpointSummary,
+} from "@t3tools/client-runtime/state/thread-checkpoints";
+import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 
 import { useCheckpointDiff } from "../../state/queries";
 import { useEnvironmentQuery } from "../../state/query";
 import { reviewEnvironment } from "../../state/review";
-import { useSelectedThreadDetail } from "../../state/use-thread-detail";
+import { useSelectedThreadProjection } from "../../state/use-thread-detail";
 import { useSelectedThreadWorktree } from "../../state/use-selected-thread-worktree";
 import {
   buildReviewSectionItems,
@@ -30,7 +34,7 @@ export function useReviewSections(input: {
 }) {
   const { environmentId, reviewCache, threadId } = input;
   const enabled = input.enabled ?? true;
-  const selectedThread = useSelectedThreadDetail();
+  const selectedThread = useSelectedThreadProjection();
   const { selectedThreadCwd } = useSelectedThreadWorktree();
   const diffPreview = useEnvironmentQuery(
     enabled && environmentId !== undefined && selectedThreadCwd !== null
@@ -49,8 +53,11 @@ export function useReviewSections(input: {
   }, [diffPreview.data, reviewCache.threadKey]);
 
   const readyCheckpoints = useMemo(
-    () => getReadyReviewCheckpoints(selectedThread?.checkpoints ?? []),
-    [selectedThread?.checkpoints],
+    () =>
+      getReadyReviewCheckpoints(
+        selectedThread === null ? [] : deriveThreadCheckpointSummaries(selectedThread.projection),
+      ),
+    [selectedThread],
   );
   const checkpointBySectionId = useMemo(
     () =>
@@ -59,7 +66,7 @@ export function useReviewSections(input: {
           getReviewSectionIdForCheckpoint(checkpoint),
           checkpoint,
         ]),
-      ) as Record<string, OrchestrationCheckpointSummary>,
+      ) as Record<string, ThreadCheckpointSummary>,
     [readyCheckpoints],
   );
   const reviewSections = useMemo(

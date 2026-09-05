@@ -6,9 +6,8 @@
  *
  * @module ProjectionSnapshotQuery
  */
+import type { ApprovalRequestId, CheckpointRef, ProjectId, ThreadId } from "@t3tools/contracts";
 import type {
-  ApprovalRequestId,
-  CheckpointRef,
   OrchestrationCheckpointSummary,
   OrchestrationProject,
   OrchestrationProjectShell,
@@ -21,9 +20,7 @@ import type {
   OrchestrationThreadDetailSnapshot,
   OrchestrationThreadDetailWindow,
   OrchestrationThreadShell,
-  ProjectId,
-  ThreadId,
-} from "@t3tools/contracts";
+} from "@t3tools/contracts/legacy-orchestration";
 import * as Context from "effect/Context";
 import type * as Option from "effect/Option";
 import type * as Effect from "effect/Effect";
@@ -109,6 +106,17 @@ export interface ProjectionSnapshotQueryShape {
   >;
 
   /**
+   * Read the shell snapshot with null optional repository metadata.
+   *
+   * Transactional callers use this method and enrich the returned projects
+   * only after their transaction has closed.
+   */
+  readonly getShellSnapshotWithoutEnrichment: () => Effect.Effect<
+    OrchestrationShellSnapshot,
+    ProjectionRepositoryError
+  >;
+
+  /**
    * Read archived thread shell summaries for the archive page.
    *
    * This query is separate from the main shell snapshot so archived threads
@@ -162,6 +170,12 @@ export interface ProjectionSnapshotQueryShape {
   readonly getProjectShellById: (
     projectId: ProjectId,
   ) => Effect.Effect<Option.Option<OrchestrationProjectShell>, ProjectionRepositoryError>;
+
+  /** Read every active project shell without hydrating thread rows or enrichment. */
+  readonly getProjectShellsWithoutEnrichment: () => Effect.Effect<
+    ReadonlyArray<OrchestrationProjectShell>,
+    ProjectionRepositoryError
+  >;
 
   /**
    * Read the earliest active thread for a project.
@@ -220,10 +234,6 @@ export interface ProjectionSnapshotQueryShape {
    * response carries `page` metadata (see `OrchestrationThreadDetailWindow`).
    * Without a window the full thread is returned with no `page` field —
    * pagination is strictly opt-in.
-   *
-   * Activity payloads are projected for clients as they are read in small
-   * sequential batches. Callers still apply the full snapshot projector for
-   * collection-level activity pruning.
    */
   readonly getThreadDetailSnapshot: (
     threadId: ThreadId,

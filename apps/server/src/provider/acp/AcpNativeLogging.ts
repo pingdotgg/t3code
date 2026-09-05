@@ -7,6 +7,10 @@ import * as Effect from "effect/Effect";
 import type * as EffectAcpProtocol from "effect-acp/protocol";
 
 import type { EventNdjsonLogger } from "../Layers/EventNdjsonLogger.ts";
+import {
+  structuralProtocolMethod,
+  summarizeNativeProtocolPayload,
+} from "../NativeProtocolLogging.ts";
 import type * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
 
 const transientProtocolUpdates = new Set(["agent_message_chunk", "agent_thought_chunk"]);
@@ -45,10 +49,10 @@ function summarizePayload(payload: unknown): Readonly<Record<string, unknown>> {
 
 function formatRequestLogPayload(event: AcpSessionRuntime.AcpSessionRequestLogEvent) {
   return {
-    method: structuralMethod(event.method),
+    method: structuralProtocolMethod(event.method),
     status: event.status,
-    request: summarizePayload(event.payload),
-    ...(event.result !== undefined ? { result: summarizePayload(event.result) } : {}),
+    request: summarizeNativeProtocolPayload(event.payload),
+    ...(event.result !== undefined ? { result: summarizeNativeProtocolPayload(event.result) } : {}),
     ...(event.cause !== undefined
       ? {
           errorTag: causeErrorTag(event.cause),
@@ -58,11 +62,11 @@ function formatRequestLogPayload(event: AcpSessionRuntime.AcpSessionRequestLogEv
   };
 }
 
-function formatProtocolLogPayload(event: EffectAcpProtocol.AcpProtocolLogEvent) {
+export function formatAcpProtocolLogPayload(event: EffectAcpProtocol.AcpProtocolLogEvent) {
   return {
     direction: event.direction,
     stage: event.stage,
-    payload: summarizePayload(event.payload),
+    payload: summarizeNativeProtocolPayload(event.payload),
   };
 }
 
@@ -172,7 +176,7 @@ export const makeAcpNativeLoggerFactory = Effect.fn("makeAcpNativeLoggerFactory"
                 return filtered
                   ? writeNativeAcpLog({
                       kind: "protocol",
-                      payload: formatProtocolLogPayload(filtered),
+                      payload: formatAcpProtocolLogPayload(filtered),
                     })
                   : Effect.void;
               },

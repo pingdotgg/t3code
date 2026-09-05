@@ -1,0 +1,28 @@
+id	priority	category	decision_question	recommendation	decision	evidence
+F01	P1	new rebase upgrade defect	Fix upgrades from old V2 migration histories, including the missed main044 repair?	YES	OPEN	persistence.md — finding 1
+F02	P1	new rebase client defect	Fix the sidebar fallback declaration so cached/disconnected environments do not crash?	YES	OPEN	clients.md — sidebar finding
+F03	P1	older V2 correctness defect	Fix the shared checkpoint-scope baseline lookup after an ordinary second run?	YES	OPEN	persistence.md — finding 5
+F04	P1	older mixed-store lifecycle defect	Fix forced WS project deletion rejecting after imported V2 threads were deleted?	YES	OPEN	persistence.md — finding 2
+F05	P1	older transport lifecycle defect	Make HTTP/live CLI/offline CLI project mutations honor V2 threads, force and creation fields?	YES	OPEN	persistence.md — finding 3
+F06	P1	partial main port	Port OpenCode descendant cancellation and error/acknowledgment semantics?	YES	OPEN	providers.md — OpenCode Stop
+F07	P1	missing main lifecycle behavior	Abort external OpenCode root and child work when releasing the runtime?	YES	OPEN	providers.md — external OpenCode release
+F08	P1	older SDK behavior regression	Restore an enforced non-writing boundary for Cursor background metadata generation?	YES	OPEN	providers.md — Cursor metadata
+F09	P1	branch-only attachment defect	Preserve generic files in queued-message save and cross-client edit recovery?	YES	OPEN	clients.md — queue-edit finding
+F10	P1	older rebase mobile defect	Restore all persisted attachment types to the mobile feed?	YES	OPEN	clients.md — attachment-filter finding
+F11	P2	missing main feature	Restore Claude workspace-image Read previews on both clients?	YES	OPEN	providers.md — Claude image preview
+F12	P2	missing main fix	Restore bounded retries for transient initial-title failures?	YES	OPEN	cross-cutting.md — automatic title retries
+F13	P2	new V2 port edge case	Require failure evidence newer than a snooze before auto-settlement treats it as a wake?	YES	OPEN	persistence.md — finding 4
+F14	P2	confirmed query cost	Use narrow V2 checkpoint queries instead of full transcript hydration for diffs?	YES	OPEN	persistence.md — finding 6
+F15	P2	confirmed startup cost	Restrict startup recovery to relevant runtime state instead of every full history?	YES	OPEN	persistence.md — finding 7
+F16	P1	confirmed reconnect payload cost	Keep WS fallback snapshots bounded on HTTP failure and large reconnect gaps?	YES	OPEN	providers.md — WebSocket snapshot fallbacks
+F17	P2	missing main mobile renderer	Restore the mobile assistant Markdown adapter, citation/template actions and iOS scoped image/video renderer?	YES	OPEN	clients.md — assistant renderer finding
+D01	decision	explicitly deferred main feature	Port active-thread continuation across server updates now?	YES for parity; otherwise explicitly defer	OPEN	AUDIT.md — D01; cross-cutting.md
+D02	decision	new V2 ownership semantics	Should inherited message/plan links resolve against their source thread instead of the active fork?	Product choice: YES=source; NO=current fork	OPEN	clients.md — inherited fork ownership
+D03	decision	previously accepted architecture	Keep the Cursor SDK boundary and its documented capability differences?	KEEP; fix F08 independently	PREVIOUSLY ACCEPTED	providers.md — intentional differences
+D04	decision	previously accepted architecture	Keep legacy import limited to messages/metadata and a fresh provider session?	KEEP documented scope	PREVIOUSLY ACCEPTED	docs/user/thread-migration.md; persistence.md
+D05	decision	previously accepted compatibility	Keep protocol V2 rejection of incompatible old clients/servers?	KEEP	PREVIOUSLY ACCEPTED	cross-cutting.md — compatibility
+D06	decision	previously accepted context tradeoff	Keep 240-character portable item summaries and separate 32000-character legacy context budget?	KEEP unless fuller fidelity is required	PREVIOUSLY ACCEPTED	cross-cutting.md — handoff limits
+D07	decision	established surface difference	Keep compact mobile queue controls without duplicating web editing/thumbnails?	KEEP; fix F10 independently	OPEN	clients.md — surface differences
+V01	verification	unmeasured stream cost	Measure V2 tool-update frame/byte counts against main's coalescing invariant?	YES: measure before prescribing the change	OPEN	providers.md — coalescing validation gap
+V02	verification	unproven skills parity	Check cwd skill discovery after CLI/mobile execution or reuse outside web?	YES: focused scenario	OPEN	providers.md — execution-triggered refresh
+V03	verification	interaction coverage	Run focused real-client checks for fixes and retained visibility/hosted-settings paths?	YES when authorized; no browser permission assumed	OPEN	clients.md — verification gaps

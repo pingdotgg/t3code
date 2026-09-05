@@ -2,7 +2,7 @@
 
 Orchestration records intent and state without knowing which provider runs a thread. Provider
 protocols, account ownership, permissions, and capabilities belong at the
-[adapter boundary](../../apps/server/src/provider/Services/ProviderAdapter.ts). Normalize there
+[adapter boundary](../../apps/server/src/orchestration-v2/ProviderAdapter.ts). Normalize there
 instead of spreading provider checks through reactors and clients.
 
 A driver kind identifies an integration; an instance identifies one configuration and account
@@ -20,7 +20,7 @@ external restart to pick up configuration changes.
 
 OpenCode also stores persistent approval grants per directory. Automatic full-access replies use
 `once` so they cannot widen a supervised thread's permissions on a shared external server.
-See the [adapter](../../apps/server/src/provider/Layers/OpenCodeAdapter.ts).
+See the [adapter](../../apps/server/src/orchestration-v2/Adapters/OpenCodeAdapterV2.ts).
 
 Antigravity separates account profiles per instance while sharing installed executables across the
 environment. It forces file-based credential storage because the native macOS keychain entry would
@@ -77,14 +77,18 @@ with a readable, current version.
 ## Protocol traps
 
 Codex async questions arrive as notifications and are answered with a new user message. There is
-no pending RPC response to send. Blocking questions still use the request/response path. The
-[adapter](../../apps/server/src/provider/Layers/CodexAdapter.ts) distinguishes them; the
-[decider](../../apps/server/src/orchestration/decider.ts) records an async answer and its user
-message together.
+no pending RPC response to send. The
+[adapter](../../apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.ts) persists them as
+`user_input_request` turn items and runtime requests with `responseCapability: { type: "message" }`.
+Their execution nodes do not block the run. Web, desktop, and mobile use their normal question
+panels, and requests remain pending after a turn finishes, a provider exits, or the server restarts.
 
-An async question can outlive the turn or a server restart. The engine reads that request's
-durable activity before resolving it because the in-memory command snapshot omits old activities.
-Do not infer that a request has disappeared merely because it is outside the recent window.
+`runtime-request.respond` reads the persisted request and question item, validates required
+answers, and commits the resolution and a user message in one transaction. Repeating the same
+command returns its receipt without posting the answer twice. The normal message path starts or
+resumes a run, queues behind active work, or steers when the adapter supports it. Blocking questions
+retain the provider's live response path. Do not infer that a request has disappeared merely because
+it is outside the recent history window.
 
 Capabilities must describe what the provider can actually do. Antigravity can capture workspace
 checkpoints but cannot roll back its conversation. The [checkpoint boundary](./overview.md#turn-completion-and-checkpoints)
@@ -93,8 +97,9 @@ also survive normalization; a display label is not necessarily a valid reply.
 
 ## Attachments and stored history
 
-Attachments live outside the project workspace. [ProviderService](../../apps/server/src/provider/Layers/ProviderService.ts)
-puts their environment-local paths in turn input and lets adapters choose native input formats.
+Attachments live outside the project workspace. The
+[attachment boundary](../../apps/server/src/orchestration-v2/AttachmentClaims.ts) validates and claims
+uploads for a thread; adapters choose native input formats for those environment-local files.
 A path in the prompt does not grant filesystem access. Keep provider sandbox and approval rules
 in force; copying uploads into the project to bypass them changes that boundary.
 
@@ -102,6 +107,21 @@ File attachments introduced a replay compatibility limit. Image-only clients can
 file-bearing messages, and an image-only server can fail the entire environment's startup when
 replaying one such event. Rollouts and downgrades must account for persisted history as well as
 current client support.
+
+## Provider diagnostics
+
+Native event logs retain lifecycle events, responses, and failures. Token deltas and duplicate raw
+frames are filtered before adapters copy or redact payloads. The filter accepts both legacy native
+events and v2 protocol envelopes; decode failures remain visible through diagnostic frames.
+
+Log payloads have a 64 KiB encoded budget. Large or deeply nested payloads become structural
+summaries that retain routing identifiers, methods, status, and error fields. Traversal is bounded
+before redaction and serialization, so logging a large response does not require several full
+copies. These limits apply to diagnostics; provider event handling is unchanged.
+
+Codex resumes with metadata-only reads when it needs a thread's identity and update time. Its
+initialization capabilities opt out of `turn/diff/updated`: T3 derives diffs from checkpoints.
+The logger filters those notifications before traversal when an older provider still sends them.
 
 Model classification has its own [manifest constraints](./model-manifest.md). Assistant-reference
 handling is documented under [citations](./assistant-citations.md).

@@ -1,7 +1,7 @@
 import type {
-  ApprovalRequestId,
   ProviderApprovalDecision,
   ProviderApprovalOption,
+  RuntimeRequestId,
 } from "@t3tools/contracts";
 import { Pressable, View } from "react-native";
 
@@ -10,9 +10,9 @@ import type { PendingApproval } from "../../lib/threadActivity";
 
 export interface PendingApprovalCardProps {
   readonly approval: PendingApproval;
-  readonly respondingApprovalId: ApprovalRequestId | null;
+  readonly respondingApprovalId: RuntimeRequestId | null;
   readonly onRespond: (
-    requestId: ApprovalRequestId,
+    requestId: RuntimeRequestId,
     decision: ProviderApprovalDecision,
   ) => Promise<unknown>;
 }
@@ -29,6 +29,8 @@ export function PendingApprovalCard(props: PendingApprovalCardProps) {
   const warning = options.find((option) => option.warning)?.warning;
   // Opaque for the same reason as PendingUserInputCard: nothing blurs the feed
   // behind this card, so a translucent surface bleeds messages through it.
+  const canRespond = props.approval.responseCapability === "live";
+  const disabled = !canRespond || props.respondingApprovalId === props.approval.requestId;
   return (
     <View className="gap-2.5 rounded-[20px] border border-adaptive-neutral-200-white-a6 bg-adaptive-neutral-100-900 p-4">
       <Text className="font-t3-bold text-2xs uppercase tracking-[1.1px] text-adaptive-sky-700-300">
@@ -40,6 +42,12 @@ export function PendingApprovalCard(props: PendingApprovalCardProps) {
       {props.approval.detail ? (
         <Text className="font-sans text-sm leading-normal text-adaptive-neutral-600-400">
           {props.approval.detail}
+        </Text>
+      ) : null}
+      {!canRespond ? (
+        <Text className="font-sans text-sm leading-5 text-adaptive-neutral-600-400">
+          The provider process for this request is no longer available. Interrupt or restart the run
+          to continue.
         </Text>
       ) : null}
       {warning ? (
@@ -58,7 +66,7 @@ export function PendingApprovalCard(props: PendingApprovalCardProps) {
                   ? "bg-adaptive-rose-100-500-a18"
                   : "bg-adaptive-neutral-200-800"
             }`}
-            disabled={props.respondingApprovalId === props.approval.requestId}
+            disabled={disabled}
             onPress={() => void props.onRespond(props.approval.requestId, option.decision)}
           >
             <Text
