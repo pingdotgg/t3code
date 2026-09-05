@@ -7514,7 +7514,7 @@ export default function ChatView(props: ChatViewProps) {
 
   const terminalDrawerControls = (
     <div
-      className="flex shrink-0 h-[calc(env(safe-area-inset-bottom)+2.5rem)] items-center justify-end border-t border-border/60 bg-background pr-[calc(env(safe-area-inset-right)+0.75rem)] pb-[env(safe-area-inset-bottom)]"
+      className="absolute right-[calc(env(safe-area-inset-right)+0.75rem)] bottom-[env(safe-area-inset-bottom)] z-30"
       data-terminal-drawer-controls
     >
       <TerminalDrawerToggle
@@ -7721,7 +7721,7 @@ export default function ChatView(props: ChatViewProps) {
   });
 
   return (
-    <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background pb-[calc(env(safe-area-inset-bottom)+2.5rem)]">
+    <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background">
       {rightPanelControlsAtRoot ? panelLayoutControls : null}
       <div
         className={cn(
@@ -8271,7 +8271,7 @@ export default function ChatView(props: ChatViewProps) {
           onClose={closeExpandedImage}
         />
       )}
-      <div className="absolute inset-x-0 bottom-0">{terminalDrawerControls}</div>
+      {terminalDrawerControls}
     </div>
   );
 }

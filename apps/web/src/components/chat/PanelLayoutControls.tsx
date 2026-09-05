@@ -1,4 +1,4 @@
-import { Maximize2Icon, Minimize2Icon, PanelBottomIcon, PanelRightIcon } from "lucide-react";
+import { Maximize2Icon, Minimize2Icon, SquareTerminalIcon, PanelRightIcon } from "lucide-react";
 import { memo } from "react";
 
 import { Toggle } from "../ui/toggle";
@@ -32,7 +32,7 @@ export const TerminalDrawerToggle = memo(function TerminalDrawerToggle({
     <Tooltip>
       <TooltipTrigger render={<span className="flex shrink-0" />}>
         <Toggle
-          className="shrink-0 [-webkit-app-region:no-drag]"
+          className="h-8 w-10 shrink-0 rounded-t-lg rounded-b-none border border-b-0 border-border bg-muted [-webkit-app-region:no-drag]"
           pressed={terminalOpen}
           onPressedChange={onToggleTerminal}
           aria-label="Toggle terminal drawer"
@@ -40,7 +40,7 @@ export const TerminalDrawerToggle = memo(function TerminalDrawerToggle({
           size="sm"
           disabled={!terminalAvailable}
         >
-          <PanelBottomIcon className="size-4" />
+          <SquareTerminalIcon className="size-4" />
         </Toggle>
       </TooltipTrigger>
       <TooltipPopup side="top">
