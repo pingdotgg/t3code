@@ -357,6 +357,115 @@ export function buildThreadTurnInterruptInput(thread: Pick<Thread, "id" | "sessi
   };
 }
 
+/** The pending question seen on the previous render and the draft target of
+ * the thread that showed it, so a disappearance can be attributed. */
+export interface PendingUserInputRequestSnapshot<TDraftTarget> {
+  requestId: string;
+  draftTarget: TDraftTarget;
+}
+
+/**
+ * While a question is pending, the composer routes typed text into that
+ * question's custom answer instead of the persisted draft. The question can
+ * disappear for reasons other than being answered (Stop, provider abort,
+ * teardown), which would silently discard the text (issue #8963). True when
+ * the request that just disappeared should have its typed answers rescued into
+ * the composer draft: the request changed, it was not submitted, and the same
+ * thread is still on screen (an off-screen cancellation is left alone rather
+ * than risk the wrong draft).
+ */
+export function shouldRescueCancelledPendingUserInput<TDraftTarget>(input: {
+  previous: PendingUserInputRequestSnapshot<TDraftTarget> | null;
+  nextRequestId: string | null;
+  currentDraftTarget: TDraftTarget;
+  wasSubmitted: boolean;
+}): boolean {
+  const { previous, nextRequestId, currentDraftTarget, wasSubmitted } = input;
+  if (!previous || previous.requestId === nextRequestId) {
+    return false;
+  }
+  return !wasSubmitted && previous.draftTarget === currentDraftTarget;
+}
+
+/**
+ * Joins a request's non-blank typed custom answers, one per question, so a
+ * multi-question request keeps every answer the user wrote. Returns null when
+ * nothing non-blank was typed.
+ */
+export function collectPendingUserInputCustomAnswers(
+  answersByQuestion: Record<string, { readonly customAnswer?: string }> | undefined,
+): string | null {
+  const answers = Object.values(answersByQuestion ?? {})
+    .map((draft) => draft.customAnswer ?? "")
+    .filter((answer) => answer.trim().length > 0);
+  return answers.length === 0 ? null : answers.join("\n\n");
+}
+
+/**
+ * Merges a rescued pending-question answer into a thread's composer draft
+ * prompt. The draft store is untouched while a question is pending, so it
+ * can still hold older unsent text — a blank draft is replaced outright,
+ * but non-blank text is preserved and the rescued answer is appended after
+ * a blank line rather than clobbering it. Returns `null` when there is
+ * nothing worth persisting (blank answer).
+ */
+export function mergeComposerDraftPromptWithPendingAnswer(
+  existingDraftPrompt: string,
+  pendingCustomAnswer: string,
+): string | null {
+  if (pendingCustomAnswer.trim().length === 0) {
+    return null;
+  }
+  if (existingDraftPrompt.trim().length === 0) {
+    return pendingCustomAnswer;
+  }
+  if (existingDraftPrompt === pendingCustomAnswer) {
+    return existingDraftPrompt;
+  }
+  return `${existingDraftPrompt}\n\n${pendingCustomAnswer}`;
+}
+
+/**
+ * Resolves the draft update when typed pending-question text leaves its answer
+ * slot. A null result means there is no text to return, so the caller must
+ * preserve both the persisted draft and any carried-draft bookkeeping.
+ */
+export function resolveComposerDraftPromptAfterReturningPendingAnswer(input: {
+  draftPrompt: string;
+  carriedDraftPrompt: string | null;
+  pendingCustomAnswer: string;
+}): string | null {
+  const existingDraftPrompt =
+    input.carriedDraftPrompt !== null && input.draftPrompt === input.carriedDraftPrompt
+      ? ""
+      : input.draftPrompt;
+  return mergeComposerDraftPromptWithPendingAnswer(existingDraftPrompt, input.pendingCustomAnswer);
+}
+
+/**
+ * A question that has just arrived takes over the composer, which would hide
+ * whatever the user was typing until the question resolves (issue #8963).
+ * Returns the draft text to carry into the request's first question as its
+ * free-form answer, so the composer visibly keeps it and Send offers it as
+ * the reply. Null when there is nothing to carry: the request already has
+ * answer state (it was seen before, e.g. on an earlier visit to the thread),
+ * the question rejects custom answers, or the draft is blank.
+ */
+export function resolveComposerDraftToCarryIntoPendingUserInput(input: {
+  hasAnswerState: boolean;
+  allowCustomAnswer?: boolean;
+  draftPrompt: string;
+}): string | null {
+  if (
+    input.hasAnswerState ||
+    input.allowCustomAnswer === false ||
+    input.draftPrompt.trim().length === 0
+  ) {
+    return null;
+  }
+  return input.draftPrompt;
+}
+
 /** Use the same enabled instance for the composer, provider status, and chat actions. */
 export function resolveComposerProviderSelection(input: {
   entries: ReadonlyArray<ProviderInstanceEntry>;
