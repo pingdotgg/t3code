@@ -23,6 +23,7 @@ import {
   useLinkedThreadPullRequest,
 } from "./ThreadStatusIndicators";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
+import { DesktopThreadSwipeNavigation } from "./DesktopThreadSwipeNavigation";
 import { ProjectFavicon } from "./ProjectFavicon";
 import { useAtomValue } from "@effect/atom-react";
 import { autoAnimate } from "@formkit/auto-animate";
@@ -3518,6 +3519,21 @@ export default function LegacySidebar() {
     updateThreadJumpHintsVisibility(shouldShowThreadJumpHintsNow);
   }, [shouldShowThreadJumpHintsNow, updateThreadJumpHintsVisibility]);
 
+  const navigateToAdjacentThread = useCallback(
+    (direction: "previous" | "next") => {
+      const targetThreadKey = resolveAdjacentThreadId({
+        threadIds: orderedSidebarThreadKeys,
+        currentThreadId: routeThreadKey,
+        direction,
+      });
+      if (!targetThreadKey) return false;
+      const targetThread = sidebarThreadByKey.get(targetThreadKey);
+      if (!targetThread) return false;
+      navigateToThread(scopeThreadRef(targetThread.environmentId, targetThread.id));
+      return true;
+    },
+    [navigateToThread, orderedSidebarThreadKeys, routeThreadKey, sidebarThreadByKey],
+  );
   useEffect(() => {
     const onWindowKeyDown = (event: globalThis.KeyboardEvent) => {
       const shortcutContext = getCurrentSidebarShortcutContext();
@@ -3532,22 +3548,10 @@ export default function LegacySidebar() {
       });
       const traversalDirection = threadTraversalDirectionFromCommand(command);
       if (traversalDirection !== null) {
-        const targetThreadKey = resolveAdjacentThreadId({
-          threadIds: orderedSidebarThreadKeys,
-          currentThreadId: routeThreadKey,
-          direction: traversalDirection,
-        });
-        if (!targetThreadKey) {
-          return;
+        if (navigateToAdjacentThread(traversalDirection)) {
+          event.preventDefault();
+          event.stopPropagation();
         }
-        const targetThread = sidebarThreadByKey.get(targetThreadKey);
-        if (!targetThread) {
-          return;
-        }
-
-        event.preventDefault();
-        event.stopPropagation();
-        navigateToThread(scopeThreadRef(targetThread.environmentId, targetThread.id));
         return;
       }
 
@@ -3578,10 +3582,9 @@ export default function LegacySidebar() {
   }, [
     getCurrentSidebarShortcutContext,
     keybindings,
+    navigateToAdjacentThread,
     navigateToThread,
-    orderedSidebarThreadKeys,
     platform,
-    routeThreadKey,
     sidebarThreadByKey,
     threadJumpThreadKeys,
   ]);
@@ -3730,6 +3733,7 @@ export default function LegacySidebar() {
 
   return (
     <>
+      {isElectron && <DesktopThreadSwipeNavigation navigate={navigateToAdjacentThread} />}
       {prewarmedSidebarThreadRefs.map((threadRef) => (
         <SidebarThreadDetailPrewarmer key={scopedThreadKey(threadRef)} threadRef={threadRef} />
       ))}

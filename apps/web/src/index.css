@@ -1545,7 +1545,15 @@ body {
 html,
 body {
   min-height: calc(100svh + env(safe-area-inset-top));
-  overscroll-behavior: none;
+  overscroll-behavior-y: none;
+}
+
+/* The browser keeps its native horizontal history gesture. Electron owns the
+   same gesture for thread traversal, so only its document suppresses Chromium's
+   back/forward overscroll navigation. */
+.electron,
+.electron body {
+  overscroll-behavior-x: none;
 }
 
 body {
