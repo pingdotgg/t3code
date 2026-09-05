@@ -120,9 +120,18 @@ function projectionFailure(input: {
 }
 
 function truncate(text: string, maxChars: number) {
+  let end = Math.min(text.length, maxChars);
+  if (
+    end > 0 &&
+    end < text.length &&
+    /[\uD800-\uDBFF]/.test(text[end - 1] ?? "") &&
+    /[\uDC00-\uDFFF]/.test(text[end] ?? "")
+  ) {
+    end -= 1;
+  }
   return text.length <= maxChars
     ? { text, textTruncated: false as const }
-    : { text: `${text.slice(0, maxChars)}\n…[truncated]`, textTruncated: true as const };
+    : { text: `${text.slice(0, end)}\n…[truncated]`, textTruncated: true as const };
 }
 
 function queuedRunSummary(input: {

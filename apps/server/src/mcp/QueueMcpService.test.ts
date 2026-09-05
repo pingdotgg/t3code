@@ -9,6 +9,7 @@ import {
   ThreadId,
   type OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -62,6 +63,7 @@ function projection(input: {
               status: "queued",
               queuePosition: 1,
               userMessageId: queuedMessageId,
+              requestedAt: DateTime.makeUnsafe("2026-09-04T00:00:00.000Z"),
               modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-test" },
             },
           ]
@@ -186,6 +188,37 @@ describe("QueueMcpService", () => {
         });
       }).pipe(Effect.provide(serviceLayer({ caller, target, dispatchCount })));
       assert.equal(yield* Ref.get(dispatchCount), 2);
+    }),
+  );
+
+  it.effect("does not split a surrogate pair at the queue preview boundary", () =>
+    Effect.gen(function* () {
+      const dispatchCount = yield* Ref.make(0);
+      const caller = projection({
+        threadId: callerThreadId,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+      });
+      const queued = projection({
+        threadId: targetThreadId,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        queued: true,
+      });
+      const target = {
+        ...queued,
+        messages: queued.messages.map((message) => ({ ...message, text: "😀 after emoji" })),
+      };
+      const result = yield* Effect.gen(function* () {
+        const service = yield* QueueMcpService;
+        return yield* service.list(scope, {
+          threadId: targetThreadId,
+          limit: 1,
+          maxCharsPerMessage: 1,
+        });
+      }).pipe(Effect.provide(serviceLayer({ caller, target, dispatchCount })));
+      assert.equal(result.runs[0]?.text, "\n…[truncated]");
+      assert.isTrue(result.runs[0]?.textTruncated);
     }),
   );
 
