@@ -206,19 +206,33 @@ export const make = Effect.gen(function* () {
 
       const showHidden = endsWithSeparator || prefix.startsWith(".");
       const lowerPrefix = prefix.toLowerCase();
-      const entries: Array<{ readonly name: string; readonly fullPath: string }> = [];
-      for (const dirent of dirents) {
-        if (
-          dirent.isDirectory() &&
+      const candidates = dirents.filter(
+        (dirent) =>
+          (dirent.isDirectory() || dirent.isSymbolicLink()) &&
           dirent.name.toLowerCase().startsWith(lowerPrefix) &&
-          (showHidden || !dirent.name.startsWith("."))
-        ) {
-          entries.push({
-            name: dirent.name,
-            fullPath: path.join(parentPath, dirent.name),
-          });
-        }
-      }
+          (showHidden || !dirent.name.startsWith(".")),
+      );
+
+      // readdir types a symlink as a link, never as its target, so a link that
+      // points at a directory only becomes browsable after following it. Broken
+      // links, unreadable targets, and links to files drop out here.
+      const resolved = yield* Effect.forEach(
+        candidates,
+        (dirent) => {
+          const entry = { name: dirent.name, fullPath: path.join(parentPath, dirent.name) };
+          if (dirent.isDirectory()) {
+            return Effect.succeed<typeof entry | undefined>(entry);
+          }
+          return Effect.promise(() =>
+            NodeFSP.stat(entry.fullPath).then(
+              (stat) => (stat.isDirectory() ? entry : undefined),
+              () => undefined,
+            ),
+          );
+        },
+        { concurrency: 16 },
+      );
+      const entries = resolved.filter((entry) => entry !== undefined);
 
       return {
         parentPath,
