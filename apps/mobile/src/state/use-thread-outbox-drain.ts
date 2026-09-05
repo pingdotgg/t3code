@@ -585,7 +585,7 @@ export function useThreadOutboxDrain(): void {
   useEffect(() => {
     let mounted = true;
     const load = async () => {
-      if ((await threadOutboxManager.load()) || !mounted) return;
+      if ((await threadOutboxManager.load()).status === "complete" || !mounted) return;
       Alert.alert(
         "Some queued messages could not be loaded",
         "Unreadable records and attachment files are still saved. Other messages can still be sent.",

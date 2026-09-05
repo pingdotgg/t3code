@@ -147,6 +147,7 @@ vi.mock("../features/sharing/incoming-share-storage", () => ({
 
 import { appAtomRegistry } from "./atom-registry";
 import { threadOutboxManager } from "./thread-outbox";
+import { ThreadOutboxManagerError } from "./thread-outbox-manager";
 import {
   appendComposerDraftAttachments,
   archiveCloudComposerDrafts,
@@ -263,7 +264,9 @@ describe("mobile composer drafts", () => {
   });
 
   it("releases videos rejected by the live draft limit and keeps accepted files", async () => {
-    const outboxLoad = vi.spyOn(threadOutboxManager, "load").mockResolvedValue(true);
+    const outboxLoad = vi
+      .spyOn(threadOutboxManager, "load")
+      .mockResolvedValue({ status: "complete" });
     onTestFinished(() => outboxLoad.mockRestore());
     const cleanup = Promise.withResolvers<void>();
     composerAttachmentCleanupMocks.remove.mockImplementationOnce(async () => {
@@ -308,7 +311,9 @@ describe("mobile composer drafts", () => {
   });
 
   it("keeps shared attachment files until every draft releases them", async () => {
-    const outboxLoad = vi.spyOn(threadOutboxManager, "load").mockResolvedValue(true);
+    const outboxLoad = vi
+      .spyOn(threadOutboxManager, "load")
+      .mockResolvedValue({ status: "complete" });
     onTestFinished(() => outboxLoad.mockRestore());
     const file = {
       id: "file-1",
@@ -338,7 +343,9 @@ describe("mobile composer drafts", () => {
   });
 
   it("retains a referenced file-backed image and releases it once unreferenced", async () => {
-    const outboxLoad = vi.spyOn(threadOutboxManager, "load").mockResolvedValue(true);
+    const outboxLoad = vi
+      .spyOn(threadOutboxManager, "load")
+      .mockResolvedValue({ status: "complete" });
     onTestFinished(() => outboxLoad.mockRestore());
     const image = {
       id: "image-1",
@@ -438,7 +445,9 @@ describe("mobile composer drafts", () => {
   });
 
   it("keeps a failed-send draft's pending upload for retry", async () => {
-    const outboxLoad = vi.spyOn(threadOutboxManager, "load").mockResolvedValue(true);
+    const outboxLoad = vi
+      .spyOn(threadOutboxManager, "load")
+      .mockResolvedValue({ status: "complete" });
     onTestFinished(() => outboxLoad.mockRestore());
     const file = {
       id: "file-failed-send",
@@ -496,7 +505,9 @@ describe("mobile composer drafts", () => {
   });
 
   it("cleans up an unreferenced image upload even when there is no local file URI", async () => {
-    const outboxLoad = vi.spyOn(threadOutboxManager, "load").mockResolvedValue(true);
+    const outboxLoad = vi
+      .spyOn(threadOutboxManager, "load")
+      .mockResolvedValue({ status: "complete" });
     onTestFinished(() => outboxLoad.mockRestore());
     const environmentId = EnvironmentId.make("environment-1");
     await releaseUnusedComposerAttachmentFiles([
@@ -521,7 +532,7 @@ describe("mobile composer drafts", () => {
   it.each(["file", "image"] as const)(
     "keeps signed-out %s attachments through cleanup and restart, and restores only the owning account",
     async (type) => {
-      const load = vi.spyOn(threadOutboxManager, "load").mockResolvedValue(true);
+      const load = vi.spyOn(threadOutboxManager, "load").mockResolvedValue({ status: "complete" });
       onTestFinished(() => load.mockRestore());
       await waitForComposerDraftsLoaded();
       const environmentId = EnvironmentId.make("cloud-environment");
@@ -575,6 +586,24 @@ describe("mobile composer drafts", () => {
       expect(appAtomRegistry.get(threadOutboxManager.queuedMessagesByThreadKeyAtom)).toEqual({});
       const enqueue = vi.spyOn(threadOutboxManager, "enqueue").mockResolvedValue();
       onTestFinished(() => enqueue.mockRestore());
+      const savedDrafts = appAtomRegistry.get(composerCloudDraftsAtom);
+      const activeDrafts = appAtomRegistry.get(composerDraftsAtom);
+      const loadError = new ThreadOutboxManagerError({
+        operation: "load",
+        environmentId: null,
+        threadId: null,
+        messageId: null,
+        cause: new Error("An outbox record is unreadable"),
+      });
+      load.mockResolvedValueOnce({ status: "incomplete", error: loadError });
+      await expect(restoreCloudComposerDrafts("account-a")).rejects.toMatchObject({
+        message: "Could not restore queued messages.",
+        cause: loadError,
+      });
+      expect(enqueue).not.toHaveBeenCalled();
+      expect(appAtomRegistry.get(composerDraftsAtom)).toBe(activeDrafts);
+      expect(appAtomRegistry.get(composerCloudDraftsAtom)).toBe(savedDrafts);
+
       await restoreCloudComposerDrafts("account-a");
       expect(getComposerDraftSnapshot(key)).toEqual({ text: "Unsent notes", attachments: [file] });
       expect(getComposerDraftSnapshot("pending-task:queued-1").text).toBe("Edited queued task");
@@ -589,7 +618,7 @@ describe("mobile composer drafts", () => {
   );
 
   it("fails sign-out preservation before cleanup if a durable backup cannot be written", async () => {
-    const load = vi.spyOn(threadOutboxManager, "load").mockResolvedValue(true);
+    const load = vi.spyOn(threadOutboxManager, "load").mockResolvedValue({ status: "complete" });
     onTestFinished(() => load.mockRestore());
     await waitForComposerDraftsLoaded();
     appAtomRegistry.set(composerDraftsAtom, { "environment-1:thread-1": DRAFT });
@@ -614,7 +643,9 @@ describe("mobile composer drafts", () => {
   it.each(["file", "image"] as const)(
     "keeps a removed %s until both preview and a share copy finish",
     async (type) => {
-      const outboxLoad = vi.spyOn(threadOutboxManager, "load").mockResolvedValue(true);
+      const outboxLoad = vi
+        .spyOn(threadOutboxManager, "load")
+        .mockResolvedValue({ status: "complete" });
       onTestFinished(() => outboxLoad.mockRestore());
       const name = type === "image" ? "photo.png" : "recording.mp4";
       const fileName = `33333333-3333-4333-8333-333333333333-${name}`;
@@ -659,7 +690,9 @@ describe("mobile composer drafts", () => {
   );
 
   it("preserves a preview opened while cleanup is checking the incoming inbox", async () => {
-    const outboxLoad = vi.spyOn(threadOutboxManager, "load").mockResolvedValue(true);
+    const outboxLoad = vi
+      .spyOn(threadOutboxManager, "load")
+      .mockResolvedValue({ status: "complete" });
     onTestFinished(() => outboxLoad.mockRestore());
     const file = {
       id: "file-opening-preview",
@@ -695,7 +728,9 @@ describe("mobile composer drafts", () => {
   });
 
   it("removes an unreferenced local file and its pending upload", async () => {
-    const outboxLoad = vi.spyOn(threadOutboxManager, "load").mockResolvedValue(true);
+    const outboxLoad = vi
+      .spyOn(threadOutboxManager, "load")
+      .mockResolvedValue({ status: "complete" });
     onTestFinished(() => outboxLoad.mockRestore());
     const environmentId = EnvironmentId.make("environment-1");
     const file = {
@@ -718,7 +753,9 @@ describe("mobile composer drafts", () => {
   });
 
   it("keeps a pending upload referenced through another local file", async () => {
-    const outboxLoad = vi.spyOn(threadOutboxManager, "load").mockResolvedValue(true);
+    const outboxLoad = vi
+      .spyOn(threadOutboxManager, "load")
+      .mockResolvedValue({ status: "complete" });
     onTestFinished(() => outboxLoad.mockRestore());
     const environmentId = EnvironmentId.make("environment-1");
     const discarded = {
@@ -747,7 +784,9 @@ describe("mobile composer drafts", () => {
   });
 
   it("completes local cleanup when pending upload deletion fails", async () => {
-    const outboxLoad = vi.spyOn(threadOutboxManager, "load").mockResolvedValue(true);
+    const outboxLoad = vi
+      .spyOn(threadOutboxManager, "load")
+      .mockResolvedValue({ status: "complete" });
     onTestFinished(() => outboxLoad.mockRestore());
     const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     onTestFinished(() => warning.mockRestore());
@@ -825,7 +864,7 @@ describe("mobile composer drafts", () => {
           },
         ],
       });
-      return true;
+      return { status: "complete" };
     });
 
     try {
@@ -839,7 +878,9 @@ describe("mobile composer drafts", () => {
   });
 
   it("keeps a file until its incoming share is consumed", async () => {
-    const outboxLoad = vi.spyOn(threadOutboxManager, "load").mockResolvedValue(true);
+    const outboxLoad = vi
+      .spyOn(threadOutboxManager, "load")
+      .mockResolvedValue({ status: "complete" });
     onTestFinished(() => outboxLoad.mockRestore());
     const file = {
       id: "file-incoming",
@@ -874,7 +915,9 @@ describe("mobile composer drafts", () => {
   });
 
   it("does not delete files when incoming share ownership cannot be loaded", async () => {
-    const outboxLoad = vi.spyOn(threadOutboxManager, "load").mockResolvedValue(true);
+    const outboxLoad = vi
+      .spyOn(threadOutboxManager, "load")
+      .mockResolvedValue({ status: "complete" });
     onTestFinished(() => outboxLoad.mockRestore());
     const file = {
       id: "file-incoming-unknown",
@@ -910,7 +953,9 @@ describe("mobile composer drafts", () => {
         ...oldFile,
         fileUri: `file:///var/mobile/Containers/Data/Application/22222222-2222-4222-8222-222222222222/Documents/t3-composer-attachments/${fileName}`,
       };
-      const outboxLoad = vi.spyOn(threadOutboxManager, "load").mockResolvedValue(true);
+      const outboxLoad = vi
+        .spyOn(threadOutboxManager, "load")
+        .mockResolvedValue({ status: "complete" });
       onTestFinished(() => outboxLoad.mockRestore());
       if (owner === "draft") {
         composerDraftFileMocks.setDocument({
@@ -933,7 +978,7 @@ describe("mobile composer drafts", () => {
               },
             ],
           });
-          return true;
+          return { status: "complete" };
         });
       } else {
         incomingShareStorageMocks.load.mockResolvedValue([
@@ -954,7 +999,7 @@ describe("mobile composer drafts", () => {
 
       appAtomRegistry.set(composerDraftsAtom, {});
       appAtomRegistry.set(threadOutboxManager.queuedMessagesByThreadKeyAtom, {});
-      outboxLoad.mockResolvedValue(true);
+      outboxLoad.mockResolvedValue({ status: "complete" });
       incomingShareStorageMocks.load.mockResolvedValue([]);
       await releaseUnusedComposerAttachmentFiles([currentFile]);
 
@@ -1722,7 +1767,9 @@ describe("mobile composer drafts", () => {
   });
 
   it("spares a file re-owned between the sweep's scan and its deletion", async () => {
-    const outboxLoad = vi.spyOn(threadOutboxManager, "load").mockResolvedValue(true);
+    const outboxLoad = vi
+      .spyOn(threadOutboxManager, "load")
+      .mockResolvedValue({ status: "complete" });
     onTestFinished(() => outboxLoad.mockRestore());
     const fileFor = (id: string) => ({
       id,
@@ -1780,11 +1827,12 @@ describe("mobile composer drafts", () => {
     };
     const saved = new Map([[readable.messageId, readable]]);
     let unreadable = true;
-    const load = vi.spyOn(storage, "load").mockImplementation(async () => ({
-      messages: [...saved.values()],
-      errors: unreadable
-        ? [
-            new ThreadOutboxStorageError({
+    const load = vi.spyOn(storage, "load").mockImplementation(async () =>
+      unreadable
+        ? {
+            messages: [...saved.values()],
+            status: "incomplete",
+            error: new ThreadOutboxStorageError({
               operation: "read-message",
               environmentId: null,
               threadId: null,
@@ -1792,9 +1840,9 @@ describe("mobile composer drafts", () => {
               fileName: "unreadable.json",
               cause: new Error("unreadable record"),
             }),
-          ]
-        : [],
-    }));
+          }
+        : { messages: [...saved.values()], status: "complete" },
+    );
     const remove = vi.spyOn(storage, "remove").mockImplementation(async (message) => {
       saved.delete(message.messageId);
     });
@@ -1803,7 +1851,20 @@ describe("mobile composer drafts", () => {
       remove.mockRestore();
     });
 
-    await expect(manager.load()).resolves.toBe(false);
+    await expect(manager.load()).resolves.toMatchObject({ status: "incomplete" });
+    await drafts.waitForComposerDraftsLoaded();
+    const currentDrafts = {
+      "environment-1:thread-1": { text: "Keep my draft during sign-out", attachments: [] },
+    };
+    registry.set(drafts.composerDraftsAtom, currentDrafts);
+    await expect(
+      drafts.archiveCloudComposerDrafts("account-a", new Set([readable.environmentId])),
+    ).rejects.toMatchObject({
+      message: "Could not preserve queued messages.",
+      cause: { operation: "load" },
+    });
+    expect(registry.get(drafts.composerDraftsAtom)).toBe(currentDrafts);
+    expect(registry.get(drafts.composerCloudDraftsAtom).signedOut).toEqual({});
     await expect(manager.confirmQueued(readable)).resolves.toBe(true);
     await expect(removeThreadOutboxMessage(readable)).resolves.toBe(true);
     await drafts.releaseUnusedComposerAttachmentFiles([file]);
@@ -1819,7 +1880,7 @@ describe("mobile composer drafts", () => {
     };
     saved.set(recovered.messageId, recovered);
     unreadable = false;
-    await expect(manager.load()).resolves.toBe(true);
+    await expect(manager.load()).resolves.toEqual({ status: "complete" });
     await drafts.releaseUnusedComposerAttachmentFiles([file]);
     expect(composerAttachmentCleanupMocks.remove).not.toHaveBeenCalled();
     expect(composerAttachmentCleanupMocks.releaseUploads).not.toHaveBeenCalled();
