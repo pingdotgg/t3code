@@ -12,7 +12,8 @@ export const PullRequestMarkdownContext = createContext<string | null>(null);
 
 /**
  * A pull request body, rendered with the app's markdown renderer plus a card for each upload
- * embedded in it, which that renderer drops on the floor.
+ * embedded in it, which that renderer drops on the floor. `mermaid` fences render as diagrams
+ * here because GitHub renders them, so authors write them expecting a diagram.
  *
  * These upload URLs do not identify the media format. The card links to GitHub, where the
  * original upload can be opened or downloaded even when its codec cannot play in the client.
@@ -49,6 +50,7 @@ export function PullRequestMarkdown({
               threadRef={threadRef ?? undefined}
               environmentId={environmentId}
               extraRemarkPlugins={extraRemarkPlugins}
+              mermaidDiagrams
             />
           );
         }

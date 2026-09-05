@@ -1,7 +1,9 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
+  ChartNetworkIcon,
   CheckIcon,
   ChevronRightIcon,
+  CodeIcon,
   CopyIcon,
   FileSpreadsheetIcon,
   FileTextIcon,
@@ -120,6 +122,8 @@ import { fnv1a32 } from "../lib/diffRendering";
 import { LRUCache } from "../lib/lruCache";
 import { getSyntaxHighlighterPromise } from "../lib/syntaxHighlighting";
 import { RenderErrorBoundary } from "./RenderErrorBoundary";
+import { MermaidDiagram } from "./chat/MermaidDiagram";
+import { isMermaidFenceLanguage } from "../lib/mermaid";
 import { useTheme } from "../hooks/useTheme";
 import { getClientSettings, useClientSettings } from "../hooks/useSettings";
 import {
@@ -202,6 +206,9 @@ interface ChatMarkdownProps {
   imageBaseDir?: string | undefined;
   onImageExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
   extraRemarkPlugins?: NonNullable<ReactMarkdownOptions["remarkPlugins"]>;
+  /** Render `mermaid` fences as diagrams. On for GitHub-authored bodies, which their authors
+      write expecting GitHub to draw them; off elsewhere, where a fence is code to read. */
+  mermaidDiagrams?: boolean;
 }
 
 export function canUseMarkdownFileShellActions(
@@ -884,12 +891,18 @@ function MarkdownCodeBlock({
   language,
   fenceTitle,
   theme,
+  actions,
+  showWrapToggle = true,
   children,
 }: {
   code: string;
   language: string;
   fenceTitle: string | null;
   theme: "light" | "dark";
+  /** Extra toolbar controls, shown before the block's own actions. */
+  actions?: ReactNode;
+  /** Off for bodies line wrapping cannot affect, such as a rendered diagram. */
+  showWrapToggle?: boolean;
   children: ReactNode;
 }) {
   const [copied, setCopied] = useState(false);
@@ -951,24 +964,27 @@ function MarkdownCodeBlock({
           />
         </span>
         <span className="flex items-center gap-0.5" role="toolbar" aria-label="Code block actions">
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-xs"
-                  className="chat-markdown-chrome-action"
-                  aria-pressed={wrapped}
-                  onClick={() => setWrapped((value) => !value)}
-                  aria-label={wrapLabel}
-                />
-              }
-            >
-              <WrapTextIcon className="size-3" />
-            </TooltipTrigger>
-            <TooltipPopup side="top">{wrapLabel}</TooltipPopup>
-          </Tooltip>
+          {actions}
+          {showWrapToggle ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-xs"
+                    className="chat-markdown-chrome-action"
+                    aria-pressed={wrapped}
+                    onClick={() => setWrapped((value) => !value)}
+                    aria-label={wrapLabel}
+                  />
+                }
+              >
+                <WrapTextIcon className="size-3" />
+              </TooltipTrigger>
+              <TooltipPopup side="top">{wrapLabel}</TooltipPopup>
+            </Tooltip>
+          ) : null}
           <Tooltip>
             <TooltipTrigger
               render={
@@ -990,6 +1006,59 @@ function MarkdownCodeBlock({
       </div>
       {children}
     </div>
+  );
+}
+
+/**
+ * A `mermaid` fence: the diagram by default, as GitHub shows it, with a toggle back to the
+ * source so nothing this block used to show is lost.
+ */
+function MarkdownMermaidBlock({
+  code,
+  language,
+  fenceTitle,
+  theme,
+  source,
+}: {
+  code: string;
+  language: string;
+  fenceTitle: string | null;
+  theme: "light" | "dark";
+  source: ReactNode;
+}) {
+  const [showSource, setShowSource] = useState(false);
+  const toggleLabel = showSource ? "Show diagram" : "Show diagram source";
+
+  return (
+    <MarkdownCodeBlock
+      code={code}
+      language={language}
+      fenceTitle={fenceTitle}
+      theme={theme}
+      showWrapToggle={showSource}
+      actions={
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-xs"
+                className="chat-markdown-chrome-action"
+                aria-pressed={showSource}
+                onClick={() => setShowSource((value) => !value)}
+                aria-label={toggleLabel}
+              />
+            }
+          >
+            {showSource ? <ChartNetworkIcon className="size-3" /> : <CodeIcon className="size-3" />}
+          </TooltipTrigger>
+          <TooltipPopup side="top">{toggleLabel}</TooltipPopup>
+        </Tooltip>
+      }
+    >
+      {showSource ? source : <MermaidDiagram code={code} theme={theme} source={source} />}
+    </MarkdownCodeBlock>
   );
 }
 
@@ -2136,6 +2205,7 @@ function useChatMarkdownState({
   onUseArtifactTemplate,
   imageBaseDir,
   onImageExpand,
+  mermaidDiagrams = false,
 }: ChatMarkdownProps) {
   const { resolvedTheme } = useTheme();
   const [localMediaPreview, setLocalMediaPreview] = useState<ExpandedImagePreview | null>(null);
@@ -2546,6 +2616,7 @@ function useChatMarkdownState({
       isStreaming,
       linkTargetPreference,
       markdownFileLinkMetaByHref,
+      mermaidDiagrams,
       onTaskListChange,
       onUseArtifactTemplate,
       openChangeRequestLink,
@@ -2572,6 +2643,7 @@ function useChatMarkdownState({
       isStreaming,
       linkTargetPreference,
       markdownFileLinkMetaByHref,
+      mermaidDiagrams,
       onTaskListChange,
       onUseArtifactTemplate,
       openChangeRequestLink,
@@ -3033,7 +3105,9 @@ const CHAT_MARKDOWN_COMPONENTS = {
     return <MarkdownDetails open={detailsOpen}>{children}</MarkdownDetails>;
   },
   pre: function MarkdownPre({ node, children, ...props }) {
-    const { resolvedTheme, diffThemeName, isStreaming } = use(ChatMarkdownRendererContext);
+    const { resolvedTheme, diffThemeName, isStreaming, mermaidDiagrams } = use(
+      ChatMarkdownRendererContext,
+    );
     const codeBlock = extractCodeBlock(children);
     if (!codeBlock) {
       return <pre {...props}>{children}</pre>;
@@ -3041,6 +3115,35 @@ const CHAT_MARKDOWN_COMPONENTS = {
 
     const language = extractFenceLanguage(codeBlock.className);
     const fenceTitle = extractFenceTitle(extractPreCodeMeta(node));
+    const source = (
+      <RenderErrorBoundary
+        resetKeys={[codeBlock.code, language, diffThemeName, isStreaming]}
+        fallback={<pre {...props}>{children}</pre>}
+      >
+        <Suspense fallback={<pre {...props}>{children}</pre>}>
+          <SuspenseShikiCodeBlock
+            className={codeBlock.className}
+            code={codeBlock.code}
+            themeName={diffThemeName}
+            isStreaming={isStreaming}
+          />
+        </Suspense>
+      </RenderErrorBoundary>
+    );
+
+    // A half-written diagram cannot parse, so streaming text keeps showing its source.
+    if (mermaidDiagrams && !isStreaming && isMermaidFenceLanguage(language)) {
+      return (
+        <MarkdownMermaidBlock
+          code={codeBlock.code}
+          language={language}
+          fenceTitle={fenceTitle}
+          theme={resolvedTheme}
+          source={source}
+        />
+      );
+    }
+
     return (
       <MarkdownCodeBlock
         code={codeBlock.code}
@@ -3048,19 +3151,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
         fenceTitle={fenceTitle}
         theme={resolvedTheme}
       >
-        <RenderErrorBoundary
-          resetKeys={[codeBlock.code, language, diffThemeName, isStreaming]}
-          fallback={<pre {...props}>{children}</pre>}
-        >
-          <Suspense fallback={<pre {...props}>{children}</pre>}>
-            <SuspenseShikiCodeBlock
-              className={codeBlock.className}
-              code={codeBlock.code}
-              themeName={diffThemeName}
-              isStreaming={isStreaming}
-            />
-          </Suspense>
-        </RenderErrorBoundary>
+        {source}
       </MarkdownCodeBlock>
     );
   },

@@ -1887,6 +1887,13 @@ code {
   background: transparent !important;
 }
 
+/* Mermaid sizes its SVG from the diagram's own layout, which overflows a narrow right panel.
+   Let it shrink to the panel and scroll only when its own minimum width wins. */
+.chat-markdown .chat-markdown-mermaid svg {
+  max-width: 100%;
+  height: auto;
+}
+
 /* Diagnostics-style tables: row separators only, uppercase headers, and a
    scroll-fade container for horizontal overflow. The root chat-markdown
    wrapping rules (overflow-wrap: anywhere) would let columns shrink to single
