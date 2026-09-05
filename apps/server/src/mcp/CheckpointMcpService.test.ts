@@ -15,6 +15,7 @@ import {
   ProviderThreadId,
   ThreadId,
   VcsDriverKind,
+  VcsProcessOutputLimitError,
   VcsUnsupportedOperationError,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -316,6 +317,40 @@ it.effect("paginates diff content on valid UTF-16 boundaries", () => {
       })
       .pipe(Effect.flip);
     assert.equal(error.code, "invalid_request");
+  }).pipe(Effect.provide(harness.serviceLayer));
+});
+
+it.effect("requires complete bounded diff output and reports overflow safely", () => {
+  const from = makeCheckpoint(0);
+  const target = makeCheckpoint(1);
+  const harness = makeHarness({
+    projection: makeProjection({ checkpoints: [from, target] }),
+    diffCheckpoints: (input) =>
+      Effect.gen(function* () {
+        assert.equal(input.requireCompleteOutput, true);
+        return yield* new VcsProcessOutputLimitError({
+          operation: "GitVcsDriver.checkpoints.diffCheckpoints",
+          command: "git diff",
+          cwd: "/private/workspace",
+          stream: "stdout",
+          maxBytes: 10_000_000,
+          observedBytes: 10_000_001,
+        });
+      }),
+  });
+
+  return Effect.gen(function* () {
+    const service = yield* CheckpointMcpService;
+    const error = yield* service
+      .diff(invocation, {
+        scopeId,
+        checkpointId: target.id,
+        fromCheckpointId: from.id,
+      })
+      .pipe(Effect.flip);
+
+    assert.equal(error.code, "operation_failed");
+    assert.equal(error.message, "Unable to compute checkpoint diff.");
   }).pipe(Effect.provide(harness.serviceLayer));
 });
 

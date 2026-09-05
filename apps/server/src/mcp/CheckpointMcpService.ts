@@ -430,13 +430,11 @@ export const make = Effect.gen(function* () {
                 toCheckpointRef: target.ref,
                 fallbackFromToHead: false,
                 ignoreWhitespace: input.ignoreWhitespace ?? true,
+                requireCompleteOutput: true,
               })
               .pipe(
-                Effect.mapError((error) =>
-                  failure(
-                    "operation_failed",
-                    `Unable to compute checkpoint diff: ${errorMessage(error)}`,
-                  ),
+                Effect.mapError(() =>
+                  failure("operation_failed", "Unable to compute checkpoint diff."),
                 ),
               );
       const cursor = input.cursor ?? 0;
