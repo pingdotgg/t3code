@@ -6,6 +6,7 @@ import * as Schema from "effect/Schema";
 import {
   resolvePullRequestAuthorFilter,
   type PullRequestAction,
+  type PullRequestFileViewedStates,
   type PullRequestActor,
   type PullRequestInvolvement,
   type PullRequestListFilters,
@@ -28,6 +29,11 @@ import * as GitHubGraphQlBudget from "../sourceControl/githubGraphQlBudget.ts";
 import * as SourceControlRateLimit from "../sourceControl/SourceControlRateLimit.ts";
 import {
   ACTOR_AVATARS_GRAPHQL_QUERY,
+  FILE_VIEWED_STATES_GRAPHQL_QUERY,
+  type GitHubFileViewedStatesPage,
+  MARK_FILE_VIEWED_GRAPHQL_MUTATION,
+  UNMARK_FILE_VIEWED_GRAPHQL_MUTATION,
+  decodeFileViewedStatesJson,
   ADD_REACTION_GRAPHQL_MUTATION,
   buildReviewSubmissionJson,
   buildReviewerRequestJson,
@@ -662,6 +668,22 @@ export class GitHubPullRequestCli extends Context.Service<
       readonly host: string;
       readonly threadId: string;
       readonly resolved: boolean;
+    }) => Effect.Effect<void, GitHubPullRequestCliError>;
+
+    readonly getFileViewedStates: (input: {
+      readonly cwd: string;
+      readonly repository: string;
+      readonly host: string;
+      readonly number: number;
+    }) => Effect.Effect<PullRequestFileViewedStates, GitHubPullRequestCliError>;
+
+    readonly setFileViewed: (input: {
+      readonly cwd: string;
+      readonly repository: string;
+      readonly host: string;
+      readonly number: number;
+      readonly path: string;
+      readonly viewed: boolean;
     }) => Effect.Effect<void, GitHubPullRequestCliError>;
 
     /**
@@ -2227,6 +2249,56 @@ export const make = Effect.gen(function* () {
           : UNRESOLVE_REVIEW_THREAD_GRAPHQL_MUTATION,
         variables: { threadId: input.threadId },
       }),
+
+    getFileViewedStates: Effect.fn("GitHubPullRequestCli.getFileViewedStates")(function* (input) {
+      const { owner, name } = parseRepositorySelector(input.repository);
+      const files: Array<PullRequestFileViewedStates["files"][number]> = [];
+      const cursors = new Set<string>();
+      const readPage = (cursor: string | null) =>
+        graphqlRead({
+          cwd: input.cwd,
+          host: input.host,
+          operation: "getFileViewedStates",
+          variables: [
+            ["-f", `owner=${owner}`],
+            ["-f", `name=${name}`],
+            ["-F", `number=${input.number}`],
+            ...(cursor === null ? [] : [["-f", `cursor=${cursor}`] as const]),
+          ],
+          query: FILE_VIEWED_STATES_GRAPHQL_QUERY,
+          decode: decodeFileViewedStatesJson,
+        });
+      let cursor: string | null = null;
+      while (true) {
+        const page: GitHubFileViewedStatesPage = yield* readPage(cursor);
+        files.push(...page.files);
+        if (!page.pageInfo.hasNextPage) return { files };
+        cursor = page.pageInfo.endCursor;
+        if (cursor === null || cursors.has(cursor)) {
+          return yield* new GitHubPullRequestReadError({
+            command: "gh",
+            cwd: input.cwd,
+            operation: "getFileViewedStates",
+            cause: "GitHub returned an invalid file cursor.",
+          });
+        }
+        cursors.add(cursor);
+      }
+    }),
+
+    setFileViewed: (input) =>
+      pullRequestNodeId({ ...input, operation: "setFileViewed" }).pipe(
+        Effect.flatMap((pullRequestId) =>
+          graphql({
+            cwd: input.cwd,
+            host: input.host,
+            query: input.viewed
+              ? MARK_FILE_VIEWED_GRAPHQL_MUTATION
+              : UNMARK_FILE_VIEWED_GRAPHQL_MUTATION,
+            variables: { pullRequestId, path: input.path },
+          }),
+        ),
+      ),
 
     setReaction: (input) => {
       const givenSubjectId = input.subjectId;

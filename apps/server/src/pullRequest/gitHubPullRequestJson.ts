@@ -2445,3 +2445,58 @@ export function decodePullRequestFilesJson(
     omittedFileStats,
   });
 }
+
+export const FILE_VIEWED_STATES_GRAPHQL_QUERY = `query($owner: String!, $name: String!, $number: Int!, $cursor: String) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      files(first: 100, after: $cursor) {
+        nodes { path viewerViewedState }
+        pageInfo { hasNextPage endCursor }
+      }
+    }
+  }
+}`;
+
+const decodeFileViewedStates = decodeJsonResult(
+  Schema.Struct({
+    data: Schema.Struct({
+      repository: Schema.Struct({
+        pullRequest: Schema.Struct({
+          files: Schema.Struct({
+            nodes: Schema.Array(
+              Schema.Struct({
+                path: Schema.String,
+                viewerViewedState: Schema.Literals(["VIEWED", "UNVIEWED", "DISMISSED"]),
+              }),
+            ),
+            pageInfo: Schema.Struct({
+              hasNextPage: Schema.Boolean,
+              endCursor: Schema.NullOr(Schema.String),
+            }),
+          }),
+        }),
+      }),
+    }),
+  }),
+);
+
+export function decodeFileViewedStatesJson(raw: string) {
+  return Result.map(decodeFileViewedStates(raw), ({ data }) => ({
+    files: data.repository.pullRequest.files.nodes.map((file) => ({
+      path: file.path,
+      viewed: file.viewerViewedState === "VIEWED",
+    })),
+    pageInfo: data.repository.pullRequest.files.pageInfo,
+  }));
+}
+
+export const MARK_FILE_VIEWED_GRAPHQL_MUTATION = `mutation($pullRequestId: ID!, $path: String!) {
+  markFileAsViewed(input: {pullRequestId: $pullRequestId, path: $path}) { clientMutationId }
+}`;
+export const UNMARK_FILE_VIEWED_GRAPHQL_MUTATION = `mutation($pullRequestId: ID!, $path: String!) {
+  unmarkFileAsViewed(input: {pullRequestId: $pullRequestId, path: $path}) { clientMutationId }
+}`;
+
+export type GitHubFileViewedStatesPage = Result.Result.Success<
+  ReturnType<typeof decodeFileViewedStatesJson>
+>;

@@ -4137,3 +4137,82 @@ it.effect("names the signed-in account in the detail, and says nothing where the
     assert.strictEqual(unnamed.viewer, undefined);
   }),
 );
+
+it.effect("shares viewed-state reads and invalidates them after marking and unmarking", () =>
+  Effect.gen(function* () {
+    let viewed = false;
+    let reads = 0;
+    const writes: Array<{ path: string; viewed: boolean; repository: string; number: number }> = [];
+    const base = fakeProvider("github");
+    const service = yield* makeService({
+      projects: [
+        project({ id: "p1", title: "t3code", workspaceRoot: "/a", repository: "pingdotgg/t3code" }),
+      ],
+      providers: [
+        fakeProvider("github", {
+          capabilities: { ...base.capabilities, fileViewedState: true },
+          getFileViewedStates: () =>
+            Effect.sync(() => {
+              reads++;
+              return { files: [{ path: " renamed.ts ", viewed }] };
+            }),
+          setFileViewed: (input) =>
+            Effect.sync(() => {
+              writes.push(input);
+              viewed = input.viewed;
+            }),
+        }),
+      ],
+    });
+    const reference = { projectId: "p1" as ProjectId, repository: "pingdotgg/t3code", number: 7 };
+    const initial = yield* Effect.all(
+      [service.fileViewedStates(reference), service.fileViewedStates(reference)],
+      { concurrency: "unbounded" },
+    );
+    assert.strictEqual(reads, 1);
+    assert.deepStrictEqual(initial[0], { files: [{ path: " renamed.ts ", viewed: false }] });
+    for (const next of [true, false]) {
+      yield* service.setFileViewed({ ...reference, path: " renamed.ts ", viewed: next });
+      assert.deepStrictEqual(yield* service.fileViewedStates(reference), {
+        files: [{ path: " renamed.ts ", viewed: next }],
+      });
+    }
+    assert.strictEqual(reads, 3);
+    assert.deepStrictEqual(
+      writes.map(({ path, viewed, repository, number }) => ({ path, viewed, repository, number })),
+      [
+        { path: " renamed.ts ", viewed: true, repository: "pingdotgg/t3code", number: 7 },
+        { path: " renamed.ts ", viewed: false, repository: "pingdotgg/t3code", number: 7 },
+      ],
+    );
+    yield* service.invalidate({ reference });
+    yield* service.fileViewedStates(reference);
+    assert.strictEqual(reads, 4);
+  }),
+);
+
+it.effect("refuses viewed state on a host without the capability", () =>
+  Effect.gen(function* () {
+    const service = yield* makeService({
+      projects: [
+        project({ id: "p1", title: "t3code", workspaceRoot: "/a", repository: "pingdotgg/t3code" }),
+      ],
+      providers: [
+        fakeProvider("github", {
+          getFileViewedStates: () => Effect.die("must not read"),
+          setFileViewed: () => Effect.die("must not write"),
+        }),
+      ],
+    });
+    const reference = { projectId: "p1" as ProjectId, repository: "pingdotgg/t3code", number: 7 };
+    assert.strictEqual(
+      (yield* Effect.flip(service.fileViewedStates(reference)))._tag,
+      "PullRequestOperationError",
+    );
+    assert.strictEqual(
+      (yield* Effect.flip(service.setFileViewed({ ...reference, path: "a.ts", viewed: true })))
+        ._tag,
+      "PullRequestOperationError",
+    );
+  }),
+);

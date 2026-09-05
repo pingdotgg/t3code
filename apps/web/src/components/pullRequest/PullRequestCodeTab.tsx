@@ -4,6 +4,7 @@ import type {
   EnvironmentId,
   PullRequestDetailView,
   PullRequestDiffSide,
+  PullRequestFileViewedStates,
   PullRequestOmittedFileStat,
   PullRequestRef,
   PullRequestReviewPosition,
@@ -75,6 +76,7 @@ import { toastManager } from "../ui/toast";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { PendingReviewCommentCard, ReviewThreadCard } from "./PullRequestReviewAnnotation";
+import { PullRequestFileViewedCheckbox } from "./PullRequestFileViewedCheckbox";
 import { PullRequestReviewBar } from "./PullRequestReviewBar";
 import {
   isFileDiffCollapsed,
@@ -218,7 +220,12 @@ export function PullRequestCodeTab({
 }) {
   const { resolvedTheme } = useTheme();
   const settings = useClientSettings();
-  const [toggledFiles, setToggledFiles] = useState<ReadonlySet<string>>(() => new Set());
+  const [fileFoldOverrides, setFileFoldOverrides] = useState<ReadonlyMap<string, boolean>>(
+    () => new Map(),
+  );
+  const [optimisticViewedFiles, setOptimisticViewedFiles] = useState<
+    ReadonlyMap<string, { snapshot: PullRequestFileViewedStates | null; viewed: boolean }>
+  >(() => new Map());
   // A change of any size can carry hundreds of commits, and a menu that long is a scroll rather
   // than a choice. The rest arrive ten at a time, on request.
   const [visibleCommitCount, setVisibleCommitCount] = useState(COMMIT_PAGE_SIZE);
@@ -262,13 +269,66 @@ export function PullRequestCodeTab({
   useEffect(() => {
     setDraft(null);
     setSelectedLines(null);
-    setToggledFiles(new Set());
+    setFileFoldOverrides(new Map());
+    setOptimisticViewedFiles(new Map());
     setFoldOverride(null);
     setVisibleCommitCount(COMMIT_PAGE_SIZE);
     setOrphansOpen(false);
     setSliceState({ key: scopeKey, cursor: null, slices: NO_SLICES });
     parseCache.current.clear();
   }, [scopeKey]);
+
+  // GitHub records viewed state for the whole PR, not for an individual commit.
+  const canViewFiles = detail.capabilities.fileViewedState === true && commit === null;
+  const viewedQuery = useEnvironmentQuery(
+    canViewFiles
+      ? pullRequestEnvironment.fileViewedStates({ environmentId, input: reference })
+      : null,
+  );
+  const refreshViewedFiles = viewedQuery.refresh;
+  const viewedSnapshot = viewedQuery.data;
+  const viewedFileKey = useCallback(
+    (path: string) => JSON.stringify([environmentId, referenceKey, path]),
+    [environmentId, referenceKey],
+  );
+  // The checkbox and the diff share the same optimistic value, so neither waits for GitHub.
+  const viewedFiles = useMemo(
+    () =>
+      new Map(
+        viewedSnapshot?.files.map((file) => {
+          const optimistic = optimisticViewedFiles.get(viewedFileKey(file.path));
+          return [
+            file.path,
+            optimistic?.snapshot === viewedSnapshot ? optimistic.viewed : file.viewed,
+          ];
+        }),
+      ),
+    [viewedSnapshot, optimisticViewedFiles, viewedFileKey],
+  );
+  const setOptimisticFileViewed = useCallback(
+    (path: string, viewed: boolean | null) => {
+      const key = viewedFileKey(path);
+      setOptimisticViewedFiles((current) => {
+        const next = new Map(current);
+        if (viewed === null) next.delete(key);
+        else next.set(key, { snapshot: viewedSnapshot, viewed });
+        return next;
+      });
+    },
+    [viewedFileKey, viewedSnapshot],
+  );
+  const viewedRefreshKey = JSON.stringify([
+    environmentId,
+    referenceKey,
+    refreshToken,
+    detail.updatedAt,
+  ]);
+  const appliedViewedRefreshKey = useRef(viewedRefreshKey);
+  useEffect(() => {
+    if (!canViewFiles || appliedViewedRefreshKey.current === viewedRefreshKey) return;
+    appliedViewedRefreshKey.current = viewedRefreshKey;
+    refreshViewedFiles();
+  }, [canViewFiles, refreshViewedFiles, viewedRefreshKey]);
 
   const loadedSlices = sliceState.key === scopeKey ? sliceState.slices : NO_SLICES;
   const cursor = sliceState.key === scopeKey ? sliceState.cursor : null;
@@ -485,7 +545,12 @@ export function PullRequestCodeTab({
           groupAt(anchor.side, anchor.line).draft = true;
         }
 
-        const collapsed = isFileDiffCollapsed(fileKey, foldOverride, toggledFiles);
+        const collapsed = isFileDiffCollapsed(
+          fileKey,
+          foldOverride,
+          fileFoldOverrides,
+          canViewFiles && viewedFiles.get(path) === true,
+        );
 
         const annotations: ReviewAnnotation[] = [...groups.values()].map((group) => ({
           side: toViewerSide(group.side),
@@ -538,7 +603,9 @@ export function PullRequestCodeTab({
       foldOverride,
       pendingComments,
       placedThreadIds,
-      toggledFiles,
+      fileFoldOverrides,
+      canViewFiles,
+      viewedFiles,
     ],
   );
   const lineStat = useMemo(() => getDiffLineStat(files), [files]);
@@ -590,16 +657,9 @@ export function PullRequestCodeTab({
   // A stable identity: the viewer's SlotPortals memoizes each file's header/annotation portal on
   // these render props, so a fresh function here would recreate every visible file's portal on
   // every tab re-render (a line-selection drag, a keystroke in the draft, a review-store update).
-  const toggleFile = useCallback(
-    (fileKey: string) =>
-      setToggledFiles((current) => {
-        // The override becomes this file's new default the moment it is folded into the set below,
-        // so nothing has to be re-derived when the reader goes back to choosing one at a time.
-        const next = new Set(current);
-        if (next.has(fileKey)) next.delete(fileKey);
-        else next.add(fileKey);
-        return next;
-      }),
+  const setFileCollapsed = useCallback(
+    (fileKey: string, collapsed: boolean) =>
+      setFileFoldOverrides((current) => new Map(current).set(fileKey, collapsed)),
     [],
   );
 
@@ -608,10 +668,10 @@ export function PullRequestCodeTab({
     (path: string) => {
       const item = items.find((candidate) => resolveFileDiffPath(candidate.fileDiff) === path);
       if (item === undefined) return;
-      if (item.collapsed === true) toggleFile(item.id);
+      if (item.collapsed === true) setFileCollapsed(item.id, false);
       requestTreeReveal(item.id);
     },
-    [items, requestTreeReveal, toggleFile],
+    [items, requestTreeReveal, setFileCollapsed],
   );
 
   const toggleAllFiles = () => {
@@ -619,7 +679,7 @@ export function PullRequestCodeTab({
     // still paging would otherwise bring its next slice in folded, moments after the reader
     // asked for everything to be open.
     setFoldOverride(areAllDiffFilesCollapsed(fileKeys, collapsedFileKeys) ? "expanded" : "folded");
-    setToggledFiles(new Set());
+    setFileFoldOverrides(new Map());
   };
 
   // Newest first: the last commit is the one a reader coming back to a change is looking for.
@@ -726,7 +786,7 @@ export function PullRequestCodeTab({
           className="mr-1 rounded hover:bg-transparent"
           onClick={(event) => {
             event.stopPropagation();
-            toggleFile(item.id);
+            setFileCollapsed(item.id, item.collapsed !== true);
           }}
         >
           {collapsed ? (
@@ -737,7 +797,7 @@ export function PullRequestCodeTab({
         </Button>
       );
     },
-    [toggleFile],
+    [setFileCollapsed],
   );
 
   const renderHeaderMetadata = useCallback(
@@ -754,14 +814,42 @@ export function PullRequestCodeTab({
         if (withheld) ({ additions, deletions } = withheld);
       }
       return (
-        <PullRequestDiffStat
-          additions={additions}
-          deletions={deletions}
-          className="font-mono text-[11px]"
-        />
+        <div className="flex items-center gap-3">
+          <PullRequestDiffStat
+            additions={additions}
+            deletions={deletions}
+            className="font-mono text-[11px]"
+          />
+          {canViewFiles && (
+            <PullRequestFileViewedCheckbox
+              key={`${environmentId}:${referenceKey}:${resolveFileDiffPath(item.fileDiff)}`}
+              environmentId={environmentId}
+              reference={reference}
+              path={resolveFileDiffPath(item.fileDiff)}
+              viewed={viewedFiles.get(resolveFileDiffPath(item.fileDiff))}
+              onOptimisticChange={(path, viewed) => {
+                setOptimisticFileViewed(path, viewed);
+                // A checkbox click is a new fold choice. On failure, restore the fold state
+                // captured by the callback that started the request.
+                setFileCollapsed(item.id, viewed ?? item.collapsed === true);
+              }}
+              onRefresh={refreshViewedFiles}
+            />
+          )}
+        </div>
       );
     },
-    [omittedFileStats],
+    [
+      omittedFileStats,
+      canViewFiles,
+      environmentId,
+      referenceKey,
+      reference,
+      viewedFiles,
+      setOptimisticFileViewed,
+      setFileCollapsed,
+      refreshViewedFiles,
+    ],
   );
 
   const diffViewOptions = useMemo(
@@ -1348,6 +1436,17 @@ export function PullRequestCodeTab({
           </CollapsiblePanel>
         </Collapsible>
       ) : null}
+      {canViewFiles && viewedQuery.error !== null && (
+        <div
+          role="alert"
+          className="flex items-center gap-2 px-3 py-2 text-xs text-muted-foreground"
+        >
+          Viewed status could not be loaded from GitHub.
+          <Button size="xs" variant="ghost" onClick={refreshViewedFiles}>
+            Retry
+          </Button>
+        </div>
+      )}
       <div className="flex min-h-0 flex-1 overflow-hidden">
         {/* Relative wrapper so the review overlay floats over the diff rather than pushing it
             up; the viewer inside still owns its own scrolling. */}
@@ -1363,7 +1462,11 @@ export function PullRequestCodeTab({
               // A control inside the header — the collapse chevron — handles itself, and
               // this capture listener fires before its own click does. Leave it alone or
               // the two toggles cancel out.
-              if (node instanceof HTMLButtonElement || node instanceof HTMLAnchorElement) {
+              if (
+                node instanceof HTMLButtonElement ||
+                node instanceof HTMLAnchorElement ||
+                node.hasAttribute("data-file-viewed-control")
+              ) {
                 return;
               }
               if (node.hasAttribute("data-diffs-header")) {
@@ -1372,7 +1475,7 @@ export function PullRequestCodeTab({
                 const item = items.find(
                   (candidate) => resolveFileDiffPath(candidate.fileDiff) === filePath,
                 );
-                if (item !== undefined) toggleFile(item.id);
+                if (item !== undefined) setFileCollapsed(item.id, item.collapsed !== true);
                 return;
               }
             }

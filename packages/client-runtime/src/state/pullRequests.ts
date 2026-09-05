@@ -242,6 +242,17 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       scheduler: commandScheduler,
       concurrency: serialPerEnvironment,
     }),
+    fileViewedStates: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:pull-requests:file-viewed-states",
+      tag: WS_METHODS.pullRequestsFileViewedStates,
+      staleTimeMs: 15_000,
+    }),
+    setFileViewed: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:pull-requests:set-file-viewed",
+      tag: WS_METHODS.pullRequestsSetFileViewed,
+      scheduler: commandScheduler,
+      concurrency: serialPerEnvironment,
+    }),
     setReaction: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:pull-requests:set-reaction",
       tag: WS_METHODS.pullRequestsSetReaction,
