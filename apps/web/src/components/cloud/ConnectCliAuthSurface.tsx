@@ -1,48 +1,32 @@
 import { useAuth, useClerk, useUser } from "@clerk/react";
 import { encodeConnectAuthCode, readConnectAuthorizeRequest } from "@t3tools/shared/connectAuth";
+import { CheckIcon, CopyIcon } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
   buildConnectCliClerkAuthorizeUrl,
   connectCliSignInRedirectUrl,
   readConnectCliAuthState,
+  readConnectCliCallbackError,
   readConnectCliCallbackResult,
   rememberConnectCliAuthState,
 } from "../../cloud/connectCliAuth";
 import { isElectron } from "../../env";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
-import { AuthSurfaceShell } from "../auth/AuthSurfaceShell";
+import { AuthSurfaceMessage, AuthSurfaceShell } from "../auth/AuthSurfaceShell";
 import { resolveClerkSignInProps } from "../clerk/authRedirect";
 import { Button } from "../ui/button";
 
-function ConnectCliAuthMessage({
-  eyebrow,
-  title,
-  description,
-}: {
-  readonly eyebrow?: string;
-  readonly title: string;
-  readonly description: string;
-}) {
-  return (
-    <>
-      {eyebrow ? (
-        <p className="text-[10px] font-semibold tracking-[0.18em] text-blue-600 uppercase dark:text-blue-400">
-          {eyebrow}
-        </p>
-      ) : null}
-      <h1 className="mt-2 text-2xl font-semibold tracking-tight sm:text-3xl">{title}</h1>
-      <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{description}</p>
-    </>
-  );
+function ConnectCommand() {
+  return <code className="font-mono text-[0.9em] text-foreground">t3 connect</code>;
 }
 
-const invalidLinkMessage = {
-  eyebrow: "Authorization request",
-  title: "This connect link is incomplete",
-  description:
-    "The link is missing its authorization request. Re-run `t3 connect` in your terminal and open the freshly printed URL.",
-} as const;
+const terminalWaitNote = "Your terminal stops waiting 10 minutes after it printed the link.";
+
+function useClerkAccountLabel(): string | null {
+  const { user } = useUser();
+  return user?.primaryEmailAddress?.emailAddress ?? user?.username ?? null;
+}
 
 /**
  * /connect: the URL the CLI prints for both flows. Waits for a Clerk session,
@@ -54,6 +38,7 @@ export function ConnectCliAuthorizeSurface() {
   const [request] = useState(() => readConnectAuthorizeRequest(new URL(window.location.href)));
   const clerk = useClerk();
   const { isLoaded, isSignedIn } = useAuth();
+  const accountLabel = useClerkAccountLabel();
   const signInOpened = useRef(false);
   const redirecting = useRef(false);
 
@@ -95,24 +80,44 @@ export function ConnectCliAuthorizeSurface() {
   if (!request) {
     return (
       <AuthSurfaceShell>
-        <ConnectCliAuthMessage {...invalidLinkMessage} />
+        <AuthSurfaceMessage
+          title="This link is incomplete"
+          description={
+            <>
+              The part after # is missing. Copy the whole link, or run <ConnectCommand /> again.
+            </>
+          }
+        />
       </AuthSurfaceShell>
     );
   }
 
+  const finishesInTerminal = request.loopbackPort !== undefined;
+
   return (
     <AuthSurfaceShell>
-      <ConnectCliAuthMessage
-        eyebrow={
-          request.loopbackPort === undefined
-            ? "Step 1 of 2 · Browser authorization"
-            : "Browser authorization"
-        }
+      <AuthSurfaceMessage
         title="Connecting your terminal"
         description={
-          isSignedIn
-            ? "Redirecting to authorize T3 Connect for your CLI…"
-            : "Sign in to continue authorizing T3 Connect for your CLI."
+          isSignedIn ? (
+            <>
+              Sending you to authorize T3 Connect
+              {accountLabel ? (
+                <>
+                  {" "}
+                  as <span className="text-foreground">{accountLabel}</span>
+                </>
+              ) : null}
+              .
+            </>
+          ) : (
+            <>
+              Your terminal ran <ConnectCommand /> and is waiting.{" "}
+              {finishesInTerminal
+                ? "Sign in here and it finishes on its own."
+                : "Sign in here, then paste the code this page gives you into the terminal."}
+            </>
+          )
         }
       />
       {isLoaded && !isSignedIn ? (
@@ -132,17 +137,31 @@ export function ConnectCliAuthorizeSurface() {
  */
 export function ConnectCliCallbackSurface() {
   const [result] = useState(readConnectCliCallbackResult);
+  const [callbackError] = useState(readConnectCliCallbackError);
   const [expectedState] = useState(readConnectCliAuthState);
-  const { user } = useUser();
+  const clerk = useClerk();
+  const accountLabel = useClerkAccountLabel();
+  const [signedOut, setSignedOut] = useState(false);
   const { copyToClipboard, isCopied } = useCopyToClipboard({ target: "authentication code" });
 
   if (!result) {
     return (
       <AuthSurfaceShell>
-        <ConnectCliAuthMessage
-          eyebrow="Step 2 of 2 · Terminal handoff"
-          title="Authorization did not complete"
-          description="No authorization code was returned. Re-run `t3 connect` in your terminal and try again."
+        <AuthSurfaceMessage
+          title={
+            callbackError === "access_denied"
+              ? "Sign-in was cancelled"
+              : "Authorization did not complete"
+          }
+          description={
+            <>
+              {callbackError === "access_denied"
+                ? "No code was issued."
+                : "Sign-in did not return a code, so there is nothing to give your terminal."}{" "}
+              Open the link from your terminal again to retry, or run <ConnectCommand /> if it has
+              stopped waiting.
+            </>
+          }
         />
       </AuthSurfaceShell>
     );
@@ -155,54 +174,82 @@ export function ConnectCliCallbackSurface() {
   if (expectedState === null || expectedState !== result.state) {
     return (
       <AuthSurfaceShell>
-        <ConnectCliAuthMessage
-          eyebrow="Step 2 of 2 · Terminal handoff"
+        <AuthSurfaceMessage
           title="This code belongs to a different request"
-          description="This authorization response does not match a connect request started in this browser. Re-run `t3 connect` in your terminal and open the freshly printed URL in this browser."
+          description={
+            <>
+              Sign-in finished in a different tab or browser than the one that opened the connect
+              link, so this result cannot be trusted. Run <ConnectCommand /> again and stay in one
+              tab from the link through sign-in.
+            </>
+          }
         />
       </AuthSurfaceShell>
     );
   }
 
-  const accountLabel = user?.primaryEmailAddress?.emailAddress ?? user?.username ?? null;
+  if (signedOut) {
+    return (
+      <AuthSurfaceShell>
+        <AuthSurfaceMessage
+          title="Signed out"
+          description={
+            <>
+              Open the link from your terminal again and sign in with the account you want to
+              connect. {terminalWaitNote}
+            </>
+          }
+        />
+      </AuthSurfaceShell>
+    );
+  }
+
   const authCode = encodeConnectAuthCode(result);
 
   return (
     <AuthSurfaceShell>
-      <ConnectCliAuthMessage
-        eyebrow="Step 2 of 2 · Terminal handoff"
-        title="Almost connected"
+      <AuthSurfaceMessage
+        title="Enter this code in your terminal"
         description={
-          accountLabel
-            ? `Enter this code in your waiting terminal to connect it as ${accountLabel}.`
-            : "Enter this code in your waiting terminal to finish connecting."
+          accountLabel ? (
+            <>
+              It connects your terminal to T3 Connect as{" "}
+              <span className="text-foreground">{accountLabel}</span>. Not you?{" "}
+              <button
+                type="button"
+                className="cursor-pointer text-foreground underline underline-offset-4"
+                onClick={() => void clerk.signOut(() => setSignedOut(true))}
+              >
+                Sign out
+              </button>{" "}
+              and open the link from your terminal again.
+            </>
+          ) : (
+            "Your terminal is waiting for it."
+          )
         }
       />
 
-      <div className="mt-6 overflow-hidden rounded-xl border border-border/80 bg-background/65">
-        <div className="flex items-center justify-between border-b border-border/70 px-4 py-2.5">
-          <span className="text-[10px] font-semibold tracking-[0.16em] text-muted-foreground uppercase">
-            One-time authorization code
-          </span>
-          <span className="font-mono text-[10px] text-muted-foreground">expires shortly</span>
-        </div>
+      <div className="mt-5 rounded-lg border bg-muted/30 px-3.5 py-3">
         <code
-          className="block p-4 font-mono text-sm leading-relaxed break-all select-all"
+          className="block font-mono text-sm leading-relaxed break-all select-all"
           data-testid="connect-auth-code"
         >
           {authCode}
         </code>
       </div>
 
-      <div className="mt-4 flex items-center gap-3">
+      <div className="mt-4 flex flex-wrap items-center gap-3">
         <Button type="button" onClick={() => copyToClipboard(authCode)}>
-          {isCopied ? "Copied!" : "Copy authorization code"}
+          {isCopied ? <CheckIcon className="text-success" /> : <CopyIcon />}
+          {isCopied ? "Copied" : "Copy code"}
         </Button>
+        <span className="text-xs text-muted-foreground">{terminalWaitNote}</span>
       </div>
 
       <p className="mt-6 text-xs leading-relaxed text-muted-foreground">
-        Only enter this code in a terminal session you started yourself. Anyone holding it can link
-        their machine to your T3 Connect account while it is valid.
+        Only paste it into a terminal you started. Anyone with this code can link a machine to your
+        account until it expires.
       </p>
     </AuthSurfaceShell>
   );
