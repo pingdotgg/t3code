@@ -64,6 +64,12 @@ const EVENT_CODE_KEY_ALIASES: Readonly<Record<string, readonly string[]>> = {
   Digit9: ["9"],
 };
 
+export function canonicalKeyFromEventCode(code?: string | null): string | null {
+  if (!code) return null;
+  const aliases = EVENT_CODE_KEY_ALIASES[code];
+  return aliases?.[0] ?? null;
+}
+
 function normalizeEventKey(key: string): string {
   const normalized = key.toLowerCase();
   if (normalized === "esc") return "escape";

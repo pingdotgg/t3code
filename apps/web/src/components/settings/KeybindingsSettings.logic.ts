@@ -11,6 +11,7 @@ import {
   parseKeybindingWhenExpression,
 } from "@t3tools/shared/keybindings";
 
+import { canonicalKeyFromEventCode } from "../../keybindings";
 import { isMacPlatform } from "../../lib/utils";
 
 export type KeybindingSource = "Default" | "Custom" | "Project";
@@ -291,7 +292,7 @@ function titleCaseCommandSegment(segment: string): string {
   return words.join(" ");
 }
 
-export function normalizeShortcutKeyToken(key: string): string | null {
+export function normalizeShortcutKeyToken(key: string, code?: string): string | null {
   const normalized = key.toLowerCase();
   if (
     normalized === "meta" ||
@@ -302,6 +303,10 @@ export function normalizeShortcutKeyToken(key: string): string | null {
     normalized === "option"
   ) {
     return null;
+  }
+  const codeKey = canonicalKeyFromEventCode(code);
+  if (codeKey) {
+    return codeKey;
   }
   if (normalized === " ") return "space";
   if (normalized === "escape") return "esc";
@@ -322,10 +327,12 @@ export function normalizeShortcutKeyToken(key: string): string | null {
 }
 
 export function keybindingFromKeyboardEvent(
-  event: Pick<KeyboardEvent, "key" | "metaKey" | "ctrlKey" | "altKey" | "shiftKey">,
+  event: Pick<KeyboardEvent, "key" | "metaKey" | "ctrlKey" | "altKey" | "shiftKey"> & {
+    code?: string | undefined;
+  },
   platform: string,
 ): string | null {
-  const keyToken = normalizeShortcutKeyToken(event.key);
+  const keyToken = normalizeShortcutKeyToken(event.key, event.code);
   if (!keyToken) return null;
 
   const parts: string[] = [];
