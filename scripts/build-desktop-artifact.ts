@@ -2562,6 +2562,18 @@ export function resolveDesktopProductName(version: string): string {
     : (desktopPackageJson.productName ?? "T3 Code");
 }
 
+// Linux AppImages auto-update in place, so the artifact filename must not
+// contain the version: electron-updater keeps the existing file when the
+// published name carries no version, and a stable path keeps dock pins,
+// .desktop entries, shortcuts, and file associations working across updates
+// (electron-userland/electron-builder#5810). Nightly and stable need distinct
+// names because both can live side by side in ~/Applications.
+export function resolveLinuxArtifactName(version: string): string {
+  return resolveDesktopUpdateChannel(version) === "nightly"
+    ? "T3-Code-Nightly-${arch}.${ext}"
+    : "T3-Code-${arch}.${ext}";
+}
+
 export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   platform: typeof BuildPlatform.Type,
   target: string,
@@ -2668,6 +2680,9 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   if (platform === "linux") {
     buildConfig.linux = {
       target: [target],
+      // Stable filename without the version: AppImages update in place and a
+      // versioned name orphans dock pins and .desktop entries every release.
+      artifactName: resolveLinuxArtifactName(version),
       executableName: "t3code",
       icon: "icons",
       category: "Development",
