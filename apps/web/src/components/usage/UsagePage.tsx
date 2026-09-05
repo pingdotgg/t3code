@@ -1,7 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { UsageProviderKind } from "@t3tools/contracts";
 import { CheckIcon, RefreshCwIcon, XIcon } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import type { DailyTotals, HourlyTotals } from "@t3tools/shared/usageMerge";
 
@@ -51,6 +51,7 @@ const METRIC_OPTIONS = [
 function isUsageMetric(value: string | null | undefined): value is UsageMetric {
   return METRIC_OPTIONS.some((option) => option.value === value);
 }
+const USAGE_METRIC_STORAGE_KEY = "t3code:usage-metric:v1";
 
 const WINDOW_OPTIONS = [
   { days: 1, label: "Past 24h" },
@@ -64,7 +65,21 @@ export function UsagePage() {
     days: 30,
     window: makeWindow(30),
   }));
-  const [metric, setMetric] = useState<UsageMetric>("cost");
+  const [metric, setMetric] = useState<UsageMetric>(() => {
+    try {
+      const stored = localStorage.getItem(USAGE_METRIC_STORAGE_KEY);
+      return isUsageMetric(stored) ? stored : "cost";
+    } catch {
+      return "cost";
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem(USAGE_METRIC_STORAGE_KEY, metric);
+    } catch {
+      // Storage may be missing, blocked, or full; the in-memory selection still works.
+    }
+  }, [metric]);
   const showingLimits = metric === "limits";
   const [breakdown, setBreakdown] = useState<"model" | "time">("model");
   const { days: windowDays, window } = windowSelection;
