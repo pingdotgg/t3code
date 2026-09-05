@@ -324,10 +324,7 @@ async function writePersistedComposerState(
 export async function flushComposerDrafts(): Promise<void> {
   // Never land a pre-hydration snapshot: persisted state must merge into the
   // atoms first, or this write would clobber disk with partial data.
-  ensureComposerDraftsLoaded();
-  if (loadPromise !== null) {
-    await loadPromise;
-  }
+  await waitForComposerDraftsLoaded();
   // An edit during an awaited write schedules another debounced write, so
   // keep landing snapshots until no debounce is pending after a queue drain.
   do {
@@ -419,13 +416,10 @@ export async function releaseUnusedComposerAttachmentFiles(
     return;
   }
 
-  // Persisted drafts must hydrate before the reference scan. On a cold start
-  // the atom is still empty, and every file a persisted draft owns would look
-  // unused. Hydrate before flushing so a pending pre-hydration write cannot
-  // land an incomplete snapshot either.
-  await waitForComposerDraftsLoaded();
+  // Flushing loads saved drafts first, so a cold-start sweep sees every owner
+  // and cannot persist incomplete state before checking references.
   await flushComposerDrafts();
-  if (!(await threadOutboxManager.load())) {
+  if ((await threadOutboxManager.load()).status !== "complete") {
     // An unreadable outbox store must not look like an empty queue: deleting
     // now would take bytes a persisted queued message still needs. Skip the
     // sweep; the next one retries hydration.
@@ -610,7 +604,10 @@ export async function archiveCloudComposerDrafts(
   environmentIds: ReadonlySet<EnvironmentId>,
 ): Promise<void> {
   await waitForComposerDraftsLoaded();
-  if (!(await threadOutboxManager.load())) throw new Error("Could not preserve queued messages.");
+  const outbox = await threadOutboxManager.load();
+  if (outbox.status !== "complete") {
+    throw new Error("Could not preserve queued messages.", { cause: outbox.error });
+  }
   await flushThreadOutbox();
   const cloud = appAtomRegistry.get(composerCloudDraftsAtom);
   const owner = accountId ?? cloud.accountId;
@@ -742,7 +739,10 @@ export async function restoreCloudComposerDrafts(accountId: string): Promise<voi
   const cloud = appAtomRegistry.get(composerCloudDraftsAtom);
   const saved = cloud.signedOut[accountId];
   if (saved) {
-    if (!(await threadOutboxManager.load())) throw new Error("Could not restore queued messages.");
+    const outbox = await threadOutboxManager.load();
+    if (outbox.status !== "complete") {
+      throw new Error("Could not restore queued messages.", { cause: outbox.error });
+    }
     for (const message of saved.queuedMessages) {
       const alreadyQueued = Object.values(
         appAtomRegistry.get(threadOutboxManager.queuedMessagesByThreadKeyAtom),

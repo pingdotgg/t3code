@@ -37,6 +37,10 @@ export interface ThreadOutboxManagerOptions {
   readonly warn?: (message: string, error: unknown) => void;
 }
 
+type ThreadOutboxHydrationResult =
+  | { readonly status: "complete" }
+  | { readonly status: "incomplete"; readonly error: ThreadOutboxManagerError };
+
 export function createThreadOutboxManager(options: ThreadOutboxManagerOptions) {
   const queuedMessagesByThreadKeyAtom = Atom.make<
     Record<string, ReadonlyArray<QueuedThreadMessage>>
@@ -46,7 +50,7 @@ export function createThreadOutboxManager(options: ThreadOutboxManagerOptions) {
     ((message: string, error: unknown) => {
       console.warn(message, error);
     });
-  let loadPromise: Promise<boolean> | null = null;
+  let loadPromise: Promise<ThreadOutboxHydrationResult> | null = null;
   let mutationQueue: Promise<void> = Promise.resolve();
   // Monotonic per-message write counter. Every accepted write (enqueue publish
   // or update) bumps it, so a writer that captured a revision before slow work
@@ -72,14 +76,14 @@ export function createThreadOutboxManager(options: ThreadOutboxManagerOptions) {
     options.registry.set(queuedMessagesByThreadKeyAtom, groupQueuedThreadMessages(messages));
   };
 
-  // Readable messages can be used after a partial load. Only a complete load
-  // returns true, so cleanup cannot delete files owned by unreadable records.
-  // A later call retries failed reads without replacing live message objects.
-  const load = (): Promise<boolean> => {
+  // Readable messages enter the atom even when ownership is incomplete.
+  // Cleanup and account changes require a complete inventory. Failed reads
+  // can be retried without replacing live messages or retaining old snapshots.
+  const load = (): Promise<ThreadOutboxHydrationResult> => {
     if (loadPromise !== null) {
       return loadPromise;
     }
-    loadPromise = serialize(async () => {
+    loadPromise = serialize<ThreadOutboxHydrationResult>(async () => {
       const result = await options.storage.load();
       const current = currentMessages();
       const currentIds = new Set(current.map((message) => message.messageId));
@@ -89,23 +93,21 @@ export function createThreadOutboxManager(options: ThreadOutboxManagerOptions) {
       // Accepted edits and removals win over a later disk read. Retaining
       // current objects also keeps retries from restarting the drain.
       if (recovered.length > 0) setMessages([...recovered, ...current]);
-      if (result.errors.length > 0) {
-        throw new AggregateError(result.errors, "Some queued messages could not be read.");
+      if (result.status === "incomplete") {
+        throw result.error;
       }
-      return true;
+      return { status: "complete" };
     }).catch((cause) => {
       loadPromise = null;
-      warn(
-        "[thread-outbox] failed to load persisted messages",
-        new ThreadOutboxManagerError({
-          operation: "load",
-          environmentId: null,
-          threadId: null,
-          messageId: null,
-          cause,
-        }),
-      );
-      return false;
+      const error = new ThreadOutboxManagerError({
+        operation: "load",
+        environmentId: null,
+        threadId: null,
+        messageId: null,
+        cause,
+      });
+      warn("[thread-outbox] failed to load persisted messages", error);
+      return { status: "incomplete", error };
     });
     return loadPromise;
   };
@@ -288,8 +290,8 @@ export function createThreadOutboxManager(options: ThreadOutboxManagerOptions) {
       const persisted = await options.storage
         .load()
         .then((result) => {
-          if (result.errors.length > 0) {
-            throw new AggregateError(result.errors, "Some queued messages could not be read.");
+          if (result.status === "incomplete") {
+            throw result.error;
           }
           return result.messages;
         })

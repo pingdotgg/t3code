@@ -27,7 +27,9 @@ import type { DraftComposerAttachment } from "../lib/composerImages";
 import { scopedThreadKey } from "../lib/scopedEntities";
 import { resolveProviderInteractionMode } from "../features/threads/legacy-plan-mode";
 
-// Keep current writes until a compatible native baseline includes the v4 reader.
+// Keep v3 writes until each platform has a new native runtime with embedded
+// v4 readers and storage-failure guards. The runtime must exclude old binaries
+// whose embedded JavaScript cannot recover file-backed drafts after OTA rollback.
 const THREAD_OUTBOX_SCHEMA_VERSION = 3;
 const THREAD_OUTBOX_MAX_RETRY_DELAY_MS = 16_000;
 

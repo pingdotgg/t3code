@@ -44,10 +44,12 @@ export class ThreadOutboxStorageError extends Schema.TaggedErrorClass<ThreadOutb
   }
 }
 
-export interface ThreadOutboxLoadResult {
+export type ThreadOutboxLoadResult = {
   readonly messages: ReadonlyArray<QueuedThreadMessage>;
-  readonly errors: ReadonlyArray<ThreadOutboxStorageError>;
-}
+} & (
+  | { readonly status: "complete" }
+  | { readonly status: "incomplete"; readonly error: ThreadOutboxStorageError }
+);
 
 export interface ThreadOutboxStorage {
   readonly load: () => Promise<ThreadOutboxLoadResult>;
@@ -100,17 +102,24 @@ export const expoThreadOutboxStorage: ThreadOutboxStorage = {
           );
         }
       }
+      if (errors.length > 0) {
+        throw new AggregateError(errors, "Some queued messages could not be read.");
+      }
+      return { status: "complete", messages };
     } catch (cause) {
-      throw new ThreadOutboxStorageError({
-        operation: "load",
-        environmentId: null,
-        threadId: null,
-        messageId: null,
-        fileName: null,
-        cause,
-      });
+      return {
+        status: "incomplete",
+        messages,
+        error: new ThreadOutboxStorageError({
+          operation: "load",
+          environmentId: null,
+          threadId: null,
+          messageId: null,
+          fileName: null,
+          cause,
+        }),
+      };
     }
-    return { messages, errors };
   },
   write: async (message) => {
     const fileName = messageFileName(message.messageId);
