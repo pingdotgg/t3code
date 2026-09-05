@@ -13,7 +13,16 @@ import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import * as DesktopLifecycle from "./DesktopLifecycle.ts";
 import * as DesktopShutdown from "./DesktopShutdown.ts";
 import * as DesktopState from "./DesktopState.ts";
+import * as DesktopTray from "./DesktopTray.ts";
 import * as DesktopWindow from "../window/DesktopWindow.ts";
+
+function makeDesktopTrayLayer(isAvailable = true) {
+  return Layer.succeed(DesktopTray.DesktopTray, {
+    configure: Effect.void,
+    isAvailable: Effect.succeed(isAvailable),
+    destroy: Effect.void,
+  } satisfies DesktopTray.DesktopTray["Service"]);
+}
 
 function makeElectronAppLayer(
   appListeners: Map<string, (...args: readonly unknown[]) => void>,
@@ -119,6 +128,7 @@ describe("DesktopLifecycle", () => {
           ),
         ),
         Layer.provideMerge(makeDesktopWindowLayer()),
+        Layer.provideMerge(makeDesktopTrayLayer()),
         Layer.provideMerge(environmentLayer),
         Layer.provideMerge(DesktopShutdown.layer),
         Layer.provideMerge(DesktopState.layer),
@@ -152,6 +162,122 @@ describe("DesktopLifecycle", () => {
       ).pipe(Effect.provide(layer));
     });
   }
+
+  it.effect("does not quit on window-all-closed on win32 (with tray) or darwin", () =>
+    Effect.gen(function* () {
+      for (const platform of ["win32", "darwin"] as const) {
+        const appListeners = new Map<string, (...args: readonly unknown[]) => void>();
+        let quitCalled = false;
+        const quit = Effect.sync(() => {
+          quitCalled = true;
+        });
+
+        const environmentLayer = Layer.succeed(DesktopEnvironment.DesktopEnvironment, {
+          platform,
+          isDevelopment: false,
+        } as DesktopEnvironment.DesktopEnvironment["Service"]);
+
+        const layer = DesktopLifecycle.layer.pipe(
+          Layer.provideMerge(makeElectronAppLayer(appListeners, quit)),
+          Layer.provideMerge(electronThemeLayer),
+          Layer.provideMerge(makeElectronWindowLayer()),
+          Layer.provideMerge(makeDesktopWindowLayer()),
+          Layer.provideMerge(makeDesktopTrayLayer(true)),
+          Layer.provideMerge(environmentLayer),
+          Layer.provideMerge(DesktopShutdown.layer),
+          Layer.provideMerge(DesktopState.layer),
+        );
+
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const lifecycle = yield* DesktopLifecycle.DesktopLifecycle;
+            yield* lifecycle.register;
+
+            appListeners.get("window-all-closed")?.();
+            yield* Effect.yieldNow;
+
+            assert.isFalse(quitCalled, `expected quit not to be called on ${platform}`);
+          }),
+        ).pipe(Effect.provide(layer));
+      }
+    }),
+  );
+
+  it.effect("quits on window-all-closed on win32 when tray is unavailable", () =>
+    Effect.gen(function* () {
+      const appListeners = new Map<string, (...args: readonly unknown[]) => void>();
+      let quitCalled = false;
+      const quit = Effect.sync(() => {
+        quitCalled = true;
+      });
+
+      const environmentLayer = Layer.succeed(DesktopEnvironment.DesktopEnvironment, {
+        platform: "win32",
+        isDevelopment: false,
+      } as DesktopEnvironment.DesktopEnvironment["Service"]);
+
+      const layer = DesktopLifecycle.layer.pipe(
+        Layer.provideMerge(makeElectronAppLayer(appListeners, quit)),
+        Layer.provideMerge(electronThemeLayer),
+        Layer.provideMerge(makeElectronWindowLayer()),
+        Layer.provideMerge(makeDesktopWindowLayer()),
+        Layer.provideMerge(makeDesktopTrayLayer(false)),
+        Layer.provideMerge(environmentLayer),
+        Layer.provideMerge(DesktopShutdown.layer),
+        Layer.provideMerge(DesktopState.layer),
+      );
+
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const lifecycle = yield* DesktopLifecycle.DesktopLifecycle;
+          yield* lifecycle.register;
+
+          appListeners.get("window-all-closed")?.();
+          yield* Effect.yieldNow;
+
+          assert.isTrue(quitCalled, "expected quit to be called on win32 when tray unavailable");
+        }),
+      ).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("quits on window-all-closed on linux", () =>
+    Effect.gen(function* () {
+      const appListeners = new Map<string, (...args: readonly unknown[]) => void>();
+      let quitCalled = false;
+      const quit = Effect.sync(() => {
+        quitCalled = true;
+      });
+
+      const environmentLayer = Layer.succeed(DesktopEnvironment.DesktopEnvironment, {
+        platform: "linux",
+        isDevelopment: false,
+      } as DesktopEnvironment.DesktopEnvironment["Service"]);
+
+      const layer = DesktopLifecycle.layer.pipe(
+        Layer.provideMerge(makeElectronAppLayer(appListeners, quit)),
+        Layer.provideMerge(electronThemeLayer),
+        Layer.provideMerge(makeElectronWindowLayer()),
+        Layer.provideMerge(makeDesktopWindowLayer()),
+        Layer.provideMerge(makeDesktopTrayLayer()),
+        Layer.provideMerge(environmentLayer),
+        Layer.provideMerge(DesktopShutdown.layer),
+        Layer.provideMerge(DesktopState.layer),
+      );
+
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const lifecycle = yield* DesktopLifecycle.DesktopLifecycle;
+          yield* lifecycle.register;
+
+          appListeners.get("window-all-closed")?.();
+          yield* Effect.yieldNow;
+
+          assert.isTrue(quitCalled, "expected quit to be called on linux");
+        }),
+      ).pipe(Effect.provide(layer));
+    }),
+  );
 
   it.effect("destroys windows before waiting for backend shutdown", () =>
     Effect.gen(function* () {
@@ -191,6 +317,7 @@ describe("DesktopLifecycle", () => {
         Layer.provideMerge(electronThemeLayer),
         Layer.provideMerge(makeElectronWindowLayer(destroyAll)),
         Layer.provideMerge(makeDesktopWindowLayer({ flushMainWindowBounds })),
+        Layer.provideMerge(makeDesktopTrayLayer()),
         Layer.provideMerge(environmentLayer),
         Layer.provideMerge(desktopShutdownLayer),
         Layer.provideMerge(DesktopState.layer),
@@ -232,6 +359,7 @@ describe("DesktopLifecycle", () => {
         Layer.provideMerge(electronThemeLayer),
         Layer.provideMerge(makeElectronWindowLayer()),
         Layer.provideMerge(makeDesktopWindowLayer({ activate })),
+        Layer.provideMerge(makeDesktopTrayLayer()),
         Layer.provideMerge(environmentLayer),
         Layer.provideMerge(DesktopShutdown.layer),
         Layer.provideMerge(DesktopState.layer),

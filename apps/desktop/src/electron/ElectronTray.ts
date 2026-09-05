@@ -38,6 +38,7 @@ export interface ElectronTrayMenuItem {
   readonly type?: "normal" | "separator" | "submenu" | "checkbox" | "radio";
   readonly click?: () => void;
   readonly enabled?: boolean;
+  readonly submenu?: readonly ElectronTrayMenuItem[];
 }
 
 export interface ElectronTrayCreateOptions {
@@ -57,6 +58,19 @@ export class ElectronTray extends Context.Service<
     readonly destroy: Effect.Effect<void>;
   }
 >()("@t3tools/desktop/electron/ElectronTray") {}
+
+const mapMenuItems = (
+  items: readonly ElectronTrayMenuItem[],
+): Electron.MenuItemConstructorOptions[] =>
+  items.map((item) => {
+    const menuItem: Electron.MenuItemConstructorOptions = {};
+    if (item.label !== undefined) menuItem.label = item.label;
+    if (item.type !== undefined) menuItem.type = item.type;
+    if (item.click !== undefined) menuItem.click = item.click;
+    if (item.enabled !== undefined) menuItem.enabled = item.enabled;
+    if (item.submenu !== undefined) menuItem.submenu = mapMenuItems(item.submenu);
+    return menuItem;
+  });
 
 export const make = Effect.gen(function* () {
   const platform = yield* HostProcessPlatform;
@@ -93,16 +107,7 @@ export const make = Effect.gen(function* () {
             newTray.setToolTip(options.tooltip);
           }
           if (options.menuItems && options.menuItems.length > 0) {
-            const template: Electron.MenuItemConstructorOptions[] = options.menuItems.map(
-              (item) => {
-                const menuItem: Electron.MenuItemConstructorOptions = {};
-                if (item.label !== undefined) menuItem.label = item.label;
-                if (item.type !== undefined) menuItem.type = item.type;
-                if (item.click !== undefined) menuItem.click = item.click;
-                if (item.enabled !== undefined) menuItem.enabled = item.enabled;
-                return menuItem;
-              },
-            );
+            const template = mapMenuItems(options.menuItems);
             const contextMenu = Electron.Menu.buildFromTemplate(template);
             newTray.setContextMenu(contextMenu);
           }

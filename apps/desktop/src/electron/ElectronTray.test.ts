@@ -105,7 +105,11 @@ describe("ElectronTray", () => {
           doubleClicked = true;
         },
         menuItems: [
-          { label: "Open T3 Code", click: () => {} },
+          {
+            label: "Open T3 Code",
+            type: "submenu",
+            submenu: [{ label: "Nested Action", click: () => {} }],
+          },
           { type: "separator" },
           { label: "Quit", click: () => {} },
         ],
@@ -118,6 +122,13 @@ describe("ElectronTray", () => {
       assert.isTrue(instance?.listeners.has("click"));
       assert.isTrue(instance?.listeners.has("double-click"));
       assert.equal(buildFromTemplateMock.mock.calls.length, 1);
+
+      const template = (
+        buildFromTemplateMock.mock.calls[0] as unknown as [Electron.MenuItemConstructorOptions[]]
+      )[0];
+      assert.equal(template[0]?.label, "Open T3 Code");
+      assert.equal(template[0]?.type, "submenu");
+      assert.isDefined(template[0]?.submenu);
 
       instance?.listeners.get("click")?.();
       assert.isTrue(clicked);
