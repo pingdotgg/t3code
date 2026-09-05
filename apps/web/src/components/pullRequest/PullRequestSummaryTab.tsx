@@ -92,7 +92,7 @@ function reviewStateLabel(state: string): string {
 
 /** What every remark in the conversation needs to be rewritten where it sits. */
 interface CommentEditing {
-  readonly cwd: string;
+  readonly cwd: string | null;
   readonly environmentId: EnvironmentId;
   readonly threadRef: ScopedThreadRef | null;
   readonly canEdit: (comment: PullRequestComment) => boolean;

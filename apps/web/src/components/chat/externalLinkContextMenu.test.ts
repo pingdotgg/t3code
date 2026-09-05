@@ -193,3 +193,24 @@ describe("external chat link context menu", () => {
     expect(resolveExternalWebLinkHost(href)).toBe(expected);
   });
 });
+
+it("opens an unlinked PR in its panel from the web context menu", async () => {
+  const harness = createHarness(null);
+  harness.showContextMenu.mockResolvedValue("open-in-pull-request-panel");
+  const openInPullRequestPanel = vi.fn();
+  const href = "https://github.com/someone/other-repo/pull/42";
+  await showExternalLinkContextMenu({
+    href,
+    position: { x: 1, y: 2 },
+    canOpenInPreview: false,
+    openInPullRequestPanel,
+    ...harness,
+  });
+  expect(harness.showContextMenu.mock.calls[0]?.[0]).toEqual([
+    { id: "open-in-pull-request-panel", label: "Open in Pull Request panel" },
+    { id: "open-external", label: "Open in system browser" },
+    { id: "copy-link", label: "Copy Link" },
+  ]);
+  expect(openInPullRequestPanel).toHaveBeenCalledWith(href);
+  expect(harness.openExternal).not.toHaveBeenCalled();
+});

@@ -3,15 +3,17 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import {
   changeRequestRepositoryUrl,
   findProjectForChangeRequest,
+  findUnlinkedGitHubEnvironment,
   gitHubPullRequestBrowserUrl,
   matchesLinkedPullRequestUrl,
   openPullRequestLink,
   parseChangeRequestUrl,
+  pullRequestRefForLink,
   pullRequestCandidateUrlFromReferenceAutolink,
   PullRequestLinkOpenError,
   shouldOpenPullRequestExternally,
 } from "./openPullRequestLink";
-import { ProjectId, type RepositoryIdentity } from "@t3tools/contracts";
+import { EnvironmentId, ProjectId, type RepositoryIdentity } from "@t3tools/contracts";
 
 function repositoryIdentity(
   provider: string,
@@ -384,4 +386,39 @@ describe("findProjectForChangeRequest", () => {
       }),
     ).toBeUndefined();
   });
+});
+
+describe("unlinked PR link targets", () => {
+  const link = { host: "github.com", repository: "someone/other-repo", number: 42 };
+  it("reads another repository without a project when the server supports it", () => {
+    expect(pullRequestRefForLink(undefined, link, true)).toEqual({
+      projectId: null,
+      repository: "someone/other-repo",
+      number: 42,
+    });
+  });
+  it("leaves old servers and other hosts on their existing fallback", () => {
+    expect(pullRequestRefForLink(undefined, link, false)).toBeNull();
+    expect(
+      pullRequestRefForLink(undefined, { ...link, host: "github.example.com" }, true),
+    ).toBeNull();
+    expect(
+      pullRequestRefForLink(undefined, { ...link, host: "github.com.evil.test" }, true),
+    ).toBeNull();
+  });
+});
+
+it("uses another capable server for unlinked page links, preferring the primary when supported", () => {
+  const old = EnvironmentId.make("old");
+  const capable = EnvironmentId.make("capable");
+  const configs = new Map([
+    [old, { environment: { capabilities: { pullRequests: true } } }],
+    [
+      capable,
+      { environment: { capabilities: { pullRequests: true, unlinkedGitHubPullRequests: true } } },
+    ],
+  ]);
+  expect(findUnlinkedGitHubEnvironment(configs, old)).toBe(capable);
+  expect(findUnlinkedGitHubEnvironment(configs, capable)).toBe(capable);
+  expect(findUnlinkedGitHubEnvironment(new Map([[old, configs.get(old)!]]), old)).toBeNull();
 });

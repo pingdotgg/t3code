@@ -252,7 +252,7 @@ export function PullRequestCodeTab({
   const parseCache = useRef(new Map<string, RenderablePatch>());
   const [viewer, setViewer] = useState<CodeViewHandle<ReviewAnnotationGroup> | null>(null);
 
-  const referenceKey = pullRequestReviewKey(reference);
+  const referenceKey = pullRequestReviewKey(environmentId, reference);
   const commit = selectedCommitOid;
   // One commit's own changes and the whole change are two different diffs, paged separately, so
   // everything below is keyed by both.
@@ -340,7 +340,7 @@ export function PullRequestCodeTab({
     refreshFirstDiffPage();
   }, [refreshToken, scopeKey, refreshFirstDiffPage]);
   const reviewKey = referenceKey;
-  const pendingComments = usePendingReviewComments(reference);
+  const pendingComments = usePendingReviewComments(environmentId, reference);
   const addComment = usePullRequestReviewStore((store) => store.addComment);
   const removeComment = usePullRequestReviewStore((store) => store.removeComment);
   const replyToThread = useAtomCommand(pullRequestEnvironment.replyToThread, {

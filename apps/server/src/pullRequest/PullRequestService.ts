@@ -1,3 +1,4 @@
+import * as NodeOS from "node:os";
 import * as Cache from "effect/Cache";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -67,6 +68,10 @@ import {
   PullRequestProviderError,
 } from "./PullRequestProvider.ts";
 import { PullRequestProviderRegistry } from "./PullRequestProviderRegistry.ts";
+
+const GitHubRepositoryName = Schema.String.check(
+  Schema.isPattern(/^[A-Za-z0-9][A-Za-z0-9-]*\/(?!\.{1,2}$)[A-Za-z0-9_.-]+$/u),
+);
 
 export interface PullRequestMergeEvent extends PullRequestRef {
   readonly mergedAt: string;
@@ -247,6 +252,15 @@ interface SupportedProject {
   /** The host the repository lives on, which is the account boundary rather than the kind. */
   readonly host: string;
 }
+
+/** A PR can be read without a checkout; only workspace listings require a full project. */
+type PullRequestRepository = Omit<SupportedProject, "project"> & {
+  readonly project: {
+    readonly id: PullRequestRef["projectId"];
+    readonly title: string;
+    readonly workspaceRoot: string;
+  };
+};
 
 /**
  * What the workspace has, split by whether this build can read it. Hosts with no
@@ -667,8 +681,32 @@ export const make = Effect.gen(function* () {
       }),
     );
 
-  const requireProject = (ref: PullRequestRef): Effect.Effect<SupportedProject, PullRequestError> =>
-    listWorkspaceProjects({ projectId: ref.projectId }).pipe(
+  const requireProject = (
+    ref: PullRequestRef,
+  ): Effect.Effect<PullRequestRepository, PullRequestError> => {
+    if (ref.projectId === null) {
+      // An explicit host keeps the CLI from inferring a repository from its working directory.
+      // Other hosts still use their linked project until their adapters support checkout-free reads.
+      const api = registry.get("github");
+      if (api === null) {
+        return Effect.fail(new PullRequestUnavailableError({ reason: "provider-unsupported" }));
+      }
+      if (!Schema.is(GitHubRepositoryName)(ref.repository)) {
+        return Effect.fail(
+          new PullRequestOperationError({
+            operation: "resolveRepository",
+            detail: "The GitHub repository must be named owner/repository.",
+          }),
+        );
+      }
+      return Effect.succeed({
+        project: { id: null, title: ref.repository, workspaceRoot: NodeOS.homedir() },
+        repository: ref.repository,
+        host: "github.com",
+        api: withRateLimitBackoff(api, "github.com", rateLimits),
+      });
+    }
+    return listWorkspaceProjects({ projectId: ref.projectId }).pipe(
       Effect.flatMap(({ supported }): Effect.Effect<SupportedProject, PullRequestError> => {
         const match = supported[0];
         if (!match) {
@@ -687,6 +725,7 @@ export const make = Effect.gen(function* () {
         return Effect.succeed(match);
       }),
     );
+  };
 
   /**
    * What the signed-in account may do with this change request, asked of the host itself. Every
@@ -695,7 +734,11 @@ export const make = Effect.gen(function* () {
    * handed to a provider on the client's word. Read freshly for that reason, rather than taken
    * from whatever the detail said when the page loaded.
    */
-  const viewerPermissionsOf = (project: SupportedProject, ref: PullRequestRef, operation: string) =>
+  const viewerPermissionsOf = (
+    project: PullRequestRepository,
+    ref: PullRequestRef,
+    operation: string,
+  ) =>
     project.api
       .getViewerPermissions({
         cwd: project.project.workspaceRoot,
@@ -791,7 +834,7 @@ export const make = Effect.gen(function* () {
   );
 
   const resolveViewers = (
-    projects: ReadonlyArray<SupportedProject>,
+    projects: ReadonlyArray<PullRequestRepository>,
     viewerRoots: WorkspaceProjects["viewerRoots"],
   ) =>
     Effect.forEach(
@@ -1228,8 +1271,14 @@ export const make = Effect.gen(function* () {
    * ten-minute answer per host — so a page that has already listed anything pays nothing for it,
    * and a host that cannot say leaves it null rather than failing the read it decorates.
    */
-  const viewerOf = (project: SupportedProject): Effect.Effect<string | null> =>
-    resolveViewers([project], new Map()).pipe(Effect.map(([resolved]) => resolved?.viewer ?? null));
+  const viewerOf = (project: PullRequestRepository): Effect.Effect<string | null> =>
+    project.project.id === null
+      ? project.api
+          .getViewer({ cwd: project.project.workspaceRoot, host: project.host })
+          .pipe(Effect.orElseSucceed(() => null))
+      : resolveViewers([project], new Map()).pipe(
+          Effect.map(([resolved]) => resolved?.viewer ?? null),
+        );
 
   const summaryUncached: PullRequestService["Service"]["summary"] = (input) =>
     requireProject(input).pipe(
@@ -1285,7 +1334,7 @@ export const make = Effect.gen(function* () {
             capabilities: project.api.capabilities,
             projectId: project.project.id,
             projectTitle: project.project.title,
-            workspaceRoot: project.project.workspaceRoot,
+            workspaceRoot: project.project.id === null ? null : project.project.workspaceRoot,
             repository: project.repository,
             number: changeRequest.number,
             title: changeRequest.title,
@@ -1961,7 +2010,7 @@ export const make = Effect.gen(function* () {
         { readonly project: SupportedProject; readonly number: number }
       >();
       for (const ref of input.refs) {
-        const project = byProject.get(ref.projectId);
+        const project = ref.projectId === null ? undefined : byProject.get(ref.projectId);
         // The repository travels through the client, so it is checked against the project's own
         // remote rather than being handed to a provider verbatim.
         if (
@@ -2285,6 +2334,7 @@ export const make = Effect.gen(function* () {
       return detailUncached({ projectId, repository, number } as PullRequestRef).pipe(
         Effect.tap(
           Effect.fn("PullRequestService.recordDetailStats")(function* (value: PullRequestDetail) {
+            if (value.projectId === null) return;
             recordStats(
               statsKey,
               {

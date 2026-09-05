@@ -2072,6 +2072,18 @@ layer("GitHubPullRequestCli.layer", (it) => {
     }),
   );
 
+  it.effect("uses the explicit GitHub host when reading a viewer outside a checkout", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output("reviewer")));
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+      assert.strictEqual(
+        yield* cli.getViewerLogin({ cwd: "/home/test", host: "github.com" }),
+        "reviewer",
+      );
+      expect(callAt(0).args).toEqual(["api", "user", "--jq", ".login", "--hostname", "github.com"]);
+    }),
+  );
+
   it.effect("fails when the authenticated account has no login", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValueOnce(Effect.succeed(output("  ")));

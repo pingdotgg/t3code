@@ -14,6 +14,11 @@ import { createJSONStorage, persist } from "zustand/middleware";
 
 import { resolveStorage } from "./lib/storage";
 
+export const PULL_REQUESTS_PANEL_REF = {
+  environmentId: "pull-requests-panel",
+  threadId: "pull-requests-panel",
+} as ScopedThreadRef;
+
 export const RIGHT_PANEL_KINDS = [
   "diff",
   "files",
@@ -62,7 +67,7 @@ export type RightPanelSurface =
        * takes the environment from its own ref.
        */
       environmentId?: string;
-      projectId: string;
+      projectId: string | null;
       repository: string;
       number: number;
     }
@@ -97,7 +102,12 @@ interface RightPanelStoreState {
   openAttachment: (ref: ScopedThreadRef, attachment: ChatFileAttachment) => void;
   openPullRequest: (
     ref: ScopedThreadRef,
-    target: { environmentId?: string; projectId: string; repository: string; number: number },
+    target: {
+      environmentId?: string;
+      projectId: string | null;
+      repository: string;
+      number: number;
+    },
   ) => void;
   openTerminal: (ref: ScopedThreadRef, terminalId: string) => void;
   splitTerminal: (
@@ -182,7 +192,7 @@ export type PullRequestSurface = Extract<RightPanelSurface, { kind: "pull-reques
 
 export function pullRequestSurfaceId(target: {
   environmentId?: string;
-  projectId: string;
+  projectId: string | null;
   repository: string;
   number: number;
 }): PullRequestSurface["id"] {
@@ -190,12 +200,12 @@ export function pullRequestSurfaceId(target: {
   // servers is two tabs rather than one tab that changes its mind about which server it is on.
   const scope =
     target.environmentId === undefined ? "" : `${encodeURIComponent(target.environmentId)}:`;
-  return `pull-request:${scope}${encodeURIComponent(target.projectId)}:${encodeURIComponent(target.repository)}:${target.number}`;
+  return `pull-request:${scope}${encodeURIComponent(target.projectId ?? "")}:${encodeURIComponent(target.repository)}:${target.number}`;
 }
 
 export function pullRequestSurface(target: {
   environmentId?: string;
-  projectId: string;
+  projectId: string | null;
   repository: string;
   number: number;
 }): PullRequestSurface {
@@ -279,7 +289,7 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                     }
                     if (surface.kind === "pull-request") {
                       if (
-                        typeof surface.projectId !== "string" ||
+                        (surface.projectId !== null && typeof surface.projectId !== "string") ||
                         typeof surface.repository !== "string" ||
                         typeof surface.number !== "number" ||
                         !Number.isSafeInteger(surface.number) ||

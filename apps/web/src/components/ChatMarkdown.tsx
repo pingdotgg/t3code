@@ -1,3 +1,4 @@
+import { pullRequestRefForLink } from "~/lib/openPullRequestLink";
 import { useAtomValue } from "@effect/atom-react";
 import {
   CheckIcon,
@@ -2555,19 +2556,18 @@ const CHAT_MARKDOWN_COMPONENTS = {
               pullRequestCandidate,
             )
           : undefined;
-      const pullRequestPreviewTarget =
-        environmentId === null || pullRequestProject === undefined || pullRequestCandidate === null
+      const pullRequestReference =
+        pullRequestCandidate === null
           ? null
-          : {
-              environmentId,
-              input: {
-                projectId: pullRequestProject.id,
-                repository:
-                  pullRequestProject.repositoryIdentity?.displayName ??
-                  pullRequestCandidate.repository,
-                number: pullRequestCandidate.number,
-              },
-            };
+          : pullRequestRefForLink(
+              pullRequestProject,
+              pullRequestCandidate,
+              serverConfig?.environment.capabilities.unlinkedGitHubPullRequests === true,
+            );
+      const pullRequestPreviewTarget =
+        environmentId === null || pullRequestReference === null
+          ? null
+          : { environmentId, input: pullRequestReference };
       const isSameDocumentLink = href?.startsWith("#") ?? false;
       const onClick = props.onClick;
       const canOpenInPreview = Boolean(threadRef) && isPreviewSupportedInRuntime();
@@ -2604,7 +2604,8 @@ const CHAT_MARKDOWN_COMPONENTS = {
             // A link to a change request in a workspace project opens beside the
             // conversation instead of in a browser: it is the thing being talked about, and
             // the panel it opens offers the browser as one of its actions.
-            if (!href || openChangeRequestLink(event, href)) return;
+            if (!href || openChangeRequestLink(event, href, undefined, environmentId ?? undefined))
+              return;
             // Anything else follows the "Open links in" setting. The system browser
             // keeps the `_blank` the shell already handles; the in-app browser needs
             // the click intercepted here. A modifier click is the way out of the
@@ -2651,6 +2652,23 @@ const CHAT_MARKDOWN_COMPONENTS = {
             void showExternalLinkContextMenu({
               href,
               canOpenInPreview,
+              ...(pullRequestPreviewTarget === null
+                ? {}
+                : {
+                    openInPullRequestPanel: (target: string) => {
+                      openChangeRequestLink(
+                        {
+                          metaKey: false,
+                          ctrlKey: false,
+                          preventDefault: () => undefined,
+                          stopPropagation: () => undefined,
+                        },
+                        pullRequestCandidateUrl ?? target,
+                        undefined,
+                        environmentId ?? undefined,
+                      );
+                    },
+                  }),
               threadLinkAction,
               position: { x: event.clientX, y: event.clientY },
               showContextMenu: (items, position) => api.contextMenu.show(items, position),

@@ -705,7 +705,7 @@ function PullRequestSurfaceIcon({
       : pullRequestEnvironment.detail({
           environmentId: resolvedEnvironmentId,
           input: {
-            projectId: surface.projectId as ProjectId,
+            projectId: surface.projectId as ProjectId | null,
             repository: surface.repository,
             number: surface.number,
           },
