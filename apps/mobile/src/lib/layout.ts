@@ -16,7 +16,6 @@ export const SPLIT_LAYOUT_MIN_WIDTH = 720;
 export const SPLIT_LAYOUT_MIN_HEIGHT = 600;
 
 export const SPLIT_SIDEBAR_MIN_WIDTH = 280;
-export const SPLIT_SIDEBAR_MAX_WIDTH = 460;
 const SPLIT_SIDEBAR_DEFAULT_MAX_WIDTH = 380;
 
 export const AUXILIARY_PANE_MIN_CONTENT_WIDTH = 960;
@@ -50,10 +49,6 @@ export const AUXILIARY_PANE_MAX_WIDTH = 480;
 const AUXILIARY_PANE_DEFAULT_MAX_WIDTH = 320;
 const FILE_INSPECTOR_MIN_VIEWPORT_WIDTH = 820;
 const FILE_INSPECTOR_MIN_MAIN_WIDTH = 560;
-const STABLE_FORM_SHEET_MAX_HEIGHT = 720;
-const STABLE_FORM_SHEET_VERTICAL_MARGIN = 64;
-const STABLE_FORM_SHEET_MIN_DETENT = 0.62;
-const STABLE_FORM_SHEET_MAX_DETENT = 0.92;
 
 export type LayoutVariant = "compact" | "split";
 
@@ -218,22 +213,6 @@ export function deriveFileInspectorPaneLayout(input: {
   };
 }
 
-/** Keep a user-selected sidebar width useful as a window is resized. */
-export function constrainPrimarySidebarWidth(
-  preferredWidth: number,
-  viewportWidth = Number.POSITIVE_INFINITY,
-): number {
-  const safeWidth = Number.isFinite(preferredWidth) ? preferredWidth : SPLIT_SIDEBAR_MIN_WIDTH;
-  const viewportMax = Number.isFinite(viewportWidth)
-    ? Math.max(SPLIT_SIDEBAR_MIN_WIDTH, viewportWidth - 360)
-    : SPLIT_SIDEBAR_MAX_WIDTH;
-  return clamp(
-    Math.round(safeWidth),
-    SPLIT_SIDEBAR_MIN_WIDTH,
-    Math.min(SPLIT_SIDEBAR_MAX_WIDTH, viewportMax),
-  );
-}
-
 /**
  * Keep an auxiliary pane within native-feeling bounds without squeezing its
  * neighboring content below a usable reading/editor width.
@@ -274,21 +253,4 @@ export function deriveCenteredContentHorizontalPadding(input: {
   }
 
   return minimumPadding + Math.max(0, (viewportWidth - input.maxContentWidth) / 2);
-}
-
-export function deriveStableFormSheetDetent(containerHeight: number): number {
-  if (!Number.isFinite(containerHeight) || containerHeight <= 0) {
-    return STABLE_FORM_SHEET_MAX_DETENT;
-  }
-
-  const targetHeight = Math.min(
-    STABLE_FORM_SHEET_MAX_HEIGHT,
-    Math.max(0, containerHeight - STABLE_FORM_SHEET_VERTICAL_MARGIN),
-  );
-  const detent = clamp(
-    targetHeight / containerHeight,
-    STABLE_FORM_SHEET_MIN_DETENT,
-    STABLE_FORM_SHEET_MAX_DETENT,
-  );
-  return Math.round(detent * 1_000) / 1_000;
 }
