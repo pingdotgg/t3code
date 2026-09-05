@@ -4118,8 +4118,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // browser to the provider. Toggleable via the `composer.dictate`
   // keybinding (default mod+shift+d) and via the mic button.
   // Declared before the keybinding handler below so the effect closure
-  // can read the enabled flag. The toggle itself goes through a ref so
-  // the handler doesn't re-subscribe on every dictation phase change.
+  // can read the enabled flag and live phase. Toggle and phase go through
+  // refs so the handler doesn't re-subscribe on every dictation change.
   // ------------------------------------------------------------------
   const dictationEnabled = useClientSettings((settings) => settings.dictationEnabled);
   const dictation = useComposerDictation({
@@ -4127,9 +4127,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     onError: (message) => {
       toastManager.add({ type: "error", title: "Dictation failed", description: message });
     },
+    targetKey: composerDraftTargetKeyRef.current,
   });
   const dictationToggleRef = useRef(dictation.toggle);
   dictationToggleRef.current = dictation.toggle;
+  const dictationPhaseRef = useRef(dictation.phase);
+  dictationPhaseRef.current = dictation.phase;
 
   // Close the stash menu whenever the trigger-driven command menu opens so
   // the two popovers never stack in the same layer, and when the user
@@ -4160,6 +4163,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         event.preventDefault();
         event.stopPropagation();
         if (event.repeat) return;
+        // An in-flight session is always stoppable, even if the setting
+        // flipped or a pending question landed mid-recording; the guards
+        // below only gate *starting* a new one.
+        if (dictationPhaseRef.current !== "idle") {
+          dictationToggleRef.current();
+          return;
+        }
         if (
           !dictationEnabled ||
           isCommandPaletteOpen() ||
@@ -5695,14 +5705,18 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     preserveComposerFocusOnPointerDown={isMobileViewport || isComposerResting}
                     showSendWhileRunning={isMobileViewport}
                     dictation={
-                      dictationEnabled &&
-                      pendingPrimaryAction === null &&
-                      !(pendingUserInputs.length === 0 && showPlanFollowUpPrompt)
+                      dictation.phase !== "idle" ||
+                      (dictationEnabled &&
+                        pendingPrimaryAction === null &&
+                        !(pendingUserInputs.length === 0 && showPlanFollowUpPrompt))
                         ? {
                             phase: dictation.phase,
                             // Recording can always be stopped: disabling the
                             // control mid-recording would strand the
-                            // MediaRecorder with no way to finish it.
+                            // MediaRecorder with no way to finish it. The
+                            // control also stays mounted while busy even if
+                            // the setting flips or a pending question lands,
+                            // so an in-flight session is never unstoppable.
                             disabled:
                               dictation.phase !== "recording" &&
                               (isConnecting ||

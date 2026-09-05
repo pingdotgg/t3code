@@ -151,6 +151,22 @@ describe("cleanupTranscript", () => {
     }
   });
 
+  it("treats the cleanup EMPTY sentinel as no transcript", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ choices: [{ message: { content: "EMPTY" } }] }), {
+          status: 200,
+        }),
+      ),
+    );
+    try {
+      await expect(cleanupTranscript("um uh", baseConfig)).rejects.toThrow(/Nothing worth keeping/);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("rejects empty cleanup output so the caller can fall back", async () => {
     vi.stubGlobal(
       "fetch",
@@ -161,7 +177,7 @@ describe("cleanupTranscript", () => {
       ),
     );
     try {
-      await expect(cleanupTranscript("hello", baseConfig)).rejects.toThrow(/raw transcript/);
+      await expect(cleanupTranscript("hello", baseConfig)).rejects.toThrow(/Nothing worth keeping/);
     } finally {
       vi.unstubAllGlobals();
     }

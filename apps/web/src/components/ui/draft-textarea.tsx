@@ -1,7 +1,6 @@
 "use client";
 
-import { useRef, useState, type ChangeEvent, type KeyboardEvent } from "react";
-import { useCommitOnBlur } from "~/hooks/useCommitOnBlur";
+import { useEffect, useRef, useState, type ChangeEvent, type KeyboardEvent } from "react";
 import { Textarea, type TextareaProps } from "./textarea";
 
 export type DraftTextareaProps = Omit<TextareaProps, "value" | "onChange" | "defaultValue"> & {
@@ -15,15 +14,35 @@ export type DraftTextareaProps = Omit<TextareaProps, "value" | "onChange" | "def
  * Escape discards the draft. Same rationale as `DraftInput`: avoids a
  * settings-wide re-render per keystroke on long fields like prompts and
  * vocabularies.
+ *
+ * Single draft owner (this component): `value` is upstream truth, `draft`
+ * is the in-progress edit, and external pushes resync only when unfocused
+ * so reset-to-defaults never clobbers typing.
  */
 export function DraftTextarea({ value, onCommit, ...rest }: DraftTextareaProps) {
   const [draft, setDraft] = useState<string | null>(null);
   const discardedRef = useRef(false);
-  const bag = useCommitOnBlur(value, onCommit);
+  const focusedRef = useRef(false);
+
+  useEffect(() => {
+    if (focusedRef.current) return;
+    setDraft(null);
+  }, [value]);
+
+  const commit = (next: string) => {
+    setDraft(null);
+    if (next !== value) {
+      onCommit(next);
+    }
+  };
 
   const handleChange = (event: ChangeEvent<HTMLTextAreaElement>) => {
     setDraft(event.target.value);
-    bag.onChange(event as unknown as ChangeEvent<HTMLInputElement>);
+  };
+
+  const handleFocus = () => {
+    focusedRef.current = true;
+    setDraft(value);
   };
 
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -38,26 +57,26 @@ export function DraftTextarea({ value, onCommit, ...rest }: DraftTextareaProps) 
     }
     if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
       event.preventDefault();
+      commit(draft ?? value);
       event.currentTarget.blur();
     }
   };
 
   const handleBlur = () => {
+    focusedRef.current = false;
     if (discardedRef.current) {
       discardedRef.current = false;
-      setDraft(null);
       return;
     }
-    bag.onBlur();
-    setDraft(null);
+    commit(draft ?? value);
   };
 
   return (
     <Textarea
       {...rest}
-      value={draft ?? bag.value}
+      value={draft ?? value}
       onChange={handleChange}
-      onFocus={() => setDraft(value)}
+      onFocus={handleFocus}
       onBlur={handleBlur}
       onKeyDown={handleKeyDown}
     />

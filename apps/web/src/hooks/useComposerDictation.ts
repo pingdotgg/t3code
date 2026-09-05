@@ -30,8 +30,17 @@ export function readDictationConfig(settings?: ClientSettings): DictationConfig 
   if (!current.dictationEnabled) return null;
   const apiKey = current.dictationApiKey.trim();
   const baseUrl = current.dictationBaseUrl.trim().replace(/\/+$/, "");
+  // Reject relative URLs: fetch would resolve them against the T3 origin
+  // and leak the provider API key to our own server in Authorization.
+  let parsedBaseUrl: URL;
+  try {
+    parsedBaseUrl = new URL(baseUrl);
+  } catch {
+    return null;
+  }
+  if (parsedBaseUrl.protocol !== "http:" && parsedBaseUrl.protocol !== "https:") return null;
   const model = current.dictationTranscriptionModel.trim();
-  if (apiKey.length === 0 || baseUrl.length === 0 || model.length === 0) return null;
+  if (apiKey.length === 0 || model.length === 0) return null;
   return {
     apiKey,
     baseUrl,
@@ -198,6 +207,7 @@ export async function cleanupTranscript(
     } catch {
       host = null;
     }
+    // Fall back to raw instead of surfacing HTTP errors: cleanup is polish.
     throw new Error(friendlyTranscriptionHttpMessage(response.status, host));
   }
 
@@ -206,8 +216,12 @@ export async function cleanupTranscript(
   };
   const content = payload.choices?.[0]?.message?.content;
   const cleaned = typeof content === "string" ? content.trim() : "";
-  if (cleaned.length === 0) {
-    throw new Error("Cleanup returned empty output. Using the raw transcript.");
+  // The cleanup prompt tells the model to return EMPTY for filler-only
+  // recordings; that sentinel is control output, not dictation text.
+  if (cleaned.length === 0 || cleaned.toLowerCase() === "empty") {
+    throw new Error(
+      "Nothing worth keeping was transcribed. Try speaking closer to the microphone.",
+    );
   }
   return cleaned;
 }
@@ -238,8 +252,10 @@ export interface UseComposerDictation {
 export function useComposerDictation(options: {
   onTranscript: (text: string) => boolean;
   onError: (message: string) => void;
+  /** Stable key of the composer the recording belongs to (thread/draft). */
+  targetKey: string;
 }): UseComposerDictation {
-  const { onTranscript, onError } = options;
+  const { onTranscript, onError, targetKey } = options;
   const [phase, setPhase] = useState<DictationPhase>("idle");
   // Latest callbacks without re-subscribing effects: the recorder event
   // handlers capture these refs, so parent re-renders swap the target
@@ -262,6 +278,29 @@ export function useComposerDictation(options: {
       streamRef.current = null;
     }
   }, []);
+
+  const cancelForTargetChange = useCallback(() => {
+    abortRef.current?.abort();
+    abortRef.current = null;
+    if (recorderRef.current && recorderRef.current.state !== "inactive") {
+      try {
+        recorderRef.current.stop();
+      } catch {
+        // Already stopped; teardown below is what matters.
+      }
+    }
+    teardownCapture();
+    setPhase("idle");
+  }, [teardownCapture]);
+  // The draft a recording belongs to: if the user switches threads while
+  // recording or transcribing, completion is discarded instead of landing
+  // speech in the wrong composer's draft.
+  const targetKeyRef = useRef(targetKey);
+  useEffect(() => {
+    if (targetKeyRef.current === targetKey) return;
+    targetKeyRef.current = targetKey;
+    cancelForTargetChange();
+  }, [targetKey, cancelForTargetChange]);
 
   const cancel = useCallback(() => {
     abortRef.current?.abort();
