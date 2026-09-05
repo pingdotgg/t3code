@@ -1291,28 +1291,30 @@ const make = Effect.gen(function* () {
       });
       return true;
     }).pipe(Effect.catchCause((cause) => recoverTurnStartFailure(cause).pipe(Effect.as(true))));
-    if (!authCommandHandled) {
+    const contextAdmissionAllowed = yield* Effect.gen(function* () {
+      if (authCommandHandled) return true;
       const usageLimitSettings = yield* serverSettingsService.getSettings;
       const latestThread = yield* projectionSnapshotQuery
         .getThreadDetailById(event.payload.threadId, { activityKinds: ["context-window.updated"] })
         .pipe(Effect.map(Option.getOrUndefined));
       if (!latestThread) {
-        return yield* appendTurnStartFailure(
+        yield* appendTurnStartFailure(
           "Provider turn start failed",
           "The thread disappeared before its provider turn could start.",
         );
+        return false;
       }
       const violation = evaluateTurnStartLimits({
         contextTokenLimit: usageLimitSettings.threadContextTokenLimit,
         activities: latestThread.activities,
       });
       if (violation) {
-        return yield* appendTurnStartFailure(
-          "T3 usage limit stopped provider work",
-          violation.detail,
-        );
+        yield* appendTurnStartFailure("T3 usage limit stopped provider work", violation.detail);
+        return false;
       }
-    }
+      return true;
+    }).pipe(Effect.catchCause((cause) => recoverTurnStartFailure(cause).pipe(Effect.as(false))));
+    if (!contextAdmissionAllowed) return;
     if (authCommandHandled) {
       return;
     }
