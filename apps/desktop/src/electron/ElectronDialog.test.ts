@@ -43,7 +43,6 @@ describe("ElectronDialog", () => {
       );
 
       assert.instanceOf(error, ElectronDialog.ElectronDialogPickFolderError);
-      assert.isTrue(ElectronDialog.isElectronDialogError(error));
       assert.strictEqual(error.ownerWindowId, 7);
       assert.strictEqual(error.defaultPath, "/workspace");
       assert.strictEqual(error.cause, cause);
