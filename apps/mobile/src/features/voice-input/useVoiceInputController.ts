@@ -40,9 +40,10 @@ export function useVoiceInputController(input: {
     latestInputRef.current = input;
   });
   useEffect(() => {
-    if (ownsSession && snapshot.selection)
-      latestInputRef.current.onChangeSelection(snapshot.selection);
-  }, [ownsSession, snapshot.selection]);
+    if (!isFocused || !input.ownerKey || !ownsSession || !snapshot.selection) return;
+    const selection = session.takeSelection(input.ownerKey);
+    if (selection) latestInputRef.current.onChangeSelection(selection);
+  }, [isFocused, input.ownerKey, ownsSession, session, snapshot.selection]);
 
   useEffect(() => {
     if (!isFocused || !ownsSession) return;

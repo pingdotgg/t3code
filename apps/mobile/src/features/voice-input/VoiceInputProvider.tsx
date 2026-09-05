@@ -8,7 +8,7 @@ import {
 } from "expo-audio";
 import { File } from "expo-file-system";
 import { createContext, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { AppState } from "react-native";
+import { AppState, Platform } from "react-native";
 import { getLocalVoiceTranscriber } from "../../native/voiceTranscription";
 import { appAtomRegistry } from "../../state/atom-registry";
 import {
@@ -43,8 +43,8 @@ async function configureVoiceRecordingAudio(): Promise<void> {
       allowsRecording: true,
       interruptionMode: "doNotMix",
       playsInSilentMode: true,
-      shouldPlayInBackground: true,
-      allowsBackgroundRecording: true,
+      shouldPlayInBackground: Platform.OS === "ios",
+      allowsBackgroundRecording: Platform.OS === "ios",
     });
     await setIsAudioActiveAsync(true);
   } catch (error) {
@@ -94,7 +94,9 @@ export function VoiceInputProvider({ children }: { children: ReactNode }) {
       value.session.draftChanged(),
     );
     const subscription = AppState.addEventListener("change", (state) => {
-      if (state === "background") void value.session.controller.appMovedToBackground();
+      if (state !== "background") return;
+      void value.session.controller.appMovedToBackground();
+      if (Platform.OS !== "ios") void value.session.controller.interruptRecording();
     });
     return () => {
       unsubscribe();

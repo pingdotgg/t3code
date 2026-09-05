@@ -57,12 +57,22 @@ export class VoiceInputSession {
     };
   };
 
+  /** Deliver the completed transcript cursor once, to its owning composer. */
+  takeSelection(ownerKey: string): Selection | null {
+    if (this.snapshot.ownerKey !== ownerKey || !this.snapshot.selection) return null;
+    const selection = this.snapshot.selection;
+    this.snapshot = { ...this.snapshot, selection: null };
+    this.listeners.forEach((listener) => listener());
+    return selection;
+  }
+
   /** Observe every draft mutation, including edits that restore the original text. */
   draftChanged(): void {
     if (!this.draft) return;
     const text = this.dependencies.readText(this.draft.ownerKey);
     if (text !== this.draft.text) {
       this.draft = { ...this.draft, text, revision: this.draft.revision + 1 };
+      if (this.snapshot.selection) this.takeSelection(this.draft.ownerKey);
     }
   }
 

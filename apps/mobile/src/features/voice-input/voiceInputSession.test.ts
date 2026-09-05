@@ -78,6 +78,25 @@ describe("VoiceInputSession", () => {
     await session.controller.interruptRecording();
   });
 
+  it("delivers the completed cursor only once and only to the original draft", async () => {
+    const { session } = harness();
+    await session.start("environment:a", selection);
+    await session.controller.stop();
+    expect(session.takeSelection("environment:b")).toBeNull();
+    expect(session.takeSelection("environment:a")).toEqual({ start: 11, end: 11 });
+    expect(session.takeSelection("environment:a")).toBeNull();
+    expect(session.getSnapshot().selection).toBeNull();
+  });
+
+  it("drops a pending cursor if the draft is edited before its composer returns", async () => {
+    const { session, drafts } = harness();
+    await session.start("environment:a", selection);
+    await session.controller.stop();
+    drafts.set("environment:a", "Edited after dictation");
+    session.draftChanged();
+    expect(session.takeSelection("environment:a")).toBeNull();
+  });
+
   it("rejects a transcript if the original draft was edited and then restored while away", async () => {
     const { session, drafts } = harness();
     await session.start("environment:a", selection);
