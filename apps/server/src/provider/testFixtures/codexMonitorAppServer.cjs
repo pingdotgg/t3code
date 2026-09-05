@@ -44,6 +44,7 @@ let step = 0;
 let cleanCount = 0;
 let interrupted = 0;
 let wakeRejected = false;
+let earlyTurnReply;
 const wakes = [];
 const write = (message) => process.stdout.write(`${JSON.stringify(message)}\n`);
 const notify = (method, params) =>
@@ -120,7 +121,8 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
         break;
       }
       active = `turn-${++serial}`;
-      reply(id, { turn: turn(active, "inProgress") });
+      if (params.input?.[0]?.text === "early-completion") earlyTurnReply = { id, turnId: active };
+      else reply(id, { turn: turn(active, "inProgress") });
       notify("turn/started", { threadId, turn: turn(active, "inProgress") });
       if (params.toolOutput) {
         wakes.push(params.toolOutput);
@@ -135,6 +137,12 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
       break;
     }
     case "thread/compact/start":
+      if (earlyTurnReply) {
+        reply(earlyTurnReply.id, { turn: turn(earlyTurnReply.turnId, "completed") });
+        earlyTurnReply = undefined;
+        reply(id, {});
+        break;
+      }
       step++;
       reply(id, {});
       if (scenario === "busy" && step === 2) finish(original);

@@ -1199,6 +1199,7 @@ export const makeCodexSessionRuntime = (
     let suppressMonitorWakes = false;
     let pendingUserSends = 0;
     const queuedUserTurns = new Set<string>();
+    let lastCompletedTurnId: string | undefined;
 
     // `~` is not shell-expanded when env vars are set via
     // `child_process.spawn`; `expandHomePath` lets a configured
@@ -1899,8 +1900,6 @@ export const makeCodexSessionRuntime = (
             : {}),
           ...(payload !== undefined ? { payload } : {}),
         });
-        if (notification.method === "turn/completed")
-          queuedUserTurns.delete(notification.params.turn.id);
         if (
           monitoringAvailable &&
           !foreignConversation &&
@@ -1951,6 +1950,8 @@ export const makeCodexSessionRuntime = (
             payload.turn.status === "failed" && "error" in payload.turn && payload.turn.error
               ? payload.turn.error.message
               : undefined;
+          lastCompletedTurnId = payload.turn.id;
+          queuedUserTurns.delete(payload.turn.id);
           return updateSession(sessionRef, {
             status: payload.turn.status === "failed" ? "error" : "ready",
             activeTurnId: undefined,
@@ -2502,15 +2503,18 @@ export const makeCodexSessionRuntime = (
                 );
                 const turnId = TurnId.make(response.turn.id);
                 suppressMonitorWakes = false;
-                queuedUserTurns.add(turnId);
-                yield* updateSession(sessionRef, (session) => ({
-                  status: "running",
-                  // Codex accepts follow-ups while the current turn is still
-                  // running. The response contains the queued turn id, but
-                  // turn/interrupt only accepts the id that is active now.
-                  activeTurnId: session.activeTurnId ?? turnId,
-                  ...(normalizedModel ? { model: normalizedModel } : {}),
-                }));
+                // A fast turn can complete before its start response reaches us.
+                if (lastCompletedTurnId !== turnId) {
+                  queuedUserTurns.add(turnId);
+                  yield* updateSession(sessionRef, (session) => ({
+                    status: "running",
+                    // Codex accepts follow-ups while the current turn is still
+                    // running. The response contains the queued turn id, but
+                    // turn/interrupt only accepts the id that is active now.
+                    activeTurnId: session.activeTurnId ?? turnId,
+                    ...(normalizedModel ? { model: normalizedModel } : {}),
+                  }));
+                }
                 const resumedProviderThreadId = currentProviderThreadId(yield* Ref.get(sessionRef));
                 return {
                   threadId: options.threadId,

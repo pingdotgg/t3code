@@ -102,6 +102,21 @@ it.effect("wakes an idle thread from tool output and stops without a shutdown wa
   }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, MonitorSession.layer))),
 );
 
+it.effect("delivers wakes when a user turn completes before its start response", () =>
+  Effect.gen(function* () {
+    const { runtime, until, inspect, subscribe } = yield* setup();
+    const sending = yield* runtime.sendTurn({ input: "early-completion" }).pipe(Effect.forkChild);
+    yield* until("turn/completed");
+    yield* runtime.compactThread;
+    yield* Fiber.join(sending);
+    assert.equal((yield* runtime.getSession).activeTurnId, undefined);
+    yield* subscribe;
+    yield* runtime.compactThread;
+    yield* until("turn/completed");
+    assert.equal((yield* inspect).wakes.length, 1);
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, MonitorSession.layer))),
+);
+
 it.effect("queues watcher events until the foreground turn completes", () =>
   Effect.gen(function* () {
     const { runtime, until, inspect, subscribe } = yield* setup();
