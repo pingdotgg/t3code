@@ -56,6 +56,7 @@ interface HeldResponse {
   data: WorkerResponse;
   deliver: () => void;
 }
+const animationFrames = new Set<ReturnType<typeof setImmediate>>();
 let responses: HeldResponse[];
 let responseWaiters: ((response: HeldResponse) => void)[];
 let terminationPromises: Promise<number>[];
@@ -147,10 +148,18 @@ beforeEach(async () => {
   responses = [];
   responseWaiters = [];
   terminationPromises = [];
-  vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) =>
-    setImmediate(() => callback(0)),
-  );
-  vi.stubGlobal("cancelAnimationFrame", clearImmediate);
+  vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+    const frame = setImmediate(() => {
+      animationFrames.delete(frame);
+      callback(0);
+    });
+    animationFrames.add(frame);
+    return frame;
+  });
+  vi.stubGlobal("cancelAnimationFrame", (frame: ReturnType<typeof setImmediate>) => {
+    animationFrames.delete(frame);
+    clearImmediate(frame);
+  });
   vi.stubGlobal("window", { matchMedia: () => ({ matches: true }) });
   pool = new WorkerPoolManager(
     // Adapt browser transport only; Pierre's real worker produces each response.
@@ -181,6 +190,9 @@ afterEach(async () => {
   renderer?.cleanUp();
   pool?.terminate();
   await Promise.all(terminationPromises);
+  // Worker termination does not cancel the pool's queued stats frame.
+  for (const frame of animationFrames) clearImmediate(frame);
+  animationFrames.clear();
   vi.unstubAllGlobals();
 });
 
