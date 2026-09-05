@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFS from "node:fs";
+import * as NodeChildProcess from "node:child_process";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
@@ -11,6 +12,7 @@ import type {
   SDKMessage,
   SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
+import { query as createSdkQuery } from "@anthropic-ai/claude-agent-sdk";
 import {
   ApprovalRequestId,
   ClaudeSettings,
@@ -76,6 +78,7 @@ class ClaudeAdapter extends Context.Service<ClaudeAdapter, ClaudeAdapterShape>()
 ) {}
 
 class FakeClaudeQuery implements AsyncIterable<SDKMessage> {
+  private readonly initialization = Promise.withResolvers<void>();
   private readonly queue: Array<SDKMessage> = [];
   private readonly waiters: Array<{
     readonly resolve: (value: IteratorResult<SDKMessage>) => void;
@@ -89,6 +92,21 @@ class FakeClaudeQuery implements AsyncIterable<SDKMessage> {
   public readonly setMaxThinkingTokensCalls: Array<number | null> = [];
   public closeCalls = 0;
   public closeError: unknown | undefined;
+
+  constructor() {
+    // Fresh-query tests need not observe the startup promise.
+    void this.initialization.promise.catch(() => {});
+  }
+
+  readonly initializationResult = (): Promise<void> => this.initialization.promise;
+
+  completeInitialization(): void {
+    this.initialization.resolve();
+  }
+
+  rejectInitialization(cause: unknown): void {
+    this.initialization.reject(cause);
+  }
 
   emit(message: SDKMessage): void {
     if (this.done) {
@@ -107,6 +125,7 @@ class FakeClaudeQuery implements AsyncIterable<SDKMessage> {
       return;
     }
     this.done = true;
+    this.initialization.reject(cause);
     this.failure = cause;
     for (const waiter of this.waiters.splice(0)) {
       waiter.reject(cause);
@@ -114,6 +133,7 @@ class FakeClaudeQuery implements AsyncIterable<SDKMessage> {
   }
 
   finish(): void {
+    this.initialization.reject(new Error("Query closed before initialization"));
     if (this.done) {
       return;
     }
@@ -188,6 +208,7 @@ function makeHarness(config?: {
   /** Queries handed to createQuery after the first; the last one repeats. */
   readonly extraQueries?: ReadonlyArray<FakeClaudeQuery>;
   readonly scopedLimitNames?: ClaudeAdapterLiveOptions["scopedLimitNames"];
+  readonly createQuery?: ClaudeAdapterLiveOptions["createQuery"];
 }) {
   const query = new FakeClaudeQuery();
   const queries = [query, ...(config?.extraQueries ?? [])];
@@ -202,6 +223,7 @@ function makeHarness(config?: {
     modelCatalog: Effect.succeed(SYNTHETIC_CLAUDE_MODEL_CATALOG),
     createQuery: (input) => {
       createInputs.push(input);
+      if (config?.createQuery) return config.createQuery(input);
       return queries[Math.min(createInputs.length - 1, queries.length - 1)]!;
     },
     ...(config?.nativeEventLogger
@@ -236,6 +258,106 @@ function makeHarness(config?: {
     query,
     getCreateQueryInputs: () => createInputs,
     getLastCreateQueryInput: () => createInputs.at(-1),
+  };
+}
+
+const BootstrapReceipt = Schema.Struct({
+  type: Schema.String,
+  prompts: Schema.Number,
+  message: Schema.optional(Schema.Unknown),
+});
+const decodeBootstrapReceipt = Schema.decodeUnknownSync(BootstrapReceipt);
+
+function makeSdkBootstrapHarness(
+  modes: ReadonlyArray<"valid" | "missing" | "control-error" | "pending">,
+  nativeEventLogger?: ClaudeAdapterLiveOptions["nativeEventLogger"],
+) {
+  const fixtures: Array<{
+    runtime: ReturnType<typeof createSdkQuery>;
+    child: NodeChildProcess.ChildProcess;
+    exited: Promise<void>;
+    initializing: Promise<void>;
+    firstPrompt: Promise<Schema.Schema.Type<typeof BootstrapReceipt>>;
+    initialized: Promise<boolean>;
+    inspect: () => Promise<Schema.Schema.Type<typeof BootstrapReceipt>>;
+  }> = [];
+  const harness = makeHarness({
+    cwd: process.cwd(),
+    ...(nativeEventLogger ? { nativeEventLogger } : {}),
+    createQuery: ({ prompt, options }) => {
+      const mode = modes[fixtures.length] ?? "valid";
+      const initializing = Promise.withResolvers<void>();
+      const firstPrompt = Promise.withResolvers<Schema.Schema.Type<typeof BootstrapReceipt>>();
+      const exited = Promise.withResolvers<void>();
+      let inspected: ReturnType<
+        typeof Promise.withResolvers<Schema.Schema.Type<typeof BootstrapReceipt>>
+      >;
+      let child: NodeChildProcess.ChildProcess;
+      const runtime = createSdkQuery({
+        prompt,
+        options: {
+          ...options,
+          // The custom spawner ignores the provider executable and environment.
+          env: {},
+          settingSources: [],
+          settings: { disableAllHooks: true },
+          persistSession: false,
+          mcpServers: {},
+          strictMcpConfig: true,
+          tools: [],
+          spawnClaudeCodeProcess: () => {
+            child = NodeChildProcess.spawn(
+              process.execPath,
+              [
+                NodePath.join(import.meta.dirname, "../testUtils/claudeBootstrapFixture.mjs"),
+                mode,
+                options.resume ?? options.sessionId ?? "unused",
+              ],
+              { env: {}, stdio: ["pipe", "pipe", "pipe", "ipc"] },
+            );
+            child.stderr?.resume();
+            child.once("exit", () => exited.resolve());
+            child.on("message", (message) => {
+              const receipt = decodeBootstrapReceipt(message);
+              if (receipt.type === "initializing") initializing.resolve();
+              if (receipt.type === "prompt") firstPrompt.resolve(receipt);
+              if (receipt.type === "state") inspected.resolve(receipt);
+            });
+            return child as NodeChildProcess.ChildProcessWithoutNullStreams;
+          },
+        },
+      });
+      fixtures.push({
+        runtime,
+        child: child!,
+        exited: exited.promise,
+        initializing: initializing.promise,
+        firstPrompt: firstPrompt.promise,
+        initialized: runtime.initializationResult().then(
+          () => true,
+          () => false,
+        ),
+        inspect: () => {
+          inspected = Promise.withResolvers();
+          child.send("inspect");
+          return inspected.promise;
+        },
+      });
+      return runtime;
+    },
+  });
+  return {
+    ...harness,
+    fixtures,
+    cleanUp: Effect.promise(async () => {
+      for (const fixture of fixtures) {
+        fixture.runtime.close();
+        if (fixture.child.exitCode === null && fixture.child.signalCode === null) {
+          fixture.child.kill("SIGTERM");
+        }
+        await fixture.exited;
+      }
+    }),
   };
 }
 
@@ -298,7 +420,7 @@ async function readFirstPromptMessage(
   return next.value;
 }
 
-/** What the CLI sends when it accepts a `--resume`, and what startSession waits for. */
+/** A durable session event, distinct from the pre-prompt initialization response. */
 function resumeAcceptedInit(sessionId: string): SDKMessage {
   return {
     type: "system",
@@ -3327,6 +3449,7 @@ describe("ClaudeAdapterLive", () => {
 
       const resumeCursor = firstSession.resumeCursor as { readonly resume: string };
       queries[1]!.emit(resumeAcceptedInit(resumeCursor.resume));
+      queries[1]!.completeInitialization();
       const secondSession = yield* adapter.startSession({
         threadId: THREAD_ID,
         provider: ProviderDriverKind.make("claudeAgent"),
@@ -5496,6 +5619,7 @@ describe("ClaudeAdapterLive", () => {
       const adapter = yield* ClaudeAdapter;
 
       harness.query.emit(resumeAcceptedInit("550e8400-e29b-41d4-a716-446655440000"));
+      harness.query.completeInitialization();
 
       const session = yield* adapter.startSession({
         threadId: RESUME_THREAD_ID,
@@ -5525,6 +5649,323 @@ describe("ClaudeAdapterLive", () => {
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
     );
+  });
+
+  it.effect("starts an actual SDK resume before any prompt or system init", () => {
+    const harness = makeSdkBootstrapHarness(["valid"]);
+    return Effect.gen(function* () {
+      yield* Effect.addFinalizer(() => harness.cleanUp);
+      const adapter = yield* ClaudeAdapter;
+      const nativeId = "550e8400-e29b-41d4-a716-446655440000";
+      const session = yield* adapter.startSession({
+        threadId: RESUME_THREAD_ID,
+        runtimeMode: "full-access",
+        resumeCursor: { resume: nativeId, resumeBeforeFirstPrompt: true },
+      });
+      assert.propertyVal(session.resumeCursor, "resume", nativeId);
+      assert.equal((yield* Effect.promise(() => harness.fixtures[0]!.inspect())).prompts, 0);
+      yield* adapter.sendTurn({ threadId: RESUME_THREAD_ID, input: "Only after initialization" });
+      const prompt = yield* Effect.promise(() => harness.fixtures[0]!.firstPrompt);
+      assert.equal(prompt.prompts, 1);
+      assert.include(encodeUnknownJsonString(prompt.message), "Only after initialization");
+    }).pipe(Effect.provide(harness.layer), Effect.scoped);
+  });
+
+  it.effect(
+    "drains an actual SDK missing result after initialization fails ahead of logging",
+    () => {
+      const logging = Deferred.makeUnsafe<void>();
+      const releaseLogging = Deferred.makeUnsafe<void>();
+      const harness = makeSdkBootstrapHarness(["missing", "valid"], {
+        filePath: "unused",
+        write: () =>
+          Deferred.succeed(logging, undefined).pipe(Effect.andThen(Deferred.await(releaseLogging))),
+        close: () => Effect.void,
+      });
+      return Effect.gen(function* () {
+        yield* Effect.addFinalizer(() => harness.cleanUp);
+        const adapter = yield* ClaudeAdapter;
+        const nativeId = "550e8400-e29b-41d4-a716-446655440000";
+        const starting = yield* adapter
+          .startSession({
+            threadId: RESUME_THREAD_ID,
+            runtimeMode: "full-access",
+            resumeCursor: { resume: nativeId, resumeBeforeFirstPrompt: true },
+          })
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(logging);
+        assert.equal(yield* Effect.promise(() => harness.fixtures[0]!.initialized), false);
+        yield* Deferred.succeed(releaseLogging, undefined);
+        const session = yield* Fiber.join(starting);
+        assert.equal(harness.fixtures.length, 2);
+        assert.notPropertyVal(session.resumeCursor, "resume", nativeId);
+        yield* adapter.sendTurn({ threadId: RESUME_THREAD_ID, input: "Single fresh prompt" });
+        const prompt = yield* Effect.promise(() => harness.fixtures[1]!.firstPrompt);
+        assert.equal(prompt.prompts, 1);
+        assert.include(encodeUnknownJsonString(prompt.message), "Single fresh prompt");
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    },
+  );
+
+  it.effect("closes an actual SDK initialize control error without retrying", () => {
+    const harness = makeSdkBootstrapHarness(["control-error"]);
+    return Effect.gen(function* () {
+      yield* Effect.addFinalizer(() => harness.cleanUp);
+      const adapter = yield* ClaudeAdapter;
+      const result = yield* adapter
+        .startSession({
+          threadId: RESUME_THREAD_ID,
+          runtimeMode: "full-access",
+          resumeCursor: {
+            resume: "550e8400-e29b-41d4-a716-446655440000",
+            resumeBeforeFirstPrompt: true,
+          },
+        })
+        .pipe(Effect.result);
+      assert.equal(result._tag, "Failure");
+      assert.equal(harness.fixtures.length, 1);
+      yield* Effect.promise(() => harness.fixtures[0]!.exited);
+      assert.equal(yield* adapter.hasSession(RESUME_THREAD_ID), false);
+    }).pipe(Effect.provide(harness.layer), Effect.scoped);
+  });
+
+  it.effect("rejects an overlapping send until actual SDK resume initialization completes", () => {
+    const harness = makeSdkBootstrapHarness(["pending"]);
+    return Effect.gen(function* () {
+      yield* Effect.addFinalizer(() => harness.cleanUp);
+      const adapter = yield* ClaudeAdapter;
+      const starting = yield* adapter
+        .startSession({
+          threadId: RESUME_THREAD_ID,
+          runtimeMode: "full-access",
+          resumeCursor: {
+            resume: "550e8400-e29b-41d4-a716-446655440000",
+            resumeBeforeFirstPrompt: true,
+          },
+        })
+        .pipe(Effect.forkChild);
+      const started = yield* adapter.streamEvents.pipe(Stream.take(1), Stream.runCollect);
+      assert.equal(started[0]?.type, "session.started");
+      yield* Effect.promise(() => harness.fixtures[0]!.initializing);
+      const result = yield* adapter
+        .sendTurn({ threadId: RESUME_THREAD_ID, input: "Too early" })
+        .pipe(Effect.result);
+      assert.equal(result._tag, "Failure");
+      if (result._tag === "Failure")
+        assert.instanceOf(result.failure, ProviderAdapterValidationError);
+      assert.equal((yield* Effect.promise(() => harness.fixtures[0]!.inspect())).prompts, 0);
+      harness.fixtures[0]!.child.send("initialize");
+      yield* Fiber.join(starting);
+      yield* adapter.sendTurn({ threadId: RESUME_THREAD_ID, input: "After ready" });
+      const prompt = yield* Effect.promise(() => harness.fixtures[0]!.firstPrompt);
+      assert.equal(prompt.prompts, 1);
+      assert.include(encodeUnknownJsonString(prompt.message), "After ready");
+    }).pipe(Effect.provide(harness.layer), Effect.scoped);
+  });
+
+  it.effect.each(["cancel", "stop"] as const)(
+    "closes actual SDK pending resume on %s",
+    (action) => {
+      const harness = makeSdkBootstrapHarness(["pending"]);
+      return Effect.gen(function* () {
+        yield* Effect.addFinalizer(() => harness.cleanUp);
+        const adapter = yield* ClaudeAdapter;
+        const starting = yield* adapter
+          .startSession({
+            threadId: RESUME_THREAD_ID,
+            runtimeMode: "full-access",
+            resumeCursor: {
+              resume: "550e8400-e29b-41d4-a716-446655440000",
+              resumeBeforeFirstPrompt: true,
+            },
+          })
+          .pipe(Effect.result, Effect.forkChild);
+        yield* adapter.streamEvents.pipe(Stream.take(1), Stream.runCollect);
+        yield* Effect.promise(() => harness.fixtures[0]!.initializing);
+        if (action === "cancel") yield* Fiber.interrupt(starting);
+        else {
+          yield* adapter.stopSession(RESUME_THREAD_ID);
+          assert.equal((yield* Fiber.join(starting))._tag, "Failure");
+        }
+        yield* Effect.promise(() => harness.fixtures[0]!.exited);
+        assert.equal(harness.fixtures.length, 1);
+        assert.equal(yield* adapter.hasSession(RESUME_THREAD_ID), false);
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    },
+  );
+
+  it.effect.each(["initialize", "missing"] as const)(
+    "does not replay a service send rejected during actual SDK resume before %s",
+    (response) => {
+      const harness = makeSdkBootstrapHarness(["pending", "valid"]);
+      const directoryLayer = ProviderSessionDirectoryLive.pipe(
+        Layer.provide(ProviderSessionRuntime.layer.pipe(Layer.provide(SqlitePersistenceMemory))),
+      );
+      const registryLayer = Layer.effect(
+        ProviderAdapterRegistry.ProviderAdapterRegistry,
+        Effect.map(ClaudeAdapter, (adapter) =>
+          makeAdapterRegistryMock({
+            [ProviderDriverKind.make("claudeAgent")]: adapter,
+          }),
+        ),
+      ).pipe(Layer.provide(harness.layer));
+      const providerLayer = makeProviderServiceLive().pipe(
+        Layer.provide(registryLayer),
+        Layer.provide(directoryLayer),
+        Layer.provide(harness.layer),
+        Layer.provide(AnalyticsService.layerTest),
+        Layer.provide(
+          Layer.succeed(
+            ProviderEventLoggers.ProviderEventLoggers,
+            ProviderEventLoggers.NoOpProviderEventLoggers,
+          ),
+        ),
+      );
+      return Effect.gen(function* () {
+        yield* Effect.addFinalizer(() => harness.cleanUp);
+        const adapter = yield* ClaudeAdapter;
+        const provider = yield* ProviderService.ProviderService;
+        const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
+        const nativeId = "550e8400-e29b-41d4-a716-446655440000";
+        yield* directory.upsert({
+          threadId: RESUME_THREAD_ID,
+          provider: ProviderDriverKind.make("claudeAgent"),
+          providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+          runtimeMode: "approval-required",
+          resumeCursor: { resume: nativeId, resumeBeforeFirstPrompt: true },
+        });
+        const started = yield* provider.streamEvents.pipe(
+          Stream.filter((event) => event.type === "session.started"),
+          Stream.take(1),
+          Stream.runCollect,
+          Effect.forkChild({ startImmediately: true }),
+        );
+        const starting = yield* provider
+          .startSession(RESUME_THREAD_ID, {
+            threadId: RESUME_THREAD_ID,
+            providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+            runtimeMode: "approval-required",
+          })
+          .pipe(Effect.forkChild);
+        yield* Fiber.join(started);
+        yield* Effect.promise(() => harness.fixtures[0]!.initializing);
+        const early = yield* provider
+          .sendTurn({ threadId: RESUME_THREAD_ID, input: "Never replay this rejected send" })
+          .pipe(Effect.result);
+        assert.equal(early._tag, "Failure");
+        if (early._tag === "Failure")
+          assert.instanceOf(early.failure, ProviderAdapterValidationError);
+        assert.propertyVal(
+          Option.getOrThrow(yield* directory.getBinding(RESUME_THREAD_ID)).resumeCursor,
+          "resumeBeforeFirstPrompt",
+          false,
+        );
+        // No prompt entered the adapter, so its still-live context remains unused.
+        assert.propertyVal(
+          (yield* adapter.listSessions())[0]!.resumeCursor,
+          "resumeBeforeFirstPrompt",
+          true,
+        );
+        assert.equal((yield* Effect.promise(() => harness.fixtures[0]!.inspect())).prompts, 0);
+        harness.fixtures[0]!.child.send(response);
+        yield* Fiber.join(starting);
+        assert.equal(harness.fixtures.length, response === "missing" ? 2 : 1);
+        const binding = Option.getOrThrow(yield* directory.getBinding(RESUME_THREAD_ID));
+        assert.propertyVal(binding.resumeCursor, "resumeBeforeFirstPrompt", response === "missing");
+        yield* provider.sendTurn({
+          threadId: RESUME_THREAD_ID,
+          input: "Explicit retry after startup",
+        });
+        const prompt = yield* Effect.promise(() => harness.fixtures.at(-1)!.firstPrompt);
+        assert.equal(prompt.prompts, 1);
+        assert.include(encodeUnknownJsonString(prompt.message), "Explicit retry after startup");
+        assert.notInclude(encodeUnknownJsonString(prompt.message), "Never replay");
+      }).pipe(
+        Effect.provide(Layer.mergeAll(providerLayer, directoryLayer, harness.layer)),
+        Effect.scoped,
+      );
+    },
+  );
+
+  it.effect("rejects initialization failure when query close throws without retrying", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      harness.query.closeError = new Error("close failed");
+      harness.query.rejectInitialization(new Error("initialization failed"));
+      const result = yield* adapter
+        .startSession({
+          threadId: RESUME_THREAD_ID,
+          runtimeMode: "full-access",
+          resumeCursor: {
+            resume: "550e8400-e29b-41d4-a716-446655440000",
+            resumeBeforeFirstPrompt: true,
+          },
+        })
+        .pipe(Effect.result);
+      assert.equal(result._tag, "Failure");
+      if (result._tag === "Failure") assert.instanceOf(result.failure, ProviderAdapterProcessError);
+      assert.equal(harness.getCreateQueryInputs().length, 1);
+      const sending = yield* adapter
+        .sendTurn({
+          threadId: RESUME_THREAD_ID,
+          input: "Failed initialization must not admit this",
+        })
+        .pipe(Effect.result);
+      if (sending._tag === "Success") {
+        assert.equal(
+          yield* Effect.promise(() => readFirstPromptText(harness.getLastCreateQueryInput())),
+          undefined,
+          "A failed close must not make an uninitialized resume sendable",
+        );
+      }
+      assert.equal(sending._tag, "Failure");
+      harness.query.closeError = undefined;
+      yield* adapter.stopSession(RESUME_THREAD_ID);
+    }).pipe(Effect.provide(harness.layer));
+  });
+
+  it.effect("ignores late resume initialization after stop and replacement", () => {
+    const replacement = new FakeClaudeQuery();
+    const harness = makeHarness({ extraQueries: [replacement] });
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const late = Promise.withResolvers<void>();
+      vi.spyOn(harness.query, "initializationResult").mockReturnValue(late.promise);
+      const started = yield* adapter.streamEvents.pipe(
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      const starting = yield* adapter
+        .startSession({
+          threadId: RESUME_THREAD_ID,
+          runtimeMode: "full-access",
+          resumeCursor: {
+            resume: "550e8400-e29b-41d4-a716-446655440000",
+            resumeBeforeFirstPrompt: true,
+          },
+        })
+        .pipe(Effect.result, Effect.forkChild);
+      yield* Fiber.join(started);
+      yield* adapter.stopSession(RESUME_THREAD_ID);
+      assert.equal((yield* Fiber.join(starting))._tag, "Failure");
+      const current = yield* adapter.startSession({
+        threadId: RESUME_THREAD_ID,
+        runtimeMode: "full-access",
+      });
+      late.resolve();
+      yield* adapter.sendTurn({ threadId: RESUME_THREAD_ID, input: "Replacement only" });
+      assert.deepEqual((yield* adapter.listSessions())[0]!.resumeCursor, {
+        ...(current.resumeCursor as object),
+        resumeBeforeFirstPrompt: false,
+      });
+      assert.equal(
+        yield* Effect.promise(() => readFirstPromptText(harness.getLastCreateQueryInput())),
+        "Replacement only",
+      );
+      assert.equal(harness.getCreateQueryInputs().length, 2);
+    }).pipe(Effect.provide(harness.layer));
   });
 
   it.effect("retries an unused generated session once after its exact ID is missing", () => {
@@ -5646,7 +6087,6 @@ describe("ClaudeAdapterLive", () => {
         "Network connection failed",
       ],
     },
-    { session_id: "7368d0c7-40a3-4d8a-bcc1-ac80c49f2719" },
   ])("does not retry an unused cursor for an ambiguous rejection %j", (overrides) => {
     const sessionId = "550e8400-e29b-41d4-a716-446655440000";
     const harness = makeHarness();
@@ -5716,6 +6156,7 @@ describe("ClaudeAdapterLive", () => {
         // The native transcript may exist even though T3 never received the first init.
         // Accepting the same ID must preserve that native context rather than replace it.
         resumedQuery.emit(resumeAcceptedInit(cursor.resume));
+        resumedQuery.completeInitialization();
         const resumed = yield* Fiber.join(starting);
         assert.deepEqual(resumed.resumeCursor, {
           threadId: RESUME_THREAD_ID,
@@ -6067,6 +6508,7 @@ describe("ClaudeAdapterLive", () => {
             Effect.forkChild({ startImmediately: true }),
           );
           harness.query.emit(resumeAcceptedInit(nativeId));
+          harness.query.completeInitialization();
           yield* Fiber.join(initialized);
           // Init alone is not a submitted T3 prompt, including across restart.
           assert.propertyVal(
@@ -6234,6 +6676,21 @@ describe("ClaudeAdapterLive", () => {
       // The close failed, so the session stays addressable by design; the bug
       // was the start never being released at all.
       assert.equal(yield* adapter.hasSession(RESUME_THREAD_ID), true);
+      harness.query.completeInitialization();
+      yield* Effect.promise(() => harness.query.initializationResult());
+      const sending = yield* adapter
+        .sendTurn({ threadId: RESUME_THREAD_ID, input: "Late initialization must not revive this" })
+        .pipe(Effect.result);
+      assert.equal(sending._tag, "Failure");
+      if (sending._tag === "Failure")
+        assert.instanceOf(sending.failure, ProviderAdapterValidationError);
+      harness.query.closeError = undefined;
+      yield* adapter.stopSession(RESUME_THREAD_ID);
+      assert.equal(yield* adapter.hasSession(RESUME_THREAD_ID), false);
+      assert.equal(
+        yield* Effect.promise(() => readFirstPromptText(harness.getLastCreateQueryInput())),
+        undefined,
+      );
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
@@ -6391,6 +6848,7 @@ describe("ClaudeAdapterLive", () => {
         session_id: durableSessionId,
         uuid: "resume-init",
       } as unknown as SDKMessage);
+      harness.query.completeInitialization();
 
       yield* Fiber.join(startFiber);
 
@@ -6918,6 +7376,7 @@ describe("ClaudeAdapterLive", () => {
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
       harness.query.emit(resumeAcceptedInit("550e8400-e29b-41d4-a716-446655440000"));
+      harness.query.completeInitialization();
       const session = yield* adapter.startSession({
         threadId: RESUME_THREAD_ID,
         provider: ProviderDriverKind.make("claudeAgent"),

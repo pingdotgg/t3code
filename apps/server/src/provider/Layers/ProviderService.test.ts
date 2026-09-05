@@ -523,6 +523,69 @@ const makeScopedClaudeAdmissionServices = (
     return { provider, directory, scope };
   });
 
+it.effect("serializes Claude writes across cancelled starts while other threads progress", () =>
+  Effect.gen(function* () {
+    const claude = makeFakeCodexAdapter(CLAUDE_AGENT_DRIVER);
+    const threadId = asThreadId("claude-lock-queued");
+    const otherId = asThreadId("claude-lock-other");
+    const writeEntered = yield* Deferred.make<void>();
+    const releaseWrite = yield* Deferred.make<void>();
+    const secondStarted = yield* Deferred.make<void>();
+    const survivorStarted = yield* Deferred.make<void>();
+    const writes: ThreadId[] = [];
+    let firstWrite = true;
+    const { provider } = yield* makeScopedClaudeAdmissionServices(claude.adapter, (directory) => ({
+      ...directory,
+      upsert: (binding) =>
+        Effect.gen(function* () {
+          if (binding.threadId === threadId && firstWrite) {
+            firstWrite = false;
+            yield* Deferred.succeed(writeEntered, undefined);
+            yield* Deferred.await(releaseWrite);
+          }
+          writes.push(binding.threadId);
+          return yield* directory.upsert(binding);
+        }),
+    }));
+    const originalStart = claude.startSession.getMockImplementation()!;
+    let blockedStarts = 0;
+    claude.startSession.mockImplementation((input) =>
+      originalStart(input).pipe(
+        Effect.tap(() => {
+          if (input.threadId !== threadId) return Effect.void;
+          blockedStarts++;
+          return blockedStarts === 2
+            ? Deferred.succeed(secondStarted, undefined)
+            : blockedStarts === 3
+              ? Deferred.succeed(survivorStarted, undefined)
+              : Effect.void;
+        }),
+      ),
+    );
+    const start = (id: ThreadId) =>
+      provider.startSession(id, {
+        threadId: id,
+        providerInstanceId: claudeAgentInstanceId,
+        runtimeMode: "approval-required",
+      });
+    const first = yield* start(threadId).pipe(Effect.forkChild);
+    yield* Deferred.await(writeEntered);
+    const cancelled = yield* start(threadId).pipe(Effect.forkChild);
+    yield* Deferred.await(secondStarted);
+    yield* start(otherId);
+    assert.deepEqual(writes, [otherId]);
+    yield* Fiber.interrupt(cancelled);
+    const surviving = yield* start(threadId).pipe(Effect.forkChild);
+    yield* Deferred.await(survivorStarted);
+    yield* Deferred.succeed(releaseWrite, undefined);
+    yield* Fiber.join(first);
+    yield* Fiber.join(surviving);
+    assert.deepEqual(writes, [otherId, threadId, threadId]);
+    yield* start(threadId);
+    assert.deepEqual(writes, [otherId, threadId, threadId, threadId]);
+  }),
+);
+
 it.effect(
   "revokes Claude recovery eligibility before sending and ignores a stale send result",
   () =>

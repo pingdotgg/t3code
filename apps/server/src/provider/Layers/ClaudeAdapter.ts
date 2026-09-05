@@ -307,7 +307,7 @@ interface ClaudeSessionContext {
   resumeSessionId: string | undefined;
   /** Only app-generated IDs with no submitted T3 prompt may recover as fresh. */
   resumeBeforeFirstPrompt: boolean | undefined;
-  /** Pending only while startSession waits for the CLI to answer the resume. */
+  /** Blocks sends until resume is accepted or query cleanup succeeds. */
   resumeVerification: Deferred.Deferred<ClaudeResumeOutcome> | undefined;
   resumeRejected: boolean;
   readonly pendingApprovals: Map<ApprovalRequestId, PendingApproval>;
@@ -347,6 +347,7 @@ interface ClaudeSessionContext {
 }
 
 interface ClaudeQueryRuntime extends AsyncIterable<SDKMessage> {
+  readonly initializationResult: () => Promise<unknown>;
   readonly setModel: (model?: string) => Promise<void>;
   readonly setPermissionMode: (mode: PermissionMode) => Promise<void>;
   readonly setMaxThinkingTokens: (maxThinkingTokens: number | null) => Promise<void>;
@@ -577,7 +578,6 @@ function isMissingConversationResult(message: SDKMessage, sessionId: string | un
     message.type === "result" &&
     message.subtype === "error_during_execution" &&
     message.is_error &&
-    message.session_id === sessionId &&
     message.errors.length === 1 &&
     message.errors[0]?.trim() === `No conversation found with session ID: ${sessionId}`
   );
@@ -2285,9 +2285,8 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
   });
 
   /**
-   * Reports whether the resume was rejected, settling startSession's wait.
-   * Hooks are excluded for the same reason as in `ensureThreadId`: they run
-   * before the CLI commits the session, so they prove nothing about a resume.
+   * A missing-transcript result precedes initialization failure. The native
+   * session ID is still transient, so only the exact requested-ID error counts.
    */
   const settleResumeVerification = Effect.fn("settleResumeVerification")(function* (
     context: ClaudeSessionContext,
@@ -2298,12 +2297,12 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     }
     const verification = context.resumeVerification;
     const rejected = isMissingConversationResult(message, context.resumeSessionId);
-    if (!verification || (!rejected && !hasDurableClaudeSessionId(message))) {
+    if (!verification || !rejected) {
       return false;
     }
     context.resumeRejected = rejected;
     context.resumeVerification = undefined;
-    yield* Deferred.succeed(verification, rejected ? "rejected" : "accepted");
+    yield* Deferred.succeed(verification, "rejected");
     return rejected;
   });
 
@@ -4108,7 +4107,6 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     // behind that failure.
     if (context.resumeVerification !== undefined) {
       const verification = context.resumeVerification;
-      context.resumeVerification = undefined;
       yield* Deferred.succeed(verification, "aborted");
     }
 
@@ -4125,6 +4123,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         }),
     });
 
+    context.resumeVerification = undefined;
     context.stopped = true;
 
     for (const taskId of Array.from(context.liveTaskIds)) {
@@ -4217,7 +4216,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
 
   const requireSession = (
     threadId: ThreadId,
-    expectedNativeSessionId?: string,
+    sendGuard?: { readonly expectedNativeSessionId?: string },
   ): Effect.Effect<ClaudeSessionContext, ProviderAdapterError> => {
     const context = sessions.get(threadId);
     if (!context) {
@@ -4237,8 +4236,8 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       );
     }
     if (
-      expectedNativeSessionId !== undefined &&
-      context.resumeSessionId !== expectedNativeSessionId
+      sendGuard?.expectedNativeSessionId !== undefined &&
+      context.resumeSessionId !== sendGuard.expectedNativeSessionId
     ) {
       return Effect.fail(
         new ProviderAdapterValidationError({
@@ -4246,6 +4245,15 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           operation: "sendTurn",
           issue:
             "Claude session changed before prompt admission. Retry after the session finishes starting.",
+        }),
+      );
+    }
+    if (sendGuard && (context.resumeVerification !== undefined || context.resumeRejected)) {
+      return Effect.fail(
+        new ProviderAdapterValidationError({
+          provider: PROVIDER,
+          operation: "sendTurn",
+          issue: "Claude session is still starting. Retry after initialization finishes.",
         }),
       );
     }
@@ -4973,12 +4981,41 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         }
       });
 
-      // Hold a resume start open until the CLI says whether it has the
-      // transcript, so startSession's retry lands before any prompt is queued.
+      // The initialize control response follows transcript loading. system/init
+      // follows a prompt instead, so waiting for that event would deadlock.
       if (resumeVerification !== undefined) {
+        const initialize = Effect.gen(function* () {
+          const initialized = yield* Effect.tryPromise(() =>
+            queryRuntime.initializationResult(),
+          ).pipe(Effect.result);
+          if (initialized._tag === "Success") {
+            if (context.resumeVerification === resumeVerification) {
+              context.resumeVerification = undefined;
+              yield* Deferred.succeed(resumeVerification, "accepted");
+            }
+          } else {
+            // SDK cleanup rejects initialize before our event logger may have
+            // consumed its buffered result. Close without marking the context
+            // stopped, then drain that result before deciding whether to retry.
+            yield* Effect.try({
+              try: () => queryRuntime.close(),
+              catch: (cause) =>
+                new ProviderAdapterProcessError({
+                  provider: PROVIDER,
+                  threadId,
+                  detail: "Failed to close Claude runtime after initialization failed.",
+                  cause,
+                }),
+            });
+            yield* Fiber.await(streamFiber);
+            yield* Deferred.succeed(resumeVerification, "aborted");
+          }
+          return yield* Deferred.await(resumeVerification);
+        });
         // The context is registered and its query already running, so an
         // interrupted wait has to take both down with it.
         const outcome = yield* Deferred.await(resumeVerification).pipe(
+          Effect.raceFirst(initialize),
           Effect.onExitIf(Exit.isFailure, () =>
             stopSessionInternal(context, { emitExitEvent: false }).pipe(
               Effect.catch((cause) =>
@@ -4989,7 +5026,10 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         );
         // A stop or a stream death settles the wait too, and the snapshot below
         // would describe a session that is already gone.
-        if (outcome === "aborted") {
+        if (
+          outcome === "aborted" ||
+          (outcome === "accepted" && (context.stopped || sessions.get(threadId) !== context))
+        ) {
           return yield* new ProviderAdapterSessionClosedError({
             provider: PROVIDER,
             threadId,
@@ -5041,7 +5081,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
   );
 
   const sendTurn: ClaudeAdapterShape["sendTurn"] = Effect.fn("sendTurn")(function* (input, guard) {
-    const context = yield* requireSession(input.threadId, guard?.expectedNativeSessionId);
+    const context = yield* requireSession(input.threadId, guard ?? {});
     if (context.resumeBeforeFirstPrompt !== undefined) {
       context.resumeBeforeFirstPrompt = false;
       context.session = {

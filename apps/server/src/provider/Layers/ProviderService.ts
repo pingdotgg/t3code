@@ -39,12 +39,12 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
+import * as RcMap from "effect/RcMap";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as SchemaIssue from "effect/SchemaIssue";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
-import * as SynchronizedRef from "effect/SynchronizedRef";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import * as ServerConfig from "../../config.ts";
@@ -330,15 +330,14 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
 
   const registry = yield* ProviderAdapterRegistry.ProviderAdapterRegistry;
   const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
-  const claudeCursorLocks = yield* SynchronizedRef.make(new Map<ThreadId, Semaphore.Semaphore>());
+  const claudeCursorLocks = yield* RcMap.make({
+    lookup: (_threadId: ThreadId) => Semaphore.make(1),
+  });
   const withClaudeCursorLock = <A, E, R>(threadId: ThreadId, task: Effect.Effect<A, E, R>) =>
-    SynchronizedRef.modifyEffect(claudeCursorLocks, (states) => {
-      const existing = states.get(threadId);
-      if (existing) return Effect.succeed([existing, states] as const);
-      return Semaphore.make(1).pipe(
-        Effect.map((lock) => [lock, new Map(states).set(threadId, lock)] as const),
-      );
-    }).pipe(Effect.flatMap((lock) => lock.withPermit(task)));
+    RcMap.get(claudeCursorLocks, threadId).pipe(
+      Effect.flatMap((lock) => lock.withPermit(task)),
+      Effect.scoped,
+    );
 
   // Admission and the four binding writers share this lock. An older startup
   // or shutdown snapshot must not restore eligibility after a prompt is sent.
