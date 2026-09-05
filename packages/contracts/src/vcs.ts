@@ -269,7 +269,21 @@ export class VcsUnsupportedOperationError extends Schema.TaggedErrorClass<VcsUns
   }
 }
 
+export class VcsCheckpointStorageError extends Schema.TaggedErrorClass<VcsCheckpointStorageError>()(
+  "VcsCheckpointStorageError",
+  {
+    operation: Schema.String,
+    cwd: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Could not store checkpoint objects in ${this.operation}: ${this.cwd}`;
+  }
+}
+
 export const VcsError = Schema.Union([
+  VcsCheckpointStorageError,
   VcsProcessSpawnError,
   VcsProcessExitError,
   VcsProcessTimeoutError,
