@@ -2,7 +2,12 @@ import * as NodeAssert from "node:assert/strict";
 
 import { describe, it } from "vite-plus/test";
 
-import { parseModelsCliOutput, parseAgentListCliOutput } from "./opencodeRuntime.ts";
+import {
+  parseAgentListCliOutput,
+  parseModelsCliOutput,
+  parseSkillsCliOutput,
+  toOpenCodeFileParts,
+} from "./opencodeRuntime.ts";
 
 describe("parseModelsCliOutput", () => {
   it("parses a single model from a single provider", () => {
@@ -125,6 +130,31 @@ describe("parseModelsCliOutput", () => {
     NodeAssert.ok(model.variants);
     NodeAssert.equal(model.variants!["medium"] !== undefined, true);
   });
+
+  it("keeps a model whose JSON body has a slash and no interior whitespace", () => {
+    // OpenRouter-style: the model id contains a `/` and no string value has a
+    // space, so the JSON body line itself matches the slug regex. It must still
+    // be treated as the body of the preceding slug, not a new slug.
+    const stdout = [
+      "openrouter/qwen/qwen3-coder",
+      JSON.stringify({
+        id: "qwen/qwen3-coder",
+        providerID: "openrouter",
+        name: "qwen3-coder",
+        status: "active",
+      }),
+    ].join("\n");
+
+    const result = parseModelsCliOutput(stdout);
+    NodeAssert.equal(result.providers.size, 1);
+    NodeAssert.deepEqual([...result.connected], ["openrouter"]);
+    const provider = result.providers.get("openrouter")!;
+    NodeAssert.ok(provider);
+    const model = provider.models["qwen/qwen3-coder"]!;
+    NodeAssert.ok(model);
+    NodeAssert.equal(model.id, "qwen/qwen3-coder");
+    NodeAssert.equal(model.providerID, "openrouter");
+  });
 });
 
 describe("parseAgentListCliOutput", () => {
@@ -225,5 +255,67 @@ describe("parseAgentListCliOutput", () => {
     const result = parseAgentListCliOutput(stdout);
     NodeAssert.equal(result[0]!.hidden, true);
     NodeAssert.equal(result[1]!.hidden, false);
+  });
+});
+
+describe("parseSkillsCliOutput", () => {
+  it("parses only skill metadata from the CLI JSON output", () => {
+    const result = parseSkillsCliOutput(
+      JSON.stringify([
+        {
+          name: "review-pr",
+          description: "Review a pull request.",
+          location: "/tmp/review-pr/SKILL.md",
+          content: "---\nname: review-pr\n---\n",
+        },
+      ]),
+    );
+
+    NodeAssert.deepEqual(result, [
+      {
+        name: "review-pr",
+        description: "Review a pull request.",
+        location: "/tmp/review-pr/SKILL.md",
+      },
+    ]);
+  });
+
+  it("degrades malformed output to an empty skill list", () => {
+    NodeAssert.deepEqual(parseSkillsCliOutput("not json"), []);
+  });
+});
+
+describe("toOpenCodeFileParts", () => {
+  const attachment = (mimeType: string, sizeBytes = 12) => ({
+    type: "file" as const,
+    id: "thread-1-00000000-0000-4000-8000-000000000001-bin",
+    name: "attachment",
+    mimeType,
+    sizeBytes,
+  });
+
+  it("sends supported images, text, and PDFs natively and skips what models reject", () => {
+    const parts = toOpenCodeFileParts({
+      attachments: [
+        attachment("application/pdf"),
+        attachment("text/markdown"),
+        attachment("image/png"),
+        // A ZIP file part makes OpenCode's Anthropic path throw before the
+        // turn starts; it must ride only as the prompt's file path line.
+        attachment("application/zip"),
+        attachment("application/octet-stream"),
+        // Image formats the model APIs reject stay on the fallback path too.
+        attachment("image/bmp"),
+        attachment("image/svg+xml"),
+        // Over the direct-attachment limit: path fallback even for a PDF.
+        attachment("application/pdf", 21 * 1024 * 1024),
+      ],
+      resolveAttachmentPath: () => "/tmp/attachment",
+    });
+
+    NodeAssert.deepEqual(
+      parts.map((part) => part.mime),
+      ["application/pdf", "text/markdown", "image/png"],
+    );
   });
 });

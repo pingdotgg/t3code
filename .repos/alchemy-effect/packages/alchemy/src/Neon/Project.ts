@@ -21,146 +21,20 @@ import { isResolved } from "../Diff.ts";
 import { createPhysicalName } from "../PhysicalName.ts";
 import * as Provider from "../Provider.ts";
 import { Resource } from "../Resource.ts";
+import {
+  hashImports,
+  hashMigrations,
+  listSqlFiles,
+  readSqlFile,
+} from "../SQL/SqlFile.ts";
+import { recordsEqual } from "../Util/equal.ts";
 import { applyMigrations, runSql } from "./Migrations.ts";
 import { parsePostgresOrigin, type PostgresOrigin } from "./PostgresOrigin.ts";
 import type { Providers } from "./Providers.ts";
-import {
-  listSqlFiles,
-  readSqlFile,
-  hashMigrations,
-  hashImports,
-} from "../Sql/SqlFile.ts";
 
-type NeonOperationStatus =
-  | "scheduling"
-  | "running"
-  | "finished"
-  | "failed"
-  | "error"
-  | "cancelling"
-  | "cancelled"
-  | "skipped";
-
-export class OperationFailed extends Data.TaggedError("OperationFailed")<{
-  operationId: string;
-  action: string;
-  status: NeonOperationStatus;
-  error?: string;
-}> {}
-
-class OperationPending extends Data.TaggedError("OperationPending")<{
-  operationId: string;
-}> {}
-
-const isOperationComplete = (status: NeonOperationStatus): boolean =>
-  status === "finished" ||
-  status === "failed" ||
-  status === "error" ||
-  status === "cancelled" ||
-  status === "skipped";
-
-/**
- * Wait for the given operations to reach a terminal state. Polls every
- * 500ms with exponential backoff up to ~30s per operation.
- */
-export const waitForOperations = (
-  operations: ReadonlyArray<{
-    readonly id: string;
-    readonly project_id: string;
-    readonly action: string;
-    readonly status: NeonOperationStatus;
-    readonly error?: string;
-  }>,
-) =>
-  Effect.gen(function* () {
-    for (const op of operations) {
-      if (isOperationComplete(op.status)) {
-        if (op.status === "failed" || op.status === "error") {
-          return yield* new OperationFailed({
-            operationId: op.id,
-            action: op.action,
-            status: op.status,
-            error: op.error,
-          });
-        }
-        continue;
-      }
-      yield* getProjectOperation({
-        project_id: op.project_id,
-        operation_id: op.id,
-      }).pipe(
-        Effect.flatMap(
-          ({
-            operation,
-          }): Effect.Effect<void, OperationFailed | OperationPending> => {
-            const status = operation.status as NeonOperationStatus;
-            if (status === "failed" || status === "error") {
-              return Effect.fail(
-                new OperationFailed({
-                  operationId: operation.id,
-                  action: operation.action,
-                  status,
-                  error: operation.error,
-                }),
-              );
-            }
-            if (!isOperationComplete(status)) {
-              return Effect.fail(new OperationPending({ operationId: op.id }));
-            }
-            return Effect.void;
-          },
-        ),
-        Effect.retry({
-          while: (e: unknown) => {
-            const tag = (e as { _tag?: string })._tag;
-            return (
-              tag === "OperationPending" ||
-              tag === "TooManyRequests" ||
-              tag === "ServiceUnavailable" ||
-              tag === "InternalServerError" ||
-              tag === "BadGateway" ||
-              tag === "GatewayTimeout"
-            );
-          },
-          schedule: Schedule.both(
-            Schedule.exponential(Duration.millis(500), 1.5),
-            Schedule.recurs(60),
-          ),
-        }),
-        Effect.catchTag("OperationPending", () => Effect.void),
-      );
-    }
-  });
-
-const findProjectByName = (name: string) =>
-  Effect.gen(function* () {
-    const matches: ListProjectsOutput["projects"][number][] = [];
-    let cursor: string | undefined;
-    while (true) {
-      const page = yield* listProjects({
-        search: name,
-        ...(cursor !== undefined ? { cursor } : {}),
-      });
-      for (const p of page.projects) {
-        if (p.name === name) matches.push(p);
-      }
-      const nextCursor = page.pagination?.cursor;
-      // Neon returns a `pagination.cursor` on every response — it's the
-      // `created_at` of the last row, not a "has next page" flag — so we
-      // can't loop on cursor presence alone or we spin forever re-fetching
-      // empty/identical pages. Stop once a page comes back empty or the
-      // cursor stops advancing.
-      if (
-        page.projects.length === 0 ||
-        nextCursor === undefined ||
-        nextCursor === cursor
-      ) {
-        break;
-      }
-      cursor = nextCursor;
-    }
-    return matches;
-  });
+const DEFAULT_MIGRATIONS_TABLE = "neon_migrations";
+const DEFAULT_REGION: NeonRegion = "aws-us-east-1";
+const DEFAULT_PG_VERSION: NeonPgVersion = 17;
 
 export type NeonRegion =
   | "aws-us-east-1"
@@ -176,10 +50,6 @@ export type NeonRegion =
   | "azure-gwc";
 
 export type NeonPgVersion = 14 | 15 | 16 | 17 | 18;
-
-const DEFAULT_MIGRATIONS_TABLE = "neon_migrations";
-const DEFAULT_REGION: NeonRegion = "aws-us-east-1";
-const DEFAULT_PG_VERSION: NeonPgVersion = 17;
 
 export type ProjectProps = {
   /**
@@ -277,6 +147,11 @@ export type Project = Resource<
      * when fronting Neon with another pooler like Hyperdrive.
      */
     origin: PostgresOrigin;
+    /**
+     * Parsed pooled connection components. Useful as a Hyperdrive `dev`
+     * origin when local workers bypass Hyperdrive and connect directly.
+     */
+    pooledOrigin: PostgresOrigin;
     historyRetentionSeconds: number;
     enableLogicalReplication: boolean;
     migrationsDir: string | undefined;
@@ -288,13 +163,15 @@ export type Project = Resource<
   Providers
 >;
 
+type ProjectAttributes = Project["Attributes"];
+
 /**
  * A Neon serverless Postgres project.
  *
  * Creating a project also provisions the project's default branch (named
  * "main" by default), an initial role, an initial database, and a
  * read-write compute endpoint, exposed as `connectionUri`.
- *
+ * @resource
  * @section Creating a Project
  * @example Basic project
  * ```typescript
@@ -336,6 +213,239 @@ export type Project = Resource<
  */
 export const Project = Resource<Project>("Neon.Project");
 
+export const ProjectProvider = () =>
+  Provider.succeed(Project, {
+    stables: ["projectId", "defaultBranchId"],
+    list: Effect.fn(function* () {
+      // Account-scoped collection: enumerate every project via the Neon
+      // projects list API, then hydrate each into the exact `read`
+      // Attributes shape with bounded concurrency.
+      const projects = yield* listAllProjects;
+      const rows = yield* Effect.forEach(
+        projects,
+        (project) =>
+          hydrateProjectAttributes(project).pipe(
+            // A project can be deleted between the list call and
+            // hydration — skip it rather than fail the whole enumeration.
+            Effect.catchTag("NotFound", () => Effect.succeed(undefined)),
+          ),
+        { concurrency: 10 },
+      );
+      return rows.filter((row): row is ProjectAttributes => row !== undefined);
+    }),
+    diff: Effect.fn(function* ({ id, olds = {}, news = {}, output }) {
+      if (!isResolved(news)) return undefined;
+      const oldName =
+        output?.projectName ?? (yield* createProjectName(id, olds.name));
+      // Auto-generated names are engine-owned: the deployed name stays
+      // authoritative even if the generator would name this id differently
+      // today. Only an explicit user-provided name can force a replace.
+      const name = news.name ?? oldName;
+      if (
+        oldName !== name ||
+        (news.region ?? output?.region ?? DEFAULT_REGION) !==
+          (output?.region ?? olds.region ?? DEFAULT_REGION) ||
+        (news.pgVersion ?? output?.pgVersion ?? DEFAULT_PG_VERSION) !==
+          (output?.pgVersion ?? olds.pgVersion ?? DEFAULT_PG_VERSION) ||
+        (news.defaultBranchName ?? output?.defaultBranchName) !==
+          output?.defaultBranchName
+      ) {
+        return { action: "replace" } as const;
+      }
+      if (
+        (news.historyRetentionSeconds ?? 86400) !==
+        (output?.historyRetentionSeconds ?? 86400)
+      ) {
+        return { action: "update" } as const;
+      }
+      if (
+        (news.enableLogicalReplication ?? false) !==
+        (output?.enableLogicalReplication ?? false)
+      ) {
+        return { action: "update" } as const;
+      }
+      if (news.migrationsDir) {
+        const newHashes = yield* hashMigrations(news.migrationsDir);
+        if (!recordsEqual(newHashes, output?.migrationsHashes ?? {})) {
+          return { action: "update" } as const;
+        }
+        if (
+          (news.migrationsTable ?? DEFAULT_MIGRATIONS_TABLE) !==
+          (output?.migrationsTable ?? DEFAULT_MIGRATIONS_TABLE)
+        ) {
+          return { action: "update" } as const;
+        }
+      }
+      if (news.importFiles?.length) {
+        const newHashes = yield* hashImports(news.importFiles, yield* rootDir);
+        if (!recordsEqual(newHashes, output?.importHashes ?? {})) {
+          return { action: "update" } as const;
+        }
+      }
+      return undefined;
+    }),
+    read: Effect.fn(function* ({ id, output, olds }) {
+      if (output?.projectId) {
+        return yield* getProject({ project_id: output.projectId }).pipe(
+          Effect.map(({ project }) => ({
+            ...output,
+            projectName: project.name,
+            pooledOrigin:
+              output.pooledOrigin ??
+              parsePostgresOrigin(output.pooledConnectionUri),
+            historyRetentionSeconds: project.history_retention_seconds,
+            enableLogicalReplication:
+              project.settings?.enable_logical_replication === true,
+          })),
+          Effect.catchTag("NotFound", () => Effect.succeed(undefined)),
+        );
+      }
+      const name = yield* createProjectName(id, olds?.name);
+      const matches = yield* findProjectByName(name);
+      const match = matches[0];
+      if (!match) return undefined;
+      return yield* hydrateProjectAttributes(match, {
+        defaultBranchName: olds?.defaultBranchName,
+        migrationsDir: olds?.migrationsDir,
+        migrationsTable: olds?.migrationsTable,
+      });
+    }),
+    reconcile: Effect.fn(function* ({ id, news = {}, output }) {
+      // Ensure — when no prior output exists we create the project
+      // (and let `read` upstream decide adoption); otherwise update
+      // the mutable scalar fields on the existing project.
+      const projectInfo = output
+        ? yield* updateProject({
+            project_id: output.projectId,
+            project: {
+              name: news.name,
+              history_retention_seconds: news.historyRetentionSeconds,
+              settings:
+                (news.enableLogicalReplication ?? false) !==
+                (output.enableLogicalReplication ?? false)
+                  ? {
+                      enable_logical_replication:
+                        news.enableLogicalReplication ?? false,
+                    }
+                  : undefined,
+            },
+          }).pipe(
+            Effect.map((r) => ({
+              projectId: output.projectId,
+              projectName: r.project.name,
+              region: output.region,
+              pgVersion: output.pgVersion,
+              defaultBranchId: output.defaultBranchId,
+              defaultBranchName: output.defaultBranchName,
+              databaseName: output.databaseName,
+              roleName: output.roleName,
+              connectionUri: output.connectionUri,
+              pooledConnectionUri: output.pooledConnectionUri,
+              origin: output.origin,
+              pooledOrigin:
+                output.pooledOrigin ??
+                parsePostgresOrigin(output.pooledConnectionUri),
+              historyRetentionSeconds:
+                r.project.history_retention_seconds ??
+                output.historyRetentionSeconds,
+              enableLogicalReplication:
+                r.project.settings?.enable_logical_replication === true,
+            })),
+          )
+        : yield* Effect.gen(function* () {
+            const name = yield* createProjectName(id, news.name);
+            const created = yield* sdkCreateProject({
+              project: {
+                name,
+                region_id: news.region,
+                pg_version: news.pgVersion,
+                branch: {
+                  name: news.defaultBranchName,
+                  role_name: news.roleName,
+                  database_name: news.databaseName,
+                },
+                history_retention_seconds: news.historyRetentionSeconds,
+                org_id: news.orgId,
+                settings: news.enableLogicalReplication
+                  ? { enable_logical_replication: true }
+                  : undefined,
+              },
+            });
+            yield* waitForOperations(created.operations);
+
+            const branchId = created.branch.id;
+            const databaseName = getDatabaseName(created);
+            const roleName = getRoleName(created) ?? "neondb_owner";
+            const conn = yield* resolveConnection(
+              created.project.id,
+              branchId,
+              databaseName,
+              roleName,
+            );
+            return {
+              projectId: created.project.id,
+              projectName: created.project.name,
+              region: created.project.region_id as NeonRegion,
+              pgVersion: created.project.pg_version as NeonPgVersion,
+              defaultBranchId: branchId,
+              defaultBranchName: created.branch.name,
+              databaseName,
+              roleName,
+              connectionUri: conn.uri,
+              pooledConnectionUri: conn.pooled,
+              origin: parsePostgresOrigin(conn.uri),
+              pooledOrigin: parsePostgresOrigin(conn.pooled),
+              historyRetentionSeconds:
+                created.project.history_retention_seconds ?? 86400,
+              enableLogicalReplication:
+                created.project.settings?.enable_logical_replication === true,
+            };
+          });
+
+      const connectionUri = Redacted.make(projectInfo.connectionUri);
+      const migrationsTable =
+        news.migrationsTable ??
+        output?.migrationsTable ??
+        DEFAULT_MIGRATIONS_TABLE;
+      const migrationsHashes = news.migrationsDir
+        ? yield* runMigrations(
+            connectionUri,
+            news.migrationsDir,
+            migrationsTable,
+          )
+        : (output?.migrationsHashes ?? {});
+      const importHashes = news.importFiles?.length
+        ? yield* runImports(
+            connectionUri,
+            news.importFiles,
+            yield* rootDir,
+            output?.importHashes ?? {},
+          )
+        : {};
+
+      return {
+        ...projectInfo,
+        migrationsDir: news.migrationsDir,
+        migrationsTable: news.migrationsDir ? migrationsTable : undefined,
+        migrationsHashes,
+        importHashes,
+      };
+    }),
+    delete: Effect.fn(function* ({ output }) {
+      yield* deleteProject({ project_id: output.projectId }).pipe(
+        Effect.tapError(Console.log),
+        Effect.catchTag("NotFound", () => Effect.void),
+      );
+    }),
+  });
+
+const rootDir = Effect.sync(process.cwd);
+
+const createProjectName = (id: string, name: string | undefined) =>
+  Effect.gen(function* () {
+    return name ?? (yield* createPhysicalName({ id }));
+  });
+
 const getRoleName = (creation: CreateProjectOutput) =>
   creation.roles.find((r) => !r.protected)?.name ?? creation.roles[0]?.name;
 
@@ -366,252 +476,218 @@ const resolveConnection = (
     return { uri: direct.uri, pooled: pooled.uri };
   });
 
-export const ProjectProvider = () =>
-  Provider.effect(
-    Project,
-    Effect.gen(function* () {
-      const rootDir = process.cwd();
+class OperationFailed extends Data.TaggedError("OperationFailed")<{
+  operationId: string;
+  action: string;
+  status: NeonOperationStatus;
+  error?: string;
+}> {}
 
-      const createProjectName = (id: string, name: string | undefined) =>
-        Effect.gen(function* () {
-          return name ?? (yield* createPhysicalName({ id }));
-        });
+class OperationPending extends Data.TaggedError("OperationPending")<{
+  operationId: string;
+}> {}
 
-      return {
-        stables: ["projectId", "defaultBranchId"],
-        diff: Effect.fn(function* ({ id, olds = {}, news = {}, output }) {
-          if (!isResolved(news)) return undefined;
-          const name = yield* createProjectName(id, news.name);
-          const oldName = output?.projectName
-            ? output.projectName
-            : yield* createProjectName(id, olds.name);
-          if (
-            oldName !== name ||
-            (news.region ?? DEFAULT_REGION) !==
-              (output?.region ?? olds.region ?? DEFAULT_REGION) ||
-            (news.pgVersion ?? DEFAULT_PG_VERSION) !==
-              (output?.pgVersion ?? olds.pgVersion ?? DEFAULT_PG_VERSION) ||
-            (news.defaultBranchName ?? output?.defaultBranchName) !==
-              output?.defaultBranchName
-          ) {
-            return { action: "replace" } as const;
-          }
-          if (
-            (news.historyRetentionSeconds ?? 86400) !==
-            (output?.historyRetentionSeconds ?? 86400)
-          ) {
-            return { action: "update" } as const;
-          }
-          if (
-            (news.enableLogicalReplication ?? false) !==
-            (output?.enableLogicalReplication ?? false)
-          ) {
-            return { action: "update" } as const;
-          }
-          if (news.migrationsDir) {
-            const newHashes = yield* hashMigrations(news.migrationsDir);
-            if (!recordsEqual(newHashes, output?.migrationsHashes ?? {})) {
-              return { action: "update" } as const;
+type NeonOperationStatus =
+  | "scheduling"
+  | "running"
+  | "finished"
+  | "failed"
+  | "error"
+  | "cancelling"
+  | "cancelled"
+  | "skipped";
+
+const isOperationComplete = (status: NeonOperationStatus): boolean =>
+  status === "finished" ||
+  status === "failed" ||
+  status === "error" ||
+  status === "cancelled" ||
+  status === "skipped";
+
+/**
+ * Wait for the given operations to reach a terminal state. Polls every
+ * 500ms with exponential backoff up to ~30s per operation.
+ */
+export const waitForOperations = (
+  operations: ReadonlyArray<{
+    readonly id: string;
+    readonly project_id: string;
+    readonly action: string;
+    readonly status: NeonOperationStatus;
+    readonly error?: string;
+  }>,
+) =>
+  Effect.gen(function* () {
+    for (const op of operations) {
+      if (isOperationComplete(op.status)) {
+        if (op.status === "failed" || op.status === "error") {
+          return yield* new OperationFailed({
+            operationId: op.id,
+            action: op.action,
+            status: op.status,
+            error: op.error,
+          });
+        }
+        continue;
+      }
+      yield* getProjectOperation({
+        project_id: op.project_id,
+        operation_id: op.id,
+      }).pipe(
+        Effect.flatMap(
+          ({
+            operation,
+          }): Effect.Effect<void, OperationFailed | OperationPending> => {
+            const status = operation.status as NeonOperationStatus;
+            if (status === "failed" || status === "error") {
+              return Effect.fail(
+                new OperationFailed({
+                  operationId: operation.id,
+                  action: operation.action,
+                  status,
+                  error: operation.error,
+                }),
+              );
             }
-            if (
-              (news.migrationsTable ?? DEFAULT_MIGRATIONS_TABLE) !==
-              (output?.migrationsTable ?? DEFAULT_MIGRATIONS_TABLE)
-            ) {
-              return { action: "update" } as const;
+            if (!isOperationComplete(status)) {
+              return Effect.fail(new OperationPending({ operationId: op.id }));
             }
-          }
-          if (news.importFiles?.length) {
-            const newHashes = yield* hashImports(news.importFiles, rootDir);
-            if (!recordsEqual(newHashes, output?.importHashes ?? {})) {
-              return { action: "update" } as const;
-            }
-          }
-          return undefined;
-        }),
-        read: Effect.fn(function* ({ id, output, olds }) {
-          if (output?.projectId) {
-            return yield* getProject({ project_id: output.projectId }).pipe(
-              Effect.map(({ project }) => ({
-                ...output,
-                projectName: project.name,
-                historyRetentionSeconds: project.history_retention_seconds,
-                enableLogicalReplication:
-                  project.settings?.enable_logical_replication === true,
-              })),
-              Effect.catchTag("NotFound", () => Effect.succeed(undefined)),
+            return Effect.void;
+          },
+        ),
+        Effect.retry({
+          while: (e: unknown) => {
+            const tag = (e as { _tag?: string })._tag;
+            return (
+              tag === "OperationPending" ||
+              tag === "TooManyRequests" ||
+              tag === "ServiceUnavailable" ||
+              tag === "InternalServerError" ||
+              tag === "BadGateway" ||
+              tag === "GatewayTimeout"
             );
-          }
-          const name = yield* createProjectName(id, olds?.name);
-          const matches = yield* findProjectByName(name);
-          const match = matches[0];
-          if (!match) return undefined;
-          const branches = yield* listProjectBranches({
-            project_id: match.id,
-            search: olds?.defaultBranchName ?? "main",
-          });
-          const defaultBranch =
-            branches.branches.find((b) => b.default) ?? branches.branches[0];
-          if (!defaultBranch) return undefined;
-          const databases = yield* listProjectBranchDatabases({
-            project_id: match.id,
-            branch_id: defaultBranch.id,
-          });
-          const db = databases.databases[0];
-          if (!db) return undefined;
-          const conn = yield* resolveConnection(
-            match.id,
-            defaultBranch.id,
-            db.name,
-            db.owner_name,
-          );
-          return {
-            projectId: match.id,
-            projectName: match.name,
-            region: match.region_id as NeonRegion,
-            pgVersion: match.pg_version as NeonPgVersion,
-            defaultBranchId: defaultBranch.id,
-            defaultBranchName: defaultBranch.name,
-            databaseName: db.name,
-            roleName: db.owner_name,
-            connectionUri: conn.uri,
-            pooledConnectionUri: conn.pooled,
-            origin: parsePostgresOrigin(conn.uri),
-            historyRetentionSeconds: match.history_retention_seconds ?? 86400,
-            enableLogicalReplication:
-              match.settings?.enable_logical_replication === true,
-            migrationsDir: olds?.migrationsDir,
-            migrationsTable: olds?.migrationsTable,
-            migrationsHashes: {},
-            importHashes: {},
-          };
+          },
+          schedule: Schedule.max([
+            Schedule.exponential(Duration.millis(500), 1.5),
+            Schedule.recurs(60),
+          ]),
         }),
-        reconcile: Effect.fn(function* ({ id, news = {}, output }) {
-          // Ensure — when no prior output exists we create the project
-          // (and let `read` upstream decide adoption); otherwise update
-          // the mutable scalar fields on the existing project.
-          const projectInfo = output
-            ? yield* updateProject({
-                project_id: output.projectId,
-                project: {
-                  name: news.name,
-                  history_retention_seconds: news.historyRetentionSeconds,
-                  settings:
-                    (news.enableLogicalReplication ?? false) !==
-                    (output.enableLogicalReplication ?? false)
-                      ? {
-                          enable_logical_replication:
-                            news.enableLogicalReplication ?? false,
-                        }
-                      : undefined,
-                },
-              }).pipe(
-                Effect.map((r) => ({
-                  projectId: output.projectId,
-                  projectName: r.project.name,
-                  region: output.region,
-                  pgVersion: output.pgVersion,
-                  defaultBranchId: output.defaultBranchId,
-                  defaultBranchName: output.defaultBranchName,
-                  databaseName: output.databaseName,
-                  roleName: output.roleName,
-                  connectionUri: output.connectionUri,
-                  pooledConnectionUri: output.pooledConnectionUri,
-                  origin: output.origin,
-                  historyRetentionSeconds:
-                    r.project.history_retention_seconds ??
-                    output.historyRetentionSeconds,
-                  enableLogicalReplication:
-                    r.project.settings?.enable_logical_replication === true,
-                })),
-              )
-            : yield* Effect.gen(function* () {
-                const name = yield* createProjectName(id, news.name);
-                const created = yield* sdkCreateProject({
-                  project: {
-                    name,
-                    region_id: news.region,
-                    pg_version: news.pgVersion,
-                    branch: {
-                      name: news.defaultBranchName,
-                      role_name: news.roleName,
-                      database_name: news.databaseName,
-                    },
-                    history_retention_seconds: news.historyRetentionSeconds,
-                    org_id: news.orgId,
-                    settings: news.enableLogicalReplication
-                      ? { enable_logical_replication: true }
-                      : undefined,
-                  },
-                });
-                yield* waitForOperations(created.operations);
+        Effect.catchTag("OperationPending", () => Effect.void),
+      );
+    }
+  });
 
-                const branchId = created.branch.id;
-                const databaseName = getDatabaseName(created);
-                const roleName = getRoleName(created) ?? "neondb_owner";
-                const conn = yield* resolveConnection(
-                  created.project.id,
-                  branchId,
-                  databaseName,
-                  roleName,
-                );
-                return {
-                  projectId: created.project.id,
-                  projectName: created.project.name,
-                  region: created.project.region_id as NeonRegion,
-                  pgVersion: created.project.pg_version as NeonPgVersion,
-                  defaultBranchId: branchId,
-                  defaultBranchName: created.branch.name,
-                  databaseName,
-                  roleName,
-                  connectionUri: conn.uri,
-                  pooledConnectionUri: conn.pooled,
-                  origin: parsePostgresOrigin(conn.uri),
-                  historyRetentionSeconds:
-                    created.project.history_retention_seconds ?? 86400,
-                  enableLogicalReplication:
-                    created.project.settings?.enable_logical_replication ===
-                    true,
-                };
-              });
+const findProjectByName = (name: string) =>
+  Effect.gen(function* () {
+    const matches: ListProjectsOutput["projects"][number][] = [];
+    let cursor: string | undefined;
+    while (true) {
+      const page = yield* listProjects({
+        search: name,
+        ...(cursor !== undefined ? { cursor } : {}),
+      });
+      for (const p of page.projects) {
+        if (p.name === name) matches.push(p);
+      }
+      const nextCursor = page.pagination?.cursor;
+      // Neon returns a `pagination.cursor` on every response — it's the
+      // `created_at` of the last row, not a "has next page" flag — so we
+      // can't loop on cursor presence alone or we spin forever re-fetching
+      // empty/identical pages. Stop once a page comes back empty or the
+      // cursor stops advancing.
+      if (
+        page.projects.length === 0 ||
+        nextCursor === undefined ||
+        nextCursor === cursor
+      ) {
+        break;
+      }
+      cursor = nextCursor;
+    }
+    return matches;
+  });
 
-          const connectionUri = Redacted.make(projectInfo.connectionUri);
-          const migrationsTable =
-            news.migrationsTable ??
-            output?.migrationsTable ??
-            DEFAULT_MIGRATIONS_TABLE;
-          const migrationsHashes = news.migrationsDir
-            ? yield* runMigrations(
-                connectionUri,
-                news.migrationsDir,
-                migrationsTable,
-              )
-            : (output?.migrationsHashes ?? {});
-          const importHashes = news.importFiles?.length
-            ? yield* runImports(
-                connectionUri,
-                news.importFiles,
-                rootDir,
-                output?.importHashes ?? {},
-              )
-            : {};
+/**
+ * Exhaustively enumerate every project in the account. Uses the same
+ * cursor-stop heuristic as {@link findProjectByName} because Neon returns a
+ * `pagination.cursor` on every page (it's the last row's `created_at`, not a
+ * "has next page" flag), so we'd otherwise loop forever re-fetching.
+ */
+const listAllProjects = Effect.gen(function* () {
+  const projects: ListProjectsOutput["projects"][number][] = [];
+  let cursor: string | undefined;
+  while (true) {
+    const page = yield* listProjects(cursor !== undefined ? { cursor } : {});
+    projects.push(...page.projects);
+    const nextCursor = page.pagination?.cursor;
+    if (
+      page.projects.length === 0 ||
+      nextCursor === undefined ||
+      nextCursor === cursor
+    ) {
+      break;
+    }
+    cursor = nextCursor;
+  }
+  return projects;
+});
 
-          return {
-            ...projectInfo,
-            migrationsDir: news.migrationsDir,
-            migrationsTable: news.migrationsDir ? migrationsTable : undefined,
-            migrationsHashes,
-            importHashes,
-          };
-        }),
-        delete: Effect.fn(function* ({ output }) {
-          yield* deleteProject({ project_id: output.projectId }).pipe(
-            Effect.tapError(Console.log),
-            Effect.catchTag("NotFound", () => Effect.void),
-          );
-        }),
-      };
-    }),
-  );
+/**
+ * Hydrate a project summary (from the list API) into the exact `read`
+ * Attributes shape — resolving the default branch, its primary database, and
+ * the direct + pooled connection URIs. Returns `undefined` when the project
+ * has no branch or database yet (mirrors `read`).
+ */
+const hydrateProjectAttributes = (
+  project: ListProjectsOutput["projects"][number],
+  opts: {
+    defaultBranchName?: string;
+    migrationsDir?: string;
+    migrationsTable?: string;
+  } = {},
+) =>
+  Effect.gen(function* () {
+    const branches = yield* listProjectBranches({
+      project_id: project.id,
+      search: opts.defaultBranchName ?? "main",
+    });
+    const defaultBranch =
+      branches.branches.find((b) => b.default) ?? branches.branches[0];
+    if (!defaultBranch) return undefined;
+    const databases = yield* listProjectBranchDatabases({
+      project_id: project.id,
+      branch_id: defaultBranch.id,
+    });
+    const db = databases.databases[0];
+    if (!db) return undefined;
+    const conn = yield* resolveConnection(
+      project.id,
+      defaultBranch.id,
+      db.name,
+      db.owner_name,
+    );
+    return {
+      projectId: project.id,
+      projectName: project.name,
+      region: project.region_id as NeonRegion,
+      pgVersion: project.pg_version as NeonPgVersion,
+      defaultBranchId: defaultBranch.id,
+      defaultBranchName: defaultBranch.name,
+      databaseName: db.name,
+      roleName: db.owner_name,
+      connectionUri: conn.uri,
+      pooledConnectionUri: conn.pooled,
+      origin: parsePostgresOrigin(conn.uri),
+      pooledOrigin: parsePostgresOrigin(conn.pooled),
+      historyRetentionSeconds: project.history_retention_seconds ?? 86400,
+      enableLogicalReplication:
+        project.settings?.enable_logical_replication === true,
+      migrationsDir: opts.migrationsDir,
+      migrationsTable: opts.migrationsTable,
+      migrationsHashes: {},
+      importHashes: {},
+    } satisfies ProjectAttributes;
+  });
 
 const runMigrations = (
   connectionUri: Redacted.Redacted<string>,
@@ -655,16 +731,3 @@ const runImports = (
     }
     return hashes;
   });
-
-const recordsEqual = (
-  a: Record<string, string>,
-  b: Record<string, string>,
-): boolean => {
-  const aKeys = Object.keys(a);
-  const bKeys = Object.keys(b);
-  if (aKeys.length !== bKeys.length) return false;
-  for (const k of aKeys) {
-    if (a[k] !== b[k]) return false;
-  }
-  return true;
-};

@@ -1,8 +1,9 @@
 import { EnvironmentId } from "@t3tools/contracts";
-import type {
-  RelayClientDeviceRecord,
-  RelayClientEnvironmentRecord,
-  RelayEnvironmentStatusResponse,
+import {
+  RelayAuthInvalidError,
+  type RelayClientDeviceRecord,
+  type RelayClientEnvironmentRecord,
+  type RelayEnvironmentStatusResponse,
 } from "@t3tools/contracts/relay";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -12,12 +13,15 @@ import * as Stream from "effect/Stream";
 import { Atom, AtomRegistry } from "effect/unstable/reactivity";
 import { afterEach, vi } from "vite-plus/test";
 
+import { DPOP_UNKNOWN_HINT } from "./errorPresentation.ts";
 import * as ManagedRelay from "./managedRelay.ts";
 import {
   createManagedRelayQueryManager,
   createManagedRelaySession,
+  deregisterManagedRelayEnvironment,
   managedRelayAccountChanges,
   type ManagedRelayQueryEvent,
+  ManagedRelaySessionError,
   managedRelaySessionAtom,
   readManagedRelaySnapshotState,
   setManagedRelaySession,
@@ -61,11 +65,8 @@ function resetRegistry() {
   registry = AtomRegistry.make();
 }
 
-function createManager(
-  overrides?: Partial<ManagedRelay.ManagedRelayClient["Service"]>,
-  onQueryEvent?: (event: ManagedRelayQueryEvent) => void,
-) {
-  const client = ManagedRelay.ManagedRelayClient.of({
+function createClient(overrides?: Partial<ManagedRelay.ManagedRelayClient["Service"]>) {
+  return ManagedRelay.ManagedRelayClient.of({
     relayUrl: "https://relay.example.test",
     listEnvironments: () => Effect.succeed([environment]),
     listDevices: () => Effect.succeed([device]),
@@ -87,6 +88,13 @@ function createManager(
     resetTokenCache: Effect.void,
     ...overrides,
   });
+}
+
+function createManager(
+  overrides?: Partial<ManagedRelay.ManagedRelayClient["Service"]>,
+  onQueryEvent?: (event: ManagedRelayQueryEvent) => void,
+) {
+  const client = createClient(overrides);
   const runtime = Atom.runtime(Layer.succeed(ManagedRelay.ManagedRelayClient, client));
   return createManagedRelayQueryManager(runtime, {
     staleTimeMs: 60_000,
@@ -118,6 +126,43 @@ describe("createManagedRelayQueryManager", () => {
 
       expect(yield* Fiber.join(tokenFiber)).toBe("clerk-token");
       expect(registry.getNodes().get(managedRelaySessionAtom)?.listeners.size).toBe(0);
+    }),
+  );
+
+  it.effect("deregisters an environment through the current Clerk session", () =>
+    Effect.gen(function* () {
+      const unlinkEnvironment = vi.fn(() => Effect.succeed({ ok: true }));
+      setSession();
+
+      yield* deregisterManagedRelayEnvironment(registry, {
+        accountId: "account-1",
+        environmentId: environment.environmentId,
+      }).pipe(
+        Effect.provideService(ManagedRelay.ManagedRelayClient, createClient({ unlinkEnvironment })),
+      );
+
+      expect(unlinkEnvironment).toHaveBeenCalledWith({
+        clerkToken: "clerk-token",
+        environmentId: environment.environmentId,
+      });
+    }),
+  );
+
+  it.effect("rejects deregistration after the account changes", () =>
+    Effect.gen(function* () {
+      const unlinkEnvironment = vi.fn(() => Effect.succeed({ ok: true }));
+      setSession();
+
+      const error = yield* deregisterManagedRelayEnvironment(registry, {
+        accountId: "previous-account",
+        environmentId: environment.environmentId,
+      }).pipe(
+        Effect.provideService(ManagedRelay.ManagedRelayClient, createClient({ unlinkEnvironment })),
+        Effect.flip,
+      );
+
+      expect(error).toBeInstanceOf(ManagedRelaySessionError);
+      expect(unlinkEnvironment).not.toHaveBeenCalled();
     }),
   );
 
@@ -198,30 +243,38 @@ describe("createManagedRelayQueryManager", () => {
     }),
   );
 
-  it("emits credential changes only when the managed relay account changes", async () => {
-    setManagedRelaySession(registry, {
-      accountId: "account-1",
-      readClerkToken: () => Promise.resolve("first-token"),
-    });
-    const changes = Effect.runPromise(
-      managedRelayAccountChanges(registry).pipe(Stream.take(2), Stream.runCollect),
-    );
-    await vi.waitFor(() => {
-      expect(registry.getNodes().get(managedRelaySessionAtom)?.listeners.size).toBeGreaterThan(0);
-    });
+  it.effect("emits credential changes only when the managed relay account changes", () =>
+    Effect.gen(function* () {
+      setManagedRelaySession(registry, {
+        accountId: "account-1",
+        readClerkToken: () => Promise.resolve("first-token"),
+      });
+      const changes = yield* managedRelayAccountChanges(registry).pipe(
+        Stream.take(2),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      yield* Effect.promise(() =>
+        vi.waitFor(() => {
+          expect(registry.getNodes().get(managedRelaySessionAtom)?.listeners.size).toBeGreaterThan(
+            0,
+          );
+        }),
+      );
 
-    setManagedRelaySession(registry, {
-      accountId: "account-1",
-      readClerkToken: () => Promise.resolve("refreshed-token"),
-    });
-    setManagedRelaySession(registry, {
-      accountId: "account-2",
-      readClerkToken: () => Promise.resolve("second-token"),
-    });
-    setManagedRelaySession(registry, null);
+      setManagedRelaySession(registry, {
+        accountId: "account-1",
+        readClerkToken: () => Promise.resolve("refreshed-token"),
+      });
+      setManagedRelaySession(registry, {
+        accountId: "account-2",
+        readClerkToken: () => Promise.resolve("second-token"),
+      });
+      setManagedRelaySession(registry, null);
 
-    expect(Array.from(await changes)).toEqual(["account-2", null]);
-  });
+      expect(Array.from(yield* Fiber.join(changes))).toEqual(["account-2", null]);
+    }),
+  );
 
   it("shares one Clerk token read across concurrent relay list and status queries", async () => {
     const secondEnvironment = {
@@ -376,6 +429,33 @@ describe("createManagedRelayQueryManager", () => {
         error: "Could not get relay environment status.",
         errorTraceId: "trace-status",
       });
+    });
+  });
+
+  it("presents clock skew as one possible cause for snapshot requests from older relays", async () => {
+    const manager = createManager({
+      getEnvironmentStatus: () =>
+        Effect.fail(
+          new ManagedRelay.ManagedRelayRequestFailedError({
+            action: "get relay environment status",
+            cause: new Error("Relay request failed."),
+            relayError: new RelayAuthInvalidError({
+              code: "auth_invalid",
+              reason: "invalid_dpop",
+              traceId: "trace-status",
+            }),
+            traceId: "trace-status",
+          }),
+        ),
+    });
+    setSession();
+    const atom = manager.environmentStatusAtom({ accountId: "account-1", environment });
+
+    registry.get(atom);
+    await vi.waitFor(() => {
+      expect(readManagedRelaySnapshotState(registry.get(atom)).error).toBe(
+        `Relay rejected the DPoP proof. ${DPOP_UNKNOWN_HINT}`,
+      );
     });
   });
 });

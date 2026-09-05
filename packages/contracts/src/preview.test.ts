@@ -2,7 +2,10 @@ import { Schema } from "effect";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  ConfiguredLocalServerUrls,
+  CONFIGURED_LOCAL_SERVER_URLS_MAX_ITEMS,
   DiscoveredLocalServer,
+  PREVIEW_URL_MAX_LENGTH,
   PreviewEvent,
   PreviewNavStatus,
   PreviewSessionSnapshot,
@@ -21,6 +24,7 @@ const decodePreviewEvent = Schema.decodeUnknownSync(PreviewEvent);
 const decodeSnapshot = Schema.decodeUnknownSync(PreviewSessionSnapshot);
 const decodeNavStatus = Schema.decodeUnknownSync(PreviewNavStatus);
 const decodeServer = Schema.decodeUnknownSync(DiscoveredLocalServer);
+const decodeConfiguredLocalServerUrls = Schema.decodeUnknownSync(ConfiguredLocalServerUrls);
 const decodeViewport = Schema.decodeUnknownSync(PreviewViewportSetting);
 const decodeResizeInput = Schema.decodeUnknownSync(PreviewAutomationResizeInput);
 const decodeOpenInput = Schema.decodeUnknownSync(PreviewAutomationOpenInput);
@@ -28,6 +32,16 @@ const decodeResizeResult = Schema.decodeUnknownSync(PreviewAutomationResizeResul
 const decodeAutomationHost = Schema.decodeUnknownSync(PreviewAutomationHost);
 const decodeAutomationError = Schema.decodeUnknownSync(PreviewAutomationError);
 const decodeAutomationStatus = Schema.decodeUnknownSync(PreviewAutomationStatus);
+
+describe("PreviewAutomationOpenInput", () => {
+  it("accepts the inline preview visibility flag", () => {
+    expect(decodeOpenInput({ open: false })).toEqual({ open: false });
+  });
+
+  it("retains the legacy show visibility alias", () => {
+    expect(decodeOpenInput({ show: false })).toEqual({ show: false });
+  });
+});
 
 describe("PreviewNavStatus", () => {
   it("decodes Idle", () => {
@@ -216,6 +230,8 @@ describe("PreviewEvent", () => {
       threadId: "t",
       tabId: "preview-t",
       createdAt: "2026-01-01T00:00:00.000Z",
+      serverEpoch: "server-a",
+      revision: 1,
       snapshot: {
         threadId: "t",
         tabId: "preview-t",
@@ -234,6 +250,8 @@ describe("PreviewEvent", () => {
       threadId: "t",
       tabId: "preview-t",
       createdAt: "2026-01-01T00:00:00.000Z",
+      serverEpoch: "server-a",
+      revision: 1,
       url: "https://example.com/",
       title: "",
       code: -105,
@@ -251,6 +269,8 @@ describe("PreviewEvent", () => {
       threadId: "t",
       tabId: "preview-t",
       createdAt: "2026-01-01T00:00:00.000Z",
+      serverEpoch: "server-a",
+      revision: 1,
       snapshot: {
         threadId: "t",
         tabId: "preview-t",
@@ -270,6 +290,8 @@ describe("PreviewEvent", () => {
       threadId: "t",
       tabId: "preview-t",
       createdAt: "2026-01-01T00:00:00.000Z",
+      serverEpoch: "server-a",
+      revision: 1,
     });
     expect(event.type).toBe("closed");
   });
@@ -321,6 +343,22 @@ describe("DiscoveredLocalServer", () => {
         pid: null,
         terminal: null,
       }),
+    ).toThrow();
+  });
+});
+
+describe("ConfiguredLocalServerUrls", () => {
+  it("bounds the number and length of probe candidates", () => {
+    expect(() =>
+      decodeConfiguredLocalServerUrls(
+        Array.from(
+          { length: CONFIGURED_LOCAL_SERVER_URLS_MAX_ITEMS + 1 },
+          (_, index) => `http://localhost:${3_000 + index}`,
+        ),
+      ),
+    ).toThrow();
+    expect(() =>
+      decodeConfiguredLocalServerUrls([`http://localhost/${"a".repeat(PREVIEW_URL_MAX_LENGTH)}`]),
     ).toThrow();
   });
 });

@@ -1,10 +1,14 @@
 import {
+  DEFAULT_SERVER_SETTINGS,
   EnvironmentId,
   type RelayClientInstallProgressEvent,
+  type ServerConfigStreamEvent,
+  type ServerLifecycleStreamEvent,
   WS_METHODS,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -25,7 +29,13 @@ import {
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import * as RpcSession from "../rpc/session.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
-import { EnvironmentRpcRequestObserver, request, runStream, subscribe } from "./client.ts";
+import {
+  EnvironmentRpcRequestObserver,
+  request,
+  runStream,
+  subscribe,
+  subscribeDynamicWithSession,
+} from "./client.ts";
 
 const TARGET = new PrimaryConnectionTarget({
   environmentId: EnvironmentId.make("environment-1"),
@@ -47,6 +57,7 @@ function session(client: WsRpcProtocolClient): RpcSession.RpcSession {
   return {
     client,
     initialConfig: Effect.never,
+    subscribeServerConfig: (input) => client.subscribeServerConfig(input),
     ready: Effect.void,
     probe: Effect.void,
     closed: Effect.never,
@@ -77,6 +88,39 @@ const makeHarness = Effect.fn("TestEnvironmentRpc.makeHarness")(function* () {
 });
 
 describe("environment RPC", () => {
+  it.effect("reuses the session config stream instead of opening a duplicate subscription", () =>
+    Effect.gen(function* () {
+      const event: ServerConfigStreamEvent = {
+        version: 1,
+        type: "settingsUpdated",
+        payload: { settings: DEFAULT_SERVER_SETTINGS },
+      };
+      let duplicateSubscriptions = 0;
+      const client = {
+        [WS_METHODS.subscribeServerConfig]: () => {
+          duplicateSubscriptions += 1;
+          return Stream.never;
+        },
+      } as unknown as WsRpcProtocolClient;
+      const { activeSession, supervisor } = yield* makeHarness();
+      yield* SubscriptionRef.set(
+        activeSession,
+        Option.some({
+          ...session(client),
+          subscribeServerConfig: () => Stream.succeed(event),
+        }),
+      );
+
+      const received = yield* subscribe(WS_METHODS.subscribeServerConfig, {}).pipe(
+        Stream.runHead,
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+      );
+
+      expect(received).toEqual(Option.some(event));
+      expect(duplicateSubscriptions).toBe(0);
+    }),
+  );
+
   it.effect("observes unary requests until they complete", () =>
     Effect.gen(function* () {
       const observations: string[] = [];
@@ -182,6 +226,72 @@ describe("environment RPC", () => {
 
       expect(subscriptions).toEqual(["first", "second"]);
       expect(yield* Ref.get(retryCount)).toBe(0);
+    }),
+  );
+
+  it.effect("keeps the producer session on an old value buffered across a session switch", () =>
+    Effect.gen(function* () {
+      const firstSubscribed = yield* Deferred.make<void>();
+      const secondSubscribed = yield* Deferred.make<void>();
+      const firstValueBlocked = yield* Deferred.make<void>();
+      const releaseFirstValue = yield* Deferred.make<void>();
+      const firstValue = { source: "first", index: 1 } as unknown as ServerLifecycleStreamEvent;
+      const bufferedFirstValue = {
+        source: "first",
+        index: 2,
+      } as unknown as ServerLifecycleStreamEvent;
+      const secondValue = { source: "second", index: 1 } as unknown as ServerLifecycleStreamEvent;
+      const firstClient = {
+        [WS_METHODS.subscribeServerLifecycle]: () =>
+          Stream.fromEffect(Deferred.succeed(firstSubscribed, undefined)).pipe(
+            Stream.drain,
+            Stream.concat(Stream.fromIterable([firstValue, bufferedFirstValue])),
+            Stream.concat(Stream.never),
+          ),
+      } as unknown as WsRpcProtocolClient;
+      const secondClient = {
+        [WS_METHODS.subscribeServerLifecycle]: () =>
+          Stream.fromEffect(Deferred.succeed(secondSubscribed, undefined)).pipe(
+            Stream.drain,
+            Stream.concat(Stream.make(secondValue)),
+            Stream.concat(Stream.never),
+          ),
+      } as unknown as WsRpcProtocolClient;
+      const firstSession = session(firstClient);
+      const secondSession = session(secondClient);
+      const { activeSession, supervisor } = yield* makeHarness();
+
+      const resultFiber = yield* subscribeDynamicWithSession(
+        WS_METHODS.subscribeServerLifecycle,
+        () => Effect.succeed({}),
+      ).pipe(
+        Stream.mapEffect(([producerSession, value]) =>
+          value === firstValue
+            ? Deferred.succeed(firstValueBlocked, undefined).pipe(
+                Effect.andThen(Deferred.await(releaseFirstValue)),
+                Effect.as([producerSession, value] as const),
+              )
+            : Effect.succeed([producerSession, value] as const),
+        ),
+        Stream.take(3),
+        Stream.runCollect,
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+        Effect.forkChild,
+      );
+
+      yield* SubscriptionRef.set(activeSession, Option.some(firstSession));
+      yield* Deferred.await(firstSubscribed);
+      yield* Deferred.await(firstValueBlocked);
+      yield* SubscriptionRef.set(activeSession, Option.some(secondSession));
+      yield* Deferred.await(secondSubscribed);
+      yield* Deferred.succeed(releaseFirstValue, undefined);
+
+      const result = yield* Fiber.join(resultFiber);
+      expect(result).toEqual([
+        [firstSession, firstValue],
+        [firstSession, bufferedFirstValue],
+        [secondSession, secondValue],
+      ]);
     }),
   );
 

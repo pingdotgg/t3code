@@ -31,6 +31,26 @@ describe("collectComposerInlineTokens", () => {
     ]);
   });
 
+  it("collects skill names that begin with a digit", () => {
+    expect(collectComposerInlineTokens("Use $2spec next")).toEqual([
+      {
+        type: "skill",
+        value: "2spec",
+        source: "$2spec",
+        start: 4,
+        end: 10,
+      },
+    ]);
+  });
+
+  it("leaves digits-only dollar amounts and compact monetary expressions as text", () => {
+    expect(collectComposerInlineTokens("I'll pay $20 tomorrow")).toEqual([]);
+    expect(collectComposerInlineTokens("Budget is $1_000 total")).toEqual([]);
+    expect(collectComposerInlineTokens("Budget is $20k tomorrow")).toEqual([]);
+    expect(collectComposerInlineTokens("Cost is $100M total")).toEqual([]);
+    expect(collectComposerInlineTokens("Limit is $1e6 here")).toEqual([]);
+  });
+
   it("does not convert incomplete trailing tokens", () => {
     expect(collectComposerInlineTokens("Use $ui")).toEqual([]);
     expect(collectComposerInlineTokens("Inspect @AGENTS.md")).toEqual([]);
@@ -128,5 +148,26 @@ describe("collectComposerInlineTokens", () => {
         end: 18,
       },
     ]);
+  });
+
+  it("still collects a file link whose label is at the length cap", () => {
+    const label = `${"a".repeat(508)}.tsx`;
+    const tokens = collectComposerInlineTokens(`see [${label}](src/${label}) ok`);
+
+    expect(tokens).toHaveLength(1);
+    expect(tokens[0]?.value).toBe(`src/${label}`);
+  });
+
+  it("leaves a file link past the label cap as plain text", () => {
+    const label = `${"a".repeat(509)}.tsx`;
+    expect(collectComposerInlineTokens(`see [${label}](src/${label}) ok`)).toEqual([]);
+  });
+
+  it("stays fast on unterminated bracket runs", () => {
+    // Unbounded, the label body rescanned the rest of the text from every
+    // whitespace: this input took seconds.
+    const started = performance.now();
+    expect(collectComposerInlineTokens(" [[".repeat(40_000))).toEqual([]);
+    expect(performance.now() - started).toBeLessThan(1_000);
   });
 });

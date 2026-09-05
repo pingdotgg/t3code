@@ -1,3 +1,4 @@
+// @effect-diagnostics globalDate:off -- Tests exercise local calendar snooze boundaries.
 import { ThreadId } from "@t3tools/contracts";
 import { TurnId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
@@ -5,15 +6,23 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   canSnooze,
   effectiveSnoozed,
+  hasQueuedTurnStart,
+  resolveSnoozePresets,
+  snoozeWakeLabel,
   threadRaisedHandWhileSnoozed,
   threadWokeAt,
   type ThreadSnoozeShell,
 } from "./threadSettled.ts";
+import type { OrchestrationThreadShell } from "@t3tools/contracts";
 
 const NOW = "2026-04-10T12:00:00.000Z";
 const SNOOZED_AT = "2026-04-10T09:00:00.000Z";
 const FUTURE_WAKE = "2026-04-11T09:00:00.000Z";
 const PAST_WAKE = "2026-04-10T10:00:00.000Z";
+
+function localDate(year: number, month: number, day: number, hour: number, minute = 0): Date {
+  return new Date(year, month - 1, day, hour, minute, 0, 0);
+}
 
 function makeShell(input: {
   readonly snoozedUntil?: string | null;
@@ -52,6 +61,15 @@ function makeShell(input: {
             assistantMessageId: null,
           },
   };
+}
+
+type QueuedTurnShell = Pick<
+  OrchestrationThreadShell,
+  "latestUserMessageAt" | "latestTurn" | "session"
+>;
+
+function makeQueuedTurnShell(overrides: Partial<QueuedTurnShell> = {}): QueuedTurnShell {
+  return { latestUserMessageAt: null, latestTurn: null, session: null, ...overrides };
 }
 
 describe("effectiveSnoozed", () => {
@@ -195,6 +213,55 @@ describe("canSnooze", () => {
   });
 });
 
+describe("hasQueuedTurnStart", () => {
+  it("expires queued state after two minutes", () => {
+    const thread = makeQueuedTurnShell({
+      latestUserMessageAt: "2026-04-10T11:57:59.000Z",
+    });
+    expect(hasQueuedTurnStart(thread, { now: NOW })).toBe(false);
+  });
+
+  it("clears queued state when a turn adopts the message or the session fails", () => {
+    const messageAt = "2026-04-10T11:59:00.000Z";
+    const adopted = makeQueuedTurnShell({
+      latestUserMessageAt: messageAt,
+      latestTurn: {
+        turnId: TurnId.make("turn-adopted"),
+        state: "running",
+        requestedAt: messageAt,
+        startedAt: null,
+        completedAt: null,
+        assistantMessageId: null,
+      },
+    });
+    const failed = makeQueuedTurnShell({
+      latestUserMessageAt: messageAt,
+      session: {
+        threadId: ThreadId.make("thread-failed"),
+        status: "error",
+        providerName: "Codex",
+        runtimeMode: "full-access",
+        activeTurnId: null,
+        lastError: "failed",
+        updatedAt: NOW,
+      },
+    });
+    expect(hasQueuedTurnStart(adopted, { now: NOW })).toBe(false);
+    expect(hasQueuedTurnStart(failed, { now: NOW })).toBe(false);
+  });
+
+  it("bounds future client clock skew", () => {
+    const farAhead = makeQueuedTurnShell({
+      latestUserMessageAt: "2026-04-10T12:03:00.000Z",
+    });
+    const slightlyAhead = makeQueuedTurnShell({
+      latestUserMessageAt: "2026-04-10T12:01:00.000Z",
+    });
+    expect(hasQueuedTurnStart(farAhead, { now: NOW })).toBe(false);
+    expect(hasQueuedTurnStart(slightlyAhead, { now: NOW })).toBe(true);
+  });
+});
+
 describe("threadWokeAt", () => {
   it("is null for never-snoozed and still-snoozed threads", () => {
     expect(threadWokeAt(makeShell({}), { now: NOW })).toBe(null);
@@ -233,5 +300,74 @@ describe("threadWokeAt", () => {
         { now: NOW },
       ),
     ).toBe("2026-04-10T09:30:00.000Z");
+  });
+});
+
+describe("snoozeWakeLabel", () => {
+  const now = "2026-06-02T00:00:00.000Z";
+
+  it("formats remaining time coarsely, rounding up", () => {
+    expect(snoozeWakeLabel("2026-06-02T00:30:00.000Z", { now })).toBe("30m");
+    expect(snoozeWakeLabel("2026-06-02T01:30:00.000Z", { now })).toBe("2h");
+    expect(snoozeWakeLabel("2026-06-03T02:00:00.000Z", { now })).toBe("2d");
+  });
+
+  it("never reads zero or negative while still snoozed", () => {
+    expect(snoozeWakeLabel("2026-06-02T00:00:30.000Z", { now })).toBe("1m");
+    expect(snoozeWakeLabel("2026-06-01T23:59:59.000Z", { now })).toBe("now");
+    expect(snoozeWakeLabel("not-a-date", { now })).toBe("now");
+    expect(snoozeWakeLabel("2026-06-02T09:00:00.000Z", { now: "bad" })).toBe("now");
+  });
+});
+
+describe("resolveSnoozePresets", () => {
+  it("offers the shared desktop and mobile choices", () => {
+    const presets = resolveSnoozePresets(localDate(2026, 4, 8, 10));
+    expect(presets.map((preset) => preset.id)).toEqual([
+      "hour",
+      "three-hours",
+      "evening",
+      "tomorrow",
+      "next-week",
+    ]);
+    expect(presets.find((preset) => preset.id === "three-hours")?.snoozedUntil).toBe(
+      localDate(2026, 4, 8, 13).toISOString(),
+    );
+    expect(presets.find((preset) => preset.id === "three-hours")?.label).toBe("In 3 hours");
+    expect(presets.find((preset) => preset.id === "evening")?.label).toBe("This evening");
+    expect(
+      new Date(presets.find((preset) => preset.id === "tomorrow")!.snoozedUntil).getHours(),
+    ).toBe(9);
+  });
+
+  it("drops the evening choice once evening is near or past", () => {
+    expect(resolveSnoozePresets(localDate(2026, 4, 8, 17, 30)).map((preset) => preset.id)).toEqual([
+      "hour",
+      "three-hours",
+      "tomorrow",
+      "next-week",
+    ]);
+  });
+
+  it("puts next week on the following Monday", () => {
+    const nextWeek = new Date(
+      resolveSnoozePresets(localDate(2026, 4, 6, 10)).find((preset) => preset.id === "next-week")!
+        .snoozedUntil,
+    );
+    expect(nextWeek.getDay()).toBe(1);
+    expect(nextWeek.getDate()).toBe(13);
+  });
+
+  it("drops next week on Sundays, when it lands on the same Monday as tomorrow", () => {
+    // Sunday 2026-08-30 07:01: "Tomorrow" and "Next week" are both Monday 9:00.
+    const presets = resolveSnoozePresets(localDate(2026, 8, 30, 7, 1));
+    expect(presets.map((preset) => preset.id)).toEqual([
+      "hour",
+      "three-hours",
+      "evening",
+      "tomorrow",
+    ]);
+    const tomorrow = new Date(presets.find((preset) => preset.id === "tomorrow")!.snoozedUntil);
+    expect(tomorrow.getDay()).toBe(1);
   });
 });

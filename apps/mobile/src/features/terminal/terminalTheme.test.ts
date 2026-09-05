@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vite-plus/test";
+import { BUILT_IN_THEMES, getThemeColorsForAppearance } from "@t3tools/shared/themePalettes";
 
-import { buildGhosttyThemeConfig, getPierreTerminalTheme } from "./terminalTheme";
+import { themeColorToNativeColor } from "../../lib/mobileTheme";
 
-describe("getPierreTerminalTheme", () => {
-  it("returns the Pierre light terminal palette", () => {
-    expect(getPierreTerminalTheme("light")).toMatchObject({
+import { buildGhosttyThemeConfig, getMobileTerminalTheme } from "./terminalTheme";
+
+describe("getMobileTerminalTheme", () => {
+  it("preserves the default light terminal palette", () => {
+    expect(getMobileTerminalTheme("t3-code", "light")).toMatchObject({
       background: "#f2f2f7",
       foreground: "#6C6C71",
       cursorForeground: "#009fff",
@@ -12,19 +15,37 @@ describe("getPierreTerminalTheme", () => {
     });
   });
 
-  it("returns the Pierre dark terminal palette", () => {
-    expect(getPierreTerminalTheme("dark")).toMatchObject({
+  it("preserves the default dark terminal palette", () => {
+    expect(getMobileTerminalTheme("t3-code", "dark")).toMatchObject({
       background: "#0a0a0a",
       foreground: "#adadb1",
       cursorForeground: "#009fff",
       cursorBackground: "#0a0a0a",
     });
   });
+  it("applies the selected palette without replacing ANSI status colors", () => {
+    const standard = getMobileTerminalTheme("t3-code", "dark");
+    const ocean = getMobileTerminalTheme("ocean", "dark");
+
+    expect(ocean.background).not.toBe(standard.background);
+    expect(ocean.cursorForeground).not.toBe(standard.cursorForeground);
+    expect(ocean.palette).toEqual(standard.palette);
+  });
+
+  it("uses the canonical desktop terminal roles for built-in themes", () => {
+    const theme = BUILT_IN_THEMES.find((candidate) => candidate.id === "ocean")!;
+    const colors = getThemeColorsForAppearance(theme, "dark")!;
+    const terminal = getMobileTerminalTheme("ocean", "dark");
+
+    expect(terminal.background).toBe(themeColorToNativeColor(colors.terminalBackground));
+    expect(terminal.foreground).toBe(themeColorToNativeColor(colors.terminalForeground));
+    expect(terminal.cursorForeground).toBe(themeColorToNativeColor(colors.terminalCursor));
+  });
 });
 
 describe("buildGhosttyThemeConfig", () => {
   it("serializes theme colors into a ghostty config file", () => {
-    const config = buildGhosttyThemeConfig(getPierreTerminalTheme("dark"));
+    const config = buildGhosttyThemeConfig(getMobileTerminalTheme("t3-code", "dark"));
 
     expect(config).toContain("background = #0a0a0a");
     expect(config).toContain("foreground = #adadb1");

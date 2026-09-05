@@ -6,14 +6,46 @@ import {
   type ComponentProps,
   type ReactElement,
   type ReactNode,
+  useMemo,
+  useRef,
 } from "react";
-import { Platform, Pressable, useColorScheme, View } from "react-native";
-import { useThemeColor } from "../lib/useThemeColor";
+import { Platform, Pressable, View, type ColorValue, type PressableProps } from "react-native";
+import { withUniwind } from "uniwind";
+import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
 
 import { cn } from "../lib/cn";
+import { withMenuActionIconColors } from "../lib/menu-action-colors";
 import { AndroidAnchoredMenu } from "./AndroidAnchoredMenu";
 import { SymbolView } from "./AppSymbol";
 import { AppText as Text } from "./AppText";
+
+const ThemedMenuView = withUniwind(
+  function NativeMenuView({
+    iconColor,
+    destructiveIconColor,
+    ...props
+  }: ComponentProps<typeof MenuView> & {
+    readonly iconColor?: ColorValue;
+    readonly destructiveIconColor?: ColorValue;
+  }) {
+    const actions = useMemo(
+      () =>
+        withMenuActionIconColors(props.actions, {
+          icon: iconColor,
+          destructiveIcon: destructiveIconColor,
+        }),
+      [props.actions, iconColor, destructiveIconColor],
+    );
+    return <MenuView {...props} actions={actions} />;
+  },
+  {
+    iconColor: { fromClassName: "iconColorClassName", styleProperty: "accentColor" },
+    destructiveIconColor: {
+      fromClassName: "destructiveIconColorClassName",
+      styleProperty: "accentColor",
+    },
+  },
+);
 
 export function ControlPill(props: {
   readonly icon?: ComponentProps<typeof SymbolView>["name"];
@@ -21,23 +53,40 @@ export function ControlPill(props: {
   readonly label?: string;
   readonly accessibilityLabel?: string;
   readonly onPress?: () => void;
+  readonly activateOnPressIn?: boolean;
   readonly variant?: "circle" | "pill" | "primary" | "danger";
   readonly disabled?: boolean;
+  readonly className?: string;
 }) {
   const variant = props.variant ?? "circle";
+  const activatedOnPressInRef = useRef(false);
 
-  const iconColor = useThemeColor("--color-icon");
-  const iconSubtle = useThemeColor("--color-icon-subtle");
-  const primaryFg = useThemeColor("--color-primary-foreground");
-  const dangerFg = useThemeColor("--color-danger-foreground");
-  const iconTintColor =
+  const handlePressIn = () => {
+    activatedOnPressInRef.current = true;
+    props.onPress?.();
+  };
+  const handlePressOut = () => {
+    // Pressability invokes onPressOut immediately before onPress on release.
+    // Defer the reset so onPress can identify the same physical gesture.
+    setTimeout(() => {
+      activatedOnPressInRef.current = false;
+    }, 0);
+  };
+  const handlePress = () => {
+    if (activatedOnPressInRef.current) {
+      return;
+    }
+    props.onPress?.();
+  };
+
+  const iconTintClassName =
     variant === "primary"
       ? props.disabled
-        ? iconSubtle
-        : primaryFg
+        ? "accent-icon-subtle"
+        : "accent-primary-foreground"
       : variant === "danger"
-        ? dangerFg
-        : iconColor;
+        ? "accent-danger-foreground"
+        : "accent-icon";
 
   const isCircle =
     variant === "circle" || variant === "danger" || (variant === "primary" && !props.label);
@@ -54,6 +103,7 @@ export function ControlPill(props: {
       : variant === "danger"
         ? "bg-danger"
         : "bg-subtle",
+    props.className,
   );
   const labelClassName = cn(
     "text-center text-xs font-t3-bold",
@@ -68,14 +118,21 @@ export function ControlPill(props: {
     <Pressable
       accessibilityLabel={props.accessibilityLabel ?? props.label}
       accessibilityRole="button"
-      onPress={props.onPress}
+      onPress={props.activateOnPressIn ? handlePress : props.onPress}
+      onPressIn={props.activateOnPressIn ? handlePressIn : undefined}
+      onPressOut={props.activateOnPressIn ? handlePressOut : undefined}
       disabled={props.disabled}
       className={containerClassName}
     >
       {props.iconNode ? (
         <View className="h-4 w-4 items-center justify-center">{props.iconNode}</View>
       ) : props.icon ? (
-        <SymbolView name={props.icon} size={16} tintColor={iconTintColor} type="monochrome" />
+        <SymbolView
+          name={props.icon}
+          size={16}
+          tintColorClassName={iconTintClassName}
+          type="monochrome"
+        />
       ) : null}
       {props.label ? <Text className={labelClassName}>{props.label}</Text> : null}
     </Pressable>
@@ -92,7 +149,10 @@ export function ControlPillMenu(
     readonly className?: string;
   },
 ) {
-  const isDarkMode = useColorScheme() === "dark";
+  const { themeAppearance } = useAppearancePreferences();
+  const isDarkMode = themeAppearance === "dark";
+  const menuPress = useRef({ isPreparing: false, isOpen: false, suppressPress: false });
+  const pendingPress = useRef<(() => void) | null>(null);
 
   if (Platform.OS === "android") {
     // Long-press menus keep their child interactive: the child element gets
@@ -133,9 +193,68 @@ export function ControlPillMenu(
   }
 
   const { className: _className, ...menuProps } = props;
+  let children = menuProps.children;
+  if (props.shouldOpenOnLongPress && isValidElement(children)) {
+    const child = children as ReactElement<Pick<PressableProps, "onTouchStart" | "onPress">>;
+    children = cloneElement(child, {
+      onTouchStart: (event) => {
+        // Reset for a new touch, not onPressIn, which also fires when a
+        // finger moves out of the row and back during the same gesture.
+        menuPress.current.isPreparing = false;
+        menuPress.current.suppressPress = menuPress.current.isOpen;
+        pendingPress.current = null;
+        child.props.onTouchStart?.(event);
+      },
+      onPress: (event) => {
+        // Accessibility clicks have no touch identifier and must not inherit
+        // cancellation from a previous physical gesture.
+        const isTouch = typeof event.nativeEvent.identifier === "number";
+        if (isTouch ? menuPress.current.suppressPress : menuPress.current.isOpen) {
+          return;
+        }
+        if (isTouch && menuPress.current.isPreparing) {
+          // A release can arrive between native menu preparation and display.
+          // Let UIKit's display/cancel callback decide this press's outcome.
+          event.persist();
+          pendingPress.current = () => child.props.onPress?.(event);
+          return;
+        }
+        child.props.onPress?.(event);
+      },
+    });
+    menuProps.onMenuInteractionStart = () => {
+      menuPress.current.isPreparing = true;
+      props.onMenuInteractionStart?.();
+    };
+    menuProps.onOpenMenu = () => {
+      menuPress.current.isPreparing = false;
+      menuPress.current.isOpen = true;
+      menuPress.current.suppressPress = true;
+      pendingPress.current = null;
+      props.onOpenMenu?.();
+    };
+    menuProps.onCloseMenu = () => {
+      menuPress.current.isPreparing = false;
+      menuPress.current.isOpen = false;
+      // Keep this gesture cancelled even if dismissal precedes finger-up.
+      // A separate JS long-press timer would also swallow holds that never
+      // open the native menu.
+      const press = pendingPress.current;
+      pendingPress.current = null;
+      props.onCloseMenu?.();
+      if (!menuPress.current.suppressPress) {
+        press?.();
+      }
+    };
+  }
   return (
-    <MenuView {...menuProps} themeVariant={isDarkMode ? "dark" : "light"}>
-      {menuProps.children}
-    </MenuView>
+    <ThemedMenuView
+      {...menuProps}
+      iconColorClassName="accent-icon"
+      destructiveIconColorClassName="accent-danger-foreground"
+      themeVariant={isDarkMode ? "dark" : "light"}
+    >
+      {children}
+    </ThemedMenuView>
   );
 }

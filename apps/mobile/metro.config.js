@@ -2,6 +2,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { getDefaultConfig } = require("expo/metro-config");
 const { withUniwindConfig } = require("uniwind/metro");
+const extraThemes = require("./generated-uniwind-theme-names.json");
 
 /** @type {import("expo/metro-config").MetroConfig} */
 const config = getDefaultConfig(__dirname);
@@ -35,8 +36,7 @@ config.resolver = {
     new RegExp(`${escapedWorkspaceRoot}[/\\\\]\\.t3[/\\\\].*`),
   ],
   extraNodeModules: {
-    // oxlint-disable-next-line unicorn/no-useless-fallback-in-spread
-    ...(config.resolver?.extraNodeModules ?? {}),
+    ...config.resolver?.extraNodeModules,
     shiki: mobileShikiRoot,
     "@shikijs/core": resolveShikiDependencyRoot("@shikijs/core"),
     "@shikijs/engine-javascript": resolveShikiDependencyRoot("@shikijs/engine-javascript"),
@@ -50,5 +50,6 @@ config.resolver = {
 
 module.exports = withUniwindConfig(config, {
   cssEntryFile: "./global.css",
+  extraThemes,
   polyfills: { rem: 14 },
 });

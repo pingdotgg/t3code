@@ -13,15 +13,43 @@ import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopClientSettings from "./DesktopClientSettings.ts";
 
 const clientSettings: ClientSettings = {
-  autoOpenPlanSidebar: false,
+  appearanceContrast: 100,
+  browserDefaultViewport: { _tag: "preset", width: 1024, height: 600, presetId: "nest-hub" },
+  browserDefaultZoomFactor: 1.25,
+  browserDefaultAppearance: "dark",
+  browserRecordingFrameRate: 60,
+  browserLinkTarget: "app",
+  browserAutoShowFloatingPreview: false,
+  browserProfiles: [{ id: "work", name: "Work", kind: "persistent" }],
+  browserDefaultProfileId: "work",
+  confirmQuit: "double-click",
   confirmThreadArchive: true,
   confirmThreadDelete: false,
+  confirmThreadUnpin: false,
+  contextWindowMeterEnabled: false,
+  composerCollapseOnBlur: false,
+  composerCollapseOnScroll: true,
   dismissedProviderUpdateNotificationKeys: [],
   diffIgnoreWhitespace: true,
+  diffLayout: "stacked",
+  environmentIdentificationMode: "artwork",
   favorites: [],
+  fontFamilyCode: "",
+  fontFamilyComposer: "",
+  fontFamilySans: "",
+  fontFamilyTerminal: "",
+  fontSizeCode: 13,
+  fontSizeInterface: 16,
+  fontSizePrompt: 14,
+  fontSizeTerminal: 12,
+  fontSmoothing: true,
   glassOpacity: 80,
+  onboardingCompletedAt: null,
+  panelAnimationDurationMs: 0,
+  planModeEnabled: false,
+  proactivePanelsEnabled: true,
+  showSkillsInSlashMenu: false,
   providerModelPreferences: {},
-  sidebarAutoSettleAfterDays: 3,
   sidebarProjectGroupingMode: "repository_path",
   sidebarProjectGroupingOverrides: {
     "environment-1:/tmp/project-a": "separate",
@@ -29,7 +57,7 @@ const clientSettings: ClientSettings = {
   sidebarProjectSortOrder: "manual",
   sidebarThreadSortOrder: "created_at",
   sidebarThreadPreviewCount: 6,
-  sidebarV2Enabled: false,
+  legacySidebarEnabled: false,
   timestampFormat: "24-hour",
   wordWrap: true,
 };
@@ -108,6 +136,59 @@ describe("DesktopClientSettings", () => {
       }),
     ),
   );
+
+  for (const failure of [
+    { label: "permission", reason: "PermissionDenied" },
+    { label: "I/O", reason: "Unknown" },
+  ] as const) {
+    it.effect(`preserves saved preferences across ${failure.label} read failures and retries`, () =>
+      withClientSettings(
+        Effect.gen(function* () {
+          const environment = yield* DesktopEnvironment.DesktopEnvironment;
+          const fileSystem = yield* FileSystem.FileSystem;
+          const settings = yield* DesktopClientSettings.DesktopClientSettings;
+          const savedSettings = {
+            ...clientSettings,
+            onboardingCompletedAt: "2026-09-05T12:00:00.000Z",
+          };
+          yield* settings.set(savedSettings);
+          const savedContents = yield* fileSystem.readFileString(environment.clientSettingsPath);
+          const cause = PlatformError.systemError({
+            _tag: failure.reason,
+            module: "FileSystem",
+            method: "readFileString",
+            pathOrDescriptor: environment.clientSettingsPath,
+          });
+          let failRead = true;
+          const retryableSettings = yield* DesktopClientSettings.make.pipe(
+            Effect.provideService(
+              FileSystem.FileSystem,
+              FileSystem.FileSystem.of({
+                ...fileSystem,
+                readFileString: (path) =>
+                  Effect.suspend(() =>
+                    failRead ? Effect.fail(cause) : fileSystem.readFileString(path),
+                  ),
+              }),
+            ),
+          );
+
+          const error = yield* retryableSettings.get.pipe(Effect.flip);
+          assert.instanceOf(error, DesktopClientSettings.DesktopClientSettingsReadError);
+          assert.equal(error.operation, "read-file");
+          assert.equal(error.path, environment.clientSettingsPath);
+          assert.strictEqual(error.cause, cause);
+          assert.equal(
+            yield* fileSystem.readFileString(environment.clientSettingsPath),
+            savedContents,
+          );
+
+          failRead = false;
+          assert.deepEqual(yield* retryableSettings.get, Option.some(savedSettings));
+        }),
+      ),
+    );
+  }
 
   it.effect("reports the failed client settings write operation and path", () =>
     withClientSettings(
@@ -195,17 +276,31 @@ describe("DesktopClientSettings", () => {
     ),
   );
 
-  it.effect("treats malformed client settings documents as absent", () =>
-    withClientSettings(
-      Effect.gen(function* () {
-        const environment = yield* DesktopEnvironment.DesktopEnvironment;
-        const fileSystem = yield* FileSystem.FileSystem;
-        const settings = yield* DesktopClientSettings.DesktopClientSettings;
-        yield* fileSystem.makeDirectory(environment.stateDir, { recursive: true });
-        yield* fileSystem.writeFileString(environment.clientSettingsPath, "{not-json");
+  for (const document of [
+    { label: "malformed JSON", contents: "{not-json" },
+    { label: "invalid direct settings", contents: '{"fontSizeCode":"large"}' },
+    { label: "invalid legacy settings", contents: '{"settings":{"fontSizeCode":"large"}}' },
+  ]) {
+    it.effect(`reports ${document.label} without treating the settings file as absent`, () =>
+      withClientSettings(
+        Effect.gen(function* () {
+          const environment = yield* DesktopEnvironment.DesktopEnvironment;
+          const fileSystem = yield* FileSystem.FileSystem;
+          const settings = yield* DesktopClientSettings.DesktopClientSettings;
+          yield* fileSystem.makeDirectory(environment.stateDir, { recursive: true });
+          yield* fileSystem.writeFileString(environment.clientSettingsPath, document.contents);
 
-        assert.isTrue(Option.isNone(yield* settings.get));
-      }),
-    ),
-  );
+          const error = yield* settings.get.pipe(Effect.flip);
+          assert.instanceOf(error, DesktopClientSettings.DesktopClientSettingsReadError);
+          assert.equal(error.operation, "decode-document");
+          assert.equal(error.path, environment.clientSettingsPath);
+          assert.instanceOf(error.cause, Schema.SchemaError);
+          assert.equal(
+            yield* fileSystem.readFileString(environment.clientSettingsPath),
+            document.contents,
+          );
+        }),
+      ),
+    );
+  }
 });

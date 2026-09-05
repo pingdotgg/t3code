@@ -4,6 +4,10 @@ import type {
   ProjectListEntriesResult,
   ProjectReadFileResult,
 } from "@t3tools/contracts";
+import {
+  isWorkspaceImagePreviewPath,
+  isWorkspaceVideoPreviewPath,
+} from "@t3tools/shared/filePreview";
 import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
@@ -11,6 +15,7 @@ import { useCallback } from "react";
 
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { projectEnvironment } from "~/state/projects";
+import { useProjectPathSearch } from "~/state/queries";
 import { executeAtomQuery } from "@t3tools/client-runtime/state/runtime";
 
 const EMPTY_PROJECT_FILE_PATH = "";
@@ -136,15 +141,54 @@ export function useProjectEntriesQuery(
   };
 }
 
+/**
+ * Backing query for the project file picker: a debounced, bounded, file-only
+ * server search. An empty query is a valid request — the index answers it
+ * with frecency-ordered files, so the picker's initial view is recent files
+ * without transferring the full workspace listing. `matchedQuery` is the
+ * query the returned entries were computed for, so the caller can highlight
+ * against results instead of half-typed input.
+ */
+export function useProjectFilePickerQuery(
+  environmentId: EnvironmentId,
+  cwd: string,
+  query: string,
+  limit: number,
+  options?: { readonly imageOnly?: boolean },
+) {
+  const search = useProjectPathSearch(
+    {
+      environmentId,
+      cwd,
+      query,
+      kind: "file",
+      ...(options?.imageOnly ? { imageOnly: true } : {}),
+    },
+    limit,
+    { allowEmptyQuery: true },
+  );
+
+  return {
+    entries: search.isPending ? [] : search.entries,
+    error: search.error,
+    isPending: search.isPending,
+    matchedQuery: search.searchedQuery,
+  };
+}
+
 export function useProjectFileQuery(
   environmentId: EnvironmentId,
   cwd: string,
   relativePath: string | null,
   enabled = true,
 ): ProjectQueryState<ProjectReadFileResult> {
-  const atom = enabled
-    ? getProjectFileQueryAtom(environmentId, cwd, relativePath)
-    : EMPTY_PROJECT_FILE_QUERY_ATOM;
+  const isMedia =
+    relativePath !== null &&
+    (isWorkspaceImagePreviewPath(relativePath) || isWorkspaceVideoPreviewPath(relativePath));
+  const atom =
+    enabled && !isMedia
+      ? getProjectFileQueryAtom(environmentId, cwd, relativePath)
+      : EMPTY_PROJECT_FILE_QUERY_ATOM;
   const result = useAtomValue(atom);
   const refreshAtom = useAtomRefresh(atom);
   const refresh = useCallback(() => refreshAtom(), [refreshAtom]);

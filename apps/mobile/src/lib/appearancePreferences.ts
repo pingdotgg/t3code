@@ -75,7 +75,7 @@ export function normalizeBaseFontSize(value: number | null | undefined): number 
   return Math.min(MAX_BASE_FONT_SIZE, Math.max(MIN_BASE_FONT_SIZE, Math.round(value)));
 }
 
-export function normalizeCodeFontSize(value: number | null | undefined): number {
+function normalizeCodeFontSize(value: number | null | undefined): number {
   if (typeof value !== "number" || !Number.isFinite(value)) {
     return DEFAULT_CODE_FONT_SIZE;
   }
@@ -83,18 +83,18 @@ export function normalizeCodeFontSize(value: number | null | undefined): number 
   return Math.min(MAX_CODE_FONT_SIZE, Math.max(MIN_CODE_FONT_SIZE, Math.round(value)));
 }
 
-export function normalizeCodeWordBreak(value: boolean | null | undefined): boolean {
+function normalizeCodeWordBreak(value: boolean | null | undefined): boolean {
   return value === true;
 }
 
 /** Terminal size derived from base: 10.5pt at base 16, snapped to 0.5pt steps. */
-export function deriveTerminalFontSize(baseFontSize: number): number {
+function deriveTerminalFontSize(baseFontSize: number): number {
   const scale = normalizeBaseFontSize(baseFontSize) / DEFAULT_BASE_FONT_SIZE;
   return normalizeTerminalFontSize(Math.round(DEFAULT_TERMINAL_FONT_SIZE * scale * 2) / 2);
 }
 
 /** Code/diff size derived from base: 12pt at base 16. */
-export function deriveCodeFontSize(baseFontSize: number): number {
+function deriveCodeFontSize(baseFontSize: number): number {
   const scale = normalizeBaseFontSize(baseFontSize) / DEFAULT_BASE_FONT_SIZE;
   return normalizeCodeFontSize(Math.round(DEFAULT_CODE_FONT_SIZE * scale));
 }
@@ -198,10 +198,25 @@ export function resolveTextScaleVariables(baseFontSize: number): Record<string, 
 
   for (const [name, role] of Object.entries(TEXT_SCALE_VARIABLE_ROLES)) {
     variables[name] = Math.max(8, Math.round(role.fontSize * scale));
-    variables[`${name}--line-height`] = Math.max(10, Math.round(role.lineHeight * scale));
+    variables[`${name}--line-height`] = scaledTypographyLineHeight(role, baseFontSize);
   }
 
   return variables;
+}
+
+/**
+ * The line height a MOBILE_TYPOGRAPHY role renders at under the given base
+ * font size — the same value resolveTextScaleVariables injects for the role's
+ * `--text-*--line-height` variable. For layout code that must predict
+ * text-driven heights (e.g. the thread feed's fixed item sizes) instead of
+ * measuring them.
+ */
+export function scaledTypographyLineHeight(
+  role: { readonly lineHeight: number },
+  baseFontSize: number,
+): number {
+  const scale = normalizeBaseFontSize(baseFontSize) / DEFAULT_BASE_FONT_SIZE;
+  return Math.max(10, Math.round(role.lineHeight * scale));
 }
 
 export function resolveNativeMarkdownTypography(baseFontSize: number): NativeMarkdownTypography {
@@ -220,20 +235,10 @@ export function resolveNativeMarkdownTypography(baseFontSize: number): NativeMar
   };
 }
 
-export function stepBaseFontSize(current: number, direction: -1 | 1): number {
-  const next = direction === -1 ? current - BASE_FONT_SIZE_STEP : current + BASE_FONT_SIZE_STEP;
-  return normalizeBaseFontSize(next);
-}
-
 export function stepTerminalFontSize(current: number, direction: -1 | 1): number {
   const next =
     direction === -1 ? current - TERMINAL_FONT_SIZE_STEP : current + TERMINAL_FONT_SIZE_STEP;
   return normalizeTerminalFontSize(next);
-}
-
-export function stepCodeFontSize(current: number, direction: -1 | 1): number {
-  const next = direction === -1 ? current - CODE_FONT_SIZE_STEP : current + CODE_FONT_SIZE_STEP;
-  return normalizeCodeFontSize(next);
 }
 
 export {

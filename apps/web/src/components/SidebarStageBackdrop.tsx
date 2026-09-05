@@ -6,6 +6,7 @@ import { resolveServerBackedAppStageLabel } from "../branding.logic";
 import { primaryServerConfigAtom } from "../state/server";
 
 export type SidebarStageBackdropVariant = "nightly" | "dev";
+export type EnvironmentIdentificationPillLabel = "Dev" | "Nightly";
 
 // A wide viewBox keeps the 96-unit art height at a fixed scale while sidebar resizing reveals
 // more horizontal canvas instead of zooming the scene.
@@ -13,23 +14,44 @@ const STAGE_BACKDROP_VIEW_BOX = "0 0 8192 96";
 
 export function resolveSidebarStageBackdropVariant(
   stageLabel: string,
+  enabled = true,
 ): SidebarStageBackdropVariant | null {
+  if (!enabled) return null;
   const normalized = stageLabel.trim().toLowerCase();
   if (normalized === "nightly") return "nightly";
   if (normalized === "dev") return "dev";
   return null;
 }
 
-export function useSidebarStageBackdropVariant(): SidebarStageBackdropVariant | null {
+export function resolveSidebarStageFocusRingOffsetClass(
+  variant: SidebarStageBackdropVariant,
+): string {
+  return variant === "nightly"
+    ? "focus-visible:ring-offset-(--stage-night-bottom)"
+    : "focus-visible:ring-offset-(--stage-art-bottom)";
+}
+
+export function resolveEnvironmentIdentificationPillLabel(
+  stageLabel: string,
+): EnvironmentIdentificationPillLabel | null {
+  const normalized = stageLabel.trim().toLowerCase();
+  if (normalized === "dev") return "Dev";
+  if (normalized === "nightly") return "Nightly";
+  return null;
+}
+
+export function useEnvironmentStageLabel(): string {
   const primaryServerVersion =
     useAtomValue(primaryServerConfigAtom)?.environment.serverVersion ?? null;
 
-  return resolveSidebarStageBackdropVariant(
-    resolveServerBackedAppStageLabel({
-      primaryServerVersion,
-      fallbackStageLabel: APP_STAGE_LABEL,
-    }),
-  );
+  return resolveServerBackedAppStageLabel({
+    primaryServerVersion,
+    fallbackStageLabel: APP_STAGE_LABEL,
+  });
+}
+
+export function useSidebarStageBackdropVariant(enabled = true): SidebarStageBackdropVariant | null {
+  return resolveSidebarStageBackdropVariant(useEnvironmentStageLabel(), enabled);
 }
 
 /** Stage-channel header art; palettes mirror the per-channel app icons in `assets/`. */
@@ -94,7 +116,7 @@ function NightlySkyArt({ compact = false }: { compact?: boolean }) {
 
   return (
     <svg
-      className="h-full w-full"
+      className="stage-art stage-nightly h-full w-full"
       fill="none"
       preserveAspectRatio="xMinYMin slice"
       viewBox={compact ? "96 0 8192 96" : STAGE_BACKDROP_VIEW_BOX}
@@ -110,9 +132,9 @@ function NightlySkyArt({ compact = false }: { compact?: boolean }) {
           gradientUnits="userSpaceOnUse"
           spreadMethod="reflect"
         >
-          <stop stopColor="#07152F" />
-          <stop offset="0.5" stopColor="#151443" />
-          <stop offset="1" stopColor="#32155B" />
+          <stop style={{ stopColor: "var(--stage-night-bottom)" }} />
+          <stop offset="0.5" style={{ stopColor: "var(--stage-night-mid)" }} />
+          <stop offset="1" style={{ stopColor: "var(--stage-night-top)" }} />
         </linearGradient>
         <radialGradient
           id={glowId}
@@ -122,20 +144,28 @@ function NightlySkyArt({ compact = false }: { compact?: boolean }) {
           gradientTransform="translate(216 18) rotate(137) scale(120 84)"
           gradientUnits="userSpaceOnUse"
         >
-          <stop stopColor="#5165D8" stopOpacity="0.4" />
-          <stop offset="0.5" stopColor="#283075" stopOpacity="0.16" />
-          <stop offset="1" stopColor="#111635" stopOpacity="0" />
+          <stop style={{ stopColor: "var(--stage-night-glow-highlight)" }} stopOpacity="0.4" />
+          <stop
+            offset="0.5"
+            style={{ stopColor: "var(--stage-night-glow-secondary)" }}
+            stopOpacity="0.16"
+          />
+          <stop offset="1" style={{ stopColor: "var(--stage-night-bottom)" }} stopOpacity="0" />
         </radialGradient>
         <linearGradient id={cloudId} x1="0" y1="60" x2="288" y2="96" gradientUnits="userSpaceOnUse">
-          <stop stopColor="#4EA4FF" stopOpacity="0.5" />
-          <stop offset="0.52" stopColor="#696FEA" stopOpacity="0.62" />
-          <stop offset="1" stopColor="#A85BEA" stopOpacity="0.5" />
+          <stop style={{ stopColor: "var(--stage-night-highlight)" }} stopOpacity="0.5" />
+          <stop
+            offset="0.52"
+            style={{ stopColor: "var(--stage-night-secondary)" }}
+            stopOpacity="0.62"
+          />
+          <stop offset="1" style={{ stopColor: "var(--stage-night-tertiary)" }} stopOpacity="0.5" />
         </linearGradient>
         <filter id={softId} x="-24" y="-24" width="336" height="144" filterUnits="userSpaceOnUse">
           <feGaussianBlur stdDeviation="4" />
         </filter>
         <pattern id={starsId} width="288" height="96" patternUnits="userSpaceOnUse">
-          <g fill="#E4EAFF">
+          <g style={{ fill: "var(--stage-night-line)" }}>
             {NIGHTLY_STARS.map((star) => (
               <circle
                 key={`${star.cx}-${star.cy}`}
@@ -146,7 +176,12 @@ function NightlySkyArt({ compact = false }: { compact?: boolean }) {
               />
             ))}
           </g>
-          <g stroke="#C8D7FF" strokeLinecap="round" strokeOpacity="0.7" strokeWidth="0.6">
+          <g
+            style={{ stroke: "var(--stage-night-sparkle)" }}
+            strokeLinecap="round"
+            strokeOpacity="0.7"
+            strokeWidth="0.6"
+          >
             {NIGHTLY_SPARKLES.map((sparkle) => (
               <g key={`${sparkle.x}-${sparkle.y}`}>
                 <path d={`M${sparkle.x - 1.5} ${sparkle.y}H${sparkle.x + 1.5}`} />
@@ -195,7 +230,7 @@ function DevBlueprintArt({ compact = false }: { compact?: boolean }) {
 
   return (
     <svg
-      className="stage-blueprint h-full w-full"
+      className="stage-art stage-blueprint h-full w-full"
       fill="none"
       preserveAspectRatio="xMinYMin slice"
       viewBox={compact ? "64 0 8192 96" : STAGE_BACKDROP_VIEW_BOX}
@@ -211,9 +246,9 @@ function DevBlueprintArt({ compact = false }: { compact?: boolean }) {
           gradientUnits="userSpaceOnUse"
           spreadMethod="reflect"
         >
-          <stop style={{ stopColor: "var(--stage-bp-bottom)" }} />
-          <stop offset="0.5" style={{ stopColor: "var(--stage-bp-mid)" }} />
-          <stop offset="1" style={{ stopColor: "var(--stage-bp-top)" }} />
+          <stop style={{ stopColor: "var(--stage-art-bottom)" }} />
+          <stop offset="0.5" style={{ stopColor: "var(--stage-art-mid)" }} />
+          <stop offset="1" style={{ stopColor: "var(--stage-art-top)" }} />
         </linearGradient>
         <radialGradient
           id={glowId}
@@ -223,9 +258,13 @@ function DevBlueprintArt({ compact = false }: { compact?: boolean }) {
           gradientTransform="translate(216 14) rotate(137) scale(120 84)"
           gradientUnits="userSpaceOnUse"
         >
-          <stop stopColor="#D4F6FF" stopOpacity="0.4" />
-          <stop offset="0.52" stopColor="#65C8FF" stopOpacity="0.16" />
-          <stop offset="1" stopColor="#276AF1" stopOpacity="0" />
+          <stop style={{ stopColor: "var(--stage-art-highlight)" }} stopOpacity="0.4" />
+          <stop
+            offset="0.52"
+            style={{ stopColor: "var(--stage-art-secondary)" }}
+            stopOpacity="0.16"
+          />
+          <stop offset="1" style={{ stopColor: "var(--stage-art-bottom)" }} stopOpacity="0" />
         </radialGradient>
         <radialGradient
           id={celesteGlowId}
@@ -235,9 +274,13 @@ function DevBlueprintArt({ compact = false }: { compact?: boolean }) {
           gradientTransform="translate(474 44) rotate(166) scale(156 92)"
           gradientUnits="userSpaceOnUse"
         >
-          <stop stopColor="#D2FFFF" stopOpacity="0.34" />
-          <stop offset="0.5" stopColor="#48DCF5" stopOpacity="0.18" />
-          <stop offset="1" stopColor="#277EF1" stopOpacity="0" />
+          <stop style={{ stopColor: "var(--stage-art-celeste-highlight)" }} stopOpacity="0.34" />
+          <stop
+            offset="0.5"
+            style={{ stopColor: "var(--stage-art-celeste-secondary)" }}
+            stopOpacity="0.18"
+          />
+          <stop offset="1" style={{ stopColor: "var(--stage-art-bottom)" }} stopOpacity="0" />
         </radialGradient>
         <radialGradient
           id={violetGlowId}
@@ -247,20 +290,34 @@ function DevBlueprintArt({ compact = false }: { compact?: boolean }) {
           gradientTransform="translate(704 18) rotate(145) scale(132 88)"
           gradientUnits="userSpaceOnUse"
         >
-          <stop stopColor="#D9D8FF" stopOpacity="0.3" />
-          <stop offset="0.52" stopColor="#7C8BFF" stopOpacity="0.14" />
-          <stop offset="1" stopColor="#3155DF" stopOpacity="0" />
+          <stop style={{ stopColor: "var(--stage-art-violet-highlight)" }} stopOpacity="0.3" />
+          <stop
+            offset="0.52"
+            style={{ stopColor: "var(--stage-art-tertiary)" }}
+            stopOpacity="0.14"
+          />
+          <stop offset="1" style={{ stopColor: "var(--stage-art-bottom)" }} stopOpacity="0" />
         </radialGradient>
         <pattern id={minorGridId} width="8" height="8" patternUnits="userSpaceOnUse">
-          <path d="M8 0H0V8" stroke="#EAF6FF" strokeOpacity="0.14" strokeWidth="0.5" />
+          <path
+            d="M8 0H0V8"
+            style={{ stroke: "var(--stage-art-grid-line)" }}
+            strokeOpacity="0.14"
+            strokeWidth="0.5"
+          />
         </pattern>
         <pattern id={majorGridId} width="32" height="32" patternUnits="userSpaceOnUse">
-          <path d="M32 0H0V32" stroke="#EAF6FF" strokeOpacity="0.26" strokeWidth="0.6" />
+          <path
+            d="M32 0H0V32"
+            style={{ stroke: "var(--stage-art-grid-line)" }}
+            strokeOpacity="0.26"
+            strokeWidth="0.6"
+          />
         </pattern>
         <pattern id={rulerId} width="32" height="6" patternUnits="userSpaceOnUse">
           <path
             d="M4 0V2.5M12 0V2.5M20 0V4M28 0V2.5"
-            stroke="#DDF7FF"
+            style={{ stroke: "var(--stage-art-line)" }}
             strokeOpacity="0.5"
             strokeWidth="0.5"
           />
@@ -271,7 +328,12 @@ function DevBlueprintArt({ compact = false }: { compact?: boolean }) {
           <rect width="768" height="96" fill={`url(#${violetGlowId})`} />
         </pattern>
         <pattern id={annotationsId} width="768" height="96" patternUnits="userSpaceOnUse">
-          <g stroke="#DDF7FF" strokeLinecap="round" strokeOpacity="0.6" strokeWidth="0.7">
+          <g
+            style={{ stroke: "var(--stage-art-line)" }}
+            strokeLinecap="round"
+            strokeOpacity="0.6"
+            strokeWidth="0.7"
+          >
             <path d="M180 64H264" strokeDasharray="5 4" />
             <path d="M180 61V67M264 61V67" />
             <path d="M276 10V44" strokeDasharray="4 4" strokeOpacity="0.5" />
@@ -284,7 +346,12 @@ function DevBlueprintArt({ compact = false }: { compact?: boolean }) {
             <path d="M590 67V73M724 67V73" strokeOpacity="0.55" />
           </g>
 
-          <g stroke="#DDF7FF" strokeLinecap="round" strokeOpacity="0.55" strokeWidth="0.6">
+          <g
+            style={{ stroke: "var(--stage-art-line)" }}
+            strokeLinecap="round"
+            strokeOpacity="0.55"
+            strokeWidth="0.6"
+          >
             <g>
               <path d="M34 60L38 64M38 60L34 64" />
             </g>
@@ -308,7 +375,7 @@ function DevBlueprintArt({ compact = false }: { compact?: boolean }) {
             </g>
           </g>
 
-          <g stroke="#DDF7FF" strokeOpacity="0.35" strokeWidth="0.6">
+          <g style={{ stroke: "var(--stage-art-line)" }} strokeOpacity="0.35" strokeWidth="0.6">
             <circle cx="196" cy="38" r="13" strokeDasharray="3.5 4" />
             <path d="M196 33V43M191 38H201" strokeOpacity="0.6" strokeWidth="0.4" />
             <circle cx="414" cy="64" r="10" strokeDasharray="2.5 3.5" />

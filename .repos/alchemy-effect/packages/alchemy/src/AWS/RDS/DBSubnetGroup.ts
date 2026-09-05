@@ -1,5 +1,6 @@
 import * as rds from "@distilled.cloud/aws/rds";
 import * as Effect from "effect/Effect";
+import * as Stream from "effect/Stream";
 import { isResolved } from "../../Diff.ts";
 import { createPhysicalName } from "../../PhysicalName.ts";
 import * as Provider from "../../Provider.ts";
@@ -32,12 +33,33 @@ export interface DBSubnetGroup extends Resource<
   "AWS.RDS.DBSubnetGroup",
   DBSubnetGroupProps,
   {
+    /**
+     * Name of the subnet group.
+     */
     dbSubnetGroupName: string;
+    /**
+     * ARN of the subnet group.
+     */
     dbSubnetGroupArn: string | undefined;
+    /**
+     * VPC the subnets belong to.
+     */
     vpcId: string | undefined;
+    /**
+     * Subnet IDs registered in the group.
+     */
     subnetIds: string[];
+    /**
+     * Status of the subnet group (e.g. `Complete`).
+     */
     status: string | undefined;
+    /**
+     * Network types the group supports (`IPV4`, `DUAL`).
+     */
     supportedNetworkTypes: string[] | undefined;
+    /**
+     * Tags on the subnet group.
+     */
     tags: Record<string, string>;
   },
   never,
@@ -46,6 +68,27 @@ export interface DBSubnetGroup extends Resource<
 
 /**
  * An RDS DB subnet group for Aurora clusters, instances, and proxies.
+ *
+ * RDS requires a subnet group spanning at least two Availability Zones
+ * before a cluster or instance can be placed in a VPC. Changing the name
+ * replaces the group; the subnet list updates in place.
+ * @resource
+ * @section Creating a Subnet Group
+ * @example Subnet Group Across Two AZs
+ * ```typescript
+ * const subnetGroup = yield* DBSubnetGroup("SubnetGroup", {
+ *   subnetIds: [privateSubnetA.subnetId, privateSubnetB.subnetId],
+ * });
+ * ```
+ *
+ * @example Place an Aurora Cluster in the Group
+ * ```typescript
+ * const cluster = yield* DBCluster("Cluster", {
+ *   engine: "aurora-postgresql",
+ *   dbSubnetGroupName: subnetGroup.dbSubnetGroupName,
+ *   vpcSecurityGroupIds: [dbSecurityGroup.groupId],
+ * });
+ * ```
  */
 export const DBSubnetGroup = Resource<DBSubnetGroup>("AWS.RDS.DBSubnetGroup");
 
@@ -195,6 +238,39 @@ export const DBSubnetGroupProvider = () =>
             tags: desiredTags,
           };
         }),
+        list: () =>
+          // AWS account/region collection: `describeDBSubnetGroups` is
+          // paginated (items field `DBSubnetGroups`). Collect every page and
+          // map each group into the exact `read` Attributes shape. `read` does
+          // not hydrate tags from the cloud (it returns the cached
+          // `output.tags`), so we mirror that here with an empty tag map rather
+          // than issuing a per-item `listTagsForResource` call.
+          rds.describeDBSubnetGroups.pages({}).pipe(
+            Stream.runCollect,
+            Effect.map((chunk) =>
+              Array.from(chunk).flatMap((page) =>
+                (page.DBSubnetGroups ?? []).flatMap((group) =>
+                  group.DBSubnetGroupName
+                    ? [
+                        {
+                          dbSubnetGroupName: group.DBSubnetGroupName,
+                          dbSubnetGroupArn: group.DBSubnetGroupArn,
+                          vpcId: group.VpcId,
+                          subnetIds: (group.Subnets ?? []).flatMap((subnet) =>
+                            subnet.SubnetIdentifier
+                              ? [subnet.SubnetIdentifier]
+                              : [],
+                          ),
+                          status: group.SubnetGroupStatus,
+                          supportedNetworkTypes: group.SupportedNetworkTypes,
+                          tags: {} as Record<string, string>,
+                        },
+                      ]
+                    : [],
+                ),
+              ),
+            ),
+          ),
         delete: Effect.fn(function* ({ output }) {
           yield* rds
             .deleteDBSubnetGroup({

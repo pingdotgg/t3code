@@ -1,9 +1,10 @@
 import { UserButton, useAuth } from "@clerk/react";
-import { LogInIcon, SmartphoneIcon } from "lucide-react";
+import { LogInIcon, ServerIcon, SmartphoneIcon } from "lucide-react";
 
 import { hasCloudPublicConfig } from "../../cloud/publicConfig";
 import { SidebarMenu, SidebarMenuButton, SidebarMenuItem } from "../ui/sidebar";
 import { MobileClientsUserProfilePage } from "./MobileClientsUserProfilePage";
+import { T3ConnectUserProfilePage } from "./T3ConnectUserProfilePage";
 import { useT3ConnectAuthPrompt } from "./useT3ConnectAuthPrompt";
 
 export function T3ConnectSidebarSignIn() {
@@ -39,6 +40,13 @@ function ConfiguredT3ConnectSidebarAvatar() {
       >
         <MobileClientsUserProfilePage />
       </UserButton.UserProfilePage>
+      <UserButton.UserProfilePage
+        label="T3 Connect"
+        labelIcon={<ServerIcon className="size-4" />}
+        url="t3-connect"
+      >
+        <T3ConnectUserProfilePage />
+      </UserButton.UserProfilePage>
     </UserButton>
   );
 }
@@ -53,12 +61,8 @@ function ConfiguredT3ConnectSidebarSignIn() {
     <>
       <SidebarMenu>
         <SidebarMenuItem>
-          <SidebarMenuButton
-            size="sm"
-            className="h-8 items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium text-sidebar-muted-foreground/80 hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
-            onClick={openAuthPrompt}
-          >
-            <LogInIcon className="size-4 shrink-0" />
+          <SidebarMenuButton onClick={openAuthPrompt}>
+            <LogInIcon />
             <span>Sign in to T3 Connect</span>
           </SidebarMenuButton>
         </SidebarMenuItem>

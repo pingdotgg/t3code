@@ -8,12 +8,12 @@
   },
   "dependencies": {
     "@effect/platform-node": "catalog:",
-    "@t3tools/contracts": "workspace:*",
+    "@electron/asar": "^3.4.1",
+    "@electron/osx-sign": "2.7.0",
     "@t3tools/shared": "workspace:*",
     "@t3tools/tailscale": "workspace:*",
     "effect": "catalog:",
-    "pngjs": "7.0.0",
-    "yaml": "catalog:"
+    "pngjs": "7.0.0"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",

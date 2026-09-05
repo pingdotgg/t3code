@@ -4,6 +4,8 @@ import {
   isUncPath,
   isWindowsAbsolutePath,
   isWindowsDrivePath,
+  normalizeProjectPathForComparison,
+  normalizeProjectPathForDispatch,
 } from "./path.ts";
 
 describe("path helpers", () => {
@@ -30,5 +32,15 @@ describe("path helpers", () => {
     expect(isExplicitRelativePath("./repo")).toBe(true);
     expect(isExplicitRelativePath("..\\repo")).toBe(true);
     expect(isExplicitRelativePath("~/repo")).toBe(false);
+  });
+
+  it("normalizes a bare Windows drive root the same as one with a trailing separator", () => {
+    // `C:`, `C:\` and `C:/` all refer to the drive root and must compare equal.
+    expect(normalizeProjectPathForDispatch("C:")).toBe("C:\\");
+    expect(normalizeProjectPathForComparison("C:")).toBe("c:\\");
+    expect(normalizeProjectPathForComparison("C:")).toBe(normalizeProjectPathForComparison("C:\\"));
+    expect(normalizeProjectPathForComparison("C:")).toBe(normalizeProjectPathForComparison("C:/"));
+    // Non-root drive paths keep their trailing separator trimmed as before.
+    expect(normalizeProjectPathForDispatch("C:\\repo\\")).toBe("C:\\repo");
   });
 });

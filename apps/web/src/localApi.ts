@@ -1,14 +1,10 @@
-import type { ContextMenuItem, LocalApi } from "@t3tools/contracts";
+import type { ConfirmDialogOptions, ContextMenuItem, LocalApi } from "@t3tools/contracts";
 
-import { resetRequestLatencyStateForTests } from "./rpc/requestLatencyState";
-import { showContextMenuFallback } from "./contextMenuFallback";
+import { requestConfirmDialog } from "./confirmDialog";
+import { dismissContextMenu, showContextMenuFallback } from "./contextMenuFallback";
 import { readBrowserClientSettings, writeBrowserClientSettings } from "./clientPersistenceStorage";
 
 let cachedApi: LocalApi | undefined;
-
-function unavailableLocalBackendError(): Error {
-  return new Error("Local backend API is unavailable before a backend is paired.");
-}
 
 function createBrowserLocalApi(): LocalApi {
   return {
@@ -17,15 +13,11 @@ function createBrowserLocalApi(): LocalApi {
         if (!window.desktopBridge) return null;
         return window.desktopBridge.pickFolder(options);
       },
-      confirm: async (message) => {
-        if (window.desktopBridge) {
-          return window.desktopBridge.confirm(message);
-        }
-        return window.confirm(message);
+      confirm: async (message, options?: ConfirmDialogOptions) => {
+        return requestConfirmDialog(message, options) ?? false;
       },
     },
     shell: {
-      openInEditor: () => Promise.reject(unavailableLocalBackendError()),
       openExternal: async (url) => {
         if (window.desktopBridge) {
           const opened = await window.desktopBridge.openExternal(url);
@@ -37,6 +29,17 @@ function createBrowserLocalApi(): LocalApi {
 
         window.open(url, "_blank", "noopener,noreferrer");
       },
+      // Only the desktop shell can reach the OS; the web build (and older
+      // desktop shells that predate this method) have nothing to open.
+      openSystemSettings: async (pane) => {
+        if (!window.desktopBridge?.openSystemSettings) {
+          throw new Error("Unable to open System Settings.");
+        }
+        const opened = await window.desktopBridge.openSystemSettings(pane);
+        if (!opened) {
+          throw new Error("Unable to open System Settings.");
+        }
+      },
     },
     contextMenu: {
       show: async <T extends string>(
@@ -47,6 +50,14 @@ function createBrowserLocalApi(): LocalApi {
           return window.desktopBridge.showContextMenu(items, position) as Promise<T | null>;
         }
         return showContextMenuFallback(items, position);
+      },
+      // A native desktop menu blocks keyboard input and closes on outside
+      // interaction, so nothing to do there; the DOM fallback needs an explicit
+      // dismiss when the state behind it goes away.
+      close: async () => {
+        if (!window.desktopBridge) {
+          dismissContextMenu();
+        }
       },
     },
     persistence: {
@@ -63,20 +74,6 @@ function createBrowserLocalApi(): LocalApi {
         writeBrowserClientSettings(settings);
       },
     },
-    server: {
-      getConfig: () => Promise.reject(unavailableLocalBackendError()),
-      refreshProviders: () => Promise.reject(unavailableLocalBackendError()),
-      updateProvider: () => Promise.reject(unavailableLocalBackendError()),
-      upsertKeybinding: () => Promise.reject(unavailableLocalBackendError()),
-      removeKeybinding: () => Promise.reject(unavailableLocalBackendError()),
-      getSettings: () => Promise.reject(unavailableLocalBackendError()),
-      updateSettings: () => Promise.reject(unavailableLocalBackendError()),
-      discoverSourceControl: () => Promise.reject(unavailableLocalBackendError()),
-      getTraceDiagnostics: () => Promise.reject(unavailableLocalBackendError()),
-      getProcessDiagnostics: () => Promise.reject(unavailableLocalBackendError()),
-      getProcessResourceHistory: () => Promise.reject(unavailableLocalBackendError()),
-      signalProcess: () => Promise.reject(unavailableLocalBackendError()),
-    },
   };
 }
 
@@ -88,12 +85,7 @@ export function readLocalApi(): LocalApi | undefined {
   if (typeof window === "undefined") return undefined;
   if (cachedApi) return cachedApi;
 
-  if (window.nativeApi) {
-    cachedApi = window.nativeApi;
-    return cachedApi;
-  }
-
-  cachedApi = createBrowserLocalApi();
+  cachedApi = createLocalApi();
   return cachedApi;
 }
 
@@ -103,11 +95,4 @@ export function ensureLocalApi(): LocalApi {
     throw new Error("Local API not found");
   }
   return api;
-}
-
-export async function __resetLocalApiForTests() {
-  cachedApi = undefined;
-  const { __resetClientSettingsPersistenceForTests } = await import("./hooks/useSettings");
-  __resetClientSettingsPersistenceForTests();
-  resetRequestLatencyStateForTests();
 }

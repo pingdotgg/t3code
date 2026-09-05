@@ -65,7 +65,9 @@ describe("GitHubCli.layer", () => {
               baseRefName: "main",
               headRefName: "feature/pr-threads",
               state: "OPEN",
+              isDraft: true,
               mergedAt: null,
+              updatedAt: "2026-08-24T12:34:56Z",
               isCrossRepository: true,
               headRepository: {
                 nameWithOwner: "octocat/codething-mvp",
@@ -91,6 +93,8 @@ describe("GitHubCli.layer", () => {
         baseRefName: "main",
         headRefName: "feature/pr-threads",
         state: "open",
+        isDraft: true,
+        updatedAt: "2026-08-24T12:34:56.000Z",
         isCrossRepository: true,
         headRepositoryNameWithOwner: "octocat/codething-mvp",
         headRepositoryOwnerLogin: "octocat",
@@ -103,7 +107,7 @@ describe("GitHubCli.layer", () => {
           "view",
           "#42",
           "--json",
-          "number,title,url,baseRefName,headRefName,state,mergedAt,isCrossRepository,headRepository,headRepositoryOwner",
+          "number,title,url,baseRefName,headRefName,state,isDraft,mergedAt,updatedAt,isCrossRepository,headRepository,headRepositoryOwner",
         ],
         cwd: "/repo",
         timeoutMs: 30_000,
@@ -371,6 +375,36 @@ describe("GitHubCli.layer", () => {
       assert.strictEqual(error.cwd, "/repo");
       assert.strictEqual(error.cause, cause);
       assert.equal(error.message.includes(cause.detail), false);
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("surfaces an actionable rate-limit error without exposing provider stderr", () =>
+    Effect.gen(function* () {
+      const cause = new VcsProcessExitError({
+        operation: "GitHubCli.execute",
+        command: "gh",
+        cwd: "/repo",
+        exitCode: 1,
+        failureKind: "rate-limited",
+        detail: "API rate limit exceeded.",
+        stderrLength: 82,
+        stderrTruncated: false,
+      });
+      mockRun.mockReturnValueOnce(Effect.fail(cause));
+
+      const gh = yield* GitHubCli.GitHubCli;
+      const error = yield* gh
+        .listOpenPullRequests({
+          cwd: "/repo",
+          headSelector: "feature/rate-limited",
+        })
+        .pipe(Effect.flip);
+
+      assert.strictEqual(error._tag, "GitHubCliRateLimitError");
+      assert.include(error.detail, "GitHub API rate limit exceeded");
+      assert.include(error.detail, "gh api rate_limit");
+      assert.strictEqual(error.cause, cause);
+      assert.notInclude(error.message, "user ID");
     }).pipe(Effect.provide(layer)),
   );
 });

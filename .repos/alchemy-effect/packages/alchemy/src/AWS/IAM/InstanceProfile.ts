@@ -1,5 +1,6 @@
 import * as iam from "@distilled.cloud/aws/iam";
 import * as Effect from "effect/Effect";
+import * as Stream from "effect/Stream";
 import { isResolved } from "../../Diff.ts";
 import type { Input } from "../../Input.ts";
 import { createPhysicalName } from "../../PhysicalName.ts";
@@ -38,11 +39,17 @@ export interface InstanceProfile extends Resource<
   "AWS.IAM.InstanceProfile",
   InstanceProfileProps,
   {
+    /** The ARN of the instance profile. */
     instanceProfileArn: string;
+    /** The name of the instance profile. */
     instanceProfileName: string;
+    /** The stable unique ID of the instance profile. */
     instanceProfileId: string | undefined;
+    /** The IAM path of the instance profile. */
     path: string | undefined;
+    /** The role attached to the instance profile, if any. */
     roleName: string | undefined;
+    /** The tags applied to the instance profile. */
     tags: Record<string, string>;
   },
   never,
@@ -54,7 +61,7 @@ export interface InstanceProfile extends Resource<
  *
  * `InstanceProfile` bridges IAM roles into EC2 so compute instances can assume
  * the attached role through the instance metadata service.
- *
+ * @resource
  * @section Attaching Roles to EC2
  * @example Create an Instance Profile
  * ```typescript
@@ -143,6 +150,27 @@ export const InstanceProfileProvider = () =>
             return { action: "replace" } as const;
           }
         }),
+        // IAM is global; `listInstanceProfiles` enumerates every instance
+        // profile in the account. Paginate exhaustively and map each item to
+        // the same Attributes shape `read` produces.
+        list: () =>
+          iam.listInstanceProfiles.pages({}).pipe(
+            Stream.runCollect,
+            Effect.map((chunk) =>
+              Array.from(chunk).flatMap((page) =>
+                (page.InstanceProfiles ?? []).map((profile) => ({
+                  instanceProfileArn: profile.Arn,
+                  instanceProfileName: profile.InstanceProfileName,
+                  instanceProfileId: profile.InstanceProfileId as
+                    | string
+                    | undefined,
+                  path: profile.Path as string | undefined,
+                  roleName: profile.Roles?.[0]?.RoleName,
+                  tags: toTagRecord(profile.Tags),
+                })),
+              ),
+            ),
+          ),
         read: Effect.fn(function* ({ id, olds, output }) {
           const name =
             output?.instanceProfileName ??

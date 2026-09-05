@@ -1,17 +1,20 @@
 import type * as lambda from "aws-lambda";
-import * as Context from "effect/Context";
+import type * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
+import * as Binding from "../../Binding.ts";
 import type { Queue } from "./Queue.ts";
 
 export type SQSRecord = lambda.SQSRecord;
 
 export interface MessagesProps extends QueueEventSourceProps {
   /**
-   * Time in seconds for long polling when using the process (run) path.
-   * @default 20
+   * How long each `ReceiveMessage` long-polls for messages when using the
+   * process (run) path (e.g. `"20 seconds"`). Rounded to whole seconds on
+   * the wire.
+   * @default 20 seconds
    */
-  waitTimeSeconds?: number;
+  waitTime?: Duration.Input;
   /**
    * Maximum number of messages to receive per poll when using the process (run) path.
    * @default 10
@@ -19,21 +22,92 @@ export interface MessagesProps extends QueueEventSourceProps {
   maxNumberOfMessages?: number;
 }
 
-export const messages = <Q extends Queue>(
-  queue: Q,
-  props: MessagesProps = {},
-) => ({
-  subscribe: <Req = never>(
-    process: (
-      stream: Stream.Stream<SQSRecord>,
-    ) => Effect.Effect<void, never, Req>,
-  ) => QueueEventSource.use((source) => source(queue, props, process)),
-});
+type MessagesHandler<Req> = (
+  stream: Stream.Stream<SQSRecord>,
+) => Effect.Effect<void, never, Req>;
 
-export class QueueEventSource extends Context.Service<
+/**
+ * Subscribe an Effect handler to messages produced by an SQS {@link Queue}.
+ *
+ * @param queue The SQS queue to consume messages from.
+ * @param props Optional event-source configuration.
+ * @param process The handler invoked with a stream of SQS records (last argument).
+ *
+ * @example
+ * ```typescript
+ * yield* SQS.consumeQueueMessages(queue, (records) =>
+ *   records.pipe(Stream.runForEach((record) => Effect.log(record.body))),
+ * );
+ * ```
+ *
+ * @example With batching configuration
+ * ```typescript
+ * yield* SQS.consumeQueueMessages(queue, { batchSize: 10 }, (records) =>
+ *   records.pipe(
+ *     Stream.map((record) => ({ MessageBody: record.body })),
+ *     Stream.run(sink),
+ *     Effect.orDie,
+ *   ),
+ * );
+ * ```
+ */
+export function consumeQueueMessages<Q extends Queue, Req = never>(
+  queue: Q,
+  process: MessagesHandler<Req>,
+): Effect.Effect<void, never, QueueEventSource>;
+export function consumeQueueMessages<Q extends Queue, Req = never>(
+  queue: Q,
+  props: MessagesProps,
+  process: MessagesHandler<Req>,
+): Effect.Effect<void, never, QueueEventSource>;
+export function consumeQueueMessages<Q extends Queue, Req = never>(
+  queue: Q,
+  propsOrProcess: MessagesProps | MessagesHandler<Req>,
+  maybeProcess?: MessagesHandler<Req>,
+): Effect.Effect<void, never, QueueEventSource> {
+  const [props, process] =
+    typeof propsOrProcess === "function"
+      ? [{} as MessagesProps, propsOrProcess]
+      : [propsOrProcess, maybeProcess!];
+  return QueueEventSource.use((source) => source(queue, props, process));
+}
+
+/**
+ * Event source connecting an SQS {@link Queue} to the hosting compute
+ * (Lambda function or ServerHost process).
+ *
+ * The contract is a `Binding.Service`; the host-specific implementation
+ * layers are `Lambda.QueueEventSource` (event-source mapping + runtime
+ * dispatch) and `Server.SQSQueueEventSource` (long-poll receive loop).
+ * Consume it through the {@link consumeQueueMessages} helper.
+ * @binding
+ * @section Consuming a Queue
+ * @example Consume Messages in a Lambda Function
+ * ```typescript
+ * export default WorkerFunction.make(
+ *   { main: import.meta.url },
+ *   Effect.gen(function* () {
+ *     const queue = yield* SQS.Queue("Jobs");
+ *
+ *     // registers the event-source mapping and the runtime dispatcher
+ *     yield* SQS.consumeQueueMessages(queue, { batchSize: 10 }, (records) =>
+ *       records.pipe(
+ *         Stream.runForEach((record) => Effect.log(record.body)),
+ *       ),
+ *     );
+ *   }).pipe(Effect.provide(Lambda.QueueEventSource)),
+ * );
+ * ```
+ */
+export interface QueueEventSource extends Binding.Service<
   QueueEventSource,
+  "AWS.SQS.QueueEventSource",
   QueueEventSourceService
->()("AWS.SQS.QueueEventSource") {}
+> {}
+
+export const QueueEventSource = Binding.Service<QueueEventSource>(
+  "AWS.SQS.QueueEventSource",
+);
 
 export interface QueueEventSourceProps {
   /**
@@ -42,10 +116,12 @@ export interface QueueEventSourceProps {
    */
   batchSize?: number;
   /**
-   * The maximum amount of time, in seconds, that Lambda spends gathering records before invoking the function.
+   * The maximum amount of time that Lambda spends gathering records before
+   * invoking the function (e.g. `"5 seconds"`). Rounded to whole seconds on
+   * the wire.
    * @default 0
    */
-  maximumBatchingWindowInSeconds?: number;
+  maximumBatchingWindow?: Duration.Input;
 }
 
 export type QueueEventSourceService = <Req = never>(

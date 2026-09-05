@@ -1,21 +1,8 @@
 /**
- * The `AnthropicConfig` module provides contextual configuration for the
- * Anthropic AI provider integration. It is used to customize the generated
- * Anthropic HTTP client without changing individual request code.
- *
- * **Common tasks**
- *
- * - Provide a shared `HttpClient` transformation for Anthropic requests
- * - Add provider-specific concerns such as request instrumentation, proxying,
- *   retries, or header manipulation
- * - Scope a client transformation to a single effect with {@link withClientTransform}
- *
- * **Gotchas**
- *
- * - Configuration is read from the Effect context, so overrides only apply to
- *   effects run inside the configured scope
- * - `withClientTransform` replaces the current `transformClient` value while
- *   preserving any other Anthropic configuration fields
+ * The `AnthropicConfig` module lets a workflow temporarily customize the HTTP
+ * client used by generated Anthropic requests. It is used by
+ * `AnthropicClient` when request helpers run, so code can add middleware,
+ * logging, or other client changes without rebuilding the client layer.
  *
  * @since 4.0.0
  */
@@ -29,8 +16,8 @@ import type { HttpClient } from "effect/unstable/http/HttpClient"
  *
  * **When to use**
  *
- * Use when a layer or integration needs to provide or read Anthropic client
- * configuration through Effect's context.
+ * Use when you need to provide or read Anthropic client configuration through
+ * Effect's context from a layer or integration.
  *
  * @see {@link withClientTransform} for scoping an HTTP client transformation
  *

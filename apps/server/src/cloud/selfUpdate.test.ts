@@ -1,589 +1,403 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { assert, it } from "@effect/vitest";
-import * as Duration from "effect/Duration";
+import { expect, it } from "@effect/vitest";
+import { ServerSelfUpdateError, ThreadId } from "@t3tools/contracts";
+import { HostProcessExecutablePath } from "@t3tools/shared/hostProcess";
+import * as Cause from "effect/Cause";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
-import * as Layer from "effect/Layer";
+import * as Fiber from "effect/Fiber";
 import * as Path from "effect/Path";
-import * as TestClock from "effect/testing/TestClock";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
-import {
-  HostProcessArguments,
-  HostProcessEnvironment,
-  HostProcessExecutablePath,
-  HostProcessPlatform,
-} from "@t3tools/shared/hostProcess";
-
 import * as ServerConfig from "../config.ts";
+import * as DesktopAppUpdate from "../desktopUpdate/DesktopAppUpdate.ts";
 import * as ProcessRunner from "../processRunner.ts";
-import {
-  BOOT_SERVICE_UNIT_ENV,
-  BOOT_SERVICE_UNIT_FILE,
-  renderBootServiceUnit,
-} from "./bootService.ts";
-import * as SelfUpdate from "./selfUpdate.ts";
+import * as ServiceLauncherClient from "./serviceLauncherClient.ts";
+import { SERVICE_LAUNCHER_PROTOCOL } from "./serviceProtocol.ts";
+import * as ServerSelfUpdate from "./selfUpdate.ts";
 
-const NODE_PATH = "/usr/local/bin/node";
-
-interface RecordedCommand {
-  readonly command: string;
-  readonly args: ReadonlyArray<string>;
+interface HarnessOptions {
+  readonly mode?: "web" | "desktop";
+  readonly managed?: boolean;
+  readonly preflight?: "ready" | "blocked";
+  readonly requestUpdate?: ServiceLauncherClient.ServiceLauncherClient["Service"]["requestUpdate"];
+  readonly desktopAppUpdate?: DesktopAppUpdate.DesktopAppUpdate["Service"];
 }
 
-const makeRecordingRunnerLayer = (
-  commands: Array<RecordedCommand>,
-  options?: {
-    readonly failWhen?: ((command: string, args: ReadonlyArray<string>) => boolean) | undefined;
-    readonly stdoutFor?:
-      | ((command: string, args: ReadonlyArray<string>) => string | undefined)
-      | undefined;
-  },
-) =>
-  Layer.succeed(
-    ProcessRunner.ProcessRunner,
-    ProcessRunner.ProcessRunner.of({
-      run: (input) =>
-        Effect.sync(() => {
-          commands.push({ command: input.command, args: input.args });
-          const failed = options?.failWhen?.(input.command, input.args) === true;
-          const versionFromPath =
-            input.command === NODE_PATH && input.args[1] === "--version"
-              ? /[/\\]runtime[/\\]versions[/\\]([^/\\]+)/.exec(input.args[0] ?? "")?.[1]
-              : undefined;
+const makeHarness = Effect.fn("test.make_self_update_harness")(function* (
+  options: HarnessOptions = {},
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-self-update-test-" });
+  const order: string[] = [];
+  const runner = ProcessRunner.ProcessRunner.of({
+    run: (input) =>
+      Effect.gen(function* () {
+        if (input.command === "npm") {
+          order.push("install");
+          const prefix = input.args[input.args.indexOf("--prefix") + 1];
+          if (prefix === undefined) return yield* Effect.die("missing npm prefix");
+          const entry = path.join(prefix, "node_modules", "t3", "dist", "bin.mjs");
+          yield* fs.makeDirectory(path.dirname(entry), { recursive: true }).pipe(Effect.orDie);
+          yield* fs.writeFileString(entry, "export {};\n").pipe(Effect.orDie);
           return {
-            stdout:
-              options?.stdoutFor?.(input.command, input.args) ??
-              (versionFromPath === undefined ? "" : `t3 v${versionFromPath}\n`),
-            stderr: failed ? `${input.command} exploded` : "",
-            code: ChildProcessSpawner.ExitCode(failed ? 1 : 0),
+            stdout: "",
+            stderr: "",
+            code: ChildProcessSpawner.ExitCode(0),
             timedOut: false,
             stdoutTruncated: false,
             stderrTruncated: false,
+            stdoutInvalidUtf8: false,
+            stderrInvalidUtf8: false,
           };
-        }),
-    }),
-  );
-
-const provideHostRefs = (input: {
-  readonly platform: NodeJS.Platform;
-  readonly env: NodeJS.ProcessEnv;
-  readonly entryPath: string;
-}) =>
-  Effect.provide(
-    Layer.mergeAll(
-      Layer.succeed(HostProcessPlatform, input.platform),
-      Layer.succeed(HostProcessEnvironment, input.env),
-      Layer.succeed(HostProcessExecutablePath, NODE_PATH),
-      Layer.succeed(HostProcessArguments, [NODE_PATH, input.entryPath, "serve"]),
-    ),
-  );
-
-it("recognizes published npm artifacts as swappable entry points", () => {
-  assert.isTrue(SelfUpdate.isPublishedCliEntry("/usr/local/lib/node_modules/t3/dist/bin.mjs"));
-  assert.isTrue(
-    SelfUpdate.isPublishedCliEntry("/home/theo/.npm/_npx/abc123/node_modules/t3/dist/bin.mjs"),
-  );
-  assert.isTrue(
-    SelfUpdate.isPublishedCliEntry(
-      "C:\\Users\\theo\\AppData\\Roaming\\npm\\node_modules\\t3\\dist\\bin.mjs",
-    ),
-  );
-  // Dev checkouts and the desktop bundle run apps/server/dist directly.
-  assert.isFalse(SelfUpdate.isPublishedCliEntry("/home/theo/dev/t3/apps/server/dist/bin.mjs"));
-  assert.isFalse(SelfUpdate.isPublishedCliEntry(""));
-});
-
-it.layer(NodeServices.layer)("resolveServerSelfUpdateCapability", (it) => {
-  const makeHome = Effect.fn("test.makeHome")(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-self-update-test-" });
-    return { fs, path, home };
-  });
-
-  const writeUnitReferencing = Effect.fn("test.writeUnitReferencing")(function* (
-    home: string,
-    entryPath: string,
-  ) {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const unitDir = path.join(home, ".config", "systemd", "user");
-    yield* fs.makeDirectory(unitDir, { recursive: true });
-    yield* fs.writeFileString(
-      path.join(unitDir, "t3code.service"),
-      renderBootServiceUnit({
-        nodePath: NODE_PATH,
-        t3EntryPath: entryPath,
-        baseDir: path.join(home, ".t3"),
-        logPath: path.join(home, ".t3", "userdata", "logs", "boot-service.log"),
-        unitPath: path.join(unitDir, "t3code.service"),
+        }
+        order.push("preflight");
+        const result =
+          options.preflight === "blocked"
+            ? { status: "blocked", version: "1.1.0", reason: "local update required" }
+            : {
+                status: "ready",
+                version: "1.1.0",
+                launcherProtocol: SERVICE_LAUNCHER_PROTOCOL,
+              };
+        return {
+          // @effect-diagnostics-next-line preferSchemaOverJson:off - fake child-process stdout.
+          stdout: JSON.stringify(result),
+          stderr: "",
+          code: ChildProcessSpawner.ExitCode(0),
+          timedOut: false,
+          stdoutTruncated: false,
+          stderrTruncated: false,
+          stdoutInvalidUtf8: false,
+          stderrInvalidUtf8: false,
+        };
       }),
-    );
   });
-
-  it.effect("reports boot-service for the systemd-spawned unit process", () =>
-    Effect.gen(function* () {
-      const { home, path } = yield* makeHome();
-      const entryPath = path.join(home, ".t3/runtime/versions/0.0.28/node_modules/t3/dist/bin.mjs");
-      yield* writeUnitReferencing(home, entryPath);
-      const method = yield* SelfUpdate.resolveServerSelfUpdateCapability({
-        desktopManaged: false,
-      }).pipe(
-        provideHostRefs({
-          platform: "linux",
-          env: {
-            HOME: home,
-            INVOCATION_ID: "abc123",
-            [BOOT_SERVICE_UNIT_ENV]: BOOT_SERVICE_UNIT_FILE,
-          },
-          entryPath,
-        }),
-      );
-      assert.equal(method, "boot-service");
-    }),
+  const launcher = ServiceLauncherClient.ServiceLauncherClient.of({
+    managed: options.managed ?? true,
+    requestUpdate:
+      options.requestUpdate ??
+      (() =>
+        Effect.sync(() => {
+          order.push("accept");
+          return "launcher-id";
+        })),
+    prepareTrial: Effect.sync((): undefined => undefined),
+  });
+  const config = yield* ServerConfig.ServerConfig.pipe(
+    Effect.provide(ServerConfig.layerTest(process.cwd(), baseDir)),
   );
-
-  it.effect("does not claim a systemd process owned by another unit", () =>
-    Effect.gen(function* () {
-      const { home, path } = yield* makeHome();
-      const entryPath = path.join(home, ".t3/runtime/versions/0.0.28/node_modules/t3/dist/bin.mjs");
-      yield* writeUnitReferencing(home, entryPath);
-      const method = yield* SelfUpdate.resolveServerSelfUpdateCapability({
-        desktopManaged: false,
-      }).pipe(
-        provideHostRefs({
-          platform: "linux",
-          env: { HOME: home, INVOCATION_ID: "abc123" },
-          entryPath,
-        }),
-      );
-      assert.isNull(method);
-    }),
+  const selfUpdate = yield* ServerSelfUpdate.make().pipe(
+    Effect.provideService(ProcessRunner.ProcessRunner, runner),
+    Effect.provideService(ServiceLauncherClient.ServiceLauncherClient, launcher),
+    Effect.provideService(
+      DesktopAppUpdate.DesktopAppUpdate,
+      options.desktopAppUpdate ?? {
+        available: false,
+        run: () => Effect.die("unexpected desktop app update run"),
+      },
+    ),
+    Effect.provideService(HostProcessExecutablePath, "/usr/bin/node"),
+    Effect.provide(ServerConfig.layer({ ...config, mode: options.mode ?? "web" })),
   );
-
-  it.effect("reports respawn for a manual run of the pinned artifact", () =>
-    Effect.gen(function* () {
-      const { home, path } = yield* makeHome();
-      const entryPath = path.join(home, ".t3/runtime/versions/0.0.28/node_modules/t3/dist/bin.mjs");
-      yield* writeUnitReferencing(home, entryPath);
-      // Same unit on disk, but no INVOCATION_ID: restarting the unit would
-      // not replace this process, so it must respawn itself instead.
-      const method = yield* SelfUpdate.resolveServerSelfUpdateCapability({
-        desktopManaged: false,
-      }).pipe(provideHostRefs({ platform: "linux", env: { HOME: home }, entryPath }));
-      assert.equal(method, "respawn");
-    }),
-  );
-
-  it.effect("reports respawn for a foreground npx artifact on darwin", () =>
-    Effect.gen(function* () {
-      const { home } = yield* makeHome();
-      const method = yield* SelfUpdate.resolveServerSelfUpdateCapability({
-        desktopManaged: false,
-      }).pipe(
-        provideHostRefs({
-          platform: "darwin",
-          env: { HOME: home },
-          entryPath: `${home}/.npm/_npx/abc123/node_modules/t3/dist/bin.mjs`,
-        }),
-      );
-      assert.equal(method, "respawn");
-    }),
-  );
-
-  it.effect("reports desktop-managed for desktop-supervised backends", () =>
-    Effect.gen(function* () {
-      const { home, path } = yield* makeHome();
-      // Desktop ownership wins over every process-shape heuristic: even a
-      // systemd-looking pinned artifact belongs to the app that spawned it.
-      const entryPath = path.join(home, ".t3/runtime/versions/0.0.28/node_modules/t3/dist/bin.mjs");
-      yield* writeUnitReferencing(home, entryPath);
-      const method = yield* SelfUpdate.resolveServerSelfUpdateCapability({
-        desktopManaged: true,
-      }).pipe(
-        provideHostRefs({
-          platform: "linux",
-          env: {
-            HOME: home,
-            INVOCATION_ID: "abc123",
-            [BOOT_SERVICE_UNIT_ENV]: BOOT_SERVICE_UNIT_FILE,
-          },
-          entryPath,
-        }),
-      );
-      assert.equal(method, "desktop-managed");
-    }),
-  );
-
-  it.effect("reports no method for dev checkouts and Windows", () =>
-    Effect.gen(function* () {
-      const { home } = yield* makeHome();
-      const devMethod = yield* SelfUpdate.resolveServerSelfUpdateCapability({
-        desktopManaged: false,
-      }).pipe(
-        provideHostRefs({
-          platform: "darwin",
-          env: { HOME: home },
-          entryPath: `${home}/dev/t3/apps/server/dist/bin.mjs`,
-        }),
-      );
-      assert.isNull(devMethod);
-      const windowsMethod = yield* SelfUpdate.resolveServerSelfUpdateCapability({
-        desktopManaged: false,
-      }).pipe(
-        provideHostRefs({
-          platform: "win32",
-          env: { HOME: home },
-          entryPath: "C:\\Users\\theo\\AppData\\Roaming\\npm\\node_modules\\t3\\dist\\bin.mjs",
-        }),
-      );
-      assert.isNull(windowsMethod);
-    }),
-  );
+  return { selfUpdate, order };
 });
 
-it.layer(NodeServices.layer)("ServerSelfUpdate.update", (it) => {
-  interface RecordedSpawn {
-    readonly command: string;
-    readonly args: ReadonlyArray<string>;
-  }
-
-  const makeContext = Effect.fn("test.makeContext")(function* (options?: {
-    readonly platform?: NodeJS.Platform;
-    readonly bootService?: boolean;
-    readonly desktopManaged?: boolean;
-    readonly entryPath?: string;
-    readonly failWhen?: (command: string, args: ReadonlyArray<string>) => boolean;
-    readonly stdoutFor?: (command: string, args: ReadonlyArray<string>) => string | undefined;
-    readonly failSpawn?: boolean;
-  }) {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-self-update-test-" });
-    const baseDir = path.join(home, ".t3");
-    const entryPath =
-      options?.entryPath ??
-      path.join(home, ".t3/runtime/versions/0.0.28/node_modules/t3/dist/bin.mjs");
-    const env: NodeJS.ProcessEnv =
-      options?.bootService === true
-        ? {
-            HOME: home,
-            INVOCATION_ID: "abc123",
-            [BOOT_SERVICE_UNIT_ENV]: BOOT_SERVICE_UNIT_FILE,
-          }
-        : { HOME: home };
-    if (options?.bootService === true) {
-      const unitDir = path.join(home, ".config", "systemd", "user");
-      yield* fs.makeDirectory(unitDir, { recursive: true });
-      yield* fs.writeFileString(
-        path.join(unitDir, "t3code.service"),
-        renderBootServiceUnit({
-          nodePath: NODE_PATH,
-          t3EntryPath: entryPath,
-          baseDir,
-          logPath: path.join(baseDir, "userdata", "logs", "boot-service.log"),
-          unitPath: path.join(unitDir, "t3code.service"),
-        }),
-      );
-    }
-
-    const commands: Array<RecordedCommand> = [];
-    const spawns: Array<RecordedSpawn> = [];
-    let exited = 0;
-    // layerTest always reports mode "web"; desktop-managed contexts overlay
-    // the mode the desktop app's bootstrap envelope would set.
-    const configLayer =
-      options?.desktopManaged === true
-        ? Layer.effect(
-            ServerConfig.ServerConfig,
-            Effect.gen(function* () {
-              const config = yield* ServerConfig.ServerConfig;
-              return { ...config, mode: "desktop" as const };
-            }),
-          ).pipe(Layer.provide(ServerConfig.layerTest(home, baseDir)))
-        : ServerConfig.layerTest(home, baseDir);
-    const service = yield* SelfUpdate.make({
-      host: {
-        spawnDetached: (command, args) =>
-          Effect.sync(() => spawns.push({ command, args })).pipe(
-            Effect.andThen(
-              options?.failSpawn === true
-                ? Effect.fail(
-                    new ProcessRunner.ProcessSpawnError({
-                      command,
-                      argumentCount: args.length,
-                      cause: new Error("detached spawn failed"),
-                    }),
-                  )
-                : Effect.void,
+it.layer(NodeServices.layer)("server self update", (it) => {
+  it.effect("marks running threads at the boot-service handoff", () =>
+    Effect.gen(function* () {
+      const events: string[] = [];
+      const selfUpdate = yield* ServerSelfUpdate.withRunningThreadContinuation({
+        mode: "web",
+        selfUpdate: {
+          update: (_input, reportProgress = () => Effect.void) =>
+            reportProgress("downloading").pipe(
+              Effect.andThen(reportProgress("installing")),
+              Effect.as({
+                targetVersion: "1.1.0",
+                method: "boot-service" as const,
+                updateId: "update-id",
+              }),
             ),
-          ),
-        exitProcess: () => {
-          exited += 1;
+          commitDesktopUpdate: () => Effect.never,
         },
-      },
-    }).pipe(
-      Effect.provide(
-        Layer.mergeAll(
-          makeRecordingRunnerLayer(commands, {
-            failWhen: options?.failWhen,
-            stdoutFor: options?.stdoutFor,
-          }),
-          configLayer,
-        ),
-      ),
-      provideHostRefs({ platform: options?.platform ?? "linux", env, entryPath }),
-    );
-    return {
-      fs,
-      path,
-      home,
-      baseDir,
-      entryPath,
-      commands,
-      spawns,
-      exitCount: () => exited,
-      service,
-    };
-  });
-
-  it.effect("rejects dist-tags and other non-exact versions", () =>
-    Effect.gen(function* () {
-      const context = yield* makeContext();
-      const error = yield* context.service.update({ targetVersion: "latest" }).pipe(Effect.flip);
-      assert.include(error.reason, "not an exact t3 version");
-      assert.lengthOf(context.commands, 0);
-    }),
-  );
-
-  it.effect("refuses to update a desktop-managed backend and points at the app", () =>
-    Effect.gen(function* () {
-      const context = yield* makeContext({ desktopManaged: true, bootService: true });
-      const error = yield* context.service.update({ targetVersion: "0.0.29" }).pipe(Effect.flip);
-      assert.include(error.reason, "desktop app");
-      assert.lengthOf(context.commands, 0);
-      assert.lengthOf(context.spawns, 0);
-    }),
-  );
-
-  it.effect("fails without touching anything when no update method applies", () =>
-    Effect.gen(function* () {
-      const context = yield* makeContext({
-        entryPath: "/home/theo/dev/t3/apps/server/dist/bin.mjs",
+        prepare: Effect.sync(() => {
+          events.push("prepare");
+          return [ThreadId.make("thread-running")];
+        }),
+        clear: () => Effect.sync(() => void events.push("clear")),
       });
-      const error = yield* context.service.update({ targetVersion: "0.0.29" }).pipe(Effect.flip);
-      assert.include(error.reason, "cannot update itself");
-      assert.lengthOf(context.commands, 0);
+
+      yield* selfUpdate.update({ targetVersion: "1.1.0", continueRunningThreads: true }, (stage) =>
+        Effect.sync(() => void events.push(stage)),
+      );
+
+      expect(events).toEqual(["downloading", "prepare", "installing"]);
     }),
   );
 
-  it.effect("surfaces a failed npm install and never schedules a restart", () =>
+  it.effect("marks desktop threads only when the prepared update commits", () =>
     Effect.gen(function* () {
-      const context = yield* makeContext({ failWhen: (command) => command === "npm" });
-      const error = yield* context.service.update({ targetVersion: "0.0.29" }).pipe(Effect.flip);
-      assert.equal(error.reason, "Could not install the requested t3 version.");
-      yield* TestClock.adjust(Duration.seconds(10));
-      assert.lengthOf(context.spawns, 0);
-      assert.equal(context.exitCount(), 0);
-    }).pipe(Effect.provide(TestClock.layer())),
+      const threadId = ThreadId.make("thread-running-desktop");
+      const events: string[] = [];
+      const commitError = new ServerSelfUpdateError({ reason: "install failed" });
+      const selfUpdate = yield* ServerSelfUpdate.withRunningThreadContinuation({
+        mode: "desktop",
+        selfUpdate: {
+          update: (_input, reportProgress = () => Effect.void) =>
+            reportProgress("installing").pipe(
+              Effect.as({
+                targetVersion: "1.2.0",
+                method: "desktop-app" as const,
+                desktopUpdateToken: "desktop-token",
+              }),
+            ),
+          commitDesktopUpdate: () =>
+            Effect.sync(() => events.push("commit")).pipe(Effect.andThen(Effect.fail(commitError))),
+        },
+        prepare: Effect.sync(() => {
+          events.push("prepare");
+          return [threadId];
+        }),
+        clear: (threadIds) => Effect.sync(() => void events.push(`clear:${threadIds.join(",")}`)),
+      });
+
+      yield* selfUpdate.update({ targetVersion: "1.2.0", continueRunningThreads: true }, (stage) =>
+        Effect.sync(() => void events.push(stage)),
+      );
+      expect(events).toEqual(["installing"]);
+      expect(yield* selfUpdate.commitDesktopUpdate("desktop-token").pipe(Effect.flip)).toBe(
+        commitError,
+      );
+      expect(events).toEqual(["installing", "prepare", "commit", `clear:${threadId}`]);
+      expect(yield* selfUpdate.commitDesktopUpdate("desktop-token").pipe(Effect.flip)).toBe(
+        commitError,
+      );
+      expect(events).toEqual([
+        "installing",
+        "prepare",
+        "commit",
+        `clear:${threadId}`,
+        "prepare",
+        "commit",
+        `clear:${threadId}`,
+      ]);
+    }),
   );
 
-  it.effect("reinstalls the same version after a failed preflight", () =>
+  it.effect("reports a failed continuation-marker cleanup", () =>
     Effect.gen(function* () {
-      let preflightAttempts = 0;
-      const context = yield* makeContext({
-        failWhen: (command) => {
-          if (command !== NODE_PATH) return false;
-          preflightAttempts += 1;
-          return preflightAttempts === 1;
+      const updateError = new ServerSelfUpdateError({ reason: "update failed" });
+      const clearError = new ServerSelfUpdateError({ reason: "marker cleanup failed" });
+      const selfUpdate = yield* ServerSelfUpdate.withRunningThreadContinuation({
+        mode: "web",
+        selfUpdate: {
+          update: (_input, reportProgress = () => Effect.void) =>
+            reportProgress("installing").pipe(Effect.andThen(Effect.fail(updateError))),
+          commitDesktopUpdate: () => Effect.never,
+        },
+        prepare: Effect.succeed([ThreadId.make("thread-cleanup-failure")]),
+        clear: () => Effect.fail(clearError),
+      });
+
+      expect(
+        yield* selfUpdate
+          .update({ targetVersion: "1.1.0", continueRunningThreads: true })
+          .pipe(Effect.flip),
+      ).toBe(clearError);
+    }),
+  );
+
+  it.effect("keeps continuation markers after the boot-service handoff is accepted", () =>
+    Effect.gen(function* () {
+      const events: string[] = [];
+      const selfUpdate = yield* ServerSelfUpdate.withRunningThreadContinuation({
+        mode: "web",
+        selfUpdate: {
+          update: (
+            _input,
+            reportProgress = () => Effect.void,
+            onHandoffAccepted = () => Effect.void,
+          ) =>
+            reportProgress("installing").pipe(
+              Effect.andThen(onHandoffAccepted()),
+              Effect.andThen(Effect.interrupt),
+            ),
+          commitDesktopUpdate: () => Effect.never,
+        },
+        prepare: Effect.sync(() => {
+          events.push("prepare");
+          return [ThreadId.make("thread-accepted-boot-handoff")];
+        }),
+        clear: () => Effect.sync(() => void events.push("clear")),
+      });
+
+      const exit = yield* selfUpdate
+        .update({ targetVersion: "1.1.0", continueRunningThreads: true })
+        .pipe(Effect.exit);
+
+      expect(exit._tag).toBe("Failure");
+      expect(events).toEqual(["prepare"]);
+    }),
+  );
+
+  it.effect("keeps continuation markers after the desktop handoff is accepted", () =>
+    Effect.gen(function* () {
+      const events: string[] = [];
+      const selfUpdate = yield* ServerSelfUpdate.withRunningThreadContinuation({
+        mode: "desktop",
+        selfUpdate: {
+          update: () =>
+            Effect.succeed({
+              targetVersion: "1.2.0",
+              method: "desktop-app" as const,
+              desktopUpdateToken: "accepted-desktop-token",
+            }),
+          commitDesktopUpdate: (_requestId, onHandoffAccepted = () => Effect.void) =>
+            onHandoffAccepted().pipe(Effect.andThen(Effect.interrupt)),
+        },
+        prepare: Effect.sync(() => {
+          events.push("prepare");
+          return [ThreadId.make("thread-accepted-desktop-handoff")];
+        }),
+        clear: () => Effect.sync(() => void events.push("clear")),
+      });
+
+      yield* selfUpdate.update({
+        targetVersion: "1.2.0",
+        continueRunningThreads: true,
+      });
+      const exit = yield* selfUpdate
+        .commitDesktopUpdate("accepted-desktop-token")
+        .pipe(Effect.exit);
+
+      expect(exit._tag).toBe("Failure");
+      expect(events).toEqual(["prepare"]);
+    }),
+  );
+
+  it.effect("clears continuation markers for mixed failure and interrupt causes", () =>
+    Effect.gen(function* () {
+      const events: string[] = [];
+      const commitError = new ServerSelfUpdateError({ reason: "install failed" });
+      const selfUpdate = yield* ServerSelfUpdate.withRunningThreadContinuation({
+        mode: "desktop",
+        selfUpdate: {
+          update: () =>
+            Effect.succeed({
+              targetVersion: "1.2.0",
+              method: "desktop-app" as const,
+              desktopUpdateToken: "failed-desktop-token",
+            }),
+          commitDesktopUpdate: (_requestId, onHandoffAccepted = () => Effect.void) =>
+            onHandoffAccepted().pipe(
+              Effect.andThen(
+                Effect.failCause(
+                  Cause.fromReasons([
+                    Cause.makeFailReason(commitError),
+                    Cause.makeInterruptReason(),
+                  ]),
+                ),
+              ),
+            ),
+        },
+        prepare: Effect.sync(() => [ThreadId.make("thread-failed-desktop-install")]),
+        clear: () => Effect.sync(() => void events.push("clear")),
+      });
+
+      yield* selfUpdate.update({
+        targetVersion: "1.2.0",
+        continueRunningThreads: true,
+      });
+      const exit = yield* selfUpdate.commitDesktopUpdate("failed-desktop-token").pipe(Effect.exit);
+      expect(exit._tag).toBe("Failure");
+      if (exit._tag === "Failure") {
+        expect(Cause.hasInterrupts(exit.cause)).toBe(true);
+        expect(Cause.hasInterruptsOnly(exit.cause)).toBe(false);
+      }
+      expect(events).toEqual(["clear"]);
+    }),
+  );
+
+  it.effect("stages and preflights before asking the launcher for an update ID", () =>
+    Effect.gen(function* () {
+      const { selfUpdate, order } = yield* makeHarness();
+      expect(yield* selfUpdate.update({ targetVersion: "1.1.0" })).toEqual({
+        targetVersion: "1.1.0",
+        method: "boot-service",
+        updateId: "launcher-id",
+      });
+      expect(order).toEqual(["install", "preflight", "accept"]);
+    }),
+  );
+
+  it.effect("rejects invalid versions and desktop-managed servers before staging", () =>
+    Effect.gen(function* () {
+      const web = yield* makeHarness();
+      expect(
+        (yield* web.selfUpdate.update({ targetVersion: "latest" }).pipe(Effect.flip)).reason,
+      ).toBe("'latest' is not an exact t3 version.");
+      const desktop = yield* makeHarness({ mode: "desktop" });
+      expect(
+        (yield* desktop.selfUpdate.update({ targetVersion: "1.1.0" }).pipe(Effect.flip)).reason,
+      ).toContain("desktop app");
+      expect([...web.order, ...desktop.order]).toEqual([]);
+    }),
+  );
+
+  it.effect("delegates desktop-managed updates to the desktop app when available", () =>
+    Effect.gen(function* () {
+      const stages: string[] = [];
+      const { selfUpdate, order } = yield* makeHarness({
+        mode: "desktop",
+        desktopAppUpdate: {
+          available: true,
+          run: (reportProgress) =>
+            reportProgress("downloading").pipe(
+              Effect.andThen(reportProgress("installing")),
+              Effect.as({ targetVersion: "1.2.0", method: "desktop-app" as const }),
+            ),
+          commit: () => Effect.never,
         },
       });
-      const versionDir = context.path.join(context.baseDir, "runtime", "versions", "0.0.29");
-      const entryPath = context.path.join(versionDir, "node_modules", "t3", "dist", "bin.mjs");
-      yield* context.fs.makeDirectory(context.path.dirname(entryPath), { recursive: true });
-      yield* context.fs.writeFileString(entryPath, "export {};\n");
-      yield* context.fs.writeFileString(
-        context.path.join(versionDir, ".install-complete"),
-        "0.0.29\n",
+      const result = yield* selfUpdate.update({ targetVersion: "1.1.0" }, (stage) =>
+        Effect.sync(() => void stages.push(stage)),
       );
-
-      const firstError = yield* context.service
-        .update({ targetVersion: "0.0.29" })
-        .pipe(Effect.flip);
-      assert.include(firstError.reason, "failed its version check");
-      assert.isFalse(yield* context.fs.exists(versionDir));
-
-      const result = yield* context.service.update({ targetVersion: "0.0.29" });
-      assert.deepEqual(result, { targetVersion: "0.0.29", method: "respawn" });
-      assert.deepEqual(
-        context.commands.map((entry) => entry.command),
-        [NODE_PATH, "npm", NODE_PATH],
-      );
-    }).pipe(Effect.provide(TestClock.layer())),
-  );
-
-  it.effect("rejects and removes an installed runtime that reports the wrong version", () =>
-    Effect.gen(function* () {
-      const context = yield* makeContext({
-        stdoutFor: (command, args) =>
-          command === NODE_PATH && args[1] === "--version" ? "t3 v0.0.28\n" : undefined,
-      });
-      const versionDir = context.path.join(context.baseDir, "runtime", "versions", "0.0.29");
-
-      const error = yield* context.service.update({ targetVersion: "0.0.29" }).pipe(Effect.flip);
-
-      assert.include(error.reason, "did not report the requested");
-      assert.isFalse(yield* context.fs.exists(versionDir));
-      assert.lengthOf(context.spawns, 0);
+      expect(result).toEqual({ targetVersion: "1.2.0", method: "desktop-app" });
+      expect(stages).toEqual(["downloading", "installing"]);
+      // The launcher staging path must not run on the desktop path.
+      expect(order).toEqual([]);
     }),
   );
 
-  it.effect("reports a detached replacement spawn failure and leaves updates retryable", () =>
+  it.effect("preserves the preflight refusal reason", () =>
     Effect.gen(function* () {
-      const context = yield* makeContext({ failSpawn: true });
-
-      const first = yield* context.service.update({ targetVersion: "0.0.29" }).pipe(Effect.flip);
-      assert.include(first.reason, "Could not start the replacement");
-
-      const second = yield* context.service.update({ targetVersion: "0.0.29" }).pipe(Effect.flip);
-      assert.include(second.reason, "Could not start the replacement");
-      assert.notInclude(second.reason, "already in progress");
-      assert.lengthOf(context.spawns, 2);
-      assert.equal(context.exitCount(), 0);
+      const { selfUpdate } = yield* makeHarness({ preflight: "blocked" });
+      expect((yield* selfUpdate.update({ targetVersion: "1.1.0" }).pipe(Effect.flip)).reason).toBe(
+        "local update required",
+      );
     }),
   );
 
-  it.effect("installs, preflights, and respawns a foreground server", () =>
+  it.effect("allows only one update at a time", () =>
     Effect.gen(function* () {
-      const context = yield* makeContext();
-      const result = yield* context.service.update({ targetVersion: "0.0.29" });
-      assert.deepEqual(result, { targetVersion: "0.0.29", method: "respawn" });
-      assert.lengthOf(context.spawns, 1);
-
-      const concurrentError = yield* context.service
-        .update({ targetVersion: "0.0.30" })
-        .pipe(Effect.flip);
-      assert.include(concurrentError.reason, "already in progress");
-
-      const pinnedEntry = context.path.join(
-        context.baseDir,
-        "runtime/versions/0.0.29/node_modules/t3/dist/bin.mjs",
-      );
-      assert.deepEqual(
-        context.commands.map((entry) => [entry.command, ...entry.args].join(" ")),
-        [
-          `npm install --prefix ${context.path.join(context.baseDir, "runtime/versions/0.0.29")} --no-fund --no-audit t3@0.0.29`,
-          `${NODE_PATH} ${pinnedEntry} --version`,
-        ],
-      );
-
-      // The restart is deferred so the RPC acknowledgement flushes first.
-      yield* TestClock.adjust(Duration.seconds(10));
-      assert.lengthOf(context.spawns, 1);
-      const spawn = context.spawns[0];
-      assert.equal(spawn?.command, "/bin/sh");
-      assert.include(spawn?.args ?? [], pinnedEntry);
-      // The replacement replays the original CLI arguments.
-      assert.include(spawn?.args ?? [], "serve");
-      assert.equal(context.exitCount(), 1);
-    }).pipe(Effect.provide(TestClock.layer())),
-  );
-
-  it.effect("rewrites the systemd unit and restarts the boot service", () =>
-    Effect.gen(function* () {
-      const context = yield* makeContext({ bootService: true });
-      const result = yield* context.service.update({ targetVersion: "0.0.29" });
-      assert.deepEqual(result, { targetVersion: "0.0.29", method: "boot-service" });
-
-      const pinnedEntry = context.path.join(
-        context.baseDir,
-        "runtime/versions/0.0.29/node_modules/t3/dist/bin.mjs",
-      );
-      const unit = yield* context.fs.readFileString(
-        context.path.join(context.home, ".config", "systemd", "user", "t3code.service"),
-      );
-      assert.include(unit, `ExecStart=${NODE_PATH} ${pinnedEntry} serve`);
-      assert.deepEqual(
-        context.commands.map((entry) => entry.command),
-        ["npm", NODE_PATH, "systemctl", "systemctl"],
-      );
-      assert.deepEqual(context.commands[2]?.args, ["--user", "daemon-reload"]);
-
-      assert.deepEqual(context.commands[3], {
-        command: "systemctl",
-        args: ["--user", "restart", "t3code.service"],
+      const requested = yield* Deferred.make<void>();
+      const accepted = yield* Deferred.make<string>();
+      const { selfUpdate } = yield* makeHarness({
+        requestUpdate: () =>
+          Deferred.succeed(requested, undefined).pipe(Effect.andThen(Deferred.await(accepted))),
       });
-      assert.lengthOf(context.spawns, 0);
-      // systemd replaces the process; the server must not exit itself.
-      assert.equal(context.exitCount(), 0);
-    }).pipe(Effect.provide(TestClock.layer())),
-  );
-
-  it.effect("restores the previous unit and permits a retry when systemd restart fails", () =>
-    Effect.gen(function* () {
-      let failRestart = true;
-      const context = yield* makeContext({
-        bootService: true,
-        failWhen: (command, args) => {
-          if (command !== "systemctl" || args[1] !== "restart" || !failRestart) {
-            return false;
-          }
-          failRestart = false;
-          return true;
-        },
+      const first = yield* Effect.forkChild(selfUpdate.update({ targetVersion: "1.1.0" }), {
+        startImmediately: true,
       });
-      const unitPath = context.path.join(
-        context.home,
-        ".config",
-        "systemd",
-        "user",
-        BOOT_SERVICE_UNIT_FILE,
+      yield* Deferred.await(requested);
+      expect((yield* selfUpdate.update({ targetVersion: "1.1.1" }).pipe(Effect.flip)).reason).toBe(
+        "A server update is already in progress.",
       );
-      const previousUnit = yield* context.fs.readFileString(unitPath);
-
-      const first = yield* context.service.update({ targetVersion: "0.0.29" }).pipe(Effect.flip);
-      assert.include(first.reason, "Restarting the systemd boot service failed");
-      assert.equal(yield* context.fs.readFileString(unitPath), previousUnit);
-      assert.deepEqual(
-        context.commands.slice(-2).map((entry) => entry.args),
-        [
-          ["--user", "restart", BOOT_SERVICE_UNIT_FILE],
-          ["--user", "daemon-reload"],
-        ],
-      );
-
-      const retry = yield* context.service.update({ targetVersion: "0.0.30" });
-      assert.deepEqual(retry, { targetVersion: "0.0.30", method: "boot-service" });
-    }).pipe(Effect.provide(TestClock.layer())),
-  );
-
-  it.effect("restores the previous systemd unit when daemon-reload fails", () =>
-    Effect.gen(function* () {
-      const context = yield* makeContext({
-        bootService: true,
-        failWhen: (command) => command === "systemctl",
-      });
-      const unitPath = context.path.join(
-        context.home,
-        ".config",
-        "systemd",
-        "user",
-        BOOT_SERVICE_UNIT_FILE,
-      );
-      const previousUnit = yield* context.fs.readFileString(unitPath);
-
-      const error = yield* context.service.update({ targetVersion: "0.0.29" }).pipe(Effect.flip);
-      assert.include(error.reason, "Reloading systemd units failed");
-      assert.equal(yield* context.fs.readFileString(unitPath), previousUnit);
-      assert.deepEqual(
-        context.commands.map((entry) => entry.command),
-        ["npm", NODE_PATH, "systemctl", "systemctl"],
-      );
-
-      yield* TestClock.adjust(Duration.seconds(10));
-      assert.lengthOf(context.spawns, 0);
-      assert.equal(context.exitCount(), 0);
-    }).pipe(Effect.provide(TestClock.layer())),
+      yield* Deferred.succeed(accepted, "launcher-id");
+      expect((yield* Fiber.join(first)).updateId).toBe("launcher-id");
+    }),
   );
 });

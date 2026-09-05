@@ -10,6 +10,7 @@ import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
 import * as Scope from "effect/Scope";
+import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 import type {
@@ -22,7 +23,9 @@ import type {
 } from "@t3tools/contracts";
 import { mergeGitStatusParts } from "@t3tools/shared/git";
 
+import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
+import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 
 const DEFAULT_VCS_STATUS_REFRESH_INTERVAL = Duration.seconds(30);
 const VCS_STATUS_REFRESH_FAILURE_BASE_DELAY = Duration.seconds(30);
@@ -131,11 +134,32 @@ interface CachedVcsStatus {
 interface ActiveRemotePoller {
   readonly fiber: Fiber.Fiber<void, never>;
   readonly subscriberCount: number;
+  readonly demandCwds: Ref.Ref<ReadonlyMap<string, number>>;
 }
 
 interface StreamStatusOptions {
   readonly automaticRemoteRefreshInterval?: Effect.Effect<Duration.Duration, never>;
 }
+
+export class VcsAutoPullPolicy extends Context.Reference<{
+  readonly isEnabled: (cwd: string) => Effect.Effect<boolean, never>;
+}>("t3/vcs/VcsAutoPullPolicy", {
+  defaultValue: () => ({ isEnabled: () => Effect.succeed(false) }),
+}) {}
+
+export const autoPullPolicyLayer = Layer.effect(
+  VcsAutoPullPolicy,
+  Effect.gen(function* () {
+    const snapshots = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
+    return {
+      isEnabled: (cwd: string) =>
+        snapshots.getActiveProjectByWorkspaceRoot(cwd).pipe(
+          Effect.map((project) => project._tag === "Some" && project.value.autoPull === true),
+          Effect.orElseSucceed(() => false),
+        ),
+    };
+  }),
+);
 
 export function remoteRefreshFailureDelay(
   consecutiveFailures: number,
@@ -161,6 +185,14 @@ export class VcsStatusBroadcaster extends Context.Service<
       cwd: string,
     ) => Effect.Effect<VcsStatusLocalResult, GitManagerServiceError>;
     readonly refreshStatus: (cwd: string) => Effect.Effect<VcsStatusResult, GitManagerServiceError>;
+    /**
+     * Refresh a loaded cwd after a turn if background policy allows it.
+     * GitManager retries missing PRs for the current branch and keeps known
+     * PRs and failed lookup backoff cached. This does not fetch Git remotes.
+     */
+    readonly refreshPullRequestStatus: (
+      cwd: string,
+    ) => Effect.Effect<VcsStatusRemoteResult | null, GitManagerServiceError>;
     readonly streamStatus: (
       input: VcsStatusInput,
       options?: StreamStatusOptions,
@@ -179,7 +211,9 @@ const normalizeCwd = (cwd: string) =>
   );
 
 export const make = Effect.gen(function* () {
+  const autoPullPolicy = yield* VcsAutoPullPolicy;
   const workflow = yield* GitWorkflowService.GitWorkflowService;
+  const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
   const fs = yield* FileSystem.FileSystem;
   const changesPubSub = yield* Effect.acquireRelease(
     PubSub.unbounded<VcsStatusChange>(),
@@ -189,6 +223,18 @@ export const make = Effect.gen(function* () {
     Scope.close(scope, Exit.void),
   );
   const cacheRef = yield* Ref.make(new Map<string, CachedVcsStatus>());
+  // One permit per cwd for remote reads that write the cache. Without it a
+  // periodic poll that started before `gh pr create` can finish after the
+  // turn-end refresh and overwrite the fresh PR with its stale `pr: null`.
+  const remoteWriteLocks = new Map<string, Semaphore.Semaphore>();
+  const withRemoteWriteLock = <A, E, R>(cwd: string, effect: Effect.Effect<A, E, R>) => {
+    let lock = remoteWriteLocks.get(cwd);
+    if (lock === undefined) {
+      lock = Semaphore.makeUnsafe(1);
+      remoteWriteLocks.set(cwd, lock);
+    }
+    return lock.withPermits(1)(effect);
+  };
   const pollersRef = yield* SynchronizedRef.make(new Map<string, ActiveRemotePoller>());
 
   const getCachedStatus = Effect.fn("VcsStatusBroadcaster.getCachedStatus")(function* (
@@ -326,14 +372,20 @@ export const make = Effect.gen(function* () {
     if (cached?.local && cached.remote) {
       return mergeGitStatusParts(cached.local.value, cached.remote.value);
     }
-    const [local, remote] = yield* Effect.all(
-      [
-        cached?.local ? Effect.succeed(cached.local.value) : workflow.localStatus({ cwd }),
-        cached?.remote ? Effect.succeed(cached.remote.value) : workflow.remoteStatus({ cwd }),
-      ],
-      { concurrency: "unbounded" },
+    return yield* withRemoteWriteLock(
+      cwd,
+      Effect.gen(function* () {
+        const latest = yield* getCachedStatus(cwd);
+        const [local, remote] = yield* Effect.all(
+          [
+            latest?.local ? Effect.succeed(latest.local.value) : workflow.localStatus({ cwd }),
+            latest?.remote ? Effect.succeed(latest.remote.value) : workflow.remoteStatus({ cwd }),
+          ],
+          { concurrency: "unbounded" },
+        );
+        return yield* updateCachedStatus(cwd, local, remote);
+      }),
     );
-    return yield* updateCachedStatus(cwd, local, remote);
   });
 
   const refreshLocalStatusCore = Effect.fn("VcsStatusBroadcaster.refreshLocalStatusCore")(
@@ -351,15 +403,63 @@ export const make = Effect.gen(function* () {
     return yield* refreshLocalStatusCore(cwd);
   });
 
+  const maybeAutoPull = Effect.fn("VcsStatusBroadcaster.maybeAutoPull")(function* (
+    cwd: string,
+    remote: VcsStatusRemoteResult | null,
+    policyCwds: ReadonlyArray<string>,
+  ) {
+    return yield* Effect.gen(function* () {
+      const autoPullEnabled = (yield* Effect.forEach(policyCwds, autoPullPolicy.isEnabled, {
+        concurrency: "unbounded",
+      })).some(Boolean);
+      if (
+        remote === null ||
+        !remote.hasUpstream ||
+        remote.aheadCount > 0 ||
+        remote.behindCount <= 0 ||
+        !autoPullEnabled
+      ) {
+        return null;
+      }
+
+      yield* workflow.invalidateLocalStatus(cwd);
+      const local = yield* workflow.localStatus({ cwd });
+      if (!local.isRepo || !local.isDefaultRef || local.hasWorkingTreeChanges) return null;
+
+      yield* workflow.pullCurrentBranch(cwd);
+      yield* workflow.invalidateStatus(cwd);
+      const [refreshedLocal, refreshedRemote] = yield* Effect.all(
+        [workflow.localStatus({ cwd }), workflow.remoteStatus({ cwd }, { refreshUpstream: false })],
+        { concurrency: "unbounded" },
+      );
+      yield* updateCachedStatus(cwd, refreshedLocal, refreshedRemote, { publish: true });
+      return { local: refreshedLocal, remote: refreshedRemote };
+    }).pipe(
+      Effect.catch(() =>
+        Effect.logWarning("Automatic project pull failed", { cwd }).pipe(Effect.as(null)),
+      ),
+    );
+  });
+
   const refreshRemoteStatus = Effect.fn("VcsStatusBroadcaster.refreshRemoteStatus")(function* (
     cwd: string,
-    options?: { readonly refreshUpstream?: boolean },
+    options?: {
+      readonly refreshUpstream?: boolean;
+      readonly policyCwds?: ReadonlyArray<string>;
+    },
   ) {
-    if (options?.refreshUpstream !== false) {
-      yield* workflow.invalidateRemoteStatus(cwd);
-    }
-    const remote = yield* workflow.remoteStatus({ cwd }, options);
-    return yield* updateCachedRemoteStatus(cwd, remote, { publish: true });
+    return yield* withRemoteWriteLock(
+      cwd,
+      Effect.gen(function* () {
+        if (options?.refreshUpstream !== false) {
+          yield* workflow.invalidateRemoteStatus(cwd);
+        }
+        const remote = yield* workflow.remoteStatus({ cwd }, options);
+        const pulled = yield* maybeAutoPull(cwd, remote, options?.policyCwds ?? [cwd]);
+        if (pulled !== null) return pulled.remote;
+        return yield* updateCachedRemoteStatus(cwd, remote, { publish: true });
+      }),
+    );
   });
 
   const refreshStatus: VcsStatusBroadcaster["Service"]["refreshStatus"] = Effect.fn(
@@ -368,16 +468,52 @@ export const make = Effect.gen(function* () {
     const cwd = yield* withFileSystem(normalizeCwd(rawCwd));
     // invalidateStatus (not the two partial invalidations) so an explicit
     // refresh also bypasses GitManager's slow PR-lookup cache.
-    yield* workflow.invalidateStatus(cwd);
-    const [local, remote] = yield* Effect.all(
-      [workflow.localStatus({ cwd }), workflow.remoteStatus({ cwd })],
-      { concurrency: "unbounded" },
+    return yield* withRemoteWriteLock(
+      cwd,
+      Effect.gen(function* () {
+        yield* workflow.invalidateStatus(cwd);
+        const [local, remote] = yield* Effect.all(
+          [workflow.localStatus({ cwd }), workflow.remoteStatus({ cwd })],
+          { concurrency: "unbounded" },
+        );
+        const pulled = yield* maybeAutoPull(cwd, remote, [rawCwd]);
+        if (pulled !== null) return mergeGitStatusParts(pulled.local, pulled.remote);
+        return yield* updateCachedStatus(cwd, local, remote, { publish: true });
+      }),
     );
-    return yield* updateCachedStatus(cwd, local, remote, { publish: true });
   });
+
+  const refreshPullRequestStatus: VcsStatusBroadcaster["Service"]["refreshPullRequestStatus"] =
+    Effect.fn("VcsStatusBroadcaster.refreshPullRequestStatus")(function* (rawCwd) {
+      const cwd = yield* withFileSystem(normalizeCwd(rawCwd));
+      return yield* withRemoteWriteLock(
+        cwd,
+        Effect.gen(function* () {
+          const cached = yield* getCachedStatus(cwd);
+          if (cached?.remote?.value == null) return null;
+          const poller = (yield* SynchronizedRef.get(pollersRef)).get(cwd);
+          const demandCwds = poller ? [...(yield* Ref.get(poller.demandCwds)).keys()] : [rawCwd];
+          const shouldRefresh = (yield* Effect.forEach(
+            demandCwds,
+            (demandCwd) =>
+              backgroundPolicy.shouldRunScopeWork({ type: "vcs-status", cwd: demandCwd }),
+            { concurrency: "unbounded" },
+          )).some(Boolean);
+          if (!shouldRefresh) return null;
+          // Resolve the checked-out branch again. A cached PR can belong to
+          // the previous branch after an agent checks out another branch.
+          const remote = yield* workflow.remoteStatus(
+            { cwd },
+            { refreshUpstream: false, refreshMissingPullRequest: true },
+          );
+          return yield* updateCachedRemoteStatus(cwd, remote, { publish: true });
+        }),
+      );
+    });
 
   const makeRemoteRefreshLoop = (
     cwd: string,
+    demandCwdsRef: Ref.Ref<ReadonlyMap<string, number>>,
     automaticRemoteRefreshInterval: Effect.Effect<Duration.Duration, never>,
     refreshImmediately: boolean,
   ) => {
@@ -394,8 +530,25 @@ export const make = Effect.gen(function* () {
           return activeInterval;
         }
 
+        const demandCwds = yield* Ref.get(demandCwdsRef);
+        const shouldRun =
+          needsInitialRefresh ||
+          (yield* Effect.all(
+            [...demandCwds.keys()].map((demandCwd) =>
+              backgroundPolicy.shouldRunScopeWork({
+                type: "vcs-status",
+                cwd: demandCwd,
+              }),
+            ),
+            { concurrency: "unbounded" },
+          )).some(Boolean);
+        if (!shouldRun) {
+          return activeInterval;
+        }
+
         const exit = yield* refreshRemoteStatus(cwd, {
           refreshUpstream: !Duration.isZero(configuredInterval),
+          policyCwds: [...demandCwds.keys()],
         }).pipe(Effect.exit);
         if (Exit.isSuccess(exit)) {
           yield* Ref.set(needsInitialRefreshRef, false);
@@ -434,7 +587,7 @@ export const make = Effect.gen(function* () {
       return yield* refreshRemoteStatusIfEnabled.pipe(
         Effect.repeat(
           Schedule.identity<Duration.Duration>().pipe(
-            Schedule.addDelay((delay) => Effect.succeed(delay)),
+            Schedule.addDelay(({ output: delay }) => Effect.succeed(delay)),
           ),
         ),
         Effect.asVoid,
@@ -444,55 +597,88 @@ export const make = Effect.gen(function* () {
 
   const retainRemotePoller = Effect.fn("VcsStatusBroadcaster.retainRemotePoller")(function* (
     cwd: string,
+    demandCwd: string,
     automaticRemoteRefreshInterval: Effect.Effect<Duration.Duration, never>,
     refreshImmediately: boolean,
   ) {
     yield* SynchronizedRef.modifyEffect(pollersRef, (activePollers) => {
       const existing = activePollers.get(cwd);
       if (existing) {
-        const nextPollers = new Map(activePollers);
-        nextPollers.set(cwd, {
-          ...existing,
-          subscriberCount: existing.subscriberCount + 1,
-        });
-        return Effect.succeed([undefined, nextPollers] as const);
+        return Ref.update(existing.demandCwds, (demandCwds) => {
+          const next = new Map(demandCwds);
+          next.set(demandCwd, (next.get(demandCwd) ?? 0) + 1);
+          return next;
+        }).pipe(
+          Effect.map(() => {
+            const nextPollers = new Map(activePollers);
+            nextPollers.set(cwd, {
+              ...existing,
+              subscriberCount: existing.subscriberCount + 1,
+            });
+            return [undefined, nextPollers] as const;
+          }),
+        );
       }
 
-      return makeRemoteRefreshLoop(cwd, automaticRemoteRefreshInterval, refreshImmediately).pipe(
-        Effect.forkIn(broadcasterScope),
-        Effect.map((fiber) => {
-          const nextPollers = new Map(activePollers);
-          nextPollers.set(cwd, {
-            fiber,
-            subscriberCount: 1,
-          });
-          return [undefined, nextPollers] as const;
-        }),
+      return Ref.make<ReadonlyMap<string, number>>(new Map([[demandCwd, 1]])).pipe(
+        Effect.flatMap((demandCwds) =>
+          makeRemoteRefreshLoop(
+            cwd,
+            demandCwds,
+            automaticRemoteRefreshInterval,
+            refreshImmediately,
+          ).pipe(
+            Effect.forkIn(broadcasterScope),
+            Effect.map((fiber) => {
+              const nextPollers = new Map(activePollers);
+              nextPollers.set(cwd, {
+                fiber,
+                subscriberCount: 1,
+                demandCwds,
+              });
+              return [undefined, nextPollers] as const;
+            }),
+          ),
+        ),
       );
     });
   });
 
   const releaseRemotePoller = Effect.fn("VcsStatusBroadcaster.releaseRemotePoller")(function* (
     cwd: string,
+    demandCwd: string,
   ) {
-    const pollerToInterrupt = yield* SynchronizedRef.modify(pollersRef, (activePollers) => {
+    const pollerToInterrupt = yield* SynchronizedRef.modifyEffect(pollersRef, (activePollers) => {
       const existing = activePollers.get(cwd);
       if (!existing) {
-        return [null, activePollers] as const;
+        return Effect.succeed([null, activePollers] as const);
       }
 
       if (existing.subscriberCount > 1) {
-        const nextPollers = new Map(activePollers);
-        nextPollers.set(cwd, {
-          ...existing,
-          subscriberCount: existing.subscriberCount - 1,
-        });
-        return [null, nextPollers] as const;
+        return Ref.update(existing.demandCwds, (demandCwds) => {
+          const nextDemandCwds = new Map(demandCwds);
+          const count = nextDemandCwds.get(demandCwd) ?? 0;
+          if (count <= 1) {
+            nextDemandCwds.delete(demandCwd);
+          } else {
+            nextDemandCwds.set(demandCwd, count - 1);
+          }
+          return nextDemandCwds;
+        }).pipe(
+          Effect.as([
+            null,
+            new Map(activePollers).set(cwd, {
+              ...existing,
+              subscriberCount: existing.subscriberCount - 1,
+            }),
+          ] as const),
+        );
       }
 
-      const nextPollers = new Map(activePollers);
-      nextPollers.delete(cwd);
-      return [existing.fiber, nextPollers] as const;
+      return Effect.succeed([
+        existing.fiber,
+        new Map([...activePollers].filter(([activeCwd]) => activeCwd !== cwd)),
+      ] as const);
     });
 
     if (pollerToInterrupt) {
@@ -510,12 +696,13 @@ export const make = Effect.gen(function* () {
         const initialRemote = cachedStatus?.remote?.value ?? null;
         yield* retainRemotePoller(
           cwd,
+          input.cwd,
           options?.automaticRemoteRefreshInterval ??
             Effect.succeed(DEFAULT_VCS_STATUS_REFRESH_INTERVAL),
           cachedStatus?.remote === null || cachedStatus?.remote === undefined,
         );
 
-        const release = releaseRemotePoller(cwd).pipe(Effect.ignore, Effect.asVoid);
+        const release = releaseRemotePoller(cwd, input.cwd).pipe(Effect.ignore, Effect.asVoid);
 
         return Stream.concat(
           Stream.make({
@@ -535,6 +722,7 @@ export const make = Effect.gen(function* () {
     getStatus,
     refreshLocalStatus,
     refreshStatus,
+    refreshPullRequestStatus,
     streamStatus,
   });
 });

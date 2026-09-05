@@ -1,10 +1,13 @@
 # Keybindings
 
-T3 Code reads keybindings from:
+Customize shortcuts in **Settings → Keybindings** on web and desktop. That page
+also lists the command IDs and defaults available in your version.
 
-- `~/.t3/keybindings.json`
+## Edit the configuration file
 
-The file must be a JSON array of rules:
+Keybindings live on the environment's machine, in
+`~/.t3/userdata/keybindings.json` by default. You can edit this file directly.
+It is a JSON array of rules:
 
 ```json
 [
@@ -13,105 +16,63 @@ The file must be a JSON array of rules:
 ]
 ```
 
-See the full schema for more details: [`packages/contracts/src/keybindings.ts`](../../packages/contracts/src/keybindings.ts)
+T3 Code creates the file with its defaults and adds new defaults on later startups.
+New defaults do not replace commands you customized. If a new default overlaps one
+of your shortcuts, [rule order](#precedence) decides which runs.
+Invalid rules are ignored; if the file cannot be parsed, T3 Code uses defaults.
 
-## Defaults
+## Rule shape
+
+Each rule requires a `key` shortcut and a `command` ID. An optional `when`
+expression restricts when it runs.
+
+Project scripts use `script.{id}.run`, such as `script.test.run`.
+
+## Key syntax
+
+Join modifiers and a key with `+`, such as `mod+shift+d` or `ctrl+l`.
+`mod` means Command on macOS and Control elsewhere. Other modifiers are
+`cmd` / `meta`, `ctrl` / `control`, `alt` / `option`, and `shift`.
+
+## When conditions
+
+Available context keys are `terminalFocus`, `terminalOpen`, `previewFocus`,
+`previewOpen`, and `modelPickerOpen`. Unknown keys evaluate to `false`.
+
+Combine keys with `!` for not, `&&` for and, `||` for or, and parentheses:
 
 ```json
-[
-  { "key": "mod+j", "command": "terminal.toggle" },
-  { "key": "mod+d", "command": "terminal.split", "when": "terminalFocus" },
-  { "key": "mod+n", "command": "terminal.new", "when": "terminalFocus" },
-  { "key": "mod+w", "command": "terminal.close", "when": "terminalFocus" },
-  { "key": "mod+shift+j", "command": "preview.toggle" },
-  { "key": "mod+r", "command": "preview.refresh", "when": "previewFocus" },
-  { "key": "mod+l", "command": "preview.focusUrl", "when": "previewFocus" },
-  { "key": "mod+=", "command": "preview.zoomIn", "when": "previewFocus" },
-  { "key": "mod+-", "command": "preview.zoomOut", "when": "previewFocus" },
-  { "key": "mod+0", "command": "preview.resetZoom", "when": "previewFocus" },
-  { "key": "mod+k", "command": "commandPalette.toggle", "when": "!terminalFocus" },
-  { "key": "mod+n", "command": "chat.new", "when": "!terminalFocus" },
-  { "key": "mod+shift+o", "command": "chat.new", "when": "!terminalFocus" },
-  { "key": "mod+shift+n", "command": "chat.newLocal", "when": "!terminalFocus" },
-  { "key": "mod+o", "command": "editor.openFavorite" }
-]
+{ "key": "mod+j", "command": "terminal.toggle", "when": "terminalOpen && !terminalFocus" }
 ```
 
-For most up to date defaults, see [`DEFAULT_KEYBINDINGS` in `apps/server/src/keybindings.ts`](../../apps/server/src/keybindings.ts)
+## Precedence
 
-## Configuration
+The last rule whose key and condition both match wins, even if it belongs to a
+different command. Put a more specific rule after a general one when they share
+a shortcut.
 
-### Rule Shape
+## Commands with special behavior
 
-Each entry supports:
+`chat.new` may ask you to choose a project when there is more than one.
+`chat.newLocal` skips that chooser. Both use your
+[new-thread defaults](./thread-sidebar.md#start-a-thread).
 
-- `key` (required): shortcut string, like `mod+j`, `ctrl+k`, `cmd+shift+d`
-- `command` (required): action ID
-- `when` (optional): boolean expression controlling when the shortcut is active
+## Reserved shortcuts
 
-Invalid rules are ignored. Invalid config files are ignored. Warnings are logged by the server.
+In the desktop app, `mod+w` closes the focused terminal or the active right-panel
+tab. When nothing remains to close, it closes the window. In a browser, `mod+w`
+closes the browser tab; rebind `rightPanel.close` and `terminal.close` to an available
+shortcut such as `alt+w`.
 
-### Available Commands
+Many defaults include `!terminalFocus` so they do not intercept terminal input.
+Keep that condition when remapping them if you want the same behavior.
 
-- `terminal.toggle`: open/close terminal drawer
-- `terminal.split`: split terminal (in focused terminal context by default)
-- `terminal.new`: create new terminal (in focused terminal context by default)
-- `terminal.close`: close/kill the focused terminal (in focused terminal context by default)
-- `preview.toggle`: open/close the in-app browser preview panel (desktop app only)
-- `preview.refresh`: reload the active preview tab (in focused preview context by default)
-- `preview.focusUrl`: focus the URL input of the preview panel (in focused preview context by default)
-- `preview.zoomIn`: zoom the preview viewport in one step (in focused preview context by default)
-- `preview.zoomOut`: zoom the preview viewport out one step (in focused preview context by default)
-- `preview.resetZoom`: reset the preview zoom to 100% (in focused preview context by default)
-- `commandPalette.toggle`: open or close the global command palette
-- `chat.new`: create a new chat thread preserving the active thread's branch/worktree state
-- `chat.newLocal`: create a new chat thread for the active project in a new environment (local/worktree determined by app settings (default `local`))
-- `editor.openFavorite`: open current project/worktree in the last-used editor
-- `script.{id}.run`: run a project script by id (for example `script.test.run`)
+## Desktop quit shortcut
 
-### Key Syntax
+Use `Cmd+Q` on macOS or `Ctrl+Q` on Windows and Linux. In the default **Hold** mode,
+hold for 1.2 seconds or press twice within 500 milliseconds. Holding requires
+keyboard repeat; if repeat is disabled, use two presses or the application menu.
 
-Supported modifiers:
-
-- `mod` (`cmd` on macOS, `ctrl` on non-macOS)
-- `cmd` / `meta`
-- `ctrl` / `control`
-- `shift`
-- `alt` / `option`
-
-Examples:
-
-- `mod+j`
-- `mod+shift+d`
-- `ctrl+l`
-- `cmd+k`
-
-### `when` Conditions
-
-Currently available context keys:
-
-- `terminalFocus`
-- `terminalOpen`
-- `previewFocus`
-- `previewOpen`
-
-Supported operators:
-
-- `!` (not)
-- `&&` (and)
-- `||` (or)
-- parentheses: `(` `)`
-
-Examples:
-
-- `"when": "terminalFocus"`
-- `"when": "terminalOpen && !terminalFocus"`
-- `"when": "terminalFocus || terminalOpen"`
-
-Unknown condition keys evaluate to `false`.
-
-### Precedence
-
-- Rules are evaluated in array order.
-- For a key event, the last rule where both `key` matches and `when` evaluates to `true` wins.
-- That means precedence is across commands, not only within the same command.
+Change **Settings → General → Confirmations → Quit shortcut** to **Direct** for a
+single press or **Double press** for two presses only. Choosing **Quit** from the
+application menu always quits immediately.

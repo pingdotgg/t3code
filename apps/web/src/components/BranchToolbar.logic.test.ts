@@ -9,12 +9,16 @@ import {
   resolveDraftEnvModeAfterBranchChange,
   resolveEffectiveEnvMode,
   resolveEnvModeLabel,
+  resolveBranchTriggerLabel,
+  resolveBranchToolbarPrBranch,
   resolveBranchToolbarValue,
   resolveLockedWorkspaceLabel,
   resolveLocalCheckoutBranchMismatch,
   resolvePreviousWorktreeLabel,
   resolvePreviousWorktreeSeed,
+  sanitizeNewRefName,
   shouldIncludeBranchPickerItem,
+  shouldShowComposerContextStrip,
   shouldShowEnvironmentIndicator,
 } from "./BranchToolbar.logic";
 
@@ -173,6 +177,130 @@ describe("resolveBranchToolbarValue", () => {
   });
 });
 
+describe("resolveBranchTriggerLabel", () => {
+  it("shows the origin ref when a new worktree will start from origin", () => {
+    expect(
+      resolveBranchTriggerLabel({
+        activeWorktreePath: null,
+        effectiveEnvMode: "worktree",
+        resolvedActiveBranch: "main",
+        resolvedActiveBranchIsRemote: false,
+        startFromOrigin: true,
+      }),
+    ).toBe("From origin/main");
+  });
+
+  it("shows the origin ref for local branch names that contain slashes", () => {
+    expect(
+      resolveBranchTriggerLabel({
+        activeWorktreePath: null,
+        effectiveEnvMode: "worktree",
+        resolvedActiveBranch: "feature/demo",
+        resolvedActiveBranchIsRemote: false,
+        startFromOrigin: true,
+      }),
+    ).toBe("From origin/feature/demo");
+  });
+
+  it("shows the local ref when start from origin is disabled", () => {
+    expect(
+      resolveBranchTriggerLabel({
+        activeWorktreePath: null,
+        effectiveEnvMode: "worktree",
+        resolvedActiveBranch: "main",
+        resolvedActiveBranchIsRemote: false,
+        startFromOrigin: false,
+      }),
+    ).toBe("From main");
+  });
+
+  it("does not duplicate the origin prefix for an explicit remote ref", () => {
+    expect(
+      resolveBranchTriggerLabel({
+        activeWorktreePath: null,
+        effectiveEnvMode: "worktree",
+        resolvedActiveBranch: "origin/feature/demo",
+        resolvedActiveBranchIsRemote: true,
+        startFromOrigin: true,
+      }),
+    ).toBe("From origin/feature/demo");
+  });
+
+  it("preserves an explicit ref from a non-origin remote", () => {
+    expect(
+      resolveBranchTriggerLabel({
+        activeWorktreePath: null,
+        effectiveEnvMode: "worktree",
+        resolvedActiveBranch: "upstream/feature/demo",
+        resolvedActiveBranchIsRemote: true,
+        startFromOrigin: true,
+      }),
+    ).toBe("From upstream/feature/demo");
+  });
+
+  it("keeps current-checkout labels and empty state unchanged", () => {
+    expect(
+      resolveBranchTriggerLabel({
+        activeWorktreePath: null,
+        effectiveEnvMode: "local",
+        resolvedActiveBranch: "main",
+        resolvedActiveBranchIsRemote: false,
+        startFromOrigin: true,
+      }),
+    ).toBe("main");
+    expect(
+      resolveBranchTriggerLabel({
+        activeWorktreePath: null,
+        effectiveEnvMode: "worktree",
+        resolvedActiveBranch: null,
+        resolvedActiveBranchIsRemote: null,
+        startFromOrigin: true,
+      }),
+    ).toBe("Select ref");
+  });
+
+  it("does not fabricate an origin ref while branch metadata is loading", () => {
+    expect(
+      resolveBranchTriggerLabel({
+        activeWorktreePath: null,
+        effectiveEnvMode: "worktree",
+        resolvedActiveBranch: "upstream/feature/demo",
+        resolvedActiveBranchIsRemote: null,
+        startFromOrigin: true,
+      }),
+    ).toBe("From upstream/feature/demo");
+  });
+});
+
+describe("resolveBranchToolbarPrBranch", () => {
+  it("uses the explicit thread branch when it matches the displayed branch", () => {
+    expect(
+      resolveBranchToolbarPrBranch({
+        activeThreadBranch: "feature/current",
+        resolvedActiveBranch: "feature/current",
+      }),
+    ).toBe("feature/current");
+  });
+
+  it("hides PR state while an optimistic branch switch is in flight", () => {
+    expect(
+      resolveBranchToolbarPrBranch({
+        activeThreadBranch: "feature/current",
+        resolvedActiveBranch: "feature/next",
+      }),
+    ).toBeNull();
+  });
+
+  it("does not infer PR state without an explicit thread branch", () => {
+    expect(
+      resolveBranchToolbarPrBranch({
+        activeThreadBranch: null,
+        resolvedActiveBranch: "feature/current",
+      }),
+    ).toBeNull();
+  });
+});
+
 describe("resolveLocalCheckoutBranchMismatch", () => {
   it("detects when a local thread is associated with a different branch than the checkout", () => {
     expect(
@@ -292,6 +420,52 @@ describe("shouldShowEnvironmentIndicator", () => {
         canPickEnvironment: false,
       }),
     ).toBe(false);
+  });
+});
+
+describe("shouldShowComposerContextStrip", () => {
+  it("keeps the environment indicator visible for a non-Git project", () => {
+    expect(
+      shouldShowComposerContextStrip({
+        hasActiveProject: true,
+        isGitRepo: false,
+        showEnvironmentIndicator: true,
+        hostsRestingComposerControls: false,
+      }),
+    ).toBe(true);
+  });
+
+  it("hides the strip when a non-Git project has nothing to show", () => {
+    expect(
+      shouldShowComposerContextStrip({
+        hasActiveProject: true,
+        isGitRepo: false,
+        showEnvironmentIndicator: false,
+        hostsRestingComposerControls: false,
+      }),
+    ).toBe(false);
+  });
+
+  it("keeps the strip for visible resting composer controls in a non-Git thread", () => {
+    expect(
+      shouldShowComposerContextStrip({
+        hasActiveProject: true,
+        isGitRepo: false,
+        showEnvironmentIndicator: false,
+        hostsRestingComposerControls: true,
+      }),
+    ).toBe(true);
+  });
+
+  it("shows Git controls without requiring an environment indicator", () => {
+    expect(
+      shouldShowComposerContextStrip({
+        hasActiveProject: true,
+        isGitRepo: true,
+        showEnvironmentIndicator: false,
+        hostsRestingComposerControls: false,
+      }),
+    ).toBe(true);
   });
 });
 
@@ -569,5 +743,94 @@ describe("shouldIncludeBranchPickerItem", () => {
         checkoutPullRequestItemValue: "__checkout_pull_request__:1359",
       }),
     ).toBe(false);
+  });
+
+  // Typing a spaced name must still surface the ref it would have been created
+  // as, or the picker shows nothing at all for that query.
+  it("surfaces an existing ref matching the sanitized query", () => {
+    expect(
+      shouldIncludeBranchPickerItem({
+        itemValue: "new-branch",
+        normalizedQuery: "new branch",
+        createBranchItemValue: null,
+        checkoutPullRequestItemValue: null,
+      }),
+    ).toBe(true);
+  });
+
+  // A partial query has to reach the ref it would have been created as, so
+  // searching "hello w" still finds an existing hello-world.
+  it("surfaces a ref from a partial query containing a space", () => {
+    expect(
+      shouldIncludeBranchPickerItem({
+        itemValue: "hello-world",
+        normalizedQuery: "hello w",
+        createBranchItemValue: null,
+        checkoutPullRequestItemValue: null,
+      }),
+    ).toBe(true);
+  });
+
+  it("excludes refs matching neither the raw nor the sanitized query", () => {
+    expect(
+      shouldIncludeBranchPickerItem({
+        itemValue: "main",
+        normalizedQuery: "new branch",
+        createBranchItemValue: null,
+        checkoutPullRequestItemValue: null,
+      }),
+    ).toBe(false);
+  });
+});
+
+// Git rejects ASCII space and the ASCII control characters in ref names, so a
+// typed name like "new branch" can only ever fail. Replacing exactly those can
+// turn a failing name into a working one without touching a name git already
+// accepts, including one holding non-ASCII whitespace such as U+00A0.
+describe("sanitizeNewRefName", () => {
+  it("replaces a space with a dash", () => {
+    expect(sanitizeNewRefName("new branch")).toBe("new-branch");
+  });
+
+  it("collapses a run of whitespace into a single dash", () => {
+    expect(sanitizeNewRefName("new   branch")).toBe("new-branch");
+  });
+
+  it("trims surrounding whitespace instead of turning it into dashes", () => {
+    expect(sanitizeNewRefName("  new branch  ")).toBe("new-branch");
+  });
+
+  it("replaces tabs, which git rejects just like spaces", () => {
+    expect(sanitizeNewRefName("new\tbranch")).toBe("new-branch");
+  });
+
+  // git accepts U+00A0, U+2009 and other non-ASCII whitespace in ref names, so
+  // rewriting them would silently create a ref the user never typed.
+  it("preserves whitespace that git accepts", () => {
+    expect(sanitizeNewRefName("new\u00a0branch")).toBe("new\u00a0branch");
+    expect(sanitizeNewRefName("new\u2009branch")).toBe("new\u2009branch");
+  });
+
+  it("keeps slashes so nested ref names survive", () => {
+    expect(sanitizeNewRefName("feature/new thing")).toBe("feature/new-thing");
+  });
+
+  it("preserves case because git ref names are case sensitive", () => {
+    expect(sanitizeNewRefName("Feature/New Thing")).toBe("Feature/New-Thing");
+  });
+
+  it("leaves an already valid ref name untouched", () => {
+    expect(sanitizeNewRefName("feature/login")).toBe("feature/login");
+  });
+
+  it("returns an empty string for whitespace-only input", () => {
+    expect(sanitizeNewRefName("   ")).toBe("");
+  });
+
+  // Scoped deliberately to whitespace: git accepts consecutive dashes, so
+  // collapsing them would rewrite names the user may have typed on purpose.
+  it("does not collapse dashes the user typed", () => {
+    expect(sanitizeNewRefName("new - branch")).toBe("new---branch");
+    expect(sanitizeNewRefName("foo--bar")).toBe("foo--bar");
   });
 });

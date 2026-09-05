@@ -7,7 +7,7 @@ import * as Effect from "effect/Effect";
 import type { Scope } from "effect/Scope";
 import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "alchemy-test";
 import { TestHttpEffect } from "./HttpServer.fixture";
 
 describe("AWS.Lambda.HttpServer", () => {
@@ -114,6 +114,89 @@ describe("AWS.Lambda.HttpServer", () => {
     expect(Buffer.from(result.body ?? "", "base64").toString("utf8")).toBe(
       "alchemy",
     );
+  });
+
+  it("detects an API Gateway v2 HTTP API (payload 2.0) event and maps it like a Function URL event", async () => {
+    // Same wire shape as a Function URL event (APIGatewayProxyEventV2), but
+    // with an execute-api domain, a real routeKey, and a named apiId.
+    const result = asStructuredResult(
+      await invoke(
+        makeEvent({
+          version: "2.0",
+          routeKey: "GET /inspect",
+          rawPath: "/inspect",
+          rawQueryString: "jobId=job-123&trace=1",
+          headers: {
+            host: "abc123.execute-api.us-west-2.amazonaws.com",
+            "x-forwarded-proto": "https",
+            "x-request-id": "req-apigw-v2",
+          },
+          cookies: ["session=abc"],
+          requestContext: {
+            apiId: "abc123",
+            domainName: "abc123.execute-api.us-west-2.amazonaws.com",
+            domainPrefix: "abc123",
+            routeKey: "GET /inspect",
+            stage: "$default",
+            http: {
+              method: "GET",
+              path: "/inspect",
+              sourceIp: "203.0.113.99",
+            },
+          } as LambdaFunctionURLEvent["requestContext"],
+        }),
+      ),
+    );
+
+    expect(result.statusCode).toBe(200);
+    expect(JSON.parse(result.body ?? "")).toEqual({
+      method: "GET",
+      url: "https://abc123.execute-api.us-west-2.amazonaws.com/inspect?jobId=job-123&trace=1",
+      originalUrl:
+        "https://abc123.execute-api.us-west-2.amazonaws.com/inspect?jobId=job-123&trace=1",
+      host: "abc123.execute-api.us-west-2.amazonaws.com",
+      protocol: "https",
+      requestId: "req-apigw-v2",
+      remoteAddress: "203.0.113.99",
+      query: {
+        jobId: "job-123",
+        trace: "1",
+      },
+      cookies: {
+        session: "abc",
+      },
+    });
+  });
+
+  it("keeps the stage prefix in rawPath for named-stage API Gateway v2 events", async () => {
+    // On the default execute-api endpoint with a named (non-$default) stage,
+    // API Gateway includes the stage in rawPath (e.g. /prod/inspect). We use
+    // rawPath as-is — consistent with the v1 branch using event.path as-is —
+    // so handlers see the stage-prefixed path.
+    const result = asStructuredResult(
+      await invoke(
+        makeEvent({
+          version: "2.0",
+          routeKey: "GET /inspect",
+          rawPath: "/prod/inspect",
+          headers: {
+            host: "abc123.execute-api.us-west-2.amazonaws.com",
+          },
+          requestContext: {
+            routeKey: "GET /inspect",
+            stage: "prod",
+            http: {
+              method: "GET",
+              path: "/prod/inspect",
+            },
+          } as LambdaFunctionURLEvent["requestContext"],
+        }),
+      ),
+    );
+
+    // Fixture only serves /inspect; the stage-prefixed path 404s, proving the
+    // prefix is preserved rather than stripped.
+    expect(result.statusCode).toBe(404);
   });
 
   it("uses shared Http error handling for defects", async () => {

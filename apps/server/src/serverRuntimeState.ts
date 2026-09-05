@@ -14,6 +14,9 @@ export const PersistedServerRuntimeState = Schema.Struct({
   host: Schema.optional(Schema.String),
   port: Schema.Int,
   origin: Schema.String,
+  // Present when the server fronts a dev web server (VITE_DEV_SERVER_URL).
+  // Dev is single-origin: browsers must pair through this URL, not `origin`.
+  devUrl: Schema.optional(Schema.String),
   startedAt: Schema.String,
 });
 export type PersistedServerRuntimeState = typeof PersistedServerRuntimeState.Type;
@@ -45,7 +48,7 @@ const runtimeOriginForConfig = (
 };
 
 export const makePersistedServerRuntimeState = (input: {
-  readonly config: Pick<ServerConfig.ServerConfig["Service"], "host">;
+  readonly config: Pick<ServerConfig.ServerConfig["Service"], "host" | "devUrl">;
   readonly port: number;
 }): Effect.Effect<PersistedServerRuntimeState> =>
   Effect.map(DateTime.now, (now) => ({
@@ -54,6 +57,7 @@ export const makePersistedServerRuntimeState = (input: {
     ...(input.config.host ? { host: input.config.host } : {}),
     port: input.port,
     origin: runtimeOriginForConfig(input.config, input.port),
+    ...(input.config.devUrl ? { devUrl: input.config.devUrl.toString() } : {}),
     startedAt: DateTime.formatIso(now),
   }));
 
@@ -99,6 +103,21 @@ export const clearPersistedServerRuntimeState = (path: string) =>
       }),
     );
   });
+
+/**
+ * Report whether the pid recorded in a persisted runtime state is still
+ * running. Signal 0 delivers nothing; it only reports whether the pid exists.
+ * EPERM means it exists but belongs to another user, which still counts as
+ * alive.
+ */
+export const isProcessAlive = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error instanceof Error && "code" in error && error.code === "EPERM";
+  }
+};
 
 export const readPersistedServerRuntimeState = (path: string) =>
   Effect.gen(function* () {

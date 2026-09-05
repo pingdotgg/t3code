@@ -459,7 +459,7 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
       supports_selection_clipboard: false,
       wakeup_cb: { _ in },
       action_cb: { _, _, _ in false },
-      read_clipboard_cb: { _, _, _ in false },
+      read_clipboard_cb: { _, _, _, _, _, _ in GHOSTTY_CLIPBOARD_READ_UNSUPPORTED },
       confirm_read_clipboard_cb: { _, _, _, _ in },
       write_clipboard_cb: { _, _, _, _, _ in },
       close_surface_cb: { _, _ in }
@@ -532,6 +532,12 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
   private func applyRemoteBuffer(_ buffer: String) {
     guard surface != nil else {
       createSurfaceIfPossible()
+      return
+    }
+
+    if buffer.isEmpty {
+      feedData(Data("\u{1B}[3J\u{1B}[H\u{1B}[2J".utf8))
+      lastAppliedBuffer = ""
       return
     }
 

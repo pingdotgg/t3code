@@ -4,6 +4,7 @@ import {
   Camera,
   ExternalLink,
   MousePointerClick,
+  PictureInPicture2,
   RotateCw,
 } from "lucide-react";
 import {
@@ -22,9 +23,7 @@ import { cn } from "~/lib/utils";
 
 interface Props {
   url: string;
-  displayUrl?: string | undefined;
   loading: boolean;
-  loadProgress: number;
   canGoBack: boolean;
   canGoForward: boolean;
   refreshDisabled: boolean;
@@ -40,6 +39,9 @@ interface Props {
   onCapture?: ((record: boolean) => void) | undefined;
   captureDisabled?: boolean | undefined;
   recording?: boolean | undefined;
+  onPictureInPicture?: (() => void) | undefined;
+  pictureInPicture?: boolean | undefined;
+  pictureInPictureDisabled?: boolean | undefined;
   /**
    * When provided, renders an annotation-mode toggle button to the right of
    * the URL input. Pressed while annotation mode is active (button shows in `pressed`
@@ -55,15 +57,18 @@ interface Props {
    * to mount the three-dot menu (hard reload, devtools, zoom, clear data).
    */
   trailingActions?: ReactNode;
+  /**
+   * Slot between the nav buttons and the URL input. The preview view uses it
+   * to name the tab's browser profile, which is otherwise invisible.
+   */
+  leadingActions?: ReactNode;
 }
 
 const NOOP = () => {};
 
 export function PreviewChromeRow({
   url,
-  displayUrl,
   loading,
-  loadProgress,
   canGoBack,
   canGoForward,
   refreshDisabled,
@@ -77,11 +82,15 @@ export function PreviewChromeRow({
   onCapture,
   captureDisabled,
   recording,
+  onPictureInPicture,
+  pictureInPicture,
+  pictureInPictureDisabled,
   onPickElement,
   pickActive,
   pickDisabled,
   pickDisabledReason,
   trailingActions,
+  leadingActions,
 }: Props) {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [draft, setDraft] = useState(url);
@@ -104,7 +113,11 @@ export function PreviewChromeRow({
 
   return (
     <div className="relative">
-      <form onSubmit={submit} className="surface-subheader gap-1 px-2" data-surface-subheader>
+      <form
+        onSubmit={submit}
+        className="flex h-10 min-h-10 shrink-0 items-center gap-1 border-b border-border/60 bg-background px-2 in-data-[preview-panel-mode=inline]:mb-3 in-data-[preview-panel-mode=inline]:h-7 in-data-[preview-panel-mode=inline]:min-h-7 in-data-[preview-panel-mode=inline]:border-b-transparent"
+        data-surface-subheader
+      >
         <div className="flex items-center gap-0.5" role="group" aria-label="Navigation">
           <Tooltip>
             <TooltipTrigger
@@ -159,13 +172,15 @@ export function PreviewChromeRow({
           </Tooltip>
         </div>
 
-        <InputGroup className="group/address h-7 flex-1 rounded-md border-transparent bg-transparent shadow-none before:shadow-none hover:bg-muted/40 focus-within:bg-background">
+        {leadingActions}
+
+        <InputGroup variant="ghost" className="group/address h-7 flex-1">
           <Tooltip>
             <TooltipTrigger
               render={
                 <InputGroupInput
                   ref={inputRef}
-                  value={inputFocused ? draft : (displayUrl ?? url)}
+                  value={inputFocused ? draft : url}
                   className={cn(
                     onOpenInBrowser &&
                       !inputFocused &&
@@ -196,7 +211,6 @@ export function PreviewChromeRow({
                 />
               }
             />
-            {!inputFocused && displayUrl ? <TooltipPopup>{url}</TooltipPopup> : null}
           </Tooltip>
           {onOpenInBrowser && !inputFocused ? (
             <InputGroupAddon
@@ -274,18 +288,38 @@ export function PreviewChromeRow({
             </TooltipPopup>
           </Tooltip>
         ) : null}
+        {onPictureInPicture ? (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  variant={pictureInPicture ? "secondary" : "ghost"}
+                  size="icon-xs"
+                  onClick={onPictureInPicture}
+                  aria-label={
+                    pictureInPicture ? "Close floating preview" : "Float preview over chat"
+                  }
+                  aria-pressed={pictureInPicture ? "true" : "false"}
+                  type="button"
+                  disabled={pictureInPictureDisabled}
+                />
+              }
+            >
+              <PictureInPicture2 className={cn(pictureInPicture && "text-primary")} />
+            </TooltipTrigger>
+            <TooltipPopup>
+              {pictureInPicture ? "Close floating preview" : "Float preview over chat"}
+            </TooltipPopup>
+          </Tooltip>
+        ) : null}
         {trailingActions}
       </form>
-      {loadProgress > 0 ? (
-        <div
-          aria-hidden
-          className="pointer-events-none absolute bottom-0 left-0 z-10 h-0.5 rounded-r-full bg-primary transition-all duration-150 ease-out"
-          style={{
-            width: `${loadProgress}%`,
-            boxShadow: "0 0 6px 1px var(--color-ring)",
-          }}
-        />
-      ) : null}
+      <div
+        aria-hidden
+        data-loading={loading}
+        className="preview-loading-progress pointer-events-none absolute bottom-0 left-0 z-10 h-0.5 w-full origin-left rounded-r-full bg-primary"
+        style={{ boxShadow: "0 0 6px 1px var(--color-ring)" }}
+      />
     </div>
   );
 }
