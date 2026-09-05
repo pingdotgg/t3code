@@ -2604,7 +2604,8 @@ const CHAT_MARKDOWN_COMPONENTS = {
             // A link to a change request in a workspace project opens beside the
             // conversation instead of in a browser: it is the thing being talked about, and
             // the panel it opens offers the browser as one of its actions.
-            if (!href || openChangeRequestLink(event, href)) return;
+            if (!href || openChangeRequestLink(event, href, undefined, environmentId ?? undefined))
+              return;
             // Anything else follows the "Open links in" setting. The system browser
             // keeps the `_blank` the shell already handles; the in-app browser needs
             // the click intercepted here. A modifier click is the way out of the
