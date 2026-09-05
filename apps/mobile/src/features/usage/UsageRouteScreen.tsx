@@ -12,7 +12,7 @@ import {
   makeWindow,
 } from "@t3tools/shared/usageFormat";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Platform, Pressable, RefreshControl, ScrollView, View } from "react-native";
+import { Alert, Platform, Pressable, RefreshControl, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
@@ -25,11 +25,7 @@ import { UsageDailyChart } from "./UsageDailyChart";
 import { UsageLimitsSection, useRefreshLimits } from "./UsageLimitsSection";
 import type { UsageChartMetric } from "./usageChartData";
 import { PROVIDER_LABEL, useProviderColors } from "./usageProviders";
-import {
-  isUsagePullRefreshPending,
-  refreshRebasedUsageWindow,
-  usagePullRefreshTargets,
-} from "./usagePullRefresh";
+import { refreshRebasedUsageWindow, usagePullRefreshTargets } from "./usagePullRefresh";
 
 type UsageTab = "usage" | "limits";
 const TAB_OPTIONS = [
@@ -69,8 +65,6 @@ export function UsageRouteScreen() {
   }));
   const [metric, setMetric] = useState<UsageChartMetric>("cost");
   const [isPullRefreshing, setIsPullRefreshing] = useState(false);
-  const refreshWasPending = useRef(false);
-  const refreshTargets = useRef<ReadonlySet<EnvironmentUsageStatus["environmentId"]>>(new Set());
   const refreshIndicatorTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   const refreshRequest = useRef(0);
   const { days: windowDays, window } = windowSelection;
@@ -102,10 +96,6 @@ export function UsageRouteScreen() {
     [isPast24Hours, merged.daily, merged.hourly],
   );
 
-  // Completion tracks only environments that had answered when the pull
-  // began. The spinner also covers the preceding rate refresh, while an
-  // environment that was already unreachable cannot pin it on.
-  const refreshPending = isUsagePullRefreshPending(environments, refreshTargets.current);
   const refreshingUsage = isPullRefreshing;
   const showingLimits = tab === "limits";
   // One ScrollView serves both tabs, so the offset would otherwise carry over
@@ -116,26 +106,6 @@ export function UsageRouteScreen() {
     setTab(next);
     scrollRef.current?.scrollTo({ y: 0, animated: false });
   };
-  useEffect(() => {
-    if (!isPullRefreshing) {
-      refreshWasPending.current = false;
-      refreshTargets.current = new Set();
-      return;
-    }
-    if (refreshPending) {
-      refreshWasPending.current = true;
-      return;
-    }
-    if (!refreshWasPending.current) return;
-
-    setIsPullRefreshing(false);
-    refreshRequest.current += 1;
-    refreshWasPending.current = false;
-    if (refreshIndicatorTimeout.current !== null) {
-      clearTimeout(refreshIndicatorTimeout.current);
-      refreshIndicatorTimeout.current = null;
-    }
-  }, [isPullRefreshing, refreshPending]);
   useEffect(
     () => () => {
       refreshRequest.current += 1;
@@ -148,8 +118,6 @@ export function UsageRouteScreen() {
   const selectWindow = (days: number) => {
     refreshRequest.current += 1;
     setIsPullRefreshing(false);
-    refreshWasPending.current = false;
-    refreshTargets.current = new Set();
     if (refreshIndicatorTimeout.current !== null) {
       clearTimeout(refreshIndicatorTimeout.current);
       refreshIndicatorTimeout.current = null;
@@ -162,7 +130,6 @@ export function UsageRouteScreen() {
   const refreshWindow = () => {
     const request = ++refreshRequest.current;
     const targets = usagePullRefreshTargets(environments);
-    refreshTargets.current = targets;
     setIsPullRefreshing(targets.size > 0);
     if (refreshIndicatorTimeout.current !== null) {
       clearTimeout(refreshIndicatorTimeout.current);
@@ -172,10 +139,26 @@ export function UsageRouteScreen() {
         ? setTimeout(() => {
             refreshRequest.current += 1;
             setIsPullRefreshing(false);
-            refreshWasPending.current = false;
             refreshIndicatorTimeout.current = null;
           }, REFRESH_INDICATOR_TIMEOUT_MS)
         : null;
+    const completeRefresh = () => {
+      if (request !== refreshRequest.current) return false;
+      refreshRequest.current += 1;
+      setIsPullRefreshing(false);
+      if (refreshIndicatorTimeout.current !== null) {
+        clearTimeout(refreshIndicatorTimeout.current);
+        refreshIndicatorTimeout.current = null;
+      }
+      return true;
+    };
+    const failRefresh = (error: unknown) => {
+      if (!completeRefresh()) return;
+      Alert.alert(
+        "Could not refresh usage",
+        error instanceof Error ? error.message : "Usage could not be refreshed. Try again.",
+      );
+    };
     const nextWindow = makeWindow(windowDays, undefined, isPast24Hours ? "hour" : "day");
     if (
       nextWindow.sinceDay !== window.sinceDay ||
@@ -190,10 +173,10 @@ export function UsageRouteScreen() {
           setWindowSelection({ days: windowDays, window: refreshedWindow });
         },
         () => request === refreshRequest.current,
-      );
+      ).then(completeRefresh, failRefresh);
       return;
     }
-    void refresh();
+    void refresh().then(completeRefresh, failRefresh);
   };
 
   return (

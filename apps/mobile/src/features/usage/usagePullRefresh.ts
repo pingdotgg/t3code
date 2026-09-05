@@ -7,7 +7,7 @@ interface UsageRefreshStatus {
   readonly summary: unknown | null;
 }
 
-/** Tracks environments whose next request can produce a completion transition. */
+/** Selects environments for which pull-to-refresh should show its indicator. */
 export function usagePullRefreshTargets(
   environments: readonly UsageRefreshStatus[],
 ): ReadonlySet<EnvironmentId> {
@@ -15,16 +15,6 @@ export function usagePullRefreshTargets(
     environments.flatMap((environment) =>
       environment.summary === null && environment.isPending ? [] : [environment.environmentId],
     ),
-  );
-}
-
-/** Reports whether one of the environments selected at refresh start is still answering. */
-export function isUsagePullRefreshPending(
-  environments: readonly UsageRefreshStatus[],
-  targets: ReadonlySet<EnvironmentId>,
-): boolean {
-  return environments.some(
-    (environment) => environment.isPending && targets.has(environment.environmentId),
   );
 }
 
