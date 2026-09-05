@@ -141,7 +141,13 @@ export function changeSavedThreadLayout(
     }
     case "rename": {
       const name = action.name.trim();
-      if (!name || name.length > 80 || name === current.name) return null;
+      if (
+        !name ||
+        name.length > 80 ||
+        name === current.name ||
+        resolved.layouts.some((item) => item.id !== current.id && item.name === name)
+      )
+        return null;
       const renamed = resolved.preset
         ? create(action.id, name, current.layout)
         : { ...current, name };

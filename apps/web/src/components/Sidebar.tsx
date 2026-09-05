@@ -1343,7 +1343,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
           </span>
         </span>
       ) : isWokeStatus ? (
-        <Tooltip>
+        <Tooltip disabled={snoozeMenuOpen}>
           <TooltipTrigger
             render={
               <button
@@ -1438,7 +1438,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
             <WorkingDuration startedAt={resolveWorkingStartedAt(thread)} />
           </span>
         ) : null,
-      project: props.projectTitle ? <span className="truncate">{props.projectTitle}</span> : null,
+      project: props.projectDisplayName ? (
+        <span className="truncate">{props.projectDisplayName}</span>
+      ) : null,
       environment: props.environmentLabel ? (
         <span className="truncate">{props.environmentLabel}</span>
       ) : null,
@@ -1521,6 +1523,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
               />
             }
           >
+            {draftIndicator}
             <ThreadRowLayout layout={layout} components={components} />
             {isRegeneratingTitle ? (
               <span className="sr-only" role="status">
@@ -1533,6 +1536,16 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                 snoozeMenuOpen && "pointer-events-auto ml-1 w-auto overflow-visible opacity-100",
               )}
             >
+              {hasUnsentDraft ? (
+                <button
+                  type="button"
+                  aria-label="Discard draft"
+                  onClick={handleDiscardDraftClick}
+                  className="rounded p-1 text-muted-foreground hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  <XIcon className="size-3.5" />
+                </button>
+              ) : null}
               {variantAction === "unsnooze" && props.snoozeSupported ? (
                 <button
                   type="button"

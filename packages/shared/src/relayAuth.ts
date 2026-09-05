@@ -81,17 +81,6 @@ export function clerkFrontendApiHostnameFromPublishableKey(publishableKey: strin
   return parseClerkFrontendApi(publishableKey).hostname;
 }
 
-export function isAllowedClerkFrontendApiHostname(
-  hostname: string,
-  configuredHostname: string | null,
-): boolean {
-  return (
-    hostname.endsWith(".clerk.accounts.dev") ||
-    hostname.endsWith(".clerk.accounts.com") ||
-    hostname === configuredHostname
-  );
-}
-
 export function relayClerkTokenOptions(template: string) {
   return {
     template,

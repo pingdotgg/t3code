@@ -38,6 +38,7 @@ import {
 } from "../types";
 import { type ComposerImageAttachment, type DraftThreadState } from "../composerDraftStore";
 import * as Schema from "effect/Schema";
+import { shallow } from "zustand/vanilla/shallow";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentThreadDetails } from "../state/threads";
 import {
@@ -464,17 +465,24 @@ export function getAntigravitySendBlockReason(
   return null;
 }
 
-export function buildRevertTurnCountByUserMessageId(input: {
-  supportsConversationRollback: boolean;
-  timelineEntries: ReadonlyArray<TimelineEntry>;
-  turnDiffSummaryByAssistantMessageId: ReadonlyMap<MessageId, TurnDiffSummary>;
-  inferredCheckpointTurnCountByTurnId: Readonly<Record<string, number | undefined>>;
-}) {
+/**
+ * Maps each user message to the checkpoint turn count a revert should target.
+ * Returns `previous` when the result is unchanged: streaming text deltas
+ * rebuild `timelineEntries` per token, and the timeline row projection only
+ * reuses rows while this Map keeps its identity.
+ */
+export function buildRevertTurnCountByUserMessageId(
+  input: {
+    supportsConversationRollback: boolean;
+    timelineEntries: ReadonlyArray<TimelineEntry>;
+    turnDiffSummaryByAssistantMessageId: ReadonlyMap<MessageId, TurnDiffSummary>;
+    inferredCheckpointTurnCountByTurnId: Readonly<Record<string, number | undefined>>;
+  },
+  previous: Map<MessageId, number> | null = null,
+): Map<MessageId, number> {
   const byUserMessageId = new Map<MessageId, number>();
-  if (!input.supportsConversationRollback) {
-    return byUserMessageId;
-  }
-  for (let index = 0; index < input.timelineEntries.length; index += 1) {
+  const entryCount = input.supportsConversationRollback ? input.timelineEntries.length : 0;
+  for (let index = 0; index < entryCount; index += 1) {
     const entry = input.timelineEntries[index];
     if (!entry || entry.kind !== "message" || entry.message.role !== "user") {
       continue;
@@ -501,7 +509,7 @@ export function buildRevertTurnCountByUserMessageId(input: {
       break;
     }
   }
-  return byUserMessageId;
+  return previous !== null && shallow(previous, byUserMessageId) ? previous : byUserMessageId;
 }
 
 export function reconcileMountedTerminalThreadIds(input: {

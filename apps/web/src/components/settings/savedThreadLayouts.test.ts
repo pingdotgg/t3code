@@ -17,6 +17,17 @@ const original = {
 };
 
 describe("saved thread layouts", () => {
+  it("rejects renaming to another saved or built-in layout name", () => {
+    const first = changeSavedThreadLayout(original, {
+      type: "create",
+      id: "one",
+      duplicate: false,
+    })!;
+    const second = changeSavedThreadLayout(first, { type: "create", id: "two", duplicate: false })!;
+    for (const name of ["Layout", "Standard", "Compact"]) {
+      expect(changeSavedThreadLayout(second, { type: "rename", id: "unused", name })).toBeNull();
+    }
+  });
   it("preserves the pre-existing arrangement when creating a fresh layout", () => {
     const next = changeSavedThreadLayout(original, {
       type: "create",

@@ -477,10 +477,7 @@ export function ThreadRowLayoutEditor({
   const preview = (
     <div className="w-fit min-w-0 max-w-full overflow-x-auto">
       <div
-        className="rounded-md bg-sidebar px-2.5 py-1.5 ring-1 ring-inset ring-border"
-        style={{
-          width: "calc(var(--sidebar-width) - 2 * var(--sidebar-content-inset) - 2px)",
-        }}
+        className="w-[calc(var(--sidebar-width)-2*var(--sidebar-content-inset)-2px)] rounded-md bg-sidebar px-2.5 py-1.5 ring-1 ring-inset ring-border"
         aria-label="Thread layout preview"
       >
         <ThreadRowLayout
