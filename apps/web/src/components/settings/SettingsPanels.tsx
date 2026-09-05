@@ -2541,7 +2541,7 @@ export function GeneralSettingsPanel() {
         <SettingsRow
           {...searchableSetting("continue-threads-after-server-update")}
           serverScoped
-          description="Automatically resume interrupted threads when this environment starts again after an update, crash, or machine restart."
+          description="Automatically resume interrupted threads after an update, crash, or machine restart. Applies to this environment and all connected environments that support it. Update older servers first."
           resetAction={
             settings.continueThreadsAfterServerUpdate !==
             DEFAULT_UNIFIED_SETTINGS.continueThreadsAfterServerUpdate ? (
