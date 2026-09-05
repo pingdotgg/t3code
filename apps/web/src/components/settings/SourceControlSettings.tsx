@@ -390,7 +390,8 @@ function GitFetchIntervalSettings() {
             </span>
           </div>
           <p className="max-w-2xl text-xs leading-relaxed text-muted-foreground">
-            Refresh remote branches in the background. Set to 0 to avoid automatic Git prompts.
+            Refresh remote branches in the background. Set to 0 to stop automatic Git fetches. Pull
+            request metadata can still refresh under your Background activity policy.
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
