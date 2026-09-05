@@ -149,6 +149,35 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
     }),
   );
 
+  it.effect("unsets the allow-scripts policy npx exports before running npm install", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-pinned-runtime-env-" });
+      let installEnv: NodeJS.ProcessEnv | undefined;
+      const inner = successfulRunner(fs, path);
+      const runner = ProcessRunner.ProcessRunner.of({
+        run: (input) => {
+          installEnv = input.env;
+          return inner.run(input);
+        },
+      });
+
+      yield* ensurePinnedRuntimeInstalled({
+        baseDir,
+        version: "1.2.3",
+        fs,
+        path,
+        runner,
+        validate: () => Effect.void,
+      });
+
+      assert.isDefined(installEnv);
+      assert.isTrue(Object.hasOwn(installEnv, "npm_config_allow_scripts"));
+      assert.isUndefined(installEnv.npm_config_allow_scripts);
+    }),
+  );
+
   it.effect("removes staging when installation is interrupted", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
