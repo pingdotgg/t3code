@@ -66,6 +66,22 @@ describe("ElectronShell", () => {
     }).pipe(Effect.provide(ElectronShell.layer)),
   );
 
+  it.effect("opens remote SSH editor URLs with a login user in the target", () =>
+    Effect.gen(function* () {
+      openExternalMock.mockResolvedValue(undefined);
+
+      const electronShell = yield* ElectronShell.ElectronShell;
+      const result = yield* electronShell.openExternal(
+        "cursor://vscode-remote/ssh-remote+r2d2%40r2d2/Users/r2d2/project",
+      );
+
+      assert.equal(result, true);
+      assert.deepEqual(openExternalMock.mock.calls, [
+        ["cursor://vscode-remote/ssh-remote+r2d2%40r2d2/Users/r2d2/project"],
+      ]);
+    }).pipe(Effect.provide(ElectronShell.layer)),
+  );
+
   it.effect("does not open remote editor URLs with userinfo", () =>
     Effect.gen(function* () {
       openExternalMock.mockResolvedValue(undefined);
