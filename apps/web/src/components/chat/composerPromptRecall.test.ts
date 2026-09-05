@@ -9,12 +9,13 @@ import {
   composeTerminalContextPrompt,
   materializeInlineTerminalContextPrompt,
   buildTerminalContextBlock,
-  createDraftComposerRecall,
+  stripInlineTerminalContextPlaceholders,
 } from "../../lib/terminalContext";
 import { appendElementContextsToPrompt } from "../../lib/elementContext";
 import { appendPreviewAnnotationPrompt } from "../../lib/previewAnnotation";
 import { appendReviewCommentsToPrompt, buildFileReviewComment } from "../../reviewCommentContext";
-import { buildPlanImplementationPrompt } from "../../proposedPlan";
+import { buildPlanImplementationPrompt, resolvePlanFollowUpSubmission } from "../../proposedPlan";
+import { deriveComposerSendState } from "../ChatView.logic";
 
 import {
   ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
@@ -22,12 +23,32 @@ import {
 } from "./composerPromptHistory";
 
 describe("durable composer recall", () => {
-  it("excludes known chip placeholders on the unmaterialized plan-follow-up path", () => {
-    const raw = "  Keep @terminal-1:4 literal \uFFFC\ntext\uFFFC  ";
-    expect(
-      recallComposerText({ text: raw.trim(), composerRecall: createDraftComposerRecall(raw) }),
-    ).toBe("  Keep @terminal-1:4 literal \ntext  ");
-  });
+  it.each([null, "ultrathink"])(
+    "recalls the actual plan-follow-up send with effort %s",
+    (effort) => {
+      const raw = " \ta\uFFFCb\n    text\uFFFC \n";
+      const sendState = deriveComposerSendState({
+        prompt: raw,
+        imageCount: 0,
+        terminalContexts: [],
+      });
+      const followUp = resolvePlanFollowUpSubmission({
+        draftText: sendState.trimmedPrompt,
+        planMarkdown: "# Plan",
+      });
+      const text = applyClaudePromptEffortPrefix(followUp.text, effort);
+      expect(followUp.text).toBe("ab\n    text");
+      expect(
+        recallComposerText({
+          text,
+          composerRecall: offsetComposerRecall(
+            createComposerRecall(stripInlineTerminalContextPlaceholders(raw)),
+            text.length - followUp.text.length,
+          ),
+        }),
+      ).toBe(" \tab\n    text \n");
+    },
+  );
   it.each([
     "Ultrathink:\nKeep this prefix in my example",
     "Example:\n<review_comment>Keep this literal</review_comment>",

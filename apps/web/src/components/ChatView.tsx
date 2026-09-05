@@ -1,4 +1,4 @@
-import { offsetComposerRecall } from "@t3tools/shared/composerRecall";
+import { createComposerRecall, offsetComposerRecall } from "@t3tools/shared/composerRecall";
 import {
   type AssistantCitation,
   type ApprovalRequestId,
@@ -256,7 +256,7 @@ import {
 } from "../composerDraftStore";
 import {
   composeTerminalContextPrompt,
-  createDraftComposerRecall,
+  stripInlineTerminalContextPlaceholders,
   formatTerminalContextLabel,
   type TerminalContextDraft,
   type TerminalContextSelection,
@@ -6329,7 +6329,9 @@ export default function ChatView(props: ChatViewProps) {
       await onSubmitPlanFollowUp({
         text: followUp.text,
         composerRecall:
-          trimmed.length > 0 ? createDraftComposerRecall(promptForSend) : { ranges: [] },
+          trimmed.length > 0
+            ? createComposerRecall(stripInlineTerminalContextPlaceholders(promptForSend))
+            : { ranges: [] },
         interactionMode: followUp.interactionMode,
       });
       return;

@@ -181,17 +181,6 @@ export function appendTerminalContextsToPrompt(
   return composeTerminalContextPrompt(prompt, contexts).text;
 }
 
-/** Plan follow-ups keep placeholders in provider text but do not recall the chip nodes. */
-export function createDraftComposerRecall(prompt: string) {
-  let offset = 0;
-  const ranges: Array<[number, number]> = [];
-  for (const part of prompt.split(INLINE_TERMINAL_CONTEXT_PLACEHOLDER)) {
-    if (part.length > 0) ranges.push([offset, offset + part.length]);
-    offset += part.length + INLINE_TERMINAL_CONTEXT_PLACEHOLDER.length;
-  }
-  return createComposerRecall(prompt, ranges);
-}
-
 /** Keep origin while expanding chips; a typed identical label remains authored text. */
 export function composeTerminalContextPrompt(
   prompt: string,
