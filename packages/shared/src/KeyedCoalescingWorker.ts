@@ -39,20 +39,26 @@ export const makeKeyedCoalescingWorker = <K, V, E, R>(options: {
       options.process(key, value).pipe(
         Effect.flatMap(() =>
           TxRef.modify(stateRef, (state) => {
-            const nextValue = state.latestByKey.get(key);
-            if (nextValue === undefined) {
-              const activeKeys = new Set(state.activeKeys);
-              activeKeys.delete(key);
-              return [null, { ...state, activeKeys }] as const;
+            const activeKeys = new Set(state.activeKeys);
+            activeKeys.delete(key);
+
+            if (!state.latestByKey.has(key)) {
+              return [false, { ...state, activeKeys }] as const;
             }
 
-            const latestByKey = new Map(state.latestByKey);
-            latestByKey.delete(key);
-            return [nextValue, { ...state, latestByKey }] as const;
-          }).pipe(Effect.tx),
-        ),
-        Effect.flatMap((nextValue) =>
-          nextValue === null ? Effect.void : processKey(key, nextValue),
+            // Work arrived while this batch ran. Requeue the key at the tail
+            // instead of processing it again here, so a continuously dirty
+            // key (a terminal in a redraw loop) cannot monopolize the worker
+            // and starve every other key's flush.
+            const queuedKeys = new Set(state.queuedKeys);
+            queuedKeys.add(key);
+            return [true, { ...state, activeKeys, queuedKeys }] as const;
+          }).pipe(
+            Effect.flatMap((shouldRequeue) =>
+              shouldRequeue ? TxQueue.offer(queue, key) : Effect.void,
+            ),
+            Effect.tx,
+          ),
         ),
       );
 
