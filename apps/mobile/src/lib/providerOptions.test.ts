@@ -2,11 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import type { ModelCapabilities } from "@t3tools/contracts";
 
-import {
-  applyProviderOptionSelection,
-  providerOptionValueLabels,
-  resolveProviderOptionDescriptors,
-} from "./providerOptions";
+import { applyProviderOptionSelection, resolveProviderOptionDescriptors } from "./providerOptions";
 
 const CODEX_CAPABILITIES: ModelCapabilities = {
   optionDescriptors: [
@@ -34,15 +30,6 @@ const CODEX_CAPABILITIES: ModelCapabilities = {
 };
 
 describe("mobile provider options", () => {
-  it("summarizes the option values currently in effect", () => {
-    const descriptors = resolveProviderOptionDescriptors({
-      capabilities: CODEX_CAPABILITIES,
-      selections: undefined,
-    });
-
-    expect(providerOptionValueLabels(descriptors)).toEqual(["Medium", "Standard"]);
-  });
-
   it("updates generic select options without knowing provider-specific ids", () => {
     const descriptors = resolveProviderOptionDescriptors({
       capabilities: CODEX_CAPABILITIES,
@@ -62,7 +49,7 @@ describe("mobile provider options", () => {
     expect(applyProviderOptionSelection(descriptors, { id: "unknown", value: "high" })).toBeNull();
   });
 
-  it("treats an unspecified boolean capability as off", () => {
+  it("updates generic boolean options", () => {
     const descriptors = resolveProviderOptionDescriptors({
       capabilities: {
         optionDescriptors: [{ id: "fastMode", label: "Fast Mode", type: "boolean" }],
@@ -70,7 +57,6 @@ describe("mobile provider options", () => {
       selections: undefined,
     });
 
-    expect(providerOptionValueLabels(descriptors)).toEqual([]);
     expect(applyProviderOptionSelection(descriptors, { id: "fastMode", value: true })).toEqual([
       { id: "fastMode", value: true },
     ]);

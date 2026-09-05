@@ -5,7 +5,6 @@ import type {
 } from "@t3tools/contracts";
 import {
   buildProviderOptionSelectionsFromDescriptors,
-  getProviderOptionCurrentLabel,
   getProviderOptionDescriptors,
 } from "@t3tools/shared/model";
 
@@ -19,23 +18,6 @@ export function resolveProviderOptionDescriptors(input: {
   return getProviderOptionDescriptors({
     caps: input.capabilities,
     selections: input.selections,
-  });
-}
-
-/**
- * Labels for the option values currently in effect (select values plus
- * enabled booleans), used to summarize the thread configuration in the
- * composer trigger pill.
- */
-export function providerOptionValueLabels(
-  descriptors: ReadonlyArray<ProviderOptionDescriptor>,
-): ReadonlyArray<string> {
-  return descriptors.flatMap((descriptor) => {
-    if (descriptor.type === "boolean") {
-      return descriptor.currentValue ? [descriptor.label] : [];
-    }
-    const label = getProviderOptionCurrentLabel(descriptor);
-    return label ? [label] : [];
   });
 }
 
