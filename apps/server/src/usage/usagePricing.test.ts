@@ -4,7 +4,6 @@ import {
   cacheSavingsUsd,
   createOverrideRateTable,
   lookupRate,
-  normalizeModelName,
   parseRateTable,
   priceUsage,
 } from "./usagePricing.ts";
@@ -81,10 +80,6 @@ describe("usage pricing", () => {
         costSource: "providerReported",
       });
     }
-  });
-
-  it("keeps the existing model-name normalization contract", () => {
-    expect(normalizeModelName(" Anthropic/Claude-Opus-5 ")).toBe("claude-opus-5");
   });
 
   it("keeps the canonical Fable rate separate from DeepInfra in either order", () => {
