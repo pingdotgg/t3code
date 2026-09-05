@@ -219,12 +219,34 @@ describe("ProjectFavicon", () => {
     });
   });
 
-  it("weights saturated pixels above neutral pixels and ignores transparent pixels", () => {
+  it("preserves the icon hue without mixing in neutral or transparent pixels", () => {
     expect(
       extractProjectFaviconColor(
         new Uint8ClampedArray([255, 0, 0, 255, 100, 100, 100, 255, 0, 0, 255, 0]),
       ),
-    ).toBe("rgb(229 17 17)");
+    ).toBe("rgb(255 0 0)");
+  });
+
+  it("chooses a real hue from a multicolored icon instead of averaging opposing colors", () => {
+    expect(
+      extractProjectFaviconColor(
+        new Uint8ClampedArray([230, 40, 40, 255, 230, 40, 40, 255, 40, 80, 230, 255]),
+      ),
+    ).toBe("rgb(230 40 40)");
+  });
+
+  it("keeps a small colored mark recognizable on a large white background", () => {
+    const pixels = new Uint8ClampedArray(400).fill(255);
+    pixels.set([30, 110, 220, 255]);
+    expect(extractProjectFaviconColor(pixels)).toBe("rgb(30 110 220)");
+  });
+
+  it("uses the ordinary surface for monochrome icons", () => {
+    expect(
+      extractProjectFaviconColor(
+        new Uint8ClampedArray([255, 255, 255, 255, 0, 0, 0, 255, 128, 130, 132, 255]),
+      ),
+    ).toBeNull();
   });
 
   it("returns no accent for a fully transparent icon", () => {

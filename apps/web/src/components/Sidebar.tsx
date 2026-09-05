@@ -1186,7 +1186,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   // a useful hierarchy nor a reliable hover cue. Status now lives in the row
   // content; surface is reserved for interaction (hover, multi-select, route).
   const rowSurfaceClassName = cn(
-    "group/sidebar-row relative w-full cursor-pointer overflow-hidden rounded-md text-left outline-none select-none",
+    "group/sidebar-row relative w-full cursor-pointer overflow-hidden rounded-md text-left outline-none select-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-2 focus-visible:outline-ring",
     props.isActive
       ? "bg-sidebar-row-active text-sidebar-foreground"
       : isSelected
@@ -1199,7 +1199,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     isInFlight &&
       !props.isActive &&
       !isSelected &&
-      "opacity-70 transition-opacity hover:opacity-100",
+      "opacity-70 motion-safe:transition-opacity hover:opacity-100 focus-visible:opacity-100",
   );
   const rowSurfaceStyle = projectFaviconColor
     ? ({ "--sidebar-row-project-color": projectFaviconColor } as CSSProperties)
@@ -1221,7 +1221,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   ) : (
     <span
       className={cn(
-        "min-w-0 flex-1 text-sm transition-opacity motion-reduce:transition-none",
+        "min-w-0 flex-1 text-sm transition-opacity motion-reduce:transition-none group-hover/sidebar-row:text-foreground group-focus-visible/sidebar-row:text-foreground",
         shouldRecede ? "font-normal" : "font-medium",
         variant === "card"
           ? cn(
@@ -1235,7 +1235,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                     : "text-foreground/90",
             )
           : cn(
-              "truncate group-hover/sidebar-row:text-foreground",
+              "truncate",
               shouldRecede
                 ? "text-secondary-label/70"
                 : props.isActive || isWoke
@@ -1353,7 +1353,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                     !hasUnsentDraft &&
                     !props.isActive &&
                     !isSelected &&
-                    "hover:bg-[color-mix(in_srgb,var(--sidebar-row-project-color)_14%,transparent)]",
+                    "sidebar-project-hover",
                 )}
                 style={rowSurfaceStyle}
                 onClick={handleClick}
@@ -1525,7 +1525,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                   !hasUnsentDraft &&
                   !props.isActive &&
                   !isSelected &&
-                  "hover:bg-[color-mix(in_srgb,var(--sidebar-row-project-color)_14%,transparent)]",
+                  "sidebar-project-hover",
               )}
               style={rowSurfaceStyle}
               onClick={handleClick}

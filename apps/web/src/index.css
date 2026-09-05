@@ -609,6 +609,35 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 }
 
 @layer components {
+  /* Project identity starts beside the icon and recedes behind the title.
+     The normal hover surface remains the foundation for every theme. */
+  .sidebar-project-hover {
+    --sidebar-project-wash: color-mix(in srgb, var(--sidebar-row-project-color) 12%, transparent);
+
+    @variant dark {
+      --sidebar-project-wash: color-mix(in srgb, var(--sidebar-row-project-color) 18%, transparent);
+    }
+
+    &:focus-visible {
+      background-color: var(--sidebar-row-hover);
+      background-image: linear-gradient(to right, var(--sidebar-project-wash), transparent 85%);
+      color: var(--sidebar-foreground);
+    }
+
+    @media (hover: hover) and (pointer: fine) {
+      &:hover {
+        background-image: linear-gradient(to right, var(--sidebar-project-wash), transparent 85%);
+      }
+    }
+
+    @media (forced-colors: active) {
+      &:hover,
+      &:focus-visible {
+        background-image: none;
+      }
+    }
+  }
+
   /* Each maintainer palette gives the same line art its own material: rose
      vellum, forest drafting paper, marine cyanotype, copper, and violet ink.
      These colors stay deliberately deep at the top edge so the white stage

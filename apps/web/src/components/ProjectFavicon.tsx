@@ -246,37 +246,36 @@ function loadProjectFaviconColor(cacheKey: string, src: string): Promise<string 
   return pending;
 }
 
+/** Samples the strongest hue family, excluding transparent padding and neutral backgrounds. */
 export function extractProjectFaviconColor(data: Uint8ClampedArray): string | null {
-  let red = 0;
-  let green = 0;
-  let blue = 0;
-  let weight = 0;
-  for (let index = 0; index < data.length; index += 4) {
-    const pixelRed = data[index];
-    const pixelGreen = data[index + 1];
-    const pixelBlue = data[index + 2];
-    const pixelAlpha = data[index + 3];
-    if (
-      pixelRed === undefined ||
-      pixelGreen === undefined ||
-      pixelBlue === undefined ||
-      pixelAlpha === undefined
-    ) {
-      continue;
-    }
-    const alpha = pixelAlpha / 255;
-    if (alpha < 0.2) continue;
-    const maximum = Math.max(pixelRed, pixelGreen, pixelBlue);
-    const minimum = Math.min(pixelRed, pixelGreen, pixelBlue);
-    const saturation = maximum === 0 ? 0 : (maximum - minimum) / maximum;
-    const pixelWeight = alpha * (0.25 + saturation);
-    red += pixelRed * pixelWeight;
-    green += pixelGreen * pixelWeight;
-    blue += pixelBlue * pixelWeight;
-    weight += pixelWeight;
+  const hues = Array.from({ length: 12 }, () => ({ red: 0, green: 0, blue: 0, weight: 0 }));
+  for (let index = 0; index + 3 < data.length; index += 4) {
+    const red = data[index]!;
+    const green = data[index + 1]!;
+    const blue = data[index + 2]!;
+    const alpha = data[index + 3]! / 255;
+    const maximum = Math.max(red, green, blue);
+    const minimum = Math.min(red, green, blue);
+    const chroma = maximum - minimum;
+    if (alpha < 0.2 || chroma < 24 || maximum < 40) continue;
+
+    const hue =
+      maximum === red
+        ? (green - blue) / chroma
+        : maximum === green
+          ? (blue - red) / chroma + 2
+          : (red - green) / chroma + 4;
+    const bucket = hues[Math.round((hue + 6) * 2) % hues.length]!;
+    const weight = alpha * chroma;
+    bucket.red += red * weight;
+    bucket.green += green * weight;
+    bucket.blue += blue * weight;
+    bucket.weight += weight;
   }
-  if (weight === 0) return null;
-  return `rgb(${Math.round(red / weight)} ${Math.round(green / weight)} ${Math.round(blue / weight)})`;
+
+  const dominant = hues.reduce((best, hue) => (hue.weight > best.weight ? hue : best));
+  if (dominant.weight === 0) return null;
+  return `rgb(${Math.round(dominant.red / dominant.weight)} ${Math.round(dominant.green / dominant.weight)} ${Math.round(dominant.blue / dominant.weight)})`;
 }
 
 function ProjectFaviconFallback({
