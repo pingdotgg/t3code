@@ -314,7 +314,7 @@ function makeSdkBootstrapHarness(
             child = NodeChildProcess.spawn(
               process.execPath,
               [
-                NodePath.join(import.meta.dirname, "../testUtils/claudeBootstrapFixture.mjs"),
+                NodePath.join(import.meta.dirname, "../testFixtures/claudeBootstrapFixture.mjs"),
                 mode,
                 options.resume ?? options.sessionId ?? "unused",
               ],
