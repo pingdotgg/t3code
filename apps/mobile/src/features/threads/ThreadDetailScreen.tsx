@@ -3,7 +3,19 @@ import {
   appendCodexArtifactTemplateUsePrompt,
   type CodexArtifactTemplate,
 } from "@t3tools/client-runtime/codex-artifact-templates";
-import type { EnvironmentThreadStatus } from "@t3tools/client-runtime/state/threads";
+import {
+  formatCodexGoalDescription,
+  formatCodexGoalError,
+  formatCodexGoalStatus,
+  formatCodexGoalUsage,
+  parseCodexGoalCommand,
+  toCodexGoalSetInput,
+  type EnvironmentThreadStatus,
+} from "@t3tools/client-runtime/state/threads";
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 import { useKeyboardChatComposerInset, useKeyboardScrollToEnd } from "@legendapp/list/keyboard";
 import { resolveProviderSkillsForCwd } from "@t3tools/client-runtime/providerSkills";
 import type { LegendListRef } from "@legendapp/list/react-native";
@@ -33,6 +45,7 @@ import {
   useState,
 } from "react";
 import {
+  Alert,
   AppState,
   Keyboard,
   Platform,
@@ -56,6 +69,9 @@ import Animated, {
 } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { AppText as Text } from "../../components/AppText";
+import { threadEnvironment, useCodexGoal } from "../../state/threads";
+import { useAtomCommand } from "../../state/use-atom-command";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import type { ComposerEditorHandle } from "../../components/ComposerEditor";
 import type { StatusTone } from "../../components/StatusPill";
@@ -268,7 +284,6 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   const selectedThreadKey = scopedThreadKey(props.environmentId, props.selectedThread.id);
   const composerEditorRef = useRef<ComposerEditorHandle>(null);
   const draftMessageRef = useRef(props.draftMessage);
-  draftMessageRef.current = props.draftMessage;
   const composerOverlayRef = useRef<View>(null);
   const listRef = useRef<LegendListRef>(null);
   const feedTouchStartRef = useRef<{ pageX: number; pageY: number } | null>(null);
@@ -286,6 +301,11 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   const [anchorMessageId, setAnchorMessageId] = useState<MessageId | null>(null);
   const [submittedMessageId, setSubmittedMessageId] = useState<MessageId | null>(null);
   const [endFollowEnabled, setEndFollowEnabled] = useState(true);
+  const getCodexGoal = useAtomCommand(threadEnvironment.getCodexGoal, { reportFailure: false });
+  const setCodexGoal = useAtomCommand(threadEnvironment.setCodexGoal, { reportFailure: false });
+  const clearCodexGoal = useAtomCommand(threadEnvironment.clearCodexGoal, {
+    reportFailure: false,
+  });
   // Android keys the safe-area padding on keyboard visibility (#5988): the
   // back gesture closes the keyboard while the editor stays focused, and a
   // focus-keyed inset would leave the toolbar under the gesture bar. iOS must
@@ -535,6 +555,29 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   const isSplitLayout = layoutVariant === "split";
   const contentMaxWidth = isSplitLayout ? CHAT_CONTENT_MAX_WIDTH : undefined;
   const selectedInstanceId = props.selectedThread.modelSelection.instanceId;
+  const selectedProvider = props.serverConfig?.providers.find(
+    (provider) => provider.instanceId === selectedInstanceId,
+  );
+  const sessionStatus = props.selectedThread.session?.status ?? null;
+  const settledSessionStatusesRef = useRef<Record<string, typeof sessionStatus>>({});
+  const settledSessionStatus = settledSessionStatusesRef.current[selectedThreadKey] ?? null;
+  if (sessionStatus !== "starting")
+    settledSessionStatusesRef.current[selectedThreadKey] = sessionStatus;
+  const hasActiveCodexGoalSession =
+    selectedProvider?.driver === "codex" &&
+    props.selectedThread.session !== null &&
+    sessionStatus !== "stopped" &&
+    !(
+      sessionStatus === "starting" &&
+      (settledSessionStatus === "stopped" || settledSessionStatus === null)
+    );
+  const codexGoal = useCodexGoal(
+    hasActiveCodexGoalSession ? props.environmentId : null,
+    hasActiveCodexGoalSession ? props.selectedThread.id : null,
+    hasActiveCodexGoalSession
+      ? (props.selectedThread.session?.providerInstanceId ?? selectedInstanceId)
+      : null,
+  );
   useStreamingHaptics(props.selectedThread.id, props.selectedThreadFeed);
   const selectedProviderSkills = useMemo(() => {
     const provider = props.serverConfig?.providers.find(
@@ -550,6 +593,10 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
     // A replaced or unmounted native editor may not emit a blur event.
     setComposerFocused(false);
   }, [selectedThreadKey, showContent]);
+
+  useLayoutEffect(() => {
+    draftMessageRef.current = props.draftMessage;
+  }, [props.draftMessage]);
 
   useEffect(() => {
     setAnchorMessageId(null);
@@ -614,6 +661,79 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   ]);
 
   const handleSendMessage = useCallback(async () => {
+    const draftGoalCommand =
+      props.draftAttachments.length === 0 ? parseCodexGoalCommand(props.draftMessage) : null;
+    if (draftGoalCommand !== null && selectedProvider === undefined) {
+      Alert.alert("Provider still loading", "Wait for the provider list to finish loading.");
+      return null;
+    }
+    const goalCommand = selectedProvider?.driver === "codex" ? draftGoalCommand : null;
+    if (goalCommand !== null) {
+      if (goalCommand.action === "invalid") {
+        Alert.alert("Invalid Goal command", goalCommand.message);
+        return null;
+      }
+      if (props.selectedThread.session === null) {
+        Alert.alert(
+          "Start the Codex thread first",
+          "Send a message before managing its native Goal.",
+        );
+        return null;
+      }
+      const target = {
+        environmentId: props.environmentId,
+        input: { threadId: props.selectedThread.id },
+      };
+      const submittedDraft = props.draftMessage;
+      const submittedThreadKey = selectedThreadKey;
+      const stillOnSubmittedThread = () => selectedThreadKeyRef.current === submittedThreadKey;
+      const clearSubmittedGoalCommandDraft = () => {
+        if (!stillOnSubmittedThread() || draftMessageRef.current !== submittedDraft) return;
+        props.onChangeDraftMessage("");
+      };
+      if (goalCommand.action === "status") {
+        const sessionWasStopped = props.selectedThread.session.status === "stopped";
+        const result = await getCodexGoal(target);
+        if (result._tag === "Failure") {
+          if (!isAtomCommandInterrupted(result) && stillOnSubmittedThread()) {
+            Alert.alert(
+              sessionWasStopped ? "Wake the Codex thread first" : "Codex Goal operation failed",
+              sessionWasStopped
+                ? "/goal status does not wake a stopped provider session."
+                : formatCodexGoalError(squashAtomCommandFailure(result)),
+            );
+          }
+          return null;
+        }
+        clearSubmittedGoalCommandDraft();
+        if (!stillOnSubmittedThread()) return null;
+        Alert.alert(
+          result.value === null
+            ? "No active Codex Goal"
+            : `Goal ${formatCodexGoalStatus(result.value.status)}`,
+          result.value === null ? undefined : formatCodexGoalDescription(result.value),
+        );
+        return null;
+      }
+      const result =
+        goalCommand.action === "clear"
+          ? await clearCodexGoal(target)
+          : await setCodexGoal({
+              environmentId: props.environmentId,
+              input: toCodexGoalSetInput(props.selectedThread.id, goalCommand),
+            });
+      if (result._tag === "Failure") {
+        if (!isAtomCommandInterrupted(result) && stillOnSubmittedThread()) {
+          Alert.alert(
+            "Codex Goal operation failed",
+            formatCodexGoalError(squashAtomCommandFailure(result)),
+          );
+        }
+        return null;
+      }
+      clearSubmittedGoalCommandDraft();
+      return null;
+    }
     const targetThreadKey = selectedThreadKey;
     const hasUserMessage = selectedThreadFeed.some(
       (entry) => entry.type === "message" && entry.message.role === "user",
@@ -637,11 +757,21 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
     return messageId;
   }, [
     anchorMessageId,
+    clearCodexGoal,
+    getCodexGoal,
     props.onSendMessage,
+    props.draftAttachments,
+    props.draftMessage,
+    props.environmentId,
+    props.onChangeDraftMessage,
+    props.selectedThread.id,
     props.selectedThread.latestTurn,
+    props.selectedThread.session,
     props.selectedThreadQueueCount,
     selectedThreadFeed,
     selectedThreadKey,
+    selectedProvider?.driver,
+    setCodexGoal,
   ]);
 
   const collapseComposer = useCallback(() => {
@@ -823,6 +953,19 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
               {/* Hidden (not unmounted) while a user-input request owns the
                 composer slot, so composer drafts and editor state survive. */}
               <View style={activeUserInputRequestId !== null ? { display: "none" } : undefined}>
+                {codexGoal !== null ? (
+                  <View className="mx-3 mb-2 rounded-xl border border-blue-500/20 bg-blue-500/10 px-3 py-2">
+                    <Text className="text-xs font-t3-bold text-foreground">
+                      Goal {formatCodexGoalStatus(codexGoal.status)}
+                    </Text>
+                    <Text className="text-xs text-foreground-muted" numberOfLines={2}>
+                      {codexGoal.objective}
+                    </Text>
+                    <Text className="text-xs text-foreground-muted" numberOfLines={1}>
+                      {formatCodexGoalUsage(codexGoal)}
+                    </Text>
+                  </View>
+                ) : null}
                 <ThreadComposer
                   editorRef={composerEditorRef}
                   draftMessage={props.draftMessage}

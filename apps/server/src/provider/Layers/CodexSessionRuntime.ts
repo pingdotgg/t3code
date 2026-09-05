@@ -205,6 +205,17 @@ export interface CodexSessionRuntimeShape {
   readonly uploadFeedback: (
     reason?: string,
   ) => Effect.Effect<EffectCodexSchema.V2FeedbackUploadResponse, CodexSessionRuntimeError>;
+  readonly getGoal: Effect.Effect<
+    EffectCodexSchema.V2ThreadGoalGetResponse,
+    CodexSessionRuntimeError
+  >;
+  readonly setGoal: (
+    input: Omit<EffectCodexSchema.V2ThreadGoalSetParams, "threadId">,
+  ) => Effect.Effect<EffectCodexSchema.V2ThreadGoalSetResponse, CodexSessionRuntimeError>;
+  readonly clearGoal: Effect.Effect<
+    EffectCodexSchema.V2ThreadGoalClearResponse,
+    CodexSessionRuntimeError
+  >;
   readonly respondToRequest: (
     requestId: ApprovalRequestId,
     decision: ProviderApprovalDecision,
@@ -223,6 +234,20 @@ export type CodexSessionRuntimeError =
   | CodexSessionRuntimePendingUserInputNotFoundError
   | CodexSessionRuntimeInvalidUserInputAnswersError
   | CodexSessionRuntimeThreadIdMissingError;
+
+export const makeCodexGoalRequests = <E>(
+  client: Pick<CodexClient.CodexAppServerClient["Service"], "request">,
+  readProviderThreadId: Effect.Effect<string, E>,
+) => {
+  const threadId = readProviderThreadId;
+  const request = client.request;
+  return {
+    getGoal: Effect.flatMap(threadId, (id) => request("thread/goal/get", { threadId: id })),
+    setGoal: (input: Parameters<CodexSessionRuntimeShape["setGoal"]>[0]) =>
+      Effect.flatMap(threadId, (id) => request("thread/goal/set", { threadId: id, ...input })),
+    clearGoal: Effect.flatMap(threadId, (id) => request("thread/goal/clear", { threadId: id })),
+  };
+};
 
 export class CodexSessionRuntimePendingApprovalNotFoundError extends Schema.TaggedErrorClass<CodexSessionRuntimePendingApprovalNotFoundError>()(
   "CodexSessionRuntimePendingApprovalNotFoundError",
@@ -741,6 +766,8 @@ function readNotificationThreadId(notification: CodexServerNotification): string
     case "thread/settings/updated":
     case "thread/tokenUsage/updated":
     case "model/rerouted":
+    case "thread/goal/updated":
+    case "thread/goal/cleared":
     case "turn/started":
     case "hook/started":
     case "turn/completed":
@@ -1010,6 +1037,8 @@ function shouldSuppressChildConversationNotification(
     method === "thread/settings/updated" ||
     method === "thread/tokenUsage/updated" ||
     method === "model/rerouted" ||
+    method === "thread/goal/updated" ||
+    method === "thread/goal/cleared" ||
     method === "turn/started" ||
     method === "turn/completed" ||
     method === "turn/plan/updated" ||
@@ -1060,6 +1089,8 @@ const CHILD_CHATTER_METHODS: ReadonlySet<string> = new Set([
   "turn/plan/updated",
   "turn/diff/updated",
   "thread/name/updated",
+  "thread/goal/updated",
+  "thread/goal/cleared",
   "rawResponseItem/completed",
   // Child-owned thread lifecycle: the parent adapter maps these onto the
   // PARENT thread (archived/compacted state), so a child compacting would
@@ -2419,6 +2450,7 @@ export const makeCodexSessionRuntime = (
             threadId: providerThreadId,
           });
         }),
+      ...makeCodexGoalRequests(client, readProviderThreadId),
       respondToRequest: (requestId, decision) =>
         Effect.gen(function* () {
           const pending = (yield* Ref.get(pendingApprovalsRef)).get(requestId);

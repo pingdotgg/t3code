@@ -69,3 +69,7 @@ In an existing Codex thread, send `/feedback` with an optional description, for
 example `/feedback The agent stopped before finishing the tests`. This uploads
 the conversation and Codex logs to OpenAI. The returned thread ID can be shared
 with OpenAI support.
+
+## Manage a Codex Goal
+
+In a started Codex thread, use `/goal` to create, inspect, steer, pause, resume, or clear its native Goal.

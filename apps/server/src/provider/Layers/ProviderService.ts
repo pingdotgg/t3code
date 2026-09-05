@@ -39,9 +39,11 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
+import * as RcMap from "effect/RcMap";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as SchemaIssue from "effect/SchemaIssue";
+import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
@@ -981,6 +983,15 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     () => reconcileInstanceSubscriptions,
   ).pipe(Effect.forkScoped);
 
+  const recoveryLocks = yield* RcMap.make({
+    lookup: (_threadId: ThreadId) => Semaphore.make(1),
+  });
+  const withRecoveryLock = <A, E, R>(threadId: ThreadId, effect: Effect.Effect<A, E, R>) =>
+    RcMap.get(recoveryLocks, threadId).pipe(
+      Effect.flatMap((lock) => lock.withPermit(effect)),
+      Effect.scoped,
+    );
+
   const recoverSessionForThread = Effect.fn("recoverSessionForThread")(function* (input: {
     readonly binding: ProviderSessionDirectory.ProviderRuntimeBinding;
     readonly operation: string;
@@ -1070,6 +1081,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     readonly threadId: ThreadId;
     readonly operation: string;
     readonly allowRecovery: boolean;
+    readonly recoveryLockHeld?: boolean;
   }) {
     const bindingOption = yield* directory.getBinding(input.threadId);
     const binding = Option.getOrUndefined(bindingOption);
@@ -1103,10 +1115,13 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       } as const;
     }
 
-    const recovered = yield* recoverSessionForThread({
+    const recover = recoverSessionForThread({
       binding,
       operation: input.operation,
     });
+    const recovered = yield* input.recoveryLockHeld
+      ? recover
+      : withRecoveryLock(input.threadId, recover);
     return {
       adapter: recovered.adapter,
       instanceId,
@@ -1312,6 +1327,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
 
         return sessionWithInstance;
       }).pipe(
+        (start) => withRecoveryLock(threadId, start),
         withMetrics({
           counter: providerSessionsTotal,
           attributes: () =>
@@ -1769,6 +1785,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           provider: routed.adapter.provider,
         });
       }).pipe(
+        (stop) => withRecoveryLock(input.threadId, stop),
         withMetrics({
           counter: providerSessionsTotal,
           outcomeAttributes: () =>
@@ -2050,6 +2067,71 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     ),
   );
 
+  const resolveCodexGoalRoute = Effect.fn("resolveCodexGoalRoute")(function* (
+    threadId: ThreadId,
+    operation: "get" | "set" | "clear",
+    allowRecovery = true,
+    recoveryLockHeld = false,
+  ) {
+    const operationName = `ProviderService.${operation}CodexGoal`;
+    const routeInput = { threadId, operation: operationName };
+    let routed = yield* resolveRoutableSession({ ...routeInput, allowRecovery: false });
+    const unsupported = () =>
+      toValidationError(
+        operationName,
+        `Provider '${routed.adapter.provider}' does not support native Codex Goals.`,
+      );
+    if (!routed.adapter.codexGoal) return yield* unsupported();
+    if (!routed.isActive && allowRecovery) {
+      routed = yield* resolveRoutableSession({
+        ...routeInput,
+        allowRecovery: true,
+        recoveryLockHeld,
+      });
+    }
+    const goal = routed.adapter.codexGoal;
+    if (!goal) return yield* unsupported();
+    return { routed, goal } as const;
+  });
+
+  const getCodexGoal: ProviderServiceMethod<"getCodexGoal"> = Effect.fn("getCodexGoal")(
+    function* (threadId, options) {
+      const { routed, goal } = yield* resolveCodexGoalRoute(
+        threadId,
+        "get",
+        options?.allowRecovery !== false,
+      );
+      if (!routed.isActive) {
+        if (options?.failIfInactive === true) {
+          return yield* toValidationError(
+            "ProviderService.getCodexGoal",
+            `Cannot read the native Codex Goal for inactive thread '${threadId}' without recovering its provider session.`,
+          );
+        }
+        return null;
+      }
+      return yield* goal.get(routed.threadId);
+    },
+  );
+
+  const setCodexGoal: ProviderServiceMethod<"setCodexGoal"> = Effect.fn("setCodexGoal")(
+    function* (input) {
+      return yield* Effect.gen(function* () {
+        const { goal } = yield* resolveCodexGoalRoute(input.threadId, "set", true, true);
+        return yield* goal.set(input);
+      }).pipe((set) => withRecoveryLock(input.threadId, set));
+    },
+  );
+
+  const clearCodexGoal: ProviderServiceMethod<"clearCodexGoal"> = Effect.fn("clearCodexGoal")(
+    function* (threadId) {
+      return yield* Effect.gen(function* () {
+        const { routed, goal } = yield* resolveCodexGoalRoute(threadId, "clear", true, true);
+        return yield* goal.clear(routed.threadId);
+      }).pipe((clear) => withRecoveryLock(threadId, clear));
+    },
+  );
+
   return {
     startSession,
     sendTurn,
@@ -2064,6 +2146,9 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     assertConversationRollbackSupported,
     rollbackConversation,
     uploadFeedback,
+    getCodexGoal,
+    setCodexGoal,
+    clearCodexGoal,
     // Each access creates a fresh PubSub subscription so that multiple
     // consumers (ProviderRuntimeIngestion, CheckpointReactor, etc.) each
     // independently receive all runtime events.
