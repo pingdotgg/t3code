@@ -18,6 +18,7 @@ import {
   type SidebarProjectGroupingMode,
   type SidebarThreadSortOrder,
 } from "@t3tools/contracts";
+import { exhaustedUntil } from "@t3tools/shared/usageLimits";
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { useFocusEffect } from "@react-navigation/native";
@@ -792,6 +793,13 @@ export function HomeScreen(props: HomeScreenProps) {
         );
       }
       const thread = item.item.thread;
+      const provider = serverConfigs
+        .get(thread.environmentId)
+        ?.providers.find(
+          (candidate) =>
+            candidate.instanceId ===
+            (thread.session?.providerInstanceId ?? thread.modelSelection.instanceId),
+        );
       return (
         <ThreadListV2Row
           thread={thread}
@@ -807,15 +815,8 @@ export function HomeScreen(props: HomeScreenProps) {
           projectTitle={v2ProjectTitleByProjectKey.get(
             scopedProjectKey(thread.environmentId, thread.projectId),
           )}
-          providerDriver={
-            serverConfigs
-              .get(thread.environmentId)
-              ?.providers.find(
-                (provider) =>
-                  provider.instanceId ===
-                  (thread.session?.providerInstanceId ?? thread.modelSelection.instanceId),
-              )?.driver ?? null
-          }
+          providerDriver={provider?.driver ?? null}
+          limitsResetAt={exhaustedUntil(provider?.usageLimits, Date.now())}
           environmentLabel={
             Object.keys(props.savedConnectionsById).length > 1
               ? (props.savedConnectionsById[thread.environmentId]?.environmentLabel ?? null)

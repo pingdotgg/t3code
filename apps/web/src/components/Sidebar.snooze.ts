@@ -18,11 +18,18 @@ function timeOfDayLabel(date: Date, timestampFormat: TimestampFormat): string {
 export function resolveSnoozePresets(
   now: Date,
   timestampFormat: TimestampFormat,
+  options?: { readonly limitsResetAt?: string | null },
 ): ReadonlyArray<SnoozePreset> {
-  return resolveSharedSnoozePresets(now).map((preset) => {
+  return resolveSharedSnoozePresets(now, options).map((preset) => {
     const wake = parseTimestampDate(preset.snoozedUntil);
     if (wake === null) return preset;
     const time = timeOfDayLabel(wake, timestampFormat);
+    if (preset.id === "limits-reset") {
+      return {
+        ...preset,
+        whenLabel: snoozeWakeDescription(preset.snoozedUntil, now, timestampFormat),
+      };
+    }
     return {
       ...preset,
       whenLabel:
@@ -45,9 +52,13 @@ export function snoozeWakeDescription(
   const wake = parseTimestampDate(snoozedUntil);
   if (wake === null) return "";
   const time = timeOfDayLabel(wake, timestampFormat);
+  // Midnight to midnight, rounded: a DST day is 23 or 25 hours long, so a
+  // fixed 24-hour bucket would file a wake just past midnight on the wrong day.
   const startOfToday = new Date(now);
   startOfToday.setHours(0, 0, 0, 0);
-  const dayDelta = Math.floor((wake.getTime() - startOfToday.getTime()) / DAY_MS);
+  const startOfWakeDay = new Date(wake);
+  startOfWakeDay.setHours(0, 0, 0, 0);
+  const dayDelta = Math.round((startOfWakeDay.getTime() - startOfToday.getTime()) / DAY_MS);
   if (dayDelta === 0) return time;
   if (dayDelta === 1) return `tomorrow ${time}`;
   const weekday = wake.toLocaleDateString(undefined, { weekday: "short" });

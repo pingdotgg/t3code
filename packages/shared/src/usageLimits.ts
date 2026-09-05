@@ -209,3 +209,36 @@ export function formatResetsIn(window: ServerProviderUsageWindow, now: number): 
   if (resetsAt === null) return null;
   return resetsAt <= now ? "resets now" : `resets in ${formatDuration(resetsAt - now)}`;
 }
+
+/**
+ * Windows that gate every turn on the account: Claude's session and weekly
+ * allowances and Codex's two positions. Claude's model-scoped buckets
+ * (`seven_day_<model>`) only limit that one model, so they never count as
+ * the account being exhausted.
+ */
+const ACCOUNT_WIDE_WINDOW_IDS: ReadonlySet<string> = new Set([
+  "five_hour",
+  "seven_day",
+  "primary",
+  "secondary",
+]);
+
+/**
+ * The latest reset among exhausted account-wide windows still ahead of `now`,
+ * or null when the account is serving. Every exhausted window has to clear
+ * before the account does, so the composer's "reset at" claim names the last.
+ */
+export function exhaustedUntil(
+  limits: ServerProviderUsageLimits | undefined,
+  now: number,
+): string | null {
+  let latest: { readonly at: number; readonly resetsAt: string } | null = null;
+  for (const window of limits?.windows ?? []) {
+    if (!ACCOUNT_WIDE_WINDOW_IDS.has(window.id)) continue;
+    if (window.usedPercent < 100 || window.resetsAt === undefined) continue;
+    const at = resetMillis(window);
+    if (at === null || at <= now) continue;
+    if (latest === null || at > latest.at) latest = { at, resetsAt: window.resetsAt };
+  }
+  return latest?.resetsAt ?? null;
+}

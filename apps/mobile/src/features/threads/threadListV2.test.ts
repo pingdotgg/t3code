@@ -106,6 +106,24 @@ describe("resolveThreadListV2SnoozeMenuSelection", () => {
       );
     }
   });
+
+  it("resolves a snooze:limits-reset event when the option is set", () => {
+    const selectedAt = new Date(2026, 4, 8, 10);
+    const resetsAt = new Date(2026, 4, 8, 14).toISOString();
+    const displayedPresets = resolveSnoozePresets(selectedAt, { limitsResetAt: resetsAt });
+
+    const selection = resolveThreadListV2SnoozeMenuSelection({
+      event: "snooze:limits-reset",
+      displayedPresets,
+      now: selectedAt,
+      limitsResetAt: resetsAt,
+    });
+
+    expect(selection).toEqual({
+      _tag: "selected",
+      preset: displayedPresets.find((preset) => preset.id === "limits-reset"),
+    });
+  });
 });
 
 describe("resolveThreadListV2Enabled", () => {

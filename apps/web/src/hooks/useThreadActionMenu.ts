@@ -6,6 +6,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { canSnooze, effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
+import { exhaustedUntil } from "@t3tools/shared/usageLimits";
 import type { ScopedThreadRef, ThreadId } from "@t3tools/contracts";
 import { useRouter } from "@tanstack/react-router";
 import { useCallback, useMemo } from "react";
@@ -23,6 +24,7 @@ import {
   readEnvironmentSupportsSettlement,
   readEnvironmentSupportsSnooze,
   readEnvironmentSupportsTitleRegeneration,
+  readThreadProviderSnapshot,
   readThreadShell,
   useProjects,
 } from "../state/entities";
@@ -136,7 +138,10 @@ export function useThreadActionMenu(input: {
           titleRegeneration: readEnvironmentSupportsTitleRegeneration(threadRef.environmentId),
         };
         const isRegeneratingTitle = thread.titleRegeneration != null;
-        const snoozePresets = resolveSnoozePresets(now, timestampFormat);
+        const providerSnapshot = readThreadProviderSnapshot(threadRef);
+        const snoozePresets = resolveSnoozePresets(now, timestampFormat, {
+          limitsResetAt: exhaustedUntil(providerSnapshot?.usageLimits, now.getTime()),
+        });
         const items = buildThreadActionMenuItems({
           branch: thread.branch ?? null,
           isPinned: thread.pinnedAt != null,

@@ -34,15 +34,16 @@ export function resolveThreadListV2SnoozeMenuSelection(input: {
   readonly event: string;
   readonly displayedPresets: ReadonlyArray<SnoozePreset>;
   readonly now: Date;
+  readonly limitsResetAt?: string | null;
 }):
   | { readonly _tag: "selected"; readonly preset: SnoozePreset }
   | { readonly _tag: "expired" }
   | { readonly _tag: "not-snooze" } {
   if (!input.event.startsWith("snooze:")) return { _tag: "not-snooze" };
 
-  const currentPreset = resolveSnoozePresets(input.now).find(
-    (candidate) => input.event === `snooze:${candidate.id}`,
-  );
+  const currentPreset = resolveSnoozePresets(input.now, {
+    limitsResetAt: input.limitsResetAt,
+  }).find((candidate) => input.event === `snooze:${candidate.id}`);
   if (currentPreset) return { _tag: "selected", preset: currentPreset };
 
   const displayedPreset = input.displayedPresets.find(

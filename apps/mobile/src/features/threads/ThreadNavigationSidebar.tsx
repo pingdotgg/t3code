@@ -11,6 +11,7 @@ import type { MenuAction } from "@react-native-menu/menu";
 import { useAtomValue } from "@effect/atom-react";
 import { type EnvironmentId, resolveEnvironmentMachineKind } from "@t3tools/contracts";
 import { sortPinnedThreadsByOrderKey } from "@t3tools/client-runtime/state/thread-sort";
+import { exhaustedUntil } from "@t3tools/shared/usageLimits";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { LayoutChangeEvent } from "react-native";
 import { Platform, Pressable, StyleSheet, TextInput, View } from "react-native";
@@ -854,6 +855,13 @@ function ThreadNavigationSidebarPane(
         case "v2-thread": {
           const thread = item.item.thread;
           const scopeKey = scopedProjectKey(thread.environmentId, thread.projectId);
+          const provider = serverConfigs
+            .get(thread.environmentId)
+            ?.providers.find(
+              (candidate) =>
+                candidate.instanceId ===
+                (thread.session?.providerInstanceId ?? thread.modelSelection.instanceId),
+            );
           return (
             <ThreadListV2Row
               thread={thread}
@@ -864,15 +872,8 @@ function ThreadNavigationSidebarPane(
               snoozeWakeLabelText={item.snoozeWakeLabelText}
               project={projectByKey.get(scopeKey) ?? null}
               projectTitle={projectTitleByProjectKey.get(scopeKey)}
-              providerDriver={
-                serverConfigs
-                  .get(thread.environmentId)
-                  ?.providers.find(
-                    (provider) =>
-                      provider.instanceId ===
-                      (thread.session?.providerInstanceId ?? thread.modelSelection.instanceId),
-                  )?.driver ?? null
-              }
+              providerDriver={provider?.driver ?? null}
+              limitsResetAt={exhaustedUntil(provider?.usageLimits, Date.now())}
               environmentLabel={
                 Object.keys(savedConnectionsById).length > 1
                   ? (savedConnectionsById[thread.environmentId]?.environmentLabel ?? null)
