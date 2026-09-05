@@ -13,6 +13,7 @@ import {
   collectLimitsGroups,
   elapsedShare,
   formatResetsIn,
+  formatSpend,
   limitsNotice,
   paceOf,
   providersWithLimits,
@@ -302,5 +303,22 @@ describe("collectLimitSources", () => {
       "Laptop · hub",
       "Desktop · hub",
     ]);
+  });
+});
+
+describe("formatSpend", () => {
+  it("renders minor units in the provider's currency and precision", () => {
+    expect(formatSpend({ usedMinor: 4631, limitMinor: 50000, currency: "USD", exponent: 2 })).toBe(
+      "$46.31 of $500.00",
+    );
+    expect(formatSpend({ usedMinor: 150, limitMinor: 2000, currency: "JPY", exponent: 0 })).toBe(
+      "¥150 of ¥2,000",
+    );
+  });
+
+  it("falls back to a plain amount for a currency Intl does not know", () => {
+    expect(
+      formatSpend({ usedMinor: 4631, limitMinor: 50000, currency: "CREDITS", exponent: 2 }),
+    ).toBe("46.31 CREDITS of 500.00 CREDITS");
   });
 });

@@ -16,6 +16,7 @@ import {
   elapsedShare,
   formatDuration,
   formatResetsIn,
+  formatSpend,
   limitsNotice,
   type LimitPace,
   paceOf,
@@ -101,7 +102,8 @@ function WindowBar({
   const resetsAt = window.resetsAt
     ? formatUpcomingTimestamp(window.resetsAt, timestampFormat, now)
     : null;
-  const summary = `${window.label}: ${Math.round(used)}% used${
+  const spent = window.spend ? formatSpend(window.spend) : null;
+  const summary = `${window.label}: ${spent ? `${spent}, ` : ""}${Math.round(used)}% used${
     elapsed === null ? "" : `, ${Math.round(elapsed * 100)}% of the window elapsed`
   }${resetsIn ? `, ${resetsIn}` : ""}`;
 
@@ -135,6 +137,7 @@ function WindowBar({
       <TooltipPopup side="top" className="max-w-72 text-xs">
         <div className="flex flex-col gap-0.5">
           <span className="text-foreground">
+            {spent ? `${spent} · ` : ""}
             {Math.round(used)}% used
             {elapsed !== null ? ` · ${Math.round(elapsed * 100)}% of the window elapsed` : ""}
           </span>
@@ -173,6 +176,12 @@ function LimitWindows({
           previous?.resetsAt !== undefined && previous.resetsAt === window.resetsAt;
         const pace = paceOf(window, now);
         const resetsIn = formatResetsIn(window, now);
+        // A budget has no reset to count down to; its amounts take that slot.
+        const detail = window.spend
+          ? formatSpend(window.spend)
+          : sharesReset
+            ? ""
+            : (resetsIn ?? "");
         return (
           <Fragment key={window.id}>
             <span className="flex min-w-0 items-center gap-2 text-xs">
@@ -184,7 +193,7 @@ function LimitWindows({
             <WindowBar color={color} window={window} now={now} />
             <span className="flex items-center gap-2 text-xs text-muted-foreground tabular-nums">
               {pace ? <PaceIcon pace={pace} /> : null}
-              <span className="ms-auto shrink-0">{sharesReset ? "" : (resetsIn ?? "")}</span>
+              <span className="ms-auto shrink-0">{detail}</span>
             </span>
           </Fragment>
         );

@@ -45,6 +45,9 @@ next reset.
 
 If a window looks stale, refresh Limits to re-check every provider and hub.
 
+Accounts with a monthly spending budget instead of rolling quotas, such as Claude Enterprise,
+show the budget as a monthly bar with the amount used so far.
+
 API-key accounts may not report subscription limits. This also applies to Claude connections
 using a proxy through `ANTHROPIC_AUTH_TOKEN`.
 
