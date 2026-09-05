@@ -26,6 +26,7 @@ import {
   type MergedUsage,
   type SettledUsageStatuses,
 } from "@t3tools/shared/usageMerge";
+import { executeAtomQuery } from "@t3tools/client-runtime/state/runtime";
 import {
   completeUsageRefresh,
   refreshStateForWindowChange,
@@ -37,6 +38,7 @@ import { AsyncResult, Atom } from "effect/unstable/reactivity";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { environmentPresentations } from "./presentation";
+import { uuidv4 } from "../lib/uuid";
 import { appAtomRegistry } from "./atom-registry";
 import { serverEnvironment } from "./server";
 import { useAtomCommand } from "./use-atom-command";
@@ -94,7 +96,6 @@ export interface UsageView {
 }
 
 export function useUsage(input: UsageSummaryInput): UsageView {
-  const [refreshToken, setRefreshToken] = useState<string>();
   const rangeKey = useMemo(
     () =>
       JSON.stringify({
@@ -114,10 +115,7 @@ export function useUsage(input: UsageSummaryInput): UsageView {
       input.untilTime,
     ],
   );
-  const windowKey = useMemo(
-    () => JSON.stringify({ ...JSON.parse(rangeKey), refreshToken }),
-    [rangeKey, refreshToken],
-  );
+  const windowKey = rangeKey;
   const atom = usageByWindowAtom(windowKey);
   const currentEnvironments = useAtomValue(atom);
   const settledStatuses = useRef<SettledUsageStatuses<EnvironmentUsageStatus> | null>(null);
@@ -212,34 +210,46 @@ export function useUsage(input: UsageSummaryInput): UsageView {
             (environment) =>
               (environment.summary?.contractVersion ?? 0) < USAGE_EXPLICIT_REFRESH_SINCE,
           );
-          const legacyAnswered = refreshEnvironments.flatMap((environment) =>
-            environment.summary !== null &&
-            environment.summary.contractVersion < USAGE_EXPLICIT_REFRESH_SINCE
-              ? [
+          const legacyAnswered = legacyOrUnknown.flatMap((environment) =>
+            environment.summary === null
+              ? []
+              : [
                   {
                     environmentId: environment.environmentId,
                     label: environment.label,
                     summary: environment.summary,
                   },
-                ]
-              : [],
+                ],
           );
-          const nextToken = makeUsageRefreshToken(legacyAnswered);
-          if (legacyOrUnknown.length > 0) {
-            if (nextToken !== undefined && nextToken !== refreshToken) {
-              setRefreshToken(nextToken);
-            } else {
-              for (const environment of legacyOrUnknown) {
-                appAtomRegistry.refresh(
-                  serverEnvironment.usageSummary({
-                    environmentId: environment.environmentId,
-                    input: { ...input, refreshToken },
-                  }),
-                );
-              }
+          const refreshToken = JSON.stringify([
+            makeUsageRefreshToken(legacyAnswered) ?? "unknown",
+            uuidv4(),
+          ]);
+          const fallbackRefreshes = legacyOrUnknown.map(async (environment) => {
+            const refreshed = await executeAtomQuery(
+              appAtomRegistry,
+              serverEnvironment.usageSummary({
+                environmentId: environment.environmentId,
+                input: { ...input, refreshToken },
+              }),
+              { reportFailure: false, refresh: true },
+            );
+            if (refreshed._tag === "Failure") return refreshed;
+            const baseAtom = serverEnvironment.usageSummary({
+              environmentId: environment.environmentId,
+              input,
+            });
+            if (appAtomRegistry.get(baseAtom).waiting) {
+              await executeAtomQuery(appAtomRegistry, baseAtom, {
+                reportFailure: false,
+              });
             }
-          }
-          return Promise.all(explicitRefreshes);
+            return executeAtomQuery(appAtomRegistry, baseAtom, {
+              reportFailure: false,
+              refresh: true,
+            });
+          });
+          return Promise.all([...explicitRefreshes, ...fallbackRefreshes]);
         })
         .then((results) => {
           const nextState = completeUsageRefresh(
@@ -264,7 +274,7 @@ export function useUsage(input: UsageSummaryInput): UsageView {
           if (nextState !== null) setManualRefreshState(nextState);
         });
     },
-    [answered, environments, rangeKey, refreshToken, refreshUsageRates, refreshUsageSummary],
+    [environments, rangeKey, refreshUsageRates, refreshUsageSummary],
   );
 
   const merged = useMemo(() => mergeUsage(answered, USAGE_CONTRACT_VERSION), [answered]);

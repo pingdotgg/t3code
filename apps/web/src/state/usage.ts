@@ -40,6 +40,8 @@ import {
   type MergedUsage,
   type SettledUsageStatuses,
 } from "@t3tools/shared/usageMerge";
+import { executeAtomQuery } from "@t3tools/client-runtime/state/runtime";
+import { randomUUID } from "../lib/utils";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentPresentations } from "./presentation";
 import { serverEnvironment } from "./server";
@@ -114,7 +116,6 @@ export function useUsage(
   /** Refresh the deferred thread query only while its table is mounted. */
   refreshThreads = false,
 ): UsageView {
-  const [refreshToken, setRefreshToken] = useState<string>();
   const rangeKey = useMemo(
     () =>
       JSON.stringify({
@@ -134,27 +135,7 @@ export function useUsage(
       input.untilTime,
     ],
   );
-  const windowKey = useMemo(
-    () =>
-      JSON.stringify({
-        sinceDay: input.sinceDay,
-        untilDay: input.untilDay,
-        timeZone: input.timeZone,
-        resolution: input.resolution,
-        sinceTime: input.sinceTime,
-        untilTime: input.untilTime,
-        refreshToken,
-      }),
-    [
-      input.sinceDay,
-      input.untilDay,
-      input.timeZone,
-      input.resolution,
-      input.sinceTime,
-      input.untilTime,
-      refreshToken,
-    ],
-  );
+  const windowKey = rangeKey;
   const atom = usageByWindowAtom(windowKey);
   const currentEnvironments = useAtomValue(atom);
   const settledStatuses = useRef<SettledUsageStatuses<EnvironmentUsageStatus> | null>(null);
@@ -258,33 +239,45 @@ export function useUsage(
             (environment) =>
               (environment.summary?.contractVersion ?? 0) < USAGE_EXPLICIT_REFRESH_SINCE,
           );
-          const legacyAnswered = refreshEnvironments.flatMap((environment) =>
-            environment.summary !== null &&
-            environment.summary.contractVersion < USAGE_EXPLICIT_REFRESH_SINCE
-              ? [
+          const legacyAnswered = legacyOrUnknown.flatMap((environment) =>
+            environment.summary === null
+              ? []
+              : [
                   {
                     environmentId: environment.environmentId,
                     label: environment.label,
                     summary: environment.summary,
                   },
-                ]
-              : [],
+                ],
           );
-          const nextToken = makeUsageRefreshToken(legacyAnswered);
-          if (legacyOrUnknown.length > 0) {
-            if (nextToken !== undefined && nextToken !== refreshToken) {
-              setRefreshToken(nextToken);
-            } else {
-              for (const environment of legacyOrUnknown) {
-                appAtomRegistry.refresh(
-                  serverEnvironment.usageSummary({
-                    environmentId: environment.environmentId,
-                    input: { ...requestInput, refreshToken },
-                  }),
-                );
-              }
+          const refreshToken = JSON.stringify([
+            makeUsageRefreshToken(legacyAnswered) ?? "unknown",
+            randomUUID(),
+          ]);
+          const fallbackRefreshes = legacyOrUnknown.map(async (environment) => {
+            const refreshed = await executeAtomQuery(
+              appAtomRegistry,
+              serverEnvironment.usageSummary({
+                environmentId: environment.environmentId,
+                input: { ...requestInput, refreshToken },
+              }),
+              { reportFailure: false, refresh: true },
+            );
+            if (refreshed._tag === "Failure") return refreshed;
+            const baseAtom = serverEnvironment.usageSummary({
+              environmentId: environment.environmentId,
+              input: requestInput,
+            });
+            if (appAtomRegistry.get(baseAtom).waiting) {
+              await executeAtomQuery(appAtomRegistry, baseAtom, {
+                reportFailure: false,
+              });
             }
-          }
+            return executeAtomQuery(appAtomRegistry, baseAtom, {
+              reportFailure: false,
+              refresh: true,
+            });
+          });
 
           if (refreshThreads) {
             for (const contribution of filterProviderContributionsForProject(
@@ -305,7 +298,7 @@ export function useUsage(
               );
             }
           }
-          return Promise.all(explicitRefreshes);
+          return Promise.all([...explicitRefreshes, ...fallbackRefreshes]);
         })
         .then((results) => {
           const nextState = completeUsageRefresh(
@@ -331,13 +324,11 @@ export function useUsage(
         });
     },
     [
-      answered,
       environments,
       merged.providerContributions,
       projectFilter,
       rangeKey,
       refreshThreads,
-      refreshToken,
       refreshUsageRates,
       refreshUsageSummary,
     ],

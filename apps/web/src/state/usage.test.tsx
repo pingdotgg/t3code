@@ -20,14 +20,23 @@ const mocks = vi.hoisted(() => ({
   refreshUsageSummary: vi.fn(),
   refreshUsageRates: vi.fn(),
   refreshAtom: vi.fn(),
+  getAtom: vi.fn(() => ({ waiting: false })),
+  usageSummary: vi.fn((_request: { environmentId: string; input: UsageSummaryInput }) => ({})),
+  executeAtomQuery: vi.fn(),
 }));
 
 vi.mock("@effect/atom-react", () => ({ useAtomValue: () => mocks.statuses }));
-vi.mock("../rpc/atomRegistry", () => ({ appAtomRegistry: { refresh: mocks.refreshAtom } }));
+vi.mock("@t3tools/client-runtime/state/runtime", () => ({
+  executeAtomQuery: mocks.executeAtomQuery,
+}));
+vi.mock("../lib/utils", () => ({ randomUUID: () => "refresh-attempt" }));
+vi.mock("../rpc/atomRegistry", () => ({
+  appAtomRegistry: { get: mocks.getAtom, refresh: mocks.refreshAtom },
+}));
 vi.mock("./presentation", () => ({ presentationsAtom: {} }));
 vi.mock("./server", () => ({
   serverEnvironment: {
-    usageSummary: vi.fn(() => ({})),
+    usageSummary: mocks.usageSummary,
     refreshUsageSummary: mocks.refreshSummaryCommand,
     refreshUsageRates: mocks.refreshRatesCommand,
   },
@@ -165,6 +174,11 @@ describe("web useUsage boundary refresh", () => {
     mocks.refreshUsageRates.mockReset();
     mocks.refreshUsageRates.mockResolvedValue({ _tag: "Success" });
     mocks.refreshAtom.mockReset();
+    mocks.getAtom.mockReset();
+    mocks.getAtom.mockReturnValue({ waiting: false });
+    mocks.usageSummary.mockClear();
+    mocks.executeAtomQuery.mockReset();
+    mocks.executeAtomQuery.mockResolvedValue({ _tag: "Success" });
   });
 
   it.each([
@@ -203,19 +217,72 @@ describe("web useUsage boundary refresh", () => {
   );
 
   it.each([
-    [12, 0],
-    [13, 1],
-  ] as const)("uses the explicit refresh RPC only for a v%s server", async (version, calls) => {
+    [12, 0, 2],
+    [13, 1, 0],
+  ] as const)(
+    "uses the explicit refresh RPC only for a v%s server",
+    async (version, calls, fallbacks) => {
+      mocks.statuses = [
+        {
+          environmentId: "env-1",
+          label: "Local",
+          isPending: false,
+          error: null,
+          summary: { ...SUMMARY, contractVersion: version } as UsageSummary,
+        },
+      ];
+      mocks.refreshUsageSummary.mockResolvedValue({ _tag: "Success" });
+      let view!: UsageView;
+      const root = await renderHarness(WINDOW_A, (nextView) => {
+        view = nextView;
+      });
+
+      try {
+        await act(async () => {
+          view.refresh();
+          await Promise.resolve();
+          await Promise.resolve();
+        });
+        expect(mocks.refreshUsageRates).toHaveBeenCalledOnce();
+        expect(mocks.refreshUsageSummary).toHaveBeenCalledTimes(calls);
+        expect(mocks.executeAtomQuery).toHaveBeenCalledTimes(fallbacks);
+        if (version === 12) {
+          const tokenInput = mocks.usageSummary.mock.calls[0]?.[0]?.input;
+          expect(tokenInput).toEqual({
+            ...WINDOW_A,
+            refreshToken: expect.any(String),
+          });
+          if (tokenInput?.refreshToken === undefined) throw new Error("missing refresh token");
+          expect(JSON.parse(tokenInput.refreshToken)).toEqual([
+            expect.any(String),
+            "refresh-attempt",
+          ]);
+          expect(mocks.usageSummary).toHaveBeenNthCalledWith(2, {
+            environmentId: "env-1",
+            input: WINDOW_A,
+          });
+        }
+      } finally {
+        await act(() => root.unmount());
+        vi.unstubAllGlobals();
+      }
+    },
+  );
+
+  it("waits for the subscribed base query to publish a successful legacy refresh", async () => {
+    const published = deferred<{ _tag: "Success" | "Failure" }>();
     mocks.statuses = [
       {
         environmentId: "env-1",
         label: "Local",
         isPending: false,
         error: null,
-        summary: { ...SUMMARY, contractVersion: version } as UsageSummary,
+        summary: { ...SUMMARY, contractVersion: 12 } as UsageSummary,
       },
     ];
-    mocks.refreshUsageSummary.mockResolvedValue({ _tag: "Success" });
+    mocks.executeAtomQuery
+      .mockResolvedValueOnce({ _tag: "Success" })
+      .mockReturnValueOnce(published.promise);
     let view!: UsageView;
     const root = await renderHarness(WINDOW_A, (nextView) => {
       view = nextView;
@@ -227,8 +294,65 @@ describe("web useUsage boundary refresh", () => {
         await Promise.resolve();
         await Promise.resolve();
       });
-      expect(mocks.refreshUsageRates).toHaveBeenCalledOnce();
-      expect(mocks.refreshUsageSummary).toHaveBeenCalledTimes(calls);
+      expect(mocks.executeAtomQuery).toHaveBeenCalledTimes(2);
+      expect(mocks.usageSummary).toHaveBeenNthCalledWith(2, {
+        environmentId: "env-1",
+        input: WINDOW_A,
+      });
+      expect(view.isRefreshing).toBe(true);
+
+      await act(async () => {
+        published.resolve({ _tag: "Success" });
+        await published.promise;
+      });
+      expect(view.isRefreshing).toBe(false);
+      expect(view.refreshError).toBeNull();
+    } finally {
+      await act(() => root.unmount());
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("waits for a failed legacy fallback query before completing refresh", async () => {
+    const fallback = deferred<{ _tag: "Success" | "Failure" }>();
+    mocks.statuses = [
+      {
+        environmentId: "env-1",
+        label: "Local",
+        isPending: false,
+        error: "This environment could not report usage.",
+        summary: null,
+      },
+    ];
+    mocks.executeAtomQuery.mockReturnValue(fallback.promise);
+    let view!: UsageView;
+    const root = await renderHarness(WINDOW_A, (nextView) => {
+      view = nextView;
+    });
+
+    try {
+      await act(async () => {
+        view.refresh();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(mocks.refreshUsageSummary).not.toHaveBeenCalled();
+      expect(mocks.executeAtomQuery).toHaveBeenCalledOnce();
+      expect(mocks.usageSummary).toHaveBeenCalledWith({
+        environmentId: "env-1",
+        input: {
+          ...WINDOW_A,
+          refreshToken: JSON.stringify(["unknown", "refresh-attempt"]),
+        },
+      });
+      expect(view.isRefreshing).toBe(true);
+
+      await act(async () => {
+        fallback.resolve({ _tag: "Failure" });
+        await fallback.promise;
+      });
+      expect(view.isRefreshing).toBe(false);
+      expect(view.refreshError).toBe("Refresh failed. Showing the last successful usage snapshot.");
     } finally {
       await act(() => root.unmount());
       vi.unstubAllGlobals();
