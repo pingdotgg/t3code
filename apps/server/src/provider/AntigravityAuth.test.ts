@@ -61,7 +61,7 @@ const makeHarness = Effect.fn("makeAuthTestHarness")(function* (
   } = {},
 ) {
   const authenticated = yield* Deferred.make<void, AcpErrors.AcpError>();
-  const discovered = yield* Deferred.make<void>();
+  const discovered = yield* Deferred.make<void, AcpErrors.AcpError>();
   const closed = yield* Deferred.make<void>();
   const events: string[] = [];
   let receiveAuthorizationUrl:
@@ -240,6 +240,25 @@ it.layer(NodeServices.layer)("AntigravityAuth", (it) => {
       assert.isNull(failed.authorizationUrl);
       assert.deepEqual(harness.catalog(), ["previous-account-model"]);
       yield* Deferred.await(harness.closed);
+    }),
+  );
+
+  it.effect("keeps a failed session request from reading as a Google sign-in failure", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      const state = yield* harness.auth.controller.start(owner);
+      yield* phase(harness.auth, "waiting");
+      yield* harness.auth.controller.complete(owner, { flowId: state.flowId!, callbackUrl });
+      yield* Deferred.succeed(harness.authenticated, undefined);
+      yield* Deferred.fail(
+        harness.discovered,
+        AcpErrors.AcpRequestError.internalError("Internal error", undefined, {
+          method: "session/new",
+        }),
+      );
+      const failed = yield* phase(harness.auth, "failed");
+      assert.notInclude(failed.message ?? "", "Google sign-in failed");
+      assert.include(failed.message ?? "", "could not start a session");
     }),
   );
 

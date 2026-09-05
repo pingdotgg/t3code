@@ -117,6 +117,12 @@ function safeAuthFailure(cause: Cause.Cause<unknown>, usesBrowser: boolean): str
       if (!usesBrowser && error.value.code === -32602) {
         return "Antigravity rejected the configured credentials. Check the provider settings.";
       }
+      // Authentication already succeeded once the flow reaches a session
+      // request, so the stored credentials are valid. Telling the user to sign
+      // in again would send them through a sign-out that deletes them.
+      if (error.value.method?.startsWith("session/")) {
+        return "Signed in, but Antigravity could not start a session. Retry without signing out.";
+      }
     }
   }
   return usesBrowser
