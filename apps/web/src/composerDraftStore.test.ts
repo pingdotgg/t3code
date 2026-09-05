@@ -2507,6 +2507,49 @@ function createMockStorage() {
 }
 
 describe("composer draft persistence", () => {
+  it("restores persisted preview annotations after reload", () => {
+    const threadId = ThreadId.make("preview-annotation-draft");
+    const annotation = {
+      id: "annotation-1",
+      pageUrl: "http://localhost:3000/dashboard",
+      pageTitle: "Dashboard",
+      comment: "Align these cards.",
+      elements: [],
+      regions: [],
+      strokes: [],
+      styleChanges: [],
+      screenshot: null,
+      createdAt: "2026-09-04T12:00:00.000Z",
+    };
+    const persistApi = useComposerDraftStore.persist as unknown as {
+      getOptions: () => {
+        merge: (
+          persistedState: unknown,
+          currentState: ReturnType<typeof useComposerDraftStore.getState>,
+        ) => ReturnType<typeof useComposerDraftStore.getState>;
+      };
+    };
+
+    const mergedState = persistApi.getOptions().merge(
+      {
+        draftsByThreadId: {
+          [threadId]: {
+            prompt: "",
+            attachments: [],
+            previewAnnotations: [annotation],
+          },
+        },
+        draftThreadsByThreadId: {},
+        projectDraftThreadIdByProjectKey: {},
+      },
+      useComposerDraftStore.getInitialState(),
+    );
+
+    expect(mergedState.draftsByThreadKey[threadKeyFor(threadId)]?.previewAnnotations).toEqual([
+      annotation,
+    ]);
+  });
+
   it("defers attachment reads and serialization until typing stops, then restores the last draft", async () => {
     await useComposerDraftStore.persist.clearStorage();
     vi.useFakeTimers();
