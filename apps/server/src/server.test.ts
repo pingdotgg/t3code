@@ -8,6 +8,7 @@ import {
   type DeviceServiceState,
   AuthAccessTokenType,
   AuthAdministrativeScopes,
+  AuthOrchestrationOperateScope,
   AuthSourceControlWriteScope,
   AuthPreviewOperateScope,
   AuthStandardClientScopes,
