@@ -1,8 +1,15 @@
+// @effect-diagnostics nodeBuiltinImport:off - This Electron adapter reads the packaged manifest before platform layers are available.
+import {
+  DesktopPackageMetadata,
+  type DesktopPackagedAppIdentity,
+} from "@t3tools/shared/desktopBuild";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
 
 import * as Electron from "electron";
 
@@ -12,12 +19,17 @@ export interface ElectronAppMetadata {
   readonly isPackaged: boolean;
   readonly resourcesPath: string;
   readonly runningUnderArm64Translation: boolean;
+  readonly packagedIdentity?: DesktopPackagedAppIdentity;
 }
+
+const decodeDesktopPackageMetadata = Schema.decodeEffect(
+  Schema.fromJsonString(DesktopPackageMetadata),
+);
 
 export class ElectronAppMetadataReadError extends Schema.TaggedErrorClass<ElectronAppMetadataReadError>()(
   "ElectronAppMetadataReadError",
   {
-    property: Schema.Literals(["app-version", "app-path"]),
+    property: Schema.Literals(["app-version", "app-path", "package-metadata"]),
     cause: Schema.Defect(),
   },
 ) {
@@ -116,13 +128,36 @@ export const make = ElectronApp.of({
           cause,
         }),
     });
-
+    const packageMetadata = Electron.app.isPackaged
+      ? yield* Effect.try({
+          try: () => NodeFS.readFileSync(NodePath.join(appPath, "package.json"), "utf8"),
+          catch: (cause) =>
+            new ElectronAppMetadataReadError({
+              property: "package-metadata",
+              cause,
+            }),
+        })
+      : undefined;
+    const packagedIdentity =
+      packageMetadata === undefined
+        ? undefined
+        : yield* decodeDesktopPackageMetadata(packageMetadata).pipe(
+            Effect.map((metadata) => metadata.t3codeDesktopIdentity),
+            Effect.mapError(
+              (cause) =>
+                new ElectronAppMetadataReadError({
+                  property: "package-metadata",
+                  cause,
+                }),
+            ),
+          );
     return {
       appVersion,
       appPath,
       isPackaged: Electron.app.isPackaged,
       resourcesPath: process.resourcesPath,
       runningUnderArm64Translation: Electron.app.runningUnderARM64Translation === true,
+      ...(packagedIdentity === undefined ? {} : { packagedIdentity }),
     };
   }),
   name: Effect.sync(() => Electron.app.name),

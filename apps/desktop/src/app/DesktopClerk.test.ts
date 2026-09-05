@@ -51,7 +51,7 @@ const makeDesktopClerkLayer = (isDevelopment = true, events: string[] = []) => {
       Layer.mergeAll(
         Layer.succeed(DesktopEnvironment.DesktopEnvironment, environment),
         Layer.succeed(ElectronApp.ElectronApp, electronApp),
-        FileSystem.layerNoop({ exists: () => Effect.succeed(false) }),
+        FileSystem.layerNoop({ exists: () => Effect.promise(async () => false) }),
       ),
     ),
   );
@@ -72,6 +72,14 @@ describe("DesktopClerk", () => {
     );
     assert.equal(DesktopClerk.resolveDesktopClerkFrontendApiHostname(""), undefined);
     assert.equal(DesktopClerk.resolveDesktopClerkFrontendApiHostname("invalid"), undefined);
+  });
+
+  it("acquires the bridge synchronously before Electron ready", () => {
+    storageMock.mockReturnValue(storageAdapter);
+    createClerkBridgeMock.mockReturnValue({ cleanup: vi.fn(), isPrimaryInstance: true });
+    // oxlint-disable-next-line t3code/no-manual-effect-runtime-in-tests -- This regression must reject asynchronous pre-ready initialization; it.effect would hide the Electron startup race.
+    Effect.runSync(Effect.scoped(Layer.build(makeDesktopClerkLayer(false))));
+    assert.equal(createClerkBridgeMock.mock.calls.length, 1);
   });
 
   it.effect("acquires and releases the SDK bridge with the layer", () => {
@@ -210,25 +218,32 @@ describe("DesktopClerk", () => {
   });
 
   it.each([
-    { isDevelopment: true, scheme: "t3code-dev" },
-    { isDevelopment: false, scheme: "t3code" },
-  ])("configures the SDK with the $scheme renderer origin", ({ isDevelopment, scheme }) => {
-    const bridge = { cleanup: vi.fn(), isPrimaryInstance: true };
-    storageMock.mockReturnValue(storageAdapter);
-    createClerkBridgeMock.mockReturnValue(bridge);
+    { isDevelopment: true, distributionId: null, scheme: "t3code-dev" },
+    { isDevelopment: false, distributionId: null, scheme: "t3code" },
+    { isDevelopment: false, distributionId: "fork-abc", scheme: "t3code-fork-abc" },
+  ])(
+    "configures the SDK with the $scheme renderer origin",
+    ({ isDevelopment, distributionId, scheme }) => {
+      const bridge = { cleanup: vi.fn(), isPrimaryInstance: true };
+      storageMock.mockReturnValue(storageAdapter);
+      createClerkBridgeMock.mockReturnValue(bridge);
 
-    assert.equal(DesktopClerk.createDesktopClerkBridge("/tmp/t3-state", isDevelopment), bridge);
-    assert.deepEqual(storageMock.mock.calls, [[{ path: "/tmp/t3-state" }]]);
-    assert.deepEqual(createClerkBridgeMock.mock.calls, [
-      [
-        {
-          storage: storageAdapter,
-          passkeys: true,
-          renderer: { scheme, host: "app" },
-        },
-      ],
-    ]);
-    storageMock.mockClear();
-    createClerkBridgeMock.mockClear();
-  });
+      assert.equal(
+        DesktopClerk.createDesktopClerkBridge("/tmp/t3-state", isDevelopment, distributionId),
+        bridge,
+      );
+      assert.deepEqual(storageMock.mock.calls, [[{ path: "/tmp/t3-state" }]]);
+      assert.deepEqual(createClerkBridgeMock.mock.calls, [
+        [
+          {
+            storage: storageAdapter,
+            passkeys: true,
+            renderer: { scheme, host: "app" },
+          },
+        ],
+      ]);
+      storageMock.mockClear();
+      createClerkBridgeMock.mockClear();
+    },
+  );
 });

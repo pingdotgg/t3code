@@ -208,6 +208,40 @@ available.
 - Repository slug source:
   - `T3CODE_DESKTOP_UPDATE_REPOSITORY` (format `owner/repo`), if set.
   - otherwise `GITHUB_REPOSITORY` from GitHub Actions.
+
+### Custom desktop release sources
+
+Packaged desktop builds can use a custom GitHub repository as their update source. In the About
+panel, select the desired update track and enter the repository as `owner/repository` in
+**Release source**. Leaving the field empty restores the repository bundled into the build.
+
+The selected track still controls release selection: Stable reads releases and Nightly reads
+prereleases from the custom repository. A downstream Nightly builder can therefore merge selected
+pull requests onto upstream `main`, publish compatible Nightly artifacts in its own repository,
+and have installed clients follow that repository without changing the upstream release channel.
+
+The custom source is persisted in the shared `~/.t3/userdata` state directory, so side-by-side
+installations can affect one another; it is restricted to GitHub repositories.
+The custom repository must publish the same platform artifact names and updater metadata as the
+standard release workflow. The updater does not verify that a custom repository is maintained by
+T3 Tools, so this setting should only be used with a release source you control.
+
+Downstream builds that coexist with an upstream installation must set
+`T3CODE_DESKTOP_DISTRIBUTION` while building every artifact. For example, `Fork` produces the
+stable product name `T3 Code (Fork)`, the stage-aware About label `T3 Code (Fork Nightly)`, and
+bundle/package identities with a bounded `fork-<sha256>` suffix. The digest keeps distinct labels
+from sharing an update identity without expanding filesystem names. Keep the distribution value
+stable across releases and install the first downstream build manually. Do not rename the `.app`
+bundle after installing it. The desktop checks that its bundle path is canonical for the same
+distribution and either packaged channel before it stops backends or asks the native updater to
+quit.
+
+Downstream branding also isolates Electron's browser profile and encrypted connection catalog. The
+downstream app still shares `~/.t3` projects, threads, settings, and backend data with the upstream
+app, but it does not open the upstream app's live Chromium profile or attempt to decrypt its saved
+remote-environment credentials with a different macOS safe-storage key. Remote environments must
+therefore be added separately in each distribution.
+
 - Required release assets for updater:
   - platform installers (`.exe`, `.dmg`, `.AppImage`, plus macOS `.zip` for Squirrel.Mac update payloads)
   - channel metadata: `latest*.yml` for stable releases, `nightly*.yml` for nightly releases

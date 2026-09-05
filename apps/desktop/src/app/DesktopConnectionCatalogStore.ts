@@ -21,6 +21,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 
 import * as ElectronSafeStorage from "../electron/ElectronSafeStorage.ts";
 import * as DesktopSavedEnvironments from "../settings/DesktopSavedEnvironments.ts";
@@ -133,6 +134,20 @@ export class DesktopConnectionCatalogStoreMigrationError extends Schema.TaggedEr
   }
 }
 
+export class DesktopConnectionCatalogStorePromotionError extends Schema.TaggedErrorClass<DesktopConnectionCatalogStorePromotionError>()(
+  "DesktopConnectionCatalogStorePromotionError",
+  {
+    operation: Schema.Literal("promote-legacy-catalog"),
+    sourceCatalogPath: Schema.String,
+    catalogPath: Schema.String,
+    cause: Schema.instanceOf(DesktopConnectionCatalogStoreWriteError),
+  },
+) {
+  override get message(): string {
+    return `Desktop connection catalog promotion failed from ${this.sourceCatalogPath} to ${this.catalogPath}.`;
+  }
+}
+
 export class DesktopConnectionCatalogStoreProtectionError extends Schema.TaggedErrorClass<DesktopConnectionCatalogStoreProtectionError>()(
   "DesktopConnectionCatalogStoreProtectionError",
   {
@@ -155,6 +170,7 @@ export class DesktopConnectionCatalogStore extends Context.Service<
       | DesktopConnectionCatalogStoreDocumentDecodeError
       | DesktopConnectionCatalogStoreDecodeError
       | DesktopConnectionCatalogStoreMigrationError
+      | DesktopConnectionCatalogStorePromotionError
       | DesktopConnectionCatalogStoreProtectionError
     >;
     readonly set: (
@@ -382,7 +398,24 @@ export const make = Effect.gen(function* () {
   const safeStorage = yield* ElectronSafeStorage.ElectronSafeStorage;
   const crypto = yield* Crypto.Crypto;
   const savedEnvironments = yield* DesktopSavedEnvironments.DesktopSavedEnvironments;
-  const catalogPath = path.join(environment.stateDir, "connection-catalog.json");
+  const catalogPath = environment.connectionCatalogPath;
+  const mutex = yield* Semaphore.make(1);
+  const resolveCatalogReadPath = Effect.gen(function* () {
+    for (const candidate of [catalogPath, ...environment.legacyConnectionCatalogPaths]) {
+      const exists = yield* fileSystem
+        .exists(candidate)
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new DesktopConnectionCatalogStoreReadError({ catalogPath: candidate, cause }),
+          ),
+        );
+      if (exists) {
+        return candidate;
+      }
+    }
+    return catalogPath;
+  });
   const encryptionAvailable = safeStorage.isEncryptionAvailable.pipe(
     Effect.mapError(
       (cause) =>
@@ -429,6 +462,12 @@ export const make = Effect.gen(function* () {
   });
 
   const migrateLegacyCatalog = Effect.gen(function* () {
+    // Legacy saved-environment secrets belong to the official app's safeStorage
+    // identity. A downstream app cannot decrypt them without a macOS Keychain
+    // prompt, so it must begin with its own empty catalog instead.
+    if (environment.isDownstreamDistribution) {
+      return Option.none<string>();
+    }
     if (!(yield* encryptionAvailable)) {
       return Option.none<string>();
     }
@@ -471,45 +510,65 @@ export const make = Effect.gen(function* () {
 
   return DesktopConnectionCatalogStore.of({
     get: Effect.gen(function* () {
-      const document = yield* readDocument(fileSystem, catalogPath);
+      const readPath = yield* resolveCatalogReadPath;
+      const document = yield* readDocument(fileSystem, readPath);
       if (Option.isNone(document)) {
         return yield* migrateLegacyCatalog;
       }
       if (!(yield* encryptionAvailable)) {
         return Option.none<string>();
       }
-      const decrypted = yield* decodeSecretBytes(catalogPath, document.value.encryptedCatalog).pipe(
+      const decrypted = yield* decodeSecretBytes(readPath, document.value.encryptedCatalog).pipe(
         Effect.flatMap((encryptedCatalog) =>
           safeStorage.decryptString(encryptedCatalog).pipe(
             Effect.mapError(
               (cause) =>
                 new DesktopConnectionCatalogStoreProtectionError({
                   operation: "decrypt-catalog",
-                  catalogPath,
+                  catalogPath: readPath,
                   cause,
                 }),
             ),
           ),
         ),
       );
+      if (readPath !== catalogPath) {
+        yield* writeCatalog(decrypted).pipe(
+          Effect.catchTags({
+            DesktopConnectionCatalogStoreWriteError: (cause) =>
+              Effect.fail(
+                new DesktopConnectionCatalogStorePromotionError({
+                  operation: "promote-legacy-catalog",
+                  sourceCatalogPath: readPath,
+                  catalogPath,
+                  cause,
+                }),
+              ),
+          }),
+        );
+      }
       return Option.some(decrypted);
-    }).pipe(Effect.withSpan("desktop.connectionCatalogStore.get")),
-    set: Effect.fn("desktop.connectionCatalogStore.set")(function* (catalog) {
+    }).pipe(mutex.withPermits(1), Effect.withSpan("desktop.connectionCatalogStore.get")),
+    set: Effect.fn("desktop.connectionCatalogStore.set")(function* (catalog: string) {
       if (!(yield* encryptionAvailable)) {
         return false;
       }
       yield* writeCatalog(catalog);
       return true;
-    }),
-    clear: fileSystem.remove(catalogPath, { force: true }).pipe(
-      Effect.catch((error) =>
-        Effect.logWarning("Could not clear the desktop connection catalog.", {
-          catalogPath,
-          error,
-        }),
-      ),
-      Effect.withSpan("desktop.connectionCatalogStore.clear"),
-    ),
+    }, mutex.withPermits(1)),
+    clear: Effect.forEach(
+      [catalogPath, ...environment.legacyConnectionCatalogPaths],
+      (candidate) =>
+        fileSystem.remove(candidate, { force: true }).pipe(
+          Effect.catch((error) =>
+            Effect.logWarning("Could not clear the desktop connection catalog.", {
+              catalogPath: candidate,
+              error,
+            }),
+          ),
+        ),
+      { discard: true },
+    ).pipe(mutex.withPermits(1), Effect.withSpan("desktop.connectionCatalogStore.clear")),
   });
 });
 

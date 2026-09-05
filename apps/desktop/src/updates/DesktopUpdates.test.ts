@@ -18,6 +18,15 @@ import * as DesktopState from "../app/DesktopState.ts";
 import * as DesktopUpdates from "./DesktopUpdates.ts";
 import { flushCallbacks, makeHarness } from "./updatesTestHarness.ts";
 
+const forkNightlyIdentity = {
+  appId: "com.t3tools.t3code.fork-nightly",
+  packageName: "t3code-fork-nightly",
+  productName: "T3 Code (Fork Nightly)",
+  displayName: "T3 Code (Fork Nightly Nightly)",
+  distributionName: "Fork Nightly",
+  distributionId: "fork-nightly",
+} as const;
+
 describe("DesktopUpdates", () => {
   it("preserves complete causes for update poller and event failures", () => {
     const cause = Cause.combine(
@@ -83,6 +92,88 @@ describe("DesktopUpdates", () => {
 
       assert.equal(harness.listenerCount(), 0);
     }).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
+  it.effect("uses the Nightly release channel for a custom GitHub repository", () => {
+    const harness = makeHarness({
+      env: { T3CODE_DESKTOP_MOCK_UPDATES: "false" },
+      updateRepository: "acme/t3code",
+    });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+
+        assert.deepEqual(harness.feedUrls(), [
+          {
+            provider: "github",
+            owner: "acme",
+            repo: "t3code",
+            releaseType: "prerelease",
+            channel: "nightly",
+          },
+        ]);
+        const state = yield* updates.getState;
+        assert.equal(state.repository, "acme/t3code");
+        assert.equal(state.channel, "nightly");
+
+        const bundled = yield* updates.setChannel("nightly");
+        assert.isNull(bundled.repository);
+        assert.isFalse(bundled.enabled);
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
+  it.effect("enables a custom repository after starting without an update feed", () => {
+    const harness = makeHarness({
+      env: { T3CODE_DESKTOP_MOCK_UPDATES: "false" },
+      updateRepository: null,
+    });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+
+        assert.isFalse((yield* updates.getState).enabled);
+        assert.equal(harness.listenerCount(), 6);
+
+        const enabled = yield* updates.setRepository("acme/t3code");
+        assert.isTrue(enabled.enabled);
+        assert.equal(enabled.repository, "acme/t3code");
+        assert.equal(enabled.channel, "nightly");
+        assert.equal(harness.listenerCount(), 6);
+        assert.equal(harness.checkCount(), 1);
+
+        const disabled = yield* updates.setRepository(null);
+        assert.isFalse(disabled.enabled);
+
+        yield* updates.setRepository("acme/other");
+        assert.equal(harness.listenerCount(), 6);
+        assert.equal(harness.checkCount(), 2);
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
+  it.effect("rejects malformed custom repositories without changing the source", () => {
+    const harness = makeHarness({
+      env: { T3CODE_DESKTOP_MOCK_UPDATES: "false" },
+      updateRepository: "acme/t3code",
+    });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+
+        const error = yield* updates
+          .setRepository("https://example.com/releases")
+          .pipe(Effect.flip);
+        assert.instanceOf(error, DesktopUpdates.DesktopUpdateRepositoryError);
+        assert.equal((yield* updates.getState).repository, "acme/t3code");
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
 
   it.effect("subscribe delivers the latest state plus subsequent changes", () => {
@@ -362,6 +453,154 @@ describe("DesktopUpdates", () => {
       ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
     }),
   );
+
+  it.effect("leaves window closure to the updater after shutdown is ready", () => {
+    const harness = makeHarness();
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        harness.emit("update-downloaded", { version: "1.2.4" });
+        yield* flushCallbacks;
+
+        const result = yield* updates.install;
+
+        assert.isTrue(result.accepted);
+        assert.equal(harness.stopBackendCount(), 1);
+        assert.equal(harness.destroyWindowCount(), 0);
+        assert.equal(harness.quitAndInstallCount(), 1);
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
+  it.effect("keeps the app open when its macOS bundle was renamed", () => {
+    const harness = makeHarness({
+      appPath: "/Applications/T3 Code (Fork Nightly).app/Contents/Resources/app.asar",
+    });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const desktopState = yield* DesktopState.DesktopState;
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        harness.emit("update-downloaded", { version: "1.2.4" });
+        yield* flushCallbacks;
+
+        const result = yield* updates.install;
+
+        assert.isTrue(result.accepted);
+        assert.isFalse(result.completed);
+        assert.isFalse(yield* Ref.get(desktopState.quitting));
+        assert.equal(harness.stopBackendCount(), 0);
+        assert.equal(harness.destroyWindowCount(), 0);
+        assert.equal(harness.quitAndInstallCount(), 0);
+
+        const state = yield* updates.getState;
+        assert.equal(state.status, "downloaded");
+        assert.equal(state.errorContext, "install");
+        assert.equal(
+          state.message,
+          "This copy of T3 Code was renamed after installation. Reinstall it using the app name provided by its disk image before updating.",
+        );
+
+        const changedState = yield* updates.setChannel("nightly");
+        assert.equal(changedState.channel, "nightly");
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
+  it.effect("allows a macOS update after switching packaged channels", () => {
+    const harness = makeHarness({
+      appName: "T3 Code (Nightly)",
+      appPath: "/Applications/T3 Code (Alpha).app/Contents/Resources/app.asar",
+    });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        harness.emit("update-downloaded", { version: "1.2.4" });
+        yield* flushCallbacks;
+
+        const result = yield* updates.install;
+
+        assert.isTrue(result.accepted);
+        assert.equal(harness.stopBackendCount(), 1);
+        assert.equal(harness.quitAndInstallCount(), 1);
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
+  it.effect("does not strip a stage word from an explicit distribution name", () => {
+    const harness = makeHarness({
+      appName: "T3 Code (Fork Nightly Nightly)",
+      appPath: "/Applications/T3 Code (Fork Alpha).app/Contents/Resources/app.asar",
+      packagedIdentity: forkNightlyIdentity,
+    });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const desktopState = yield* DesktopState.DesktopState;
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        harness.emit("update-downloaded", { version: "1.2.4" });
+        yield* flushCallbacks;
+
+        const result = yield* updates.install;
+
+        assert.isTrue(result.accepted);
+        assert.isFalse(yield* Ref.get(desktopState.quitting));
+        assert.equal(harness.stopBackendCount(), 0);
+        assert.equal(harness.quitAndInstallCount(), 0);
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
+  it.effect("allows staged bundles for an explicit distribution ending in a stage word", () => {
+    const harness = makeHarness({
+      appName: "T3 Code (Fork Nightly Nightly)",
+      appPath: "/Applications/T3 Code (Fork Nightly Alpha).app/Contents/Resources/app.asar",
+      packagedIdentity: forkNightlyIdentity,
+    });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        harness.emit("update-downloaded", { version: "1.2.4" });
+        yield* flushCallbacks;
+
+        const result = yield* updates.install;
+
+        assert.isTrue(result.accepted);
+        assert.equal(harness.stopBackendCount(), 1);
+        assert.equal(harness.quitAndInstallCount(), 1);
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
+  it.effect("allows a downstream macOS update after switching packaged channels", () => {
+    const harness = makeHarness({
+      appName: "T3 Code (Fork Nightly)",
+      appPath: "/Applications/T3 Code (Fork Alpha).app/Contents/Resources/app.asar",
+    });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        harness.emit("update-downloaded", { version: "1.2.4" });
+        yield* flushCallbacks;
+
+        const result = yield* updates.install;
+
+        assert.isTrue(result.accepted);
+        assert.equal(harness.stopBackendCount(), 1);
+        assert.equal(harness.quitAndInstallCount(), 1);
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
 
   it.effect("keeps raw updater event failures out of update state", () => {
     const harness = makeHarness();
@@ -737,6 +976,40 @@ describe("DesktopUpdates", () => {
             assert.equal(error.action, "check");
             assert.equal(error.requestedChannel, "nightly");
           }
+
+          yield* Deferred.succeed(releaseCheck, undefined);
+          yield* Fiber.join(checkFiber);
+        }),
+      ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+    }),
+  );
+
+  it.effect("fails repository changes with repository context while a check is in progress", () =>
+    Effect.gen(function* () {
+      const checkStarted = yield* Deferred.make<void>();
+      const releaseCheck = yield* Deferred.make<void>();
+      const harness = makeHarness({
+        checkForUpdates: Deferred.succeed(checkStarted, undefined).pipe(
+          Effect.andThen(Deferred.await(releaseCheck)),
+        ),
+      });
+
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const updates = yield* DesktopUpdates.DesktopUpdates;
+          yield* updates.configure;
+
+          const checkFiber = yield* updates.check("manual").pipe(Effect.forkScoped);
+          yield* Deferred.await(checkStarted);
+
+          const error = yield* updates.setRepository("acme/t3code").pipe(Effect.flip);
+          assert.instanceOf(error, DesktopUpdates.DesktopUpdateRepositoryChangeInProgressError);
+          assert.equal(error.action, "check");
+          assert.equal(error.requestedRepository, "acme/t3code");
+          assert.equal(
+            error.message,
+            "Cannot change the desktop update source to acme/t3code while an update check action is in progress.",
+          );
 
           yield* Deferred.succeed(releaseCheck, undefined);
           yield* Fiber.join(checkFiber);

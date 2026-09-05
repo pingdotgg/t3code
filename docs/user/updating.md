@@ -21,6 +21,23 @@ interrupted, and threads without saved provider resume state need a new message.
 If you previously enabled continuation for updates, enable this setting once
 to allow recovery without a connected client.
 
+## Choose a desktop update track
+
+In the desktop app, open **Settings** → **General** and find **Update track** in the About section.
+
+- **Stable** follows full T3 Code releases.
+- **Nightly** follows T3 Code prereleases.
+- **Custom** follows Nightly prereleases from another public GitHub repository. Paste the
+  repository URL or its `owner/repository` name in **Release source**.
+
+Selecting Stable or Nightly clears the custom source. A source-code branch is not an installable
+update feed by itself. Its automation must publish the desktop manifests and installers as GitHub
+Release assets, then Custom can follow that repository.
+
+On macOS, keep the application name supplied by its disk image. Renaming the `.app` bundle breaks
+the native updater's replacement target. T3 Code detects that mismatch before shutdown and keeps
+the app open with recovery instructions.
+
 ## Update a connected server
 
 The offered action depends on how the server runs:

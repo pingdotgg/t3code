@@ -13,6 +13,7 @@ const {
   isDefaultProtocolClientMock,
   onMock,
   quitMock,
+  readFileMock,
   relaunchMock,
   removeListenerMock,
   removeSwitchMock,
@@ -35,6 +36,7 @@ const {
   isDefaultProtocolClientMock: vi.fn(() => false),
   onMock: vi.fn(),
   quitMock: vi.fn(),
+  readFileMock: vi.fn(() => '{"name":"t3code"}'),
   relaunchMock: vi.fn(),
   removeListenerMock: vi.fn(),
   removeSwitchMock: vi.fn(),
@@ -46,6 +48,10 @@ const {
   setNameMock: vi.fn(),
   setPathMock: vi.fn(),
   whenReadyMock: vi.fn(() => Promise.resolve()),
+}));
+
+vi.mock("node:fs", () => ({
+  readFileSync: readFileMock,
 }));
 
 vi.mock("electron", () => ({
@@ -93,10 +99,18 @@ describe("ElectronApp", () => {
     exitMock.mockClear();
     onMock.mockClear();
     quitMock.mockClear();
+    readFileMock.mockClear();
+    readFileMock.mockReturnValue('{"name":"t3code"}');
     relaunchMock.mockClear();
     removeListenerMock.mockClear();
     removeSwitchMock.mockClear();
     setPathMock.mockClear();
+  });
+
+  it("resolves packaged metadata without yielding before Electron ready", () => {
+    // oxlint-disable-next-line t3code/no-manual-effect-runtime-in-tests -- This regression must reject asynchronous pre-ready initialization; it.effect would hide the Electron startup race.
+    const metadata = Effect.runSync(ElectronApp.make.metadata);
+    assert.equal(metadata.isPackaged, true);
   });
 
   it.effect("reads app metadata through the service", () =>
@@ -113,6 +127,63 @@ describe("ElectronApp", () => {
       });
     }).pipe(Effect.provide(ElectronApp.layer)),
   );
+
+  it.effect("reads the packaged desktop identity from package metadata", () => {
+    readFileMock.mockReturnValueOnce(
+      JSON.stringify({
+        t3codeDesktopIdentity: {
+          appId: "com.t3tools.t3code.fork",
+          packageName: "t3code-fork",
+          productName: "T3 Code (Fork Nightly)",
+          displayName: "T3 Code (Fork Nightly Nightly)",
+          distributionName: "Fork Nightly",
+          distributionId: "fork-nightly",
+        },
+      }),
+    );
+
+    return Effect.gen(function* () {
+      const electronApp = yield* ElectronApp.ElectronApp;
+      const metadata = yield* electronApp.metadata;
+
+      assert.equal(metadata.packagedIdentity?.distributionName, "Fork Nightly");
+      assert.equal(metadata.packagedIdentity?.displayName, "T3 Code (Fork Nightly Nightly)");
+    }).pipe(Effect.provide(ElectronApp.layer));
+  });
+
+  it.effect("preserves the underlying package metadata read failure", () => {
+    const cause = new Error("manifest unavailable");
+    readFileMock.mockImplementationOnce(() => {
+      throw cause;
+    });
+
+    return Effect.gen(function* () {
+      const electronApp = yield* ElectronApp.ElectronApp;
+      const error = yield* electronApp.metadata.pipe(Effect.flip);
+
+      assert.instanceOf(error, ElectronApp.ElectronAppMetadataReadError);
+      assert.equal(error.property, "package-metadata");
+      assert.strictEqual(error.cause, cause);
+    }).pipe(Effect.provide(ElectronApp.layer));
+  });
+
+  it.effect("rejects malformed packaged desktop identity metadata", () => {
+    readFileMock.mockReturnValueOnce(
+      JSON.stringify({
+        t3codeDesktopIdentity: {
+          appId: "",
+        },
+      }),
+    );
+
+    return Effect.gen(function* () {
+      const electronApp = yield* ElectronApp.ElectronApp;
+      const error = yield* electronApp.metadata.pipe(Effect.flip);
+
+      assert.instanceOf(error, ElectronApp.ElectronAppMetadataReadError);
+      assert.equal(error.property, "package-metadata");
+    }).pipe(Effect.provide(ElectronApp.layer));
+  });
 
   it.effect("reads the OS locale through the service", () =>
     Effect.gen(function* () {

@@ -254,6 +254,7 @@ describe("DesktopServerExposure", () => {
       setServerExposureMode: () => Effect.fail(settingsFailure),
       setTailscaleServe: () => Effect.fail(settingsFailure),
       setUpdateChannel: () => Effect.die("unexpected update channel change"),
+      setUpdateRepository: () => Effect.die("unexpected update repository change"),
       setWslBackendEnabled: () => Effect.die("unexpected WSL backend toggle"),
       setWslDistro: () => Effect.die("unexpected WSL distro change"),
       setWslOnly: () => Effect.die("unexpected WSL-only toggle"),

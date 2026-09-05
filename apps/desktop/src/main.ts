@@ -69,9 +69,9 @@ import * as DesktopWslServerTree from "./wsl/DesktopWslServerTree.ts";
 
 const desktopEnvironmentLayer = Layer.unwrap(
   Effect.gen(function* () {
-    const metadata = yield* Effect.service(ElectronApp.ElectronApp).pipe(
-      Effect.flatMap((app) => app.metadata),
-    );
+    const electronApp = yield* ElectronApp.ElectronApp;
+    const metadata = yield* electronApp.metadata;
+    const appName = yield* electronApp.name;
     const platform = yield* HostProcessPlatform;
     const processArch = yield* HostProcessArchitecture;
     return DesktopEnvironment.layer({
@@ -79,6 +79,7 @@ const desktopEnvironmentLayer = Layer.unwrap(
       homeDirectory: NodeOS.homedir(),
       platform,
       processArch,
+      appName,
       ...metadata,
     });
   }),

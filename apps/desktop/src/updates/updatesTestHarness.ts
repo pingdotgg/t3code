@@ -1,5 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import type { DesktopUpdateState } from "@t3tools/contracts";
+import type { DesktopPackagedAppIdentity } from "@t3tools/shared/desktopBuild";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -32,12 +33,18 @@ export interface UpdatesHarnessOptions {
   readonly stopBackend?: Effect.Effect<void>;
   readonly startBackend?: Effect.Effect<void>;
   readonly env?: Record<string, string | undefined>;
+  readonly updateRepository?: string | null;
+  readonly appPath?: string;
+  readonly appName?: string;
+  readonly packagedIdentity?: DesktopPackagedAppIdentity;
 }
 
 export function makeHarness(options: UpdatesHarnessOptions = {}) {
   let checkCount = 0;
   let quitAndInstallCount = 0;
   let downloadCount = 0;
+  let destroyWindowCount = 0;
+  let stopBackendCount = 0;
   let allowDowngrade = false;
   let fullChangelog = false;
   const feedUrls: ElectronUpdater.ElectronUpdaterFeedUrl[] = [];
@@ -117,6 +124,7 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
         sentStates.push(state as DesktopUpdateState);
       }),
     destroyAll: Effect.sync(() => {
+      destroyWindowCount += 1;
       installSteps.push("destroyAll");
     }),
     syncAllAppearance: () => Effect.void,
@@ -128,7 +136,10 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
     start: Effect.sync(() => {
       installSteps.push("startBackend");
     }).pipe(Effect.andThen(options.startBackend ?? Effect.void)),
-    stop: () => options.stopBackend ?? Effect.void,
+    stop: () =>
+      Effect.sync(() => {
+        stopBackendCount += 1;
+      }).pipe(Effect.andThen(options.stopBackend ?? Effect.void)),
     currentConfig: Effect.succeed(Option.none()),
     snapshot: Effect.succeed({
       desiredRunning: false,
@@ -147,7 +158,11 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
     platform: "darwin",
     processArch: "x64",
     appVersion: "1.2.3",
-    appPath: "/repo",
+    appName: options.appName ?? "T3 Code (Alpha)",
+    ...(options.packagedIdentity === undefined
+      ? {}
+      : { packagedIdentity: options.packagedIdentity }),
+    appPath: options.appPath ?? "/repo",
     isPackaged: true,
     resourcesPath: "/missing/resources",
     runningUnderArm64Translation: false,
@@ -167,10 +182,14 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
 
   let testSettings: DesktopAppSettings.DesktopSettings = {
     ...DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
+    updateRepository: options.updateRepository ?? null,
+    ...(options.updateRepository ? { updateChannel: "nightly" } : {}),
   };
   const setUpdateChannelError = options.setUpdateChannelError;
   const settingsLayer =
-    setUpdateChannelError || options.beforeSetUpdateChannel
+    setUpdateChannelError ||
+    options.beforeSetUpdateChannel ||
+    options.updateRepository !== undefined
       ? Layer.succeed(DesktopAppSettings.DesktopAppSettings, {
           get: Effect.sync(() => testSettings),
           load: Effect.sync(() => testSettings),
@@ -183,16 +202,31 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
               : (options.beforeSetUpdateChannel ?? Effect.void).pipe(
                   Effect.andThen(
                     Effect.sync(() => {
-                      const changed = testSettings.updateChannel !== channel;
+                      const changed =
+                        testSettings.updateChannel !== channel ||
+                        testSettings.updateRepository !== null;
                       testSettings = {
                         ...testSettings,
                         updateChannel: channel,
                         updateChannelConfiguredByUser: true,
+                        updateRepository: null,
                       };
                       return { settings: testSettings, changed };
                     }),
                   ),
                 ),
+          setUpdateRepository: (repository) =>
+            Effect.sync(() => {
+              const changed = testSettings.updateRepository !== repository;
+              testSettings = {
+                ...testSettings,
+                updateChannel: repository === null ? testSettings.updateChannel : "nightly",
+                updateChannelConfiguredByUser:
+                  repository === null ? testSettings.updateChannelConfiguredByUser : true,
+                updateRepository: repository,
+              };
+              return { settings: testSettings, changed };
+            }),
           setWslBackendEnabled: () => Effect.die("unexpected WSL backend toggle"),
           setWslDistro: () => Effect.die("unexpected WSL distro change"),
           setWslOnly: () => Effect.die("unexpected WSL-only toggle"),
@@ -223,6 +257,9 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
     layer,
     checkCount: () => checkCount,
     quitAndInstalls: () => quitAndInstallCount,
+    quitAndInstallCount: () => quitAndInstallCount,
+    destroyWindowCount: () => destroyWindowCount,
+    stopBackendCount: () => stopBackendCount,
     installSteps,
     downloadCount: () => downloadCount,
     feedUrls: () => feedUrls,

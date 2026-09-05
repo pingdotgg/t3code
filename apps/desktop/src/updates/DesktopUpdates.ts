@@ -1,9 +1,11 @@
 import {
   DesktopUpdateChannelSchema,
+  normalizeDesktopUpdateRepository,
   type DesktopRuntimeInfo,
   type DesktopUpdateActionResult,
   type DesktopUpdateChannel,
   type DesktopUpdateCheckResult,
+  type DesktopUpdateRepository,
   type DesktopUpdateState,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -50,7 +52,13 @@ const AUTO_UPDATE_STARTUP_DELAY = "15 seconds";
 const AUTO_UPDATE_POLL_INTERVAL = "4 minutes";
 const PREPARED_INSTALL_CHECK_WAIT = Duration.seconds(90);
 
-type UpdateAction = "check" | "download" | "install" | "install-recovery" | "channel";
+type UpdateAction =
+  | "check"
+  | "download"
+  | "install"
+  | "install-recovery"
+  | "channel"
+  | "repository";
 
 interface DesktopPreparedUpdateInstallResult extends DesktopUpdateActionResult {
   readonly failed: boolean;
@@ -79,12 +87,25 @@ const currentIsoTimestamp = DateTime.now.pipe(Effect.map(DateTime.formatIso));
 export class DesktopUpdateActionInProgressError extends Schema.TaggedErrorClass<DesktopUpdateActionInProgressError>()(
   "DesktopUpdateActionInProgressError",
   {
-    action: Schema.Literals(["check", "download", "install", "channel"]),
+    action: Schema.Literals(["check", "download", "install", "channel", "repository"]),
     requestedChannel: DesktopUpdateChannelSchema,
   },
 ) {
   override get message(): string {
     return `Cannot change the desktop update channel to ${this.requestedChannel} while an update ${this.action} action is in progress.`;
+  }
+}
+
+export class DesktopUpdateRepositoryChangeInProgressError extends Schema.TaggedErrorClass<DesktopUpdateRepositoryChangeInProgressError>()(
+  "DesktopUpdateRepositoryChangeInProgressError",
+  {
+    action: Schema.Literals(["check", "download", "install", "channel", "repository"]),
+    requestedRepository: Schema.NullOr(Schema.String),
+  },
+) {
+  override get message(): string {
+    const repository = this.requestedRepository ?? "the bundled release source";
+    return `Cannot change the desktop update source to ${repository} while an update ${this.action} action is in progress.`;
   }
 }
 
@@ -97,6 +118,29 @@ export class DesktopUpdateChannelPersistenceError extends Schema.TaggedErrorClas
 ) {
   override get message(): string {
     return `Failed to persist the ${this.channel} desktop update channel.`;
+  }
+}
+
+export class DesktopUpdateRepositoryError extends Schema.TaggedErrorClass<DesktopUpdateRepositoryError>()(
+  "DesktopUpdateRepositoryError",
+  {
+    repository: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Custom update repositories must use the GitHub owner/repository format: ${this.repository}.`;
+  }
+}
+
+export class DesktopUpdateRepositoryPersistenceError extends Schema.TaggedErrorClass<DesktopUpdateRepositoryPersistenceError>()(
+  "DesktopUpdateRepositoryPersistenceError",
+  {
+    repository: Schema.NullOr(Schema.String),
+    cause: Schema.instanceOf(DesktopAppSettings.DesktopSettingsWriteError),
+  },
+) {
+  override get message(): string {
+    return "Failed to persist the custom desktop update source.";
   }
 }
 
@@ -127,7 +171,14 @@ export class DesktopUpdateEventHandlingError extends Schema.TaggedErrorClass<Des
 export class DesktopUpdaterReportedError extends Schema.TaggedErrorClass<DesktopUpdaterReportedError>()(
   "DesktopUpdaterReportedError",
   {
-    operation: Schema.Literals(["check", "download", "install", "channel", "background"]),
+    operation: Schema.Literals([
+      "check",
+      "download",
+      "install",
+      "channel",
+      "repository",
+      "background",
+    ]),
     cause: Schema.Defect(),
   },
 ) {
@@ -146,6 +197,44 @@ export class DesktopUpdateUnexpectedActionError extends Schema.TaggedErrorClass<
   override get message(): string {
     return `Desktop update ${this.action} action failed unexpectedly.`;
   }
+}
+
+export class DesktopUpdateRenamedMacAppError extends Schema.TaggedErrorClass<DesktopUpdateRenamedMacAppError>()(
+  "DesktopUpdateRenamedMacAppError",
+  {
+    expectedBundleName: Schema.String,
+    actualBundleName: Schema.String,
+  },
+) {
+  override get message(): string {
+    return "This copy of T3 Code was renamed after installation. Reinstall it using the app name provided by its disk image before updating.";
+  }
+}
+
+export function resolveMacAppBundleName(appPath: string): string | null {
+  const marker = ".app/Contents/";
+  const markerIndex = appPath.lastIndexOf(marker);
+  if (markerIndex < 0) return null;
+  const bundlePath = appPath.slice(0, markerIndex + ".app".length);
+  const separatorIndex = Math.max(bundlePath.lastIndexOf("/"), bundlePath.lastIndexOf("\\"));
+  return bundlePath.slice(separatorIndex + 1, -".app".length);
+}
+
+function isCompatibleMacAppBundleName(actualBundleName: string, expectedBundleName: string) {
+  if (actualBundleName === expectedBundleName) return true;
+  if (expectedBundleName === "T3 Code (Alpha)" || expectedBundleName === "T3 Code (Nightly)") {
+    return actualBundleName === "T3 Code (Alpha)" || actualBundleName === "T3 Code (Nightly)";
+  }
+
+  // Runtime identity normalizes legacy downstream names to their stable
+  // product name. Append a stage to that exact name instead of stripping a
+  // trailing word that may belong to the distribution itself.
+  const match = /^T3 Code \((.+)\)$/u.exec(expectedBundleName);
+  if (!match) return false;
+  return (
+    actualBundleName === `T3 Code (${match[1]} Alpha)` ||
+    actualBundleName === `T3 Code (${match[1]} Nightly)`
+  );
 }
 
 export type DesktopUpdateConfigureError = never;
@@ -180,6 +269,14 @@ export class DesktopUpdates extends Context.Service<
     readonly setChannel: (
       channel: DesktopUpdateChannel,
     ) => Effect.Effect<DesktopUpdateState, DesktopUpdateSetChannelError>;
+    readonly setRepository: (
+      repository: DesktopUpdateRepository,
+    ) => Effect.Effect<
+      DesktopUpdateState,
+      | DesktopUpdateRepositoryError
+      | DesktopUpdateRepositoryPersistenceError
+      | DesktopUpdateRepositoryChangeInProgressError
+    >;
     readonly check: (reason: string) => Effect.Effect<DesktopUpdateCheckResult>;
     readonly download: Effect.Effect<DesktopUpdateActionResult>;
     readonly install: Effect.Effect<DesktopUpdateActionResult>;
@@ -214,9 +311,15 @@ function createBaseUpdateState(
   channel: DesktopUpdateChannel,
   enabled: boolean,
   environment: DesktopEnvironment.DesktopEnvironment["Service"],
+  repository: DesktopUpdateRepository,
 ): DesktopUpdateState {
   return {
-    ...createInitialDesktopUpdateState(environment.appVersion, environment.runtimeInfo, channel),
+    ...createInitialDesktopUpdateState(
+      environment.appVersion,
+      environment.runtimeInfo,
+      channel,
+      repository,
+    ),
     enabled,
     status: enabled ? "idle" : "disabled",
   };
@@ -285,12 +388,14 @@ export const make = Effect.gen(function* () {
   const activeUpdateActionRef = yield* Ref.make<Option.Option<UpdateAction>>(Option.none());
   const finishedUpdateActions = yield* PubSub.unbounded<UpdateAction>();
   const updaterConfiguredRef = yield* Ref.make(false);
+  const updaterRuntimeInitializedRef = yield* Ref.make(false);
   const lastLoggedDownloadMilestoneRef = yield* Ref.make(-1);
   const updateStateRef = yield* Ref.make<DesktopUpdateState>(
     createInitialDesktopUpdateState(
       environment.appVersion,
       environment.runtimeInfo,
       environment.defaultDesktopSettings.updateChannel,
+      environment.defaultDesktopSettings.updateRepository,
     ),
   );
 
@@ -331,7 +436,16 @@ export const make = Effect.gen(function* () {
   );
 
   const hasUpdateFeedConfig = Ref.get(appUpdateYmlConfigRef).pipe(
-    Effect.map((appUpdateYmlConfig) => Option.isSome(appUpdateYmlConfig) || config.mockUpdates),
+    Effect.flatMap((appUpdateYmlConfig) =>
+      desktopSettings.get.pipe(
+        Effect.map(
+          (settings) =>
+            Option.isSome(appUpdateYmlConfig) ||
+            settings.updateRepository !== null ||
+            config.mockUpdates,
+        ),
+      ),
+    ),
   );
 
   const resolveDisabledReason = Effect.gen(function* () {
@@ -355,11 +469,12 @@ export const make = Effect.gen(function* () {
       Option.isSome(activeAction) ? [false, activeAction] : [true, Option.some(action)],
     );
 
-  const tryStartChannelChange = Ref.modify(activeUpdateActionRef, (activeAction) =>
-    Option.isSome(activeAction)
-      ? [activeAction, activeAction]
-      : [Option.none<UpdateAction>(), Option.some<UpdateAction>("channel")],
-  );
+  const tryStartSettingsChange = (action: "channel" | "repository") =>
+    Ref.modify(activeUpdateActionRef, (activeAction) =>
+      Option.isSome(activeAction)
+        ? [activeAction, activeAction]
+        : [Option.none<UpdateAction>(), Option.some<UpdateAction>(action)],
+    );
 
   const finishUpdateAction = (action: UpdateAction): Effect.Effect<void> =>
     Ref.modify(activeUpdateActionRef, (activeAction) => {
@@ -385,6 +500,32 @@ export const make = Effect.gen(function* () {
       allowPrerelease: allowsPrerelease,
       allowDowngrade: allowsPrerelease,
       fullChangelog: allowsPrerelease,
+    });
+  });
+
+  const applyAutoUpdaterFeed = Effect.fn("desktop.updates.applyAutoUpdaterFeed")(function* (
+    repository: DesktopUpdateRepository,
+    channel: DesktopUpdateChannel,
+  ) {
+    const bundledFeed = yield* Ref.get(appUpdateYmlConfigRef);
+    const feed = Option.match(Option.fromNullishOr(repository), {
+      onSome: (customRepository) => {
+        const [owner, repo] = customRepository.split("/");
+        return {
+          provider: "github" as const,
+          owner,
+          repo,
+          releaseType: channel === "nightly" ? ("prerelease" as const) : ("release" as const),
+          ...(channel === "nightly" ? { channel: "nightly" as const } : {}),
+        } satisfies ElectronUpdater.ElectronUpdaterFeedUrl;
+      },
+      onNone: () => Option.getOrUndefined(bundledFeed),
+    });
+    if (feed !== undefined) {
+      yield* electronUpdater.setFeedURL(feed as ElectronUpdater.ElectronUpdaterFeedUrl);
+    }
+    yield* logUpdaterInfo("using update repository", {
+      repository: repository ?? "bundled",
     });
   });
 
@@ -580,6 +721,29 @@ export const make = Effect.gen(function* () {
         }
         if (admission === "refused") {
           return { accepted: false, completed: false, failed: false };
+        }
+
+        if (environment.platform === "darwin" && environment.isPackaged) {
+          const actualBundleName = resolveMacAppBundleName(environment.appPath);
+          if (
+            actualBundleName !== null &&
+            !isCompatibleMacAppBundleName(actualBundleName, environment.productName)
+          ) {
+            const error = new DesktopUpdateRenamedMacAppError({
+              expectedBundleName: environment.productName,
+              actualBundleName,
+            });
+            yield* finishUpdateAction("install");
+            yield* updateState((current) =>
+              reduceDesktopUpdateStateOnInstallFailure(current, error.message),
+            );
+            yield* logUpdaterError(error.message, {
+              errorTag: error._tag,
+              expectedBundleName: error.expectedBundleName,
+              actualBundleName: error.actualBundleName,
+            });
+            return { accepted: true, completed: false, failed: true };
+          }
         }
 
         yield* Ref.set(desktopState.quitting, true);
@@ -844,57 +1008,15 @@ export const make = Effect.gen(function* () {
     );
   });
 
-  return DesktopUpdates.of({
-    getState: Ref.get(updateStateRef),
-    isActionActive: activeUpdateAction.pipe(Effect.map(Option.isSome)),
-    isInstallActive: activeUpdateAction.pipe(
-      Effect.map((action) => Option.isSome(action) && action.value === "install"),
-    ),
-    subscribe: stateMutex.withPermits(1)(
-      Effect.gen(function* () {
-        const subscription = yield* PubSub.subscribe(stateChanges);
-        const latest = yield* Ref.get(updateStateRef);
-        return { latest, changes: Stream.fromSubscription(subscription) };
-      }),
-    ),
-    emitState,
-    disabledReason: resolveDisabledReason,
-    configure: Effect.gen(function* () {
+  const initializeAutoUpdaterRuntime = Effect.fn("desktop.updates.initializeAutoUpdaterRuntime")(
+    function* () {
+      if (yield* Ref.get(updaterRuntimeInitializedRef)) {
+        return;
+      }
       const context = yield* Effect.context<never>();
       const runEffect = (effect: Effect.Effect<void>) => {
         void Effect.runPromiseWith(context)(effect);
       };
-
-      const appUpdateYmlConfig = yield* readAppUpdateYml;
-      yield* Ref.set(appUpdateYmlConfigRef, appUpdateYmlConfig);
-
-      if (config.mockUpdates) {
-        yield* electronUpdater.setFeedURL({
-          provider: "generic",
-          url: `http://localhost:${config.mockUpdateServerPort}`,
-        } as ElectronUpdater.ElectronUpdaterFeedUrl);
-      }
-
-      const settings = yield* desktopSettings.get;
-      const enabled = yield* shouldEnableAutoUpdates;
-      yield* setState(createBaseUpdateState(settings.updateChannel, enabled, environment));
-      if (!enabled) {
-        return;
-      }
-      yield* Ref.set(updaterConfiguredRef, true);
-
-      yield* electronUpdater.setAutoDownload(false);
-      yield* electronUpdater.setAutoInstallOnAppQuit(false);
-      yield* applyAutoUpdaterChannel(settings.updateChannel);
-      yield* electronUpdater.setDisableDifferentialDownload(
-        isArm64HostRunningIntelBuild(environment.runtimeInfo),
-      );
-
-      if (isArm64HostRunningIntelBuild(environment.runtimeInfo)) {
-        yield* logUpdaterInfo(
-          "Apple Silicon host detected while running Intel build; updates will switch to arm64 packages",
-        );
-      }
 
       yield* electronUpdater.on("checking-for-update", () => {
         runEffect(
@@ -919,13 +1041,80 @@ export const make = Effect.gen(function* () {
         runEffect(handleUpdateDownloaded(info));
       });
 
+      yield* Ref.set(updaterRuntimeInitializedRef, true);
       yield* startUpdatePollers;
+    },
+  );
+
+  const enableAutoUpdater = Effect.fn("desktop.updates.enableAutoUpdater")(function* (
+    repository: DesktopUpdateRepository,
+    channel: DesktopUpdateChannel,
+  ) {
+    if (config.mockUpdates) {
+      yield* electronUpdater.setFeedURL({
+        provider: "generic",
+        url: `http://localhost:${config.mockUpdateServerPort}`,
+      } as ElectronUpdater.ElectronUpdaterFeedUrl);
+    }
+
+    yield* electronUpdater.setAutoDownload(false);
+    yield* electronUpdater.setAutoInstallOnAppQuit(false);
+    if (!config.mockUpdates) {
+      yield* applyAutoUpdaterFeed(repository, channel);
+    }
+    yield* applyAutoUpdaterChannel(channel);
+    yield* electronUpdater.setDisableDifferentialDownload(
+      isArm64HostRunningIntelBuild(environment.runtimeInfo),
+    );
+    yield* Ref.set(updaterConfiguredRef, true);
+
+    if (isArm64HostRunningIntelBuild(environment.runtimeInfo)) {
+      yield* logUpdaterInfo(
+        "Apple Silicon host detected while running Intel build; updates will switch to arm64 packages",
+      );
+    }
+  });
+
+  return DesktopUpdates.of({
+    getState: Ref.get(updateStateRef),
+    isActionActive: activeUpdateAction.pipe(Effect.map(Option.isSome)),
+    isInstallActive: activeUpdateAction.pipe(
+      Effect.map((action) => Option.isSome(action) && action.value === "install"),
+    ),
+    subscribe: stateMutex.withPermits(1)(
+      Effect.gen(function* () {
+        const subscription = yield* PubSub.subscribe(stateChanges);
+        const latest = yield* Ref.get(updateStateRef);
+        return { latest, changes: Stream.fromSubscription(subscription) };
+      }),
+    ),
+    emitState,
+    disabledReason: resolveDisabledReason,
+    configure: Effect.gen(function* () {
+      const appUpdateYmlConfig = yield* readAppUpdateYml;
+      yield* Ref.set(appUpdateYmlConfigRef, appUpdateYmlConfig);
+
+      const settings = yield* desktopSettings.get;
+      const enabled = yield* shouldEnableAutoUpdates;
+      yield* setState(
+        createBaseUpdateState(
+          settings.updateChannel,
+          enabled,
+          environment,
+          settings.updateRepository,
+        ),
+      );
+      yield* initializeAutoUpdaterRuntime();
+      if (!enabled) {
+        return;
+      }
+      yield* enableAutoUpdater(settings.updateRepository, settings.updateChannel);
     }).pipe(Effect.withSpan("desktop.updates.configure")),
     setChannel: Effect.fn("desktop.updates.setChannel")(function* (
       nextChannel: DesktopUpdateChannel,
     ) {
       yield* Effect.annotateCurrentSpan({ channel: nextChannel });
-      const activeAction = yield* tryStartChannelChange;
+      const activeAction = yield* tryStartSettingsChange("channel");
       if (Option.isSome(activeAction)) {
         return yield* new DesktopUpdateActionInProgressError({
           action: activeAction.value === "install-recovery" ? "install" : activeAction.value,
@@ -935,7 +1124,7 @@ export const make = Effect.gen(function* () {
 
       return yield* Effect.gen(function* () {
         const state = yield* Ref.get(updateStateRef);
-        if (nextChannel === state.channel) {
+        if (nextChannel === state.channel && state.repository === null) {
           return state;
         }
 
@@ -948,12 +1137,23 @@ export const make = Effect.gen(function* () {
           );
 
         const enabled = yield* shouldEnableAutoUpdates;
-        yield* setState(createBaseUpdateState(nextChannel, enabled, environment));
+        const settings = yield* desktopSettings.get;
+        yield* setState(
+          createBaseUpdateState(nextChannel, enabled, environment, settings.updateRepository),
+        );
 
-        if (!enabled || !(yield* Ref.get(updaterConfiguredRef))) {
+        if (!enabled) {
+          yield* Ref.set(updaterConfiguredRef, false);
           return yield* Ref.get(updateStateRef);
         }
 
+        if (!(yield* Ref.get(updaterConfiguredRef))) {
+          return yield* Ref.get(updateStateRef);
+        }
+
+        if (!config.mockUpdates) {
+          yield* applyAutoUpdaterFeed(settings.updateRepository, nextChannel);
+        }
         yield* applyAutoUpdaterChannel(nextChannel);
         const allowDowngrade = yield* electronUpdater.allowDowngrade;
         yield* electronUpdater.setAllowDowngrade(true);
@@ -962,6 +1162,63 @@ export const make = Effect.gen(function* () {
         );
         return yield* Ref.get(updateStateRef);
       }).pipe(Effect.ensuring(finishUpdateAction("channel")));
+    }),
+    setRepository: Effect.fn("desktop.updates.setRepository")(function* (
+      nextRepository: DesktopUpdateRepository,
+    ) {
+      const normalizedRepository =
+        nextRepository === null ? null : normalizeDesktopUpdateRepository(nextRepository);
+      if (nextRepository !== null && normalizedRepository === null) {
+        return yield* new DesktopUpdateRepositoryError({ repository: nextRepository });
+      }
+
+      const activeAction = yield* tryStartSettingsChange("repository");
+      if (Option.isSome(activeAction)) {
+        return yield* new DesktopUpdateRepositoryChangeInProgressError({
+          action: activeAction.value === "install-recovery" ? "install" : activeAction.value,
+          requestedRepository: normalizedRepository,
+        });
+      }
+
+      return yield* Effect.gen(function* () {
+        const state = yield* Ref.get(updateStateRef);
+        if (state.repository === normalizedRepository) {
+          return state;
+        }
+
+        const settingsChange = yield* desktopSettings
+          .setUpdateRepository(normalizedRepository)
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new DesktopUpdateRepositoryPersistenceError({
+                  repository: normalizedRepository,
+                  cause,
+                }),
+            ),
+          );
+        const enabled = yield* shouldEnableAutoUpdates;
+        yield* setState(
+          createBaseUpdateState(
+            settingsChange.settings.updateChannel,
+            enabled,
+            environment,
+            settingsChange.settings.updateRepository,
+          ),
+        );
+
+        if (!enabled) {
+          yield* Ref.set(updaterConfiguredRef, false);
+          return yield* Ref.get(updateStateRef);
+        }
+
+        yield* enableAutoUpdater(
+          settingsChange.settings.updateRepository,
+          settingsChange.settings.updateChannel,
+        );
+        yield* checkForUpdates("repository-change", "held");
+        return yield* Ref.get(updateStateRef);
+      }).pipe(Effect.ensuring(finishUpdateAction("repository")));
     }),
     check: Effect.fn("desktop.updates.check")(function* (reason: string) {
       yield* Effect.annotateCurrentSpan({ reason });

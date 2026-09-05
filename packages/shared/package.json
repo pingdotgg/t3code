@@ -259,6 +259,10 @@
       "types": "./src/desktopAppControl.ts",
       "import": "./src/desktopAppControl.ts"
     },
+    "./desktopBuild": {
+      "types": "./src/desktopBuild.ts",
+      "import": "./src/desktopBuild.ts"
+    },
     "./claudeCompaction": {
       "types": "./src/claudeCompaction.ts",
       "import": "./src/claudeCompaction.ts"

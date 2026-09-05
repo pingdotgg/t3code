@@ -16,6 +16,7 @@ function makeState(overrides: Partial<DesktopUpdateState> = {}): DesktopUpdateSt
     enabled: true,
     status: "idle",
     channel: "latest",
+    repository: null,
     currentVersion: "1.2.3",
     hostArch: "arm64",
     appArch: "arm64",

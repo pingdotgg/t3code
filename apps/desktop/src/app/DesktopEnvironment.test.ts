@@ -40,6 +40,91 @@ const makeEnvironment = (
   DesktopEnvironment.DesktopEnvironment.pipe(Effect.provide(makeEnvironmentLayer(overrides, env)));
 
 describe("DesktopEnvironment", () => {
+  it.effect("separates downstream display branding from its stable runtime identity", () =>
+    Effect.gen(function* () {
+      const environment = yield* makeEnvironment({
+        isPackaged: true,
+        appVersion: "0.0.38-nightly.20260901.1",
+        appName: "T3 Code (Fork Nightly)",
+        appPath: "/Applications/T3 Code (Fork Nightly).app/Contents/Resources/app.asar",
+        resourcesPath: "/Applications/T3 Code (Fork Nightly).app/Contents/Resources",
+      });
+
+      assert.equal(environment.displayName, "T3 Code (Fork Nightly)");
+      assert.equal(environment.branding.displayName, "T3 Code (Fork Nightly)");
+      assert.equal(environment.branding.stageLabel, "Nightly");
+      assert.isTrue(environment.isDownstreamDistribution);
+      assert.equal(environment.productName, "T3 Code (Fork)");
+      assert.equal(environment.userDataDirName, "T3 Code (Fork)");
+      assert.deepEqual(environment.legacyDownstreamUserDataDirNames, [
+        "T3 Code (Fork Nightly)",
+        "T3 Code (Fork Alpha)",
+      ]);
+      assert.equal(
+        environment.connectionCatalogPath,
+        "/Users/alice/.t3/userdata/connection-catalog.fork-8e5b1a73152cf01c1ce614f31711fc4159e8ecc177cd4c02975ed0145b3d3d45.json",
+      );
+    }),
+  );
+
+  it.effect("keeps official packaged builds on the shared connection catalog", () =>
+    Effect.gen(function* () {
+      const environment = yield* makeEnvironment({
+        isPackaged: true,
+        appVersion: "0.0.38-nightly.20260901.1",
+        appName: "T3 Code (Nightly)",
+      });
+
+      assert.equal(
+        environment.connectionCatalogPath,
+        "/Users/alice/.t3/userdata/connection-catalog.json",
+      );
+      assert.isFalse(environment.isDownstreamDistribution);
+      assert.equal(environment.userDataDirName, "t3code");
+      assert.equal(environment.productName, "T3 Code (Nightly)");
+    }),
+  );
+
+  it.effect("keeps downstream profile and catalog identity stable across update channels", () =>
+    Effect.gen(function* () {
+      const alpha = yield* makeEnvironment({
+        isPackaged: true,
+        appVersion: "0.0.38",
+        appName: "T3 Code (Fork)",
+      });
+      const nightly = yield* makeEnvironment({
+        isPackaged: true,
+        appVersion: "0.0.38-nightly.20260901.1",
+        appName: "T3 Code (Fork)",
+      });
+
+      assert.equal(alpha.userDataDirName, nightly.userDataDirName);
+      assert.equal(alpha.connectionCatalogPath, nightly.connectionCatalogPath);
+      assert.equal(alpha.productName, nightly.productName);
+      assert.notEqual(alpha.displayName, nightly.displayName);
+      assert.deepEqual(alpha.legacyDownstreamUserDataDirNames, [
+        "T3 Code (Fork Alpha)",
+        "T3 Code (Fork Nightly)",
+      ]);
+      assert.deepEqual(nightly.legacyDownstreamUserDataDirNames, [
+        "T3 Code (Fork Nightly)",
+        "T3 Code (Fork Alpha)",
+      ]);
+    }),
+  );
+
+  it("preserves an unrecognized packaged app name as its display name", () => {
+    const identity = DesktopEnvironment.currentDesktopAppIdentity({
+      isDevelopment: false,
+      isPackaged: true,
+      appVersion: "0.0.38-nightly.20260901.1",
+      appName: "Acme Code",
+    });
+
+    assert.equal(identity.productName, "Acme Code");
+    assert.equal(identity.displayName, "Acme Code");
+  });
+
   it.effect("derives state paths and development identity inside Effect", () =>
     Effect.gen(function* () {
       const environment = yield* makeEnvironment(
@@ -61,6 +146,7 @@ describe("DesktopEnvironment", () => {
       assert.equal(environment.stateDir, "/tmp/t3/userdata");
       assert.equal(environment.desktopSettingsPath, "/tmp/t3/userdata/desktop-settings.json");
       assert.equal(environment.clientSettingsPath, "/tmp/t3/userdata/client-settings.json");
+      assert.equal(environment.connectionCatalogPath, "/tmp/t3/userdata/connection-catalog.json");
       assert.equal(
         environment.savedEnvironmentRegistryPath,
         "/tmp/t3/userdata/saved-environments.json",

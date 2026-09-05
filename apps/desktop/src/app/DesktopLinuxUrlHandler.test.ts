@@ -177,6 +177,30 @@ describe("DesktopLinuxUrlHandler", () => {
     });
   });
 
+  it.effect("registers a fork without replacing the official URL handler", () => {
+    const recorded = emptyRecording();
+    return Effect.gen(function* () {
+      yield* runRegister(recorded, {
+        environment: { distributionId: "fork-abc", displayName: "T3 Code (Fork)" },
+      });
+      assert.equal(
+        recorded.files[0]?.path,
+        "/home/alice/.local/share/applications/t3code-fork-abc-url-handler.desktop",
+      );
+      assert.include(recorded.files[0]?.content, "MimeType=x-scheme-handler/t3code-fork-abc;");
+      assert.deepEqual(recorded.commands, [
+        {
+          command: "xdg-mime",
+          args: [
+            "default",
+            "t3code-fork-abc-url-handler.desktop",
+            "x-scheme-handler/t3code-fork-abc",
+          ],
+        },
+      ]);
+    });
+  });
+
   it.effect("falls back to the process executable outside an AppImage", () => {
     const recorded = emptyRecording();
 

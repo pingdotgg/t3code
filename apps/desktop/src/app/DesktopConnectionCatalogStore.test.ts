@@ -3,6 +3,8 @@ import { assert, describe, it } from "@effect/vitest";
 import { ConnectionCatalogDocument } from "@t3tools/client-runtime/platform";
 import { EnvironmentId, type PersistedSavedEnvironmentRecord } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Layer from "effect/Layer";
@@ -19,13 +21,30 @@ import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 
 const textDecoder = new TextDecoder();
 const textEncoder = new TextEncoder();
+const encodeEncryptedCatalogFixture = Schema.encodeEffect(
+  Schema.fromJsonString(
+    Schema.Struct({ version: Schema.Literal(1), encryptedCatalog: Schema.String }),
+  ),
+);
 const decodeConnectionCatalog = Schema.decodeEffect(
   Schema.fromJsonString(ConnectionCatalogDocument),
 );
-function makeSafeStorageLayer(available: boolean, failDecrypt: Ref.Ref<boolean> | null = null) {
+function makeSafeStorageLayer(
+  available: boolean,
+  failDecrypt: Ref.Ref<boolean> | null = null,
+  failEncrypt: Ref.Ref<boolean> | null = null,
+) {
   return Layer.succeed(ElectronSafeStorage.ElectronSafeStorage, {
     isEncryptionAvailable: Effect.succeed(available),
-    encryptString: (value) => Effect.succeed(textEncoder.encode(`encrypted:${value}`)),
+    encryptString: (value) =>
+      Effect.gen(function* () {
+        if (failEncrypt !== null && (yield* Ref.get(failEncrypt))) {
+          return yield* new ElectronSafeStorage.ElectronSafeStorageEncryptError({
+            cause: new Error("could not encrypt promoted catalog"),
+          });
+        }
+        return textEncoder.encode(`encrypted:${value}`);
+      }),
     decryptString: (value) => {
       return Effect.gen(function* () {
         const decoded = textDecoder.decode(value);
@@ -49,6 +68,8 @@ function makeLayer(
   encryptionAvailable = true,
   failDecrypt: Ref.Ref<boolean> | null = null,
   fileSystemLayer: Layer.Layer<FileSystem.FileSystem> = NodeServices.layer,
+  appName?: string,
+  failEncrypt: Ref.Ref<boolean> | null = null,
 ) {
   const environmentLayer = DesktopEnvironment.layer({
     dirname: "/repo/apps/desktop/src",
@@ -56,6 +77,7 @@ function makeLayer(
     platform: "darwin",
     processArch: "arm64",
     appVersion: "1.2.3",
+    ...(appName === undefined ? {} : { appName }),
     appPath: "/repo",
     isPackaged: true,
     resourcesPath: "/missing/resources",
@@ -65,7 +87,7 @@ function makeLayer(
       Layer.mergeAll(NodeServices.layer, DesktopConfig.layerTest({ T3CODE_HOME: baseDir })),
     ),
   );
-  const safeStorageLayer = makeSafeStorageLayer(encryptionAvailable, failDecrypt);
+  const safeStorageLayer = makeSafeStorageLayer(encryptionAvailable, failDecrypt, failEncrypt);
   const dependencies = Layer.mergeAll(
     environmentLayer,
     safeStorageLayer,
@@ -119,6 +141,253 @@ describe("DesktopConnectionCatalogStore", () => {
       }),
       false,
     ),
+  );
+
+  it.effect("isolates a downstream distribution from the official encrypted catalog", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-desktop-connection-catalog-test-",
+        });
+        const store = yield* DesktopConnectionCatalogStore.DesktopConnectionCatalogStore.pipe(
+          Effect.provide(
+            makeLayer(baseDir, true, null, NodeServices.layer, "T3 Code (Fork Alpha)"),
+          ),
+        );
+        const savedEnvironments = yield* DesktopSavedEnvironments.DesktopSavedEnvironments.pipe(
+          Effect.provide(
+            makeLayer(baseDir, true, null, NodeServices.layer, "T3 Code (Fork Alpha)"),
+          ),
+        );
+        const officialCatalogPath = `${baseDir}/userdata/connection-catalog.json`;
+        const downstreamCatalogPath = `${baseDir}/userdata/connection-catalog.fork-8e5b1a73152cf01c1ce614f31711fc4159e8ecc177cd4c02975ed0145b3d3d45.json`;
+
+        yield* fileSystem.makeDirectory(`${baseDir}/userdata`, { recursive: true });
+        yield* fileSystem.writeFileString(officialCatalogPath, "official-ciphertext");
+        yield* savedEnvironments.setRegistry([
+          {
+            environmentId: EnvironmentId.make("legacy-bearer-environment"),
+            label: "Legacy bearer",
+            httpBaseUrl: "https://legacy.example.com/",
+            wsBaseUrl: "wss://legacy.example.com/",
+            createdAt: "2026-06-01T00:00:00.000Z",
+            lastConnectedAt: null,
+          },
+        ]);
+        assert.deepStrictEqual(yield* store.get, Option.none());
+        assert.isFalse(yield* fileSystem.exists(downstreamCatalogPath));
+        assert.isTrue(yield* store.set('{"schemaVersion":1,"targets":[]}'));
+        assert.equal(yield* fileSystem.readFileString(officialCatalogPath), "official-ciphertext");
+        assert.isTrue(yield* fileSystem.exists(downstreamCatalogPath));
+      }).pipe(Effect.provide(NodeServices.layer)),
+    ),
+  );
+
+  it.effect("moves a readable stage-named downstream catalog to its stable identity", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-desktop-connection-catalog-test-",
+        });
+        const store = yield* DesktopConnectionCatalogStore.DesktopConnectionCatalogStore.pipe(
+          Effect.provide(
+            makeLayer(baseDir, true, null, NodeServices.layer, "T3 Code (Fork Nightly)"),
+          ),
+        );
+        const catalog = '{"schemaVersion":1,"targets":[]}';
+        const legacyPath = `${baseDir}/userdata/connection-catalog.0054003300200043006f00640065002000280046006f0072006b0020004e0069006700680074006c00790029.json`;
+        const stablePath = `${baseDir}/userdata/connection-catalog.fork-8e5b1a73152cf01c1ce614f31711fc4159e8ecc177cd4c02975ed0145b3d3d45.json`;
+        const encryptedCatalog = Buffer.from(`encrypted:${catalog}`, "utf8").toString("base64");
+
+        yield* fileSystem.makeDirectory(`${baseDir}/userdata`, { recursive: true });
+        yield* fileSystem.writeFileString(
+          legacyPath,
+          `{"version":1,"encryptedCatalog":"${encryptedCatalog}"}`,
+        );
+
+        assert.deepStrictEqual(yield* store.get, Option.some(catalog));
+        assert.isTrue(yield* fileSystem.exists(stablePath));
+
+        yield* store.clear;
+        assert.deepStrictEqual(yield* store.get, Option.none());
+        assert.isFalse(yield* fileSystem.exists(stablePath));
+        assert.isFalse(yield* fileSystem.exists(legacyPath));
+      }).pipe(Effect.provide(NodeServices.layer)),
+    ),
+  );
+
+  it.effect("preserves encryption failures while promoting a stage-named catalog", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-desktop-connection-catalog-test-",
+        });
+        const failEncrypt = yield* Ref.make(true);
+        const store = yield* DesktopConnectionCatalogStore.DesktopConnectionCatalogStore.pipe(
+          Effect.provide(
+            makeLayer(
+              baseDir,
+              true,
+              null,
+              NodeServices.layer,
+              "T3 Code (Fork Nightly)",
+              failEncrypt,
+            ),
+          ),
+        );
+        const catalog = '{"schemaVersion":1,"targets":[]}';
+        const legacyPath = `${baseDir}/userdata/connection-catalog.0054003300200043006f00640065002000280046006f0072006b0020004e0069006700680074006c00790029.json`;
+        const stablePath = `${baseDir}/userdata/connection-catalog.fork-8e5b1a73152cf01c1ce614f31711fc4159e8ecc177cd4c02975ed0145b3d3d45.json`;
+        const encryptedCatalog = Buffer.from(`encrypted:${catalog}`, "utf8").toString("base64");
+
+        yield* fileSystem.makeDirectory(`${baseDir}/userdata`, { recursive: true });
+        yield* fileSystem.writeFileString(
+          legacyPath,
+          `{"version":1,"encryptedCatalog":"${encryptedCatalog}"}`,
+        );
+
+        const error = yield* store.get.pipe(Effect.flip);
+        assert.instanceOf(
+          error,
+          DesktopConnectionCatalogStore.DesktopConnectionCatalogStoreProtectionError,
+        );
+        assert.equal(error.operation, "encrypt-catalog");
+        assert.equal(error.catalogPath, stablePath);
+        assert.instanceOf(error.cause, ElectronSafeStorage.ElectronSafeStorageEncryptError);
+      }).pipe(Effect.provide(NodeServices.layer)),
+    ),
+  );
+
+  it.effect("identifies both catalog paths when promotion cannot persist", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-desktop-connection-catalog-test-",
+        });
+        const legacyPath = `${baseDir}/userdata/connection-catalog.0054003300200043006f00640065002000280046006f0072006b0020004e0069006700680074006c00790029.json`;
+        const stablePath = `${baseDir}/userdata/connection-catalog.fork-8e5b1a73152cf01c1ce614f31711fc4159e8ecc177cd4c02975ed0145b3d3d45.json`;
+        const catalog = '{"schemaVersion":1,"targets":[]}';
+        const encryptedCatalog = Buffer.from(`encrypted:${catalog}`, "utf8").toString("base64");
+        const permissionError = PlatformError.systemError({
+          _tag: "PermissionDenied",
+          module: "FileSystem",
+          method: "makeDirectory",
+          pathOrDescriptor: `${baseDir}/userdata`,
+        });
+
+        yield* fileSystem.makeDirectory(`${baseDir}/userdata`, { recursive: true });
+        yield* fileSystem.writeFileString(
+          legacyPath,
+          `{"version":1,"encryptedCatalog":"${encryptedCatalog}"}`,
+        );
+        const fileSystemLayer = Layer.succeed(
+          FileSystem.FileSystem,
+          FileSystem.makeNoop({
+            exists: fileSystem.exists,
+            readFileString: fileSystem.readFileString,
+            makeDirectory: () => Effect.fail(permissionError),
+          }),
+        );
+        const store = yield* DesktopConnectionCatalogStore.DesktopConnectionCatalogStore.pipe(
+          Effect.provide(makeLayer(baseDir, true, null, fileSystemLayer, "T3 Code (Fork Nightly)")),
+        );
+
+        const error = yield* store.get.pipe(Effect.flip);
+        assert.instanceOf(
+          error,
+          DesktopConnectionCatalogStore.DesktopConnectionCatalogStorePromotionError,
+        );
+        assert.equal(error.operation, "promote-legacy-catalog");
+        assert.equal(error.catalogPath, stablePath);
+        assert.equal(error.sourceCatalogPath, legacyPath);
+        assert.instanceOf(
+          error.cause,
+          DesktopConnectionCatalogStore.DesktopConnectionCatalogStoreWriteError,
+        );
+        assert.equal(
+          error.message,
+          `Desktop connection catalog promotion failed from ${legacyPath} to ${stablePath}.`,
+        );
+      }).pipe(Effect.provide(NodeServices.layer)),
+    ),
+  );
+
+  it.effect("serializes legacy migration with a concurrent catalog save", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-catalog-race-" });
+      const decryptStarted = yield* Deferred.make<void>();
+      const releaseDecrypt = yield* Deferred.make<void>();
+      const saveStarted = yield* Deferred.make<void>();
+      const operations: string[] = [];
+      const oldCatalog = '{"schemaVersion":1,"targets":[]}';
+      const newCatalog = '{"schemaVersion":1,"targets":[],"profiles":[]}';
+      const safeStorageLayer = Layer.succeed(ElectronSafeStorage.ElectronSafeStorage, {
+        isEncryptionAvailable: Effect.succeed(true),
+        selectedStorageBackend: Effect.succeed(Option.none()),
+        encryptString: (value) =>
+          Effect.sync(() => {
+            operations.push(value === oldCatalog ? "migrate" : "save");
+            return textEncoder.encode(`encrypted:${value}`);
+          }),
+        decryptString: (value) =>
+          Effect.gen(function* () {
+            yield* Deferred.succeed(decryptStarted, undefined);
+            yield* Deferred.await(releaseDecrypt);
+            return textDecoder.decode(value).slice("encrypted:".length);
+          }),
+      });
+      const environmentLayer = DesktopEnvironment.layer({
+        dirname: "/repo/apps/desktop/src",
+        homeDirectory: baseDir,
+        platform: "darwin",
+        processArch: "arm64",
+        appVersion: "1.2.3",
+        appName: "T3 Code (Fork Nightly)",
+        appPath: "/repo",
+        isPackaged: true,
+        resourcesPath: "/missing/resources",
+        runningUnderArm64Translation: false,
+      }).pipe(
+        Layer.provide(
+          Layer.mergeAll(NodeServices.layer, DesktopConfig.layerTest({ T3CODE_HOME: baseDir })),
+        ),
+      );
+      const dependencies = Layer.mergeAll(environmentLayer, safeStorageLayer, NodeServices.layer);
+      const saved = DesktopSavedEnvironments.layer.pipe(Layer.provideMerge(dependencies));
+      const store = yield* DesktopConnectionCatalogStore.DesktopConnectionCatalogStore.pipe(
+        Effect.provide(DesktopConnectionCatalogStore.layer.pipe(Layer.provide(saved))),
+      );
+      const environment = yield* DesktopEnvironment.DesktopEnvironment.pipe(
+        Effect.provide(environmentLayer),
+      );
+      const legacyPath = environment.legacyConnectionCatalogPaths[0]!;
+      yield* fileSystem.makeDirectory(`${baseDir}/userdata`, { recursive: true });
+      yield* fileSystem.writeFileString(
+        legacyPath,
+        yield* encodeEncryptedCatalogFixture({
+          version: 1,
+          encryptedCatalog: Buffer.from(`encrypted:${oldCatalog}`).toString("base64"),
+        }),
+      );
+      const reading = yield* Effect.forkChild(store.get);
+      yield* Deferred.await(decryptStarted);
+      const saving = yield* Effect.forkChild(
+        Deferred.succeed(saveStarted, undefined).pipe(Effect.andThen(store.set(newCatalog))),
+      );
+      yield* Deferred.await(saveStarted);
+      yield* Effect.yieldNow;
+      assert.deepEqual(operations, []);
+      yield* Deferred.succeed(releaseDecrypt, undefined);
+      yield* Fiber.join(reading);
+      yield* Fiber.join(saving);
+      assert.deepEqual(operations, ["migrate", "save"]);
+      assert.deepEqual(yield* store.get, Option.some(newCatalog));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
   it.effect("migrates legacy relay, SSH, bearer profile, and credential data", () =>

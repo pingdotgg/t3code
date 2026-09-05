@@ -1,6 +1,7 @@
 import type {
   DesktopRuntimeInfo,
   DesktopUpdateChannel,
+  DesktopUpdateRepository,
   DesktopUpdateReleaseNote,
   DesktopUpdateState,
 } from "@t3tools/contracts";
@@ -19,11 +20,13 @@ export function createInitialDesktopUpdateState(
   currentVersion: string,
   runtimeInfo: DesktopRuntimeInfo,
   channel: DesktopUpdateChannel,
+  repository: DesktopUpdateRepository = null,
 ): DesktopUpdateState {
   return {
     enabled: false,
     status: "disabled",
     channel,
+    repository,
     currentVersion,
     hostArch: runtimeInfo.hostArch,
     appArch: runtimeInfo.appArch,

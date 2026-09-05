@@ -12,6 +12,8 @@ import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
+import { resolveDesktopRuntimeIdentity } from "@t3tools/shared/desktopBuild";
+
 import {
   BundleNotSelfContainedError,
   BuildCommandFailedError,
@@ -28,6 +30,7 @@ import {
   MAC_FILE_EXCLUSIONS,
   InvalidMacPasskeyRpDomainError,
   InvalidMacPasskeyPublishableKeyError,
+  InvalidDesktopDistributionError,
   InvalidMockUpdateServerPortError,
   UnsupportedDesktopBuildArchitectureError,
   isMacPasskeySigningConfigurationError,
@@ -48,6 +51,7 @@ import {
   resolveFffNativeDependencies,
   resolveBuildOptions,
   resolveDesktopBuildIconAssets,
+  resolveDesktopBuildIdentity,
   resolveDesktopProductName,
   resolveDesktopUpdateChannel,
   resolveDesktopWebAssetBrand,
@@ -263,6 +267,161 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     assert.equal(resolveDesktopProductName("0.0.17"), "T3 Code (Alpha)");
     assert.equal(resolveDesktopProductName("0.0.17-nightly.20260413.42"), "T3 Code (Nightly)");
   });
+
+  it.effect("derives an isolated identity for a downstream Nightly distribution", () =>
+    Effect.gen(function* () {
+      assert.deepStrictEqual(
+        yield* resolveDesktopBuildIdentity("0.0.17-nightly.20260413.42", " Fork "),
+        {
+          appId:
+            "com.t3tools.t3code.fork-8e5b1a73152cf01c1ce614f31711fc4159e8ecc177cd4c02975ed0145b3d3d45",
+          packageName:
+            "t3code-fork-8e5b1a73152cf01c1ce614f31711fc4159e8ecc177cd4c02975ed0145b3d3d45",
+          productName: "T3 Code (Fork)",
+          displayName: "T3 Code (Fork Nightly)",
+          distributionName: "Fork",
+          distributionId: "fork-8e5b1a73152cf01c1ce614f31711fc4159e8ecc177cd4c02975ed0145b3d3d45",
+        },
+      );
+    }),
+  );
+
+  it.effect("carries suffix-bearing distribution identities into the desktop runtime", () =>
+    Effect.gen(function* () {
+      for (const distributionName of ["Fork Alpha", "Fork Nightly"] as const) {
+        const buildIdentity = yield* resolveDesktopBuildIdentity(
+          "0.0.17-nightly.20260413.42",
+          distributionName,
+        );
+        const runtimeIdentity = resolveDesktopRuntimeIdentity({
+          isDevelopment: false,
+          isPackaged: true,
+          stageLabel: "Nightly",
+          appName: buildIdentity.productName,
+          packagedIdentity: buildIdentity,
+        });
+
+        assert.deepStrictEqual(runtimeIdentity, buildIdentity);
+        assert.equal(runtimeIdentity.distributionName, distributionName);
+        assert.equal(runtimeIdentity.productName, `T3 Code (${distributionName})`);
+        assert.equal(runtimeIdentity.displayName, `T3 Code (${distributionName} Nightly)`);
+      }
+    }),
+  );
+
+  it.effect("keeps distinct downstream distribution identities isolated", () =>
+    Effect.gen(function* () {
+      const spaced = yield* resolveDesktopBuildIdentity("0.0.17-nightly.20260413.42", "Foo Bar");
+      const hyphenated = yield* resolveDesktopBuildIdentity(
+        "0.0.17-nightly.20260413.42",
+        "Foo-Bar",
+      );
+      const uppercase = yield* resolveDesktopBuildIdentity("0.0.17-nightly.20260413.42", "Fork");
+      const lowercase = yield* resolveDesktopBuildIdentity("0.0.17-nightly.20260413.42", "fork");
+
+      assert.notEqual(spaced.appId, hyphenated.appId);
+      assert.notEqual(spaced.packageName, hyphenated.packageName);
+      assert.notEqual(uppercase.appId, lowercase.appId);
+      assert.notEqual(uppercase.packageName, lowercase.packageName);
+    }),
+  );
+
+  it.effect("rejects unsafe downstream distribution names", () =>
+    Effect.gen(function* () {
+      const error = yield* resolveDesktopBuildIdentity(
+        "0.0.17-nightly.20260413.42",
+        "Fork/Nightly",
+      ).pipe(Effect.flip);
+
+      assert.instanceOf(error, InvalidDesktopDistributionError);
+    }),
+  );
+
+  it.effect("rejects downstream display names that exceed filesystem-safe bounds", () =>
+    Effect.gen(function* () {
+      const error = yield* resolveDesktopBuildIdentity(
+        "0.0.17-nightly.20260413.42",
+        `F${"o".repeat(64)}`,
+      ).pipe(Effect.flip);
+
+      assert.instanceOf(error, InvalidDesktopDistributionError);
+    }),
+  );
+
+  it.effect("applies a downstream identity to macOS packaging metadata", () =>
+    Effect.gen(function* () {
+      const identity = yield* resolveDesktopBuildIdentity("0.0.17-nightly.20260413.42", "Fork");
+      const config = yield* createBuildConfig(
+        "mac",
+        "dmg",
+        "0.0.17-nightly.20260413.42",
+        false,
+        false,
+        undefined,
+        undefined,
+        false,
+        undefined,
+        identity,
+      );
+
+      assert.equal(
+        config.appId,
+        "com.t3tools.t3code.fork-8e5b1a73152cf01c1ce614f31711fc4159e8ecc177cd4c02975ed0145b3d3d45",
+      );
+      assert.equal(config.productName, "T3 Code (Fork)");
+      assert.deepEqual((config.mac as Record<string, unknown>).protocols, [
+        { name: "T3 Code", schemes: [`t3code-${identity.distributionId}`] },
+      ]);
+      assert.equal(
+        (config.dmg as { readonly title: string }).title,
+        "T3 Code (Fork) 0.0.17-nightly.20260413.42 Installer",
+      );
+    }),
+  );
+
+  it.effect("keeps fork Linux URL schemes separate from the official installation", () =>
+    Effect.gen(function* () {
+      const identity = yield* resolveDesktopBuildIdentity("1.2.3", "Fork");
+      const config = yield* createBuildConfig(
+        "linux",
+        "AppImage",
+        "1.2.3",
+        false,
+        false,
+        undefined,
+        undefined,
+        false,
+        undefined,
+        identity,
+      );
+      assert.deepEqual((config.linux as Record<string, unknown>).protocols, [
+        { name: "T3 Code", schemes: [`t3code-${identity.distributionId}`] },
+      ]);
+    }),
+  );
+
+  it.effect("enables stable ad hoc update signing for downstream macOS builds", () =>
+    Effect.gen(function* () {
+      const identity = yield* resolveDesktopBuildIdentity("0.0.17-nightly.20260413.42", "Fork");
+      const config = yield* createBuildConfig(
+        "mac",
+        "dmg",
+        "0.0.17-nightly.20260413.42",
+        false,
+        false,
+        undefined,
+        undefined,
+        false,
+        undefined,
+        identity,
+        true,
+      );
+
+      const mac = config.mac as Record<string, unknown>;
+      assert.equal(mac.identity, "-");
+      assert.match(String(mac.sign), /\/scripts\/sign-macos\.ts$/);
+    }),
+  );
 
   it("switches desktop packaging icons to the nightly artwork for nightly versions", () => {
     assert.deepStrictEqual(resolveDesktopBuildIconAssets("0.0.17"), {
@@ -1309,6 +1468,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
 
     return Effect.scoped(
       Effect.gen(function* () {
+        const path = yield* Path.Path;
         const fixture = yield* makeWindowsPayloadFixture({ copyUnpackedNatives: true });
         yield* validateWindowsPackagedPayload({
           stageDistDir: fixture.stageDistDir,
@@ -1317,7 +1477,11 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         });
 
         assert.isFalse(
-          commands.some((command) => command.options.env?.ELECTRON_RUN_AS_NODE === "1"),
+          commands.some(
+            (command) =>
+              command.command === path.join(fixture.packagedAppDir, fixture.appExecutableName) &&
+              command.options.env?.ELECTRON_RUN_AS_NODE === "1",
+          ),
         );
         assert.isTrue(
           commands.some(
@@ -2073,6 +2237,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         skipBuild: Option.none(),
         keepStage: Option.none(),
         signed: Option.none(),
+        stableMacAdhocSignature: Option.none(),
         verbose: Option.none(),
         mockUpdates: Option.none(),
         mockUpdateServerPort: Option.none(),
@@ -2113,6 +2278,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
             skipBuild: Option.none(),
             keepStage: Option.none(),
             signed: Option.none(),
+            stableMacAdhocSignature: Option.none(),
             verbose: Option.none(),
             mockUpdates: Option.none(),
             mockUpdateServerPort: Option.none(),
@@ -2137,6 +2303,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         skipBuild: Option.some(false),
         keepStage: Option.some(false),
         signed: Option.some(false),
+        stableMacAdhocSignature: Option.some(false),
         verbose: Option.some(false),
         mockUpdates: Option.some(false),
         mockUpdateServerPort: Option.none(),

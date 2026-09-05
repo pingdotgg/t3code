@@ -21,12 +21,12 @@ const decodeAppPackageMetadata = Schema.decodeEffect(Schema.fromJsonString(AppPa
 export class DesktopUserDataPathResolutionError extends Schema.TaggedErrorClass<DesktopUserDataPathResolutionError>()(
   "DesktopUserDataPathResolutionError",
   {
-    legacyPath: Schema.String,
+    candidatePath: Schema.String,
     cause: Schema.Defect(),
   },
 ) {
   override get message(): string {
-    return `Failed to inspect legacy desktop user-data path at "${this.legacyPath}".`;
+    return `Failed to inspect the desktop user-data path at "${this.candidatePath}".`;
   }
 }
 
@@ -45,26 +45,50 @@ const normalizeCommitHash = (value: string): Option.Option<string> => {
     : Option.none();
 };
 
+/** Shared path selection for synchronous pre-ready and ordinary filesystem adapters. */
+export const resolveUserDataPathWith = (
+  inspectPath: (candidate: string) => Effect.Effect<boolean, DesktopUserDataPathResolutionError>,
+) =>
+  Effect.gen(function* () {
+    const environment = yield* DesktopEnvironment.DesktopEnvironment;
+    if (environment.isDownstreamDistribution) {
+      const stablePath = environment.path.join(
+        environment.appDataDirectory,
+        environment.userDataDirName,
+      );
+      if (yield* inspectPath(stablePath)) {
+        return stablePath;
+      }
+      for (const legacyDirName of environment.legacyDownstreamUserDataDirNames) {
+        const legacyPath = environment.path.join(environment.appDataDirectory, legacyDirName);
+        if (yield* inspectPath(legacyPath)) {
+          return legacyPath;
+        }
+      }
+      return stablePath;
+    }
+    const legacyPath = environment.path.join(
+      environment.appDataDirectory,
+      environment.legacyUserDataDirName,
+    );
+    const legacyPathExists = yield* inspectPath(legacyPath);
+    return legacyPathExists
+      ? legacyPath
+      : environment.path.join(environment.appDataDirectory, environment.userDataDirName);
+  }).pipe(Effect.withSpan("desktop.appIdentity.resolveUserDataPath"));
+
 export const resolveUserDataPath = Effect.gen(function* () {
-  const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const fileSystem = yield* FileSystem.FileSystem;
-  const legacyPath = environment.path.join(
-    environment.appDataDirectory,
-    environment.legacyUserDataDirName,
+  return yield* resolveUserDataPathWith((candidate) =>
+    fileSystem
+      .exists(candidate)
+      .pipe(
+        Effect.mapError(
+          (cause) => new DesktopUserDataPathResolutionError({ candidatePath: candidate, cause }),
+        ),
+      ),
   );
-  const legacyPathExists = yield* fileSystem.exists(legacyPath).pipe(
-    Effect.mapError(
-      (cause) =>
-        new DesktopUserDataPathResolutionError({
-          legacyPath,
-          cause,
-        }),
-    ),
-  );
-  return legacyPathExists
-    ? legacyPath
-    : environment.path.join(environment.appDataDirectory, environment.userDataDirName);
-}).pipe(Effect.withSpan("desktop.appIdentity.resolveUserDataPath"));
+});
 
 export const make = Effect.gen(function* () {
   const assets = yield* DesktopAssets.DesktopAssets;
@@ -119,7 +143,6 @@ export const make = Effect.gen(function* () {
 
   const configure = Effect.gen(function* () {
     const commitHash = yield* resolveAboutCommitHash;
-    yield* electronApp.setName(environment.displayName);
     yield* electronApp.setAboutPanelOptions({
       applicationName: environment.displayName,
       applicationVersion: environment.appVersion,

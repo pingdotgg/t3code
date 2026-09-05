@@ -1,7 +1,12 @@
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
-import { DesktopEnvironmentBootstrapSchema } from "./ipc.ts";
+import {
+  DesktopEnvironmentBootstrapSchema,
+  DesktopUpdateStateSchema,
+  isValidDesktopUpdateRepository,
+  normalizeDesktopUpdateRepository,
+} from "./ipc.ts";
 
 describe("DesktopEnvironmentBootstrapSchema", () => {
   const decode = Schema.decodeUnknownSync(DesktopEnvironmentBootstrapSchema);
@@ -34,5 +39,50 @@ describe("DesktopEnvironmentBootstrapSchema", () => {
         wsBaseUrl: null,
       }).runningDistro,
     ).toBeNull();
+  });
+});
+
+describe("desktop update repository", () => {
+  it("normalizes GitHub URLs to owner/repository", () => {
+    expect(normalizeDesktopUpdateRepository(" https://github.com/acme/t3code.git ")).toBe(
+      "acme/t3code",
+    );
+  });
+
+  it.each(["", "acme", "acme/t3code/releases", "https://example.com/acme/t3code"])(
+    "rejects non-GitHub repository %j",
+    (repository) => {
+      expect(normalizeDesktopUpdateRepository(repository)).toBeNull();
+      expect(isValidDesktopUpdateRepository(repository)).toBe(false);
+    },
+  );
+});
+
+const decodeDesktopUpdateState = Schema.decodeUnknownSync(DesktopUpdateStateSchema);
+
+describe("desktop update status compatibility", () => {
+  it("accepts protocol-v1 update state without a repository", () => {
+    const state = decodeDesktopUpdateState({
+      enabled: true,
+      status: "idle",
+      channel: "latest",
+      currentVersion: "1.2.3",
+      hostArch: "arm64",
+      appArch: "arm64",
+      runningUnderArm64Translation: false,
+      availableVersion: null,
+      downloadedVersion: null,
+      releaseNotes: [],
+      omittedReleaseCount: 0,
+      downloadPercent: null,
+      checkedAt: null,
+      message: null,
+      errorContext: null,
+      canRetry: false,
+    });
+    expect(state.repository).toBeNull();
+    expect(decodeDesktopUpdateState({ ...state, repository: "fork/releases" }).repository).toBe(
+      "fork/releases",
+    );
   });
 });

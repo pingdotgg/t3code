@@ -111,7 +111,8 @@ const withIdentity = <A, E, R>(
     readonly calls?: ElectronAppCalls;
     readonly environment?: TestEnvironmentInput;
     readonly legacyPathExists?: boolean;
-    readonly legacyPathProbeError?: PlatformError.PlatformError;
+    readonly existingUserDataDirName?: string;
+    readonly pathProbeError?: PlatformError.PlatformError;
     readonly packageJson?: string;
     readonly pngIconPath?: Option.Option<string>;
   } = {},
@@ -128,10 +129,11 @@ const withIdentity = <A, E, R>(
         Layer.provideMerge(
           FileSystem.layerNoop({
             exists: (path) =>
-              input.legacyPathProbeError
-                ? Effect.fail(input.legacyPathProbeError)
+              input.pathProbeError
+                ? Effect.fail(input.pathProbeError)
                 : Effect.succeed(
-                    input.legacyPathExists === true && path.includes("T3 Code (Alpha)"),
+                    input.legacyPathExists === true &&
+                      path.endsWith(input.existingUserDataDirName ?? "T3 Code (Alpha)"),
                   ),
             readFileString: () =>
               Effect.succeed(input.packageJson ?? '{"t3codeCommitHash":"abcdef1234567890"}'),
@@ -174,16 +176,87 @@ describe("DesktopAppIdentity", () => {
         const error = yield* identity.resolveUserDataPath.pipe(Effect.flip);
 
         assert.instanceOf(error, DesktopAppIdentity.DesktopUserDataPathResolutionError);
-        assert.equal(error.legacyPath, legacyPath);
+        assert.equal(error.candidatePath, legacyPath);
         assert.strictEqual(error.cause, cause);
         assert.equal(
           error.message,
-          `Failed to inspect legacy desktop user-data path at "${legacyPath}".`,
+          `Failed to inspect the desktop user-data path at "${legacyPath}".`,
         );
       }),
-      { legacyPathProbeError: cause },
+      { pathProbeError: cause },
     );
   });
+
+  it.effect("identifies a failed downstream stable-path probe", () => {
+    const stablePath = "/Users/alice/Library/Application Support/T3 Code (Fork)";
+    const cause = PlatformError.systemError({
+      _tag: "PermissionDenied",
+      module: "FileSystem",
+      method: "exists",
+      description: "permission denied",
+      pathOrDescriptor: stablePath,
+    });
+
+    return withIdentity(
+      Effect.gen(function* () {
+        const identity = yield* DesktopAppIdentity.DesktopAppIdentity;
+        const error = yield* identity.resolveUserDataPath.pipe(Effect.flip);
+
+        assert.instanceOf(error, DesktopAppIdentity.DesktopUserDataPathResolutionError);
+        assert.equal(error.candidatePath, stablePath);
+        assert.strictEqual(error.cause, cause);
+        assert.equal(
+          error.message,
+          `Failed to inspect the desktop user-data path at "${stablePath}".`,
+        );
+      }),
+      {
+        pathProbeError: cause,
+        environment: {
+          appName: "T3 Code (Fork Nightly)",
+          appVersion: "0.0.38-nightly.20260901.1243",
+        },
+      },
+    );
+  });
+
+  it.effect("keeps a downstream profile separate from an existing official profile", () =>
+    withIdentity(
+      Effect.gen(function* () {
+        const identity = yield* DesktopAppIdentity.DesktopAppIdentity;
+        const userDataPath = yield* identity.resolveUserDataPath;
+
+        assert.equal(userDataPath, "/Users/alice/Library/Application Support/T3 Code (Fork)");
+      }),
+      {
+        legacyPathExists: true,
+        environment: {
+          appName: "T3 Code (Fork Nightly)",
+          appVersion: "0.0.38-nightly.20260901.1243",
+        },
+      },
+    ),
+  );
+
+  it.effect("uses an existing stage-named downstream profile during identity migration", () =>
+    withIdentity(
+      Effect.gen(function* () {
+        const identity = yield* DesktopAppIdentity.DesktopAppIdentity;
+        assert.equal(
+          yield* identity.resolveUserDataPath,
+          "/Users/alice/Library/Application Support/T3 Code (Fork Alpha)",
+        );
+      }),
+      {
+        legacyPathExists: true,
+        existingUserDataDirName: "T3 Code (Fork Alpha)",
+        environment: {
+          appName: "T3 Code (Fork Nightly)",
+          appVersion: "0.0.38-nightly.20260901.1243",
+        },
+      },
+    ),
+  );
 
   it.effect("configures app identity from the environment commit override", () => {
     const calls: ElectronAppCalls = {
@@ -197,7 +270,7 @@ describe("DesktopAppIdentity", () => {
         const identity = yield* DesktopAppIdentity.DesktopAppIdentity;
         yield* identity.configure;
 
-        assert.deepEqual(calls.setName, ["T3 Code (Alpha)"]);
+        assert.deepEqual(calls.setName, []);
         assert.equal(calls.setAboutPanelOptions[0]?.applicationName, "T3 Code (Alpha)");
         assert.equal(calls.setAboutPanelOptions[0]?.applicationVersion, "1.2.3");
         assert.equal(calls.setAboutPanelOptions[0]?.version, "0123456789ab");
@@ -213,6 +286,31 @@ describe("DesktopAppIdentity", () => {
           },
         },
         pngIconPath: Option.some("/icon.png"),
+      },
+    );
+  });
+
+  it.effect("keeps downstream display branding without mutating Electron's locked app name", () => {
+    const calls: ElectronAppCalls = {
+      setAboutPanelOptions: [],
+      setDockIcon: [],
+      setName: [],
+    };
+
+    return withIdentity(
+      Effect.gen(function* () {
+        const identity = yield* DesktopAppIdentity.DesktopAppIdentity;
+        yield* identity.configure;
+
+        assert.deepEqual(calls.setName, []);
+        assert.equal(calls.setAboutPanelOptions[0]?.applicationName, "T3 Code (Fork Nightly)");
+      }),
+      {
+        calls,
+        environment: {
+          appName: "T3 Code (Fork Nightly)",
+          appVersion: "0.0.38-nightly.20260901.1243",
+        },
       },
     );
   });

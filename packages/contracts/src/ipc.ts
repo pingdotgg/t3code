@@ -49,6 +49,7 @@ import type {
   TerminalWriteInput,
 } from "./terminal.ts";
 import * as Schema from "effect/Schema";
+import * as Effect from "effect/Effect";
 import type {
   DiscoveredLocalServerList,
   PreviewCloseInput,
@@ -169,6 +170,7 @@ export type DesktopUpdateStatus =
 export type DesktopRuntimeArch = "arm64" | "x64" | "other";
 export type DesktopTheme = "light" | "dark" | "system";
 export type DesktopUpdateChannel = "latest" | "nightly";
+export type DesktopUpdateRepository = string | null;
 export type DesktopAppStageLabel = "Alpha" | "Dev" | "Nightly";
 
 export const DesktopUpdateStatusSchema = Schema.Literals([
@@ -184,7 +186,39 @@ export const DesktopUpdateStatusSchema = Schema.Literals([
 export const DesktopRuntimeArchSchema = Schema.Literals(["arm64", "x64", "other"]);
 export const DesktopThemeSchema = Schema.Literals(["light", "dark", "system"]);
 export const DesktopUpdateChannelSchema = Schema.Literals(["latest", "nightly"]);
+export const DesktopUpdateRepositorySchema = Schema.NullOr(Schema.String);
 export const DesktopAppStageLabelSchema = Schema.Literals(["Alpha", "Dev", "Nightly"]);
+
+const GITHUB_REPOSITORY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9-]*\/[A-Za-z0-9_.-]+$/;
+
+/**
+ * Normalize the GitHub repository accepted by the desktop update feed.
+ * Custom update sources intentionally stay on GitHub so electron-updater can
+ * retain its release and artifact handling without accepting arbitrary URLs.
+ */
+export function normalizeDesktopUpdateRepository(value: unknown): DesktopUpdateRepository {
+  if (typeof value !== "string") return null;
+
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+
+  let repository = trimmed;
+  if (trimmed.startsWith("https://github.com/")) {
+    try {
+      const url = new URL(trimmed);
+      if (url.hostname !== "github.com" || url.search || url.hash) return null;
+      repository = url.pathname.replace(/^\/+|\/+$/g, "").replace(/\.git$/, "");
+    } catch {
+      return null;
+    }
+  }
+
+  return GITHUB_REPOSITORY_PATTERN.test(repository) ? repository : null;
+}
+
+export function isValidDesktopUpdateRepository(value: unknown): value is string {
+  return normalizeDesktopUpdateRepository(value) !== null;
+}
 
 export interface DesktopAppBranding {
   baseName: string;
@@ -208,6 +242,7 @@ export interface DesktopUpdateState {
   enabled: boolean;
   status: DesktopUpdateStatus;
   channel: DesktopUpdateChannel;
+  repository: DesktopUpdateRepository;
   currentVersion: string;
   hostArch: DesktopRuntimeArch;
   appArch: DesktopRuntimeArch;
@@ -239,6 +274,7 @@ export const DesktopUpdateStateSchema = Schema.Struct({
   enabled: Schema.Boolean,
   status: DesktopUpdateStatusSchema,
   channel: DesktopUpdateChannelSchema,
+  repository: DesktopUpdateRepositorySchema.pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   currentVersion: Schema.String,
   hostArch: DesktopRuntimeArchSchema,
   appArch: DesktopRuntimeArchSchema,
@@ -1147,6 +1183,7 @@ export interface DesktopBridge {
   onWindowFullscreenStateChange: (listener: (fullscreen: boolean) => void) => () => void;
   getUpdateState: () => Promise<DesktopUpdateState>;
   setUpdateChannel: (channel: DesktopUpdateChannel) => Promise<DesktopUpdateState>;
+  setUpdateRepository: (repository: DesktopUpdateRepository) => Promise<DesktopUpdateState>;
   checkForUpdate: () => Promise<DesktopUpdateCheckResult>;
   downloadUpdate: () => Promise<DesktopUpdateActionResult>;
   installUpdate: () => Promise<DesktopUpdateActionResult>;

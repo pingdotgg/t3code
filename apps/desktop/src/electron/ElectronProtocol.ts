@@ -1,3 +1,4 @@
+import { resolveDesktopUrlScheme } from "@t3tools/shared/desktopBuild";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -12,16 +13,16 @@ export const DESKTOP_HOST = "app";
 export const DESKTOP_PRODUCTION_SCHEME = "t3code";
 export const DESKTOP_DEVELOPMENT_SCHEME = "t3code-dev";
 
-export function getDesktopScheme(isDevelopment: boolean): string {
-  return isDevelopment ? DESKTOP_DEVELOPMENT_SCHEME : DESKTOP_PRODUCTION_SCHEME;
+export function getDesktopScheme(isDevelopment: boolean, distributionId?: string | null): string {
+  return resolveDesktopUrlScheme(isDevelopment, distributionId);
 }
 
-export function getDesktopOrigin(isDevelopment: boolean): string {
-  return `${getDesktopScheme(isDevelopment)}://${DESKTOP_HOST}`;
+export function getDesktopOrigin(isDevelopment: boolean, distributionId?: string | null): string {
+  return `${getDesktopScheme(isDevelopment, distributionId)}://${DESKTOP_HOST}`;
 }
 
-export function getDesktopUrl(isDevelopment: boolean): string {
-  return `${getDesktopOrigin(isDevelopment)}/`;
+export function getDesktopUrl(isDevelopment: boolean, distributionId?: string | null): string {
+  return `${getDesktopOrigin(isDevelopment, distributionId)}/`;
 }
 
 export class ElectronProtocolRegistrationError extends Schema.TaggedErrorClass<ElectronProtocolRegistrationError>()(
@@ -109,36 +110,24 @@ function withContentSecurityPolicy(response: Response, policy: string): Response
 /**
  * Must run synchronously during process bootstrap, before Electron emits `ready`.
  */
-export function registerDesktopSchemePrivilegesSync(): void {
-  Electron.protocol.registerSchemesAsPrivileged([
-    {
-      scheme: DESKTOP_PRODUCTION_SCHEME,
-      privileges: {
-        standard: true,
-        secure: true,
-        supportFetchAPI: true,
-        corsEnabled: true,
-        stream: true,
-      },
-    },
-    {
-      scheme: DESKTOP_DEVELOPMENT_SCHEME,
-      privileges: {
-        standard: true,
-        secure: true,
-        supportFetchAPI: true,
-        corsEnabled: true,
-        stream: true,
-      },
-    },
-  ]);
+export function registerDesktopSchemePrivilegesSync(
+  additionalSchemes: readonly string[] = [],
+): void {
+  Electron.protocol.registerSchemesAsPrivileged(
+    [...new Set([DESKTOP_PRODUCTION_SCHEME, DESKTOP_DEVELOPMENT_SCHEME, ...additionalSchemes])].map(
+      (scheme) => ({
+        scheme,
+        privileges: {
+          standard: true,
+          secure: true,
+          supportFetchAPI: true,
+          corsEnabled: true,
+          stream: true,
+        },
+      }),
+    ),
+  );
 }
-
-const registerDesktopSchemePrivileges = Effect.sync(registerDesktopSchemePrivilegesSync).pipe(
-  Effect.withSpan("desktop.electron.protocol.registerSchemePrivileges"),
-);
-
-export const layerSchemePrivileges = Layer.effectDiscard(registerDesktopSchemePrivileges);
 
 async function proxyRequest(
   request: Request,
