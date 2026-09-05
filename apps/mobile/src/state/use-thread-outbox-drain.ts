@@ -48,6 +48,7 @@ import {
 import { environmentThreadShells, threadEnvironment } from "./threads";
 import {
   appendComposerDraftAttachments,
+  clearComposerDraftModelSelection,
   composerDraftsAtom,
   flushComposerDrafts,
   type ComposerDraft,
@@ -183,6 +184,18 @@ export async function completeQueuedMessageDelivery(
   deliveryRevision: number,
 ): Promise<"removed" | "edited" | "failed"> {
   try {
+    // The server now owns the choice this message sent. Release only that
+    // choice, so later desktop changes can reach the composer while a pick
+    // made before or during delivery survives, even one with the same value.
+    if (queuedMessage.modelSelectionId !== undefined) {
+      clearComposerDraftModelSelection(
+        scopedThreadKey(queuedMessage.environmentId, queuedMessage.threadId),
+        queuedMessage.modelSelectionId,
+      );
+      // Persist before removing the outbox entry. A crash between the two
+      // writes can then retry cleanup instead of resurrecting the old model.
+      await flushComposerDrafts();
+    }
     await removeDeliveredCloudQueuedMessage(queuedMessage).catch((error) => {
       console.warn("[thread-outbox] could not update sign-out snapshot after delivery", {
         messageId: queuedMessage.messageId,
@@ -230,6 +243,8 @@ export async function removeAcknowledgedExistingThreadMessage(
   acknowledgedMessageIds: Set<MessageId>,
 ): Promise<boolean> {
   try {
+    // Delivery may have succeeded while persisting its cleared override failed.
+    await flushComposerDrafts();
     await removeDeliveredCloudQueuedMessage(queuedMessage).catch((error) => {
       console.warn("[thread-outbox] could not update sign-out snapshot after delivery", {
         messageId: queuedMessage.messageId,

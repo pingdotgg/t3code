@@ -22,6 +22,8 @@ import {
 } from "../lib/composerAttachmentFiles";
 import type { DraftComposerAttachment, FileBackedComposerAttachment } from "../lib/composerImages";
 import { SerializedAsyncQueue } from "../lib/serialized-async-queue";
+import { scopedThreadKey } from "../lib/scopedEntities";
+import { randomHex } from "../lib/uuid";
 import { appAtomRegistry } from "./atom-registry";
 import {
   decodeQueuedThreadMessage,
@@ -56,6 +58,11 @@ export interface ComposerDraft {
   readonly attachments: ReadonlyArray<DraftComposerAttachment>;
   readonly importedShareIds?: ReadonlyArray<string>;
   readonly modelSelection?: ModelSelection;
+  /**
+   * New on every explicit model pick, even one that repeats the value. A
+   * queued message carries it so delivery releases only the choice it sent.
+   */
+  readonly modelSelectionId?: string;
   readonly runtimeMode?: RuntimeMode;
   readonly interactionMode?: ProviderInteractionMode;
   readonly workspaceSelection?: ComposerDraftWorkspaceSelection;
@@ -91,6 +98,7 @@ const ComposerDraftSchema = Schema.Struct({
   attachments: Schema.Array(DraftComposerAttachmentSchema),
   importedShareIds: Schema.optional(Schema.Array(Schema.String)),
   modelSelection: Schema.optional(ModelSelectionSchema),
+  modelSelectionId: Schema.optional(Schema.String),
   runtimeMode: Schema.optional(RuntimeModeSchema),
   interactionMode: Schema.optional(ProviderInteractionModeSchema),
   workspaceSelection: Schema.optional(ComposerDraftWorkspaceSelectionSchema),
@@ -715,7 +723,13 @@ export async function removeDeliveredCloudQueuedMessage(
               (message.creation?.startFromOrigin ?? false))))
     )
       continue;
-    const drafts = { ...saved.drafts };
+    const drafts = {
+      ...clearComposerDraftModelSelectionState(
+        saved.drafts,
+        scopedThreadKey(message.environmentId, message.threadId),
+        message.modelSelectionId,
+      ),
+    };
     delete drafts[editorKey];
     signedOut[accountId] = {
       drafts,
@@ -755,11 +769,14 @@ export async function restoreCloudComposerDrafts(accountId: string): Promise<voi
       const restored = { ...current };
       for (const [key, draft] of Object.entries(saved.drafts)) {
         const existing = current[key];
+        const modelOwner = existing && Object.hasOwn(existing, "modelSelection") ? existing : draft;
         const attachmentIds = new Set(existing?.attachments.map((attachment) => attachment.id));
         restored[key] = existing
           ? {
               ...draft,
               ...existing,
+              modelSelection: modelOwner.modelSelection,
+              modelSelectionId: modelOwner.modelSelectionId,
               text: mergeComposerDraftText(existing.text, draft.text),
               // A concurrent import must not lose files, even above the send limit.
               attachments: [
@@ -963,6 +980,7 @@ export function updateComposerDraftSettings(
     const draft = {
       ...normalizeDraft(current[draftKey]),
       ...settings,
+      ...(settings.modelSelection ? { modelSelectionId: randomHex(8) } : {}),
     };
     if (isEmptyDraft(draft)) {
       const next = { ...current };
@@ -974,6 +992,32 @@ export function updateComposerDraftSettings(
       [draftKey]: draft,
     };
   });
+}
+
+function clearComposerDraftModelSelectionState(
+  current: Record<string, ComposerDraft>,
+  draftKey: string,
+  modelSelectionId: string | undefined,
+): Record<string, ComposerDraft> {
+  const existing = current[draftKey];
+  if (modelSelectionId === undefined || existing?.modelSelectionId !== modelSelectionId)
+    return current;
+  const { modelSelection: _selection, modelSelectionId: _id, ...draft } = existing;
+  // A share-import receipt outlives its content, so an otherwise empty draft
+  // still carrying one is kept: dropping it would re-import the same share.
+  if (isEmptyDraft(draft) && (draft.importedShareIds?.length ?? 0) === 0) {
+    const next = { ...current };
+    delete next[draftKey];
+    return next;
+  }
+  return { ...current, [draftKey]: draft };
+}
+
+/** Releases the model choice a delivered message sent, leaving a newer pick and draft content alone. */
+export function clearComposerDraftModelSelection(draftKey: string, modelSelectionId: string): void {
+  updateComposerDrafts((current) =>
+    clearComposerDraftModelSelectionState(current, draftKey, modelSelectionId),
+  );
 }
 
 export function clearComposerDraftContentState(
@@ -991,12 +1035,15 @@ export function clearComposerDraftContentState(
   const {
     importedShareIds: _importedShareIds,
     modelSelection,
+    modelSelectionId,
     workspaceSelection,
     ...retained
   } = existing;
   const draft = {
     ...retained,
-    ...(options?.clearModelSelection || modelSelection === undefined ? {} : { modelSelection }),
+    ...(options?.clearModelSelection || modelSelection === undefined
+      ? {}
+      : { modelSelection, ...(modelSelectionId === undefined ? {} : { modelSelectionId }) }),
     ...(options?.clearWorkspaceSelection || workspaceSelection === undefined
       ? {}
       : { workspaceSelection }),
@@ -1201,6 +1248,7 @@ export function sameComposerDraftState(a: ComposerDraft, b: ComposerDraft): bool
     a.attachments === b.attachments &&
     a.importedShareIds === b.importedShareIds &&
     a.modelSelection === b.modelSelection &&
+    a.modelSelectionId === b.modelSelectionId &&
     a.runtimeMode === b.runtimeMode &&
     a.interactionMode === b.interactionMode &&
     a.workspaceSelection === b.workspaceSelection
@@ -1235,11 +1283,14 @@ export function undoComposerDraftMergeState(
   );
   // A setting still holding the merge's value is the merge's doing: restore
   // the snapshot's. One the user changed since the merge stays theirs.
-  const undoSetting = <
-    K extends "modelSelection" | "runtimeMode" | "interactionMode" | "workspaceSelection",
-  >(
+  const undoSetting = <K extends "runtimeMode" | "interactionMode" | "workspaceSelection">(
     key: K,
   ): ComposerDraft[K] => (existing[key] === merged[key] ? snapshot[key] : existing[key]);
+  const modelOwner =
+    existing.modelSelection === merged.modelSelection &&
+    existing.modelSelectionId === merged.modelSelectionId
+      ? snapshot
+      : existing;
   const text =
     insertedText.length > 0 && existing.text.startsWith(merged.text)
       ? snapshot.text + existing.text.slice(merged.text.length)
@@ -1252,7 +1303,10 @@ export function undoComposerDraftMergeState(
     attachments: existing.attachments.filter(
       (attachment) => !insertedAttachmentIds.has(attachment.id),
     ),
-    modelSelection: undoSetting("modelSelection"),
+    // Present-but-undefined is meaningful: it records that the live draft
+    // cleared its model, so a cloud restore keeps that over the archived one.
+    modelSelection: modelOwner.modelSelection,
+    modelSelectionId: modelOwner.modelSelectionId,
     runtimeMode: undoSetting("runtimeMode"),
     interactionMode: undoSetting("interactionMode"),
     workspaceSelection: undoSetting("workspaceSelection"),
