@@ -93,7 +93,7 @@ export const makeLiveStreamBudget = Effect.fn("makeLiveStreamBudget")(function* 
       return Effect.succeed(item);
     });
 
-  // Replace one coalescing batch atomically. Both raw and projected payloads
+  // Replace one coalescing batch atomically. Queued and coalesced payloads
   // count against the same budget, and discarded updates release their charge.
   const replace = <A extends object>(
     previous: ReadonlyArray<RetainedLiveItem<unknown>>,

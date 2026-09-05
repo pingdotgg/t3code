@@ -104,6 +104,50 @@ describe("ChatMarkdown favicon privacy", () => {
 });
 
 describe("ChatMarkdown streaming", () => {
+  it("recovers highlighting after a failed fence changes without resetting its controls", async () => {
+    const highlighter = await getSyntaxHighlighterPromise("text");
+    const codeToHtml = highlighter.codeToHtml.bind(highlighter);
+    let fail = true;
+    vi.spyOn(highlighter, "codeToHtml").mockImplementation((...args) => {
+      if (fail) throw new Error("Temporary highlighter failure");
+      return codeToHtml(...args);
+    });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    let renderer: ReactTestRenderer | undefined;
+
+    try {
+      await act(async () => {
+        renderer = create(
+          <ChatMarkdown cwd="/tmp/project" text={"```text\ninitial\n```"} isStreaming />,
+        );
+      });
+      const mounted = renderer!;
+      const codeBlock = mounted.root.findByProps({ "data-language": "text" });
+      const initialWrap = codeBlock.props["data-wrap"] === "true";
+      const wrap = codeButton(mounted, initialWrap ? "Disable line wrap" : "Wrap lines");
+      await act(async () => {
+        wrap.onClick?.({} as Parameters<NonNullable<typeof wrap.onClick>>[0]);
+      });
+      expect(mounted.root.findAllByProps({ className: "chat-markdown-shiki" })).toHaveLength(0);
+
+      fail = false;
+      await act(async () => {
+        mounted.update(
+          <ChatMarkdown cwd="/tmp/project" text={"```text\nrecovered\n```"} isStreaming />,
+        );
+      });
+      expect(mounted.root.findAllByProps({ className: "chat-markdown-shiki" })).toHaveLength(1);
+      expect(mounted.root.findByProps({ "data-language": "text" })).toBe(codeBlock);
+      expect(codeBlock.props["data-wrap"]).toBe(String(!initialWrap));
+    } finally {
+      await act(async () => renderer?.unmount());
+      vi.unstubAllGlobals();
+      vi.restoreAllMocks();
+    }
+  });
+
   it("preserves code controls and details without highlighting an unchanged fence again", async () => {
     const highlighter = await getSyntaxHighlighterPromise("text");
     const highlight = vi.spyOn(highlighter, "codeToHtml");

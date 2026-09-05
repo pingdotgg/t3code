@@ -72,16 +72,26 @@ export function createThreadOutboxManager(options: ThreadOutboxManagerOptions) {
     options.registry.set(queuedMessagesByThreadKeyAtom, groupQueuedThreadMessages(messages));
   };
 
-  // Resolves true when hydration completed; false when the read failed (the
-  // next call retries). Destructive callers (the attachment sweep) must not
-  // treat a failed hydration as an empty queue.
+  // Readable messages can be used after a partial load. Only a complete load
+  // returns true, so cleanup cannot delete files owned by unreadable records.
+  // A later call retries failed reads without replacing live message objects.
   const load = (): Promise<boolean> => {
     if (loadPromise !== null) {
       return loadPromise;
     }
     loadPromise = serialize(async () => {
-      const persistedMessages = await options.storage.load();
-      setMessages([...persistedMessages, ...currentMessages()]);
+      const result = await options.storage.load();
+      const current = currentMessages();
+      const currentIds = new Set(current.map((message) => message.messageId));
+      const recovered = result.messages.filter(
+        (message) => !currentIds.has(message.messageId) && !revisions.has(message.messageId),
+      );
+      // Accepted edits and removals win over a later disk read. Retaining
+      // current objects also keeps retries from restarting the drain.
+      if (recovered.length > 0) setMessages([...recovered, ...current]);
+      if (result.errors.length > 0) {
+        throw new AggregateError(result.errors, "Some queued messages could not be read.");
+      }
       return true;
     }).catch((cause) => {
       loadPromise = null;
@@ -275,15 +285,23 @@ export function createThreadOutboxManager(options: ThreadOutboxManagerOptions) {
     // changes after this request must not enter the clear set.
     const revisionsAtRequest = new Map(revisions);
     return serialize(async () => {
-      const persisted = await options.storage.load().catch((cause) => {
-        throw new ThreadOutboxManagerError({
-          operation: "clear-environment-load",
-          environmentId,
-          threadId: null,
-          messageId: null,
-          cause,
+      const persisted = await options.storage
+        .load()
+        .then((result) => {
+          if (result.errors.length > 0) {
+            throw new AggregateError(result.errors, "Some queued messages could not be read.");
+          }
+          return result.messages;
+        })
+        .catch((cause) => {
+          throw new ThreadOutboxManagerError({
+            operation: "clear-environment-load",
+            environmentId,
+            threadId: null,
+            messageId: null,
+            cause,
+          });
         });
-      });
       const allMessages = flattenQueuedThreadMessages(
         groupQueuedThreadMessages([...persisted, ...currentMessages()]),
       );
