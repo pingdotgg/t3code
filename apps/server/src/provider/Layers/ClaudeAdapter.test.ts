@@ -6081,27 +6081,27 @@ describe("ClaudeAdapterLive", () => {
             }),
         }),
         Effect.provide(
-          Layer.mock(OrchestrationEngine.OrchestrationEngineService)({
-            dispatch: () => Effect.succeed({ sequence: 1 }),
-          }),
-        ),
-        Effect.provide(
-          Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
-            getProjectShellById: () =>
-              Effect.succeed(
-                Option.some({
-                  id: projectId,
-                  title: "Imported project",
-                  workspaceRoot: process.cwd(),
-                  defaultModelSelection: null,
-                  scripts: [],
-                  createdAt,
-                  updatedAt: createdAt,
-                }),
-              ),
-            getImportedAgentSessionSources: () => Effect.succeed([]),
-            getThreadDetailById: () => Effect.succeed(Option.none()),
-          }),
+          Layer.mergeAll(
+            Layer.mock(OrchestrationEngine.OrchestrationEngineService)({
+              dispatch: () => Effect.succeed({ sequence: 1 }),
+            }),
+            Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
+              getProjectShellById: () =>
+                Effect.succeed(
+                  Option.some({
+                    id: projectId,
+                    title: "Imported project",
+                    workspaceRoot: process.cwd(),
+                    defaultModelSelection: null,
+                    scripts: [],
+                    createdAt,
+                    updatedAt: createdAt,
+                  }),
+                ),
+              getImportedAgentSessionSources: () => Effect.succeed([]),
+              getThreadDetailById: () => Effect.succeed(Option.none()),
+            }),
+          ),
         ),
       );
       assert.deepEqual(imported, { importedCount: 1, skippedCount: 0 });
