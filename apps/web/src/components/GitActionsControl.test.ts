@@ -12,6 +12,7 @@ const state = vi.hoisted(() => ({
   scopes: new Set<string>(),
   primaryScopes: new Set<string>(),
   shell: { branch: "main" } as { branch: string } | null,
+  detail: null as { branch: string } | null,
   draft: null as { branch: string; worktreePath: null; envMode: "local" } | null,
   branch: "main",
   commits: 0,
@@ -34,7 +35,8 @@ vi.mock("react", async (importOriginal) => ({
 }));
 vi.mock("@effect/atom-react", () => ({ useAtomValue: () => null }));
 vi.mock("~/state/entities", () => ({
-  useThread: () => null,
+  useThread: (_ref: unknown, options?: { waitForShell?: boolean }) =>
+    options?.waitForShell && state.shell === null ? null : state.detail,
   useThreadShell: () => state.shell,
 }));
 vi.mock("~/state/session", () => ({
@@ -60,6 +62,7 @@ vi.mock("~/state/threads", () => ({
       if (!state.scopes.has(AuthOrchestrationOperateScope))
         return AsyncResult.failure(Cause.fail(new Error("Task denied")));
       if (state.shell) state.shell.branch = input.branch;
+      if (state.detail) state.detail.branch = input.branch;
       return AsyncResult.success(undefined);
     },
   },
@@ -178,6 +181,7 @@ describe("Git actions while thread details load", () => {
     state.scopes = new Set([AuthSourceControlWriteScope]);
     state.primaryScopes = new Set([AuthSourceControlWriteScope, AuthOrchestrationOperateScope]);
     state.shell = { branch: "main" };
+    state.detail = null;
     state.draft = null;
     state.branch = "main";
     state.commits = 0;
@@ -200,6 +204,42 @@ describe("Git actions while thread details load", () => {
     await renderActions()({ action: "commit", featureBranch: true });
 
     expect(state.branch).toBe("feature");
+    expect(state.commits).toBe(1);
+    expect(state.shell?.branch).toBe("feature");
+    expect(state.metadataRequests).toEqual([{ environmentId: "environment", branch: "feature" }]);
+  });
+
+  it("synchronizes archived thread detail after its shell disappears", async () => {
+    state.scopes.add(AuthOrchestrationOperateScope);
+    state.detail = { branch: "main" };
+    renderActions();
+    state.shell = null;
+
+    await renderActions()({ action: "commit", featureBranch: true });
+
+    expect(state.commits).toBe(1);
+    expect(state.branch).toBe("feature");
+    expect(state.detail.branch).toBe("feature");
+    expect(state.metadataRequests).toEqual([{ environmentId: "environment", branch: "feature" }]);
+  });
+
+  it("requires task permission before changing an archived thread's branch", async () => {
+    state.shell = null;
+    state.detail = { branch: "main" };
+
+    await renderActions()({ action: "commit", featureBranch: true });
+
+    expect(state.commits).toBe(0);
+    expect(state.detail.branch).toBe("main");
+    expect(state.metadataRequests).toEqual([]);
+  });
+
+  it("uses the current shell branch when cached detail names the new branch", async () => {
+    state.scopes.add(AuthOrchestrationOperateScope);
+    state.detail = { branch: "feature" };
+
+    await renderActions()({ action: "commit", featureBranch: true });
+
     expect(state.commits).toBe(1);
     expect(state.shell?.branch).toBe("feature");
     expect(state.metadataRequests).toEqual([{ environmentId: "environment", branch: "feature" }]);
