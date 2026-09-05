@@ -863,11 +863,12 @@ export const make = Effect.gen(function* () {
     yield* ensureRates(false);
     yield* ensureScanCacheLoaded;
 
-    const dirs = yield* resolveTranscriptDirs(settings).pipe(
-      Effect.provideService(Path.Path, path),
-    );
     const windowStartMs =
       (exactWindow?.sinceTimeMs ?? DateTime.toEpochMillis(windowStart.value)) - MTIME_SLACK_MS;
+    // Thread rows and the summary must fold the same transcript snapshot. In
+    // particular, a file that grows during the source-cache TTL belongs to the
+    // next refresh on both RPCs instead of appearing in the drill-down alone.
+    const currentSnapshot = yield* getSourceSnapshot(windowStartMs, undefined, settings);
 
     const resolveProject = yield* resolveProjects();
     const accumulator = new ThreadUsageAccumulator({
@@ -889,25 +890,17 @@ export const make = Effect.gen(function* () {
     const livePaths = new Set<string>();
     const walkedRoots: string[] = [];
 
-    for (const { provider, dir, fileName } of dirs) {
+    for (const { provider, dir, files } of currentSnapshot.dirs) {
       if (input.providers !== undefined && !input.providers.includes(provider)) continue;
-      const exists = yield* fileSystem
-        .exists(dir)
-        .pipe(Effect.catchCause(() => Effect.succeed(false)));
-      if (!exists) continue;
+      if (files === null) continue;
       walkedRoots.push(dir);
-
-      const files = yield* Effect.promise(() =>
-        listTranscriptFiles(dir, windowStartMs, fileName === undefined ? undefined : { fileName }),
-      );
       for (const file of files) {
         livePaths.add(file.path);
-        const records = yield* readFileRecords(file.path, file.size, file.mtimeMs, provider);
-        if (records.length === 0) continue;
+        if (file.records.length === 0) continue;
         const isSubagent =
           provider === "claude" && path.basename(path.dirname(file.path)) === "subagents";
         const agentId = isSubagent ? path.basename(file.path, ".jsonl") : null;
-        for (const record of records) {
+        for (const record of file.records) {
           const sessionKey =
             record.sessionId.length > 0
               ? `${provider}:${record.sessionId}`
@@ -956,11 +949,10 @@ export const make = Effect.gen(function* () {
       { concurrency: 8 },
     );
 
-    const readAt = yield* DateTime.now;
     const finishedAtMs = yield* Clock.currentTimeMillis;
     return {
       contractVersion: USAGE_CONTRACT_VERSION,
-      readAt: DateTime.formatIso(readAt),
+      readAt: DateTime.formatIso(DateTime.makeUnsafe(currentSnapshot.completedAtMs)),
       sinceDay: input.sinceDay,
       untilDay: input.untilDay,
       rows,
