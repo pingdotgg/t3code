@@ -171,7 +171,7 @@ function ProviderSetupActions({
   const actionsDisabled = pendingLabel !== null || queryError !== null;
   const installationStatusMessage =
     installation?.phase === "downloading"
-      ? `Downloading ${(installation.downloadedBytes / 1_000_000).toFixed(1)} MB${installation.totalBytes === null ? "" : ` of ${(installation.totalBytes / 1_000_000).toFixed(1)} MB`}.`
+      ? "Downloading Antigravity."
       : installation?.phase === "extracting"
         ? "Extracting Antigravity."
         : installation?.phase === "verifying"
@@ -183,6 +183,16 @@ function ProviderSetupActions({
                 ? "The configured Antigravity runtime is unavailable."
                 : "The configured Antigravity runtime has not been checked."
               : "Install the official Antigravity runtime before signing in.";
+  const downloadSizeMessage =
+    installation?.phase === "downloading"
+      ? `${(installation.downloadedBytes / 1_000_000).toFixed(1)} MB${installation.totalBytes === null ? "" : ` of ${(installation.totalBytes / 1_000_000).toFixed(1)} MB`}`
+      : undefined;
+  const downloadPercentage =
+    installation?.phase === "downloading" &&
+    installation.totalBytes !== null &&
+    installation.totalBytes > 0
+      ? Math.floor((installation.downloadedBytes / installation.totalBytes) * 100)
+      : null;
 
   async function runCommand<A, E>(
     label: string,
@@ -265,18 +275,29 @@ function ProviderSetupActions({
     <div className="grid gap-3">
       <div className="grid gap-2">
         <p className="font-medium">Runtime</p>
-        <p role="status" className="text-muted-foreground">
-          {installationStatusMessage}
-        </p>
+        <div className="flex items-center justify-between gap-3">
+          <p role="status" className="text-muted-foreground">
+            {installationStatusMessage}
+          </p>
+          {downloadPercentage !== null ? (
+            <span className="shrink-0 tabular-nums text-muted-foreground">
+              {downloadPercentage}%
+            </span>
+          ) : null}
+        </div>
         {installation?.phase === "downloading" &&
         installation.totalBytes !== null &&
         installation.totalBytes > 0 ? (
           <progress
             aria-label="Antigravity download"
-            className="h-1 w-full accent-foreground"
+            aria-valuetext={downloadSizeMessage}
+            className="h-2 w-full appearance-none overflow-hidden rounded-full bg-muted [&::-moz-progress-bar]:rounded-full [&::-moz-progress-bar]:bg-primary [&::-webkit-progress-bar]:rounded-full [&::-webkit-progress-bar]:bg-muted [&::-webkit-progress-value]:rounded-full [&::-webkit-progress-value]:bg-primary"
             value={installation.downloadedBytes}
             max={installation.totalBytes}
           />
+        ) : null}
+        {downloadSizeMessage ? (
+          <p className="tabular-nums text-muted-foreground">{downloadSizeMessage}</p>
         ) : null}
         {installation?.message && installation.message !== installationStatusMessage ? (
           <p className="text-muted-foreground [overflow-wrap:anywhere]">{installation.message}</p>
