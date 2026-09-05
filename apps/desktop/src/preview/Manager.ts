@@ -3869,6 +3869,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     send: SendCommand,
     sendCleanup: SendCommand,
   ) {
+    const initialControlEpoch = (yield* Ref.get(controlEpochRef)).get(tabId) ?? 0;
     yield* prepareAutomationInput(send, false);
     const keySequence = makePreviewAutomationKeySequence(input, {
       isMac: hostPlatform === "darwin",
@@ -3885,7 +3886,27 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       yield* sendCleanup("Emulation.setFocusEmulationEnabled", { enabled: false }).pipe(
         Effect.ignore,
       );
-      if (previouslyFocused && previouslyFocused.id !== wc.id && !previouslyFocused.isDestroyed()) {
+      const focusedWebContents = yield* attempt(
+        {
+          operation: "automationPress.getCurrentFocusedWebContents",
+          tabId,
+          webContentsId: wc.id,
+        },
+        () => webContents.getFocusedWebContents(),
+      ).pipe(Effect.orElseSucceed(() => null));
+      const focusedWindow = yield* attempt(
+        { operation: "automationPress.getFocusedWindow", tabId, webContentsId: wc.id },
+        () => BrowserWindow.getFocusedWindow(),
+      ).pipe(Effect.orElseSucceed(() => null));
+      const currentControlEpoch = (yield* Ref.get(controlEpochRef)).get(tabId) ?? 0;
+      if (
+        currentControlEpoch === initialControlEpoch &&
+        focusedWindow !== null &&
+        focusedWebContents?.id === wc.id &&
+        previouslyFocused &&
+        previouslyFocused.id !== wc.id &&
+        !previouslyFocused.isDestroyed()
+      ) {
         yield* attempt(
           {
             operation: "automationPress.restoreFocusedWebContents",

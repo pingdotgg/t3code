@@ -116,6 +116,7 @@ const {
   createFromPath,
   fromId,
   getFocusedWebContents,
+  getFocusedWindow,
   mkdir,
   showItemInFolder,
   webviewSend,
@@ -126,6 +127,9 @@ const {
   createFromPath: vi.fn((): { readonly isEmpty: () => boolean } => ({ isEmpty: () => false })),
   fromId: vi.fn<(_id?: number) => Electron.WebContents | null>((_id?: number) => null),
   getFocusedWebContents: vi.fn(() => null),
+  getFocusedWindow: vi.fn<() => Electron.BrowserWindow | null>(
+    () => ({}) as Electron.BrowserWindow,
+  ),
   mkdir: vi.fn((_path: string) => undefined),
   showItemInFolder: vi.fn(),
   webviewSend: vi.fn(),
@@ -134,7 +138,7 @@ const {
 }));
 
 vi.mock("electron", () => ({
-  BrowserWindow: browserWindowConstructor,
+  BrowserWindow: Object.assign(browserWindowConstructor, { getFocusedWindow }),
   clipboard: {
     writeImage,
   },
@@ -468,6 +472,8 @@ describe("PreviewManager", () => {
     fromId.mockClear();
     getFocusedWebContents.mockReset();
     getFocusedWebContents.mockReturnValue(null);
+    getFocusedWindow.mockReset();
+    getFocusedWindow.mockReturnValue({} as Electron.BrowserWindow);
     mkdir.mockClear();
     writeFile.mockClear();
     showItemInFolder.mockClear();
@@ -3785,6 +3791,13 @@ describe("PreviewManager", () => {
     withManager((manager) =>
       Effect.gen(function* () {
         let failKeyDown = false;
+        let interruptPress = false;
+        let blockCleanup = false;
+        const cleanupStarted = Deferred.makeUnsafe<void>();
+        let releaseCleanup!: () => void;
+        const cleanupRelease = new Promise<void>((resolve) => {
+          releaseCleanup = resolve;
+        });
         let humanInput: ((_event: unknown, signal: unknown) => void) | undefined;
         const sendCommand = vi.fn(async (method: string, params?: Record<string, unknown>) => {
           if (
@@ -3800,22 +3813,31 @@ describe("PreviewManager", () => {
           ) {
             humanInput?.(
               {},
-              {
-                kind: "key",
-                key: params["key"],
-                code: params["code"] ?? "Digit1",
-              },
+              interruptPress
+                ? { kind: "pointer", x: 400, y: 300, button: 0 }
+                : {
+                    kind: "key",
+                    key: params["key"],
+                    code: params["code"] ?? "Digit1",
+                  },
             );
+          }
+          if (blockCleanup && method === "Input.dispatchKeyEvent" && params?.["type"] === "keyUp") {
+            humanInput?.({}, { kind: "pointer", x: 400, y: 300, button: 0 });
+            Deferred.doneUnsafe(cleanupStarted, Effect.void);
+            await cleanupRelease;
           }
           return method === "Runtime.evaluate" ? { result: { value: { ok: true } } } : undefined;
         });
         const restoreFocus = vi.fn();
         const focus = vi.fn();
-        getFocusedWebContents.mockReturnValue({
+        const previousFocused = {
           id: 7,
           isDestroyed: () => false,
           focus: restoreFocus,
-        } as never);
+        } as never;
+        const focusedGuest = { id: 42, isDestroyed: () => false } as never;
+        getFocusedWebContents.mockReturnValueOnce(previousFocused).mockReturnValue(focusedGuest);
         fromId.mockReturnValue({
           id: 42,
           isDestroyed: () => false,
@@ -3913,6 +3935,8 @@ describe("PreviewManager", () => {
         expect(sendCommand).toHaveBeenCalledWith("Input.setIgnoreInputEvents", { ignore: false });
 
         sendCommand.mockClear();
+        getFocusedWebContents.mockReset();
+        getFocusedWebContents.mockReturnValueOnce(previousFocused).mockReturnValue(focusedGuest);
         failKeyDown = true;
         const failedPress = yield* Effect.exit(manager.automationPress("tab_input", { key: "y" }));
 
@@ -3938,6 +3962,8 @@ describe("PreviewManager", () => {
         ).toHaveLength(1);
 
         sendCommand.mockClear();
+        getFocusedWebContents.mockReset();
+        getFocusedWebContents.mockReturnValueOnce(previousFocused).mockReturnValue(focusedGuest);
         failKeyDown = false;
         yield* manager.automationPress("tab_input", { key: "!" });
         expect(sendCommand).toHaveBeenCalledWith("Input.dispatchKeyEvent", {
@@ -3950,6 +3976,74 @@ describe("PreviewManager", () => {
           isKeypad: false,
           text: "!",
           unmodifiedText: "!",
+        });
+        expect(restoreFocus).toHaveBeenCalledTimes(3);
+
+        getFocusedWebContents.mockReset();
+        getFocusedWebContents
+          .mockReturnValueOnce({ id: 7, isDestroyed: () => false, focus: restoreFocus } as never)
+          .mockReturnValueOnce(null);
+        getFocusedWindow.mockReturnValue(null);
+        yield* manager.automationPress("tab_input", { key: "?" });
+        expect(restoreFocus).toHaveBeenCalledTimes(3);
+
+        getFocusedWindow.mockReturnValue({} as Electron.BrowserWindow);
+        getFocusedWebContents.mockReset();
+        getFocusedWebContents
+          .mockReturnValueOnce({ id: 7, isDestroyed: () => false, focus: restoreFocus } as never)
+          .mockReturnValueOnce({ id: 43, isDestroyed: () => false } as never);
+        yield* manager.automationPress("tab_input", { key: "/" });
+        expect(restoreFocus).toHaveBeenCalledTimes(3);
+
+        getFocusedWebContents.mockReset();
+        getFocusedWebContents.mockReturnValueOnce(previousFocused).mockReturnValue(previousFocused);
+        yield* manager.automationPress("tab_input", { key: "=" });
+        expect(restoreFocus).toHaveBeenCalledTimes(3);
+
+        sendCommand.mockClear();
+        getFocusedWebContents.mockReset();
+        getFocusedWebContents.mockReturnValueOnce(previousFocused).mockReturnValue(focusedGuest);
+        interruptPress = true;
+        const interruptedPress = yield* Effect.exit(
+          manager.automationPress("tab_input", { key: "~" }),
+        );
+        expect(Exit.isFailure(interruptedPress)).toBe(true);
+        if (Exit.isFailure(interruptedPress)) {
+          expect(Option.getOrThrow(Cause.findErrorOption(interruptedPress.cause))).toMatchObject({
+            _tag: "PreviewAutomationControlInterruptedError",
+            operation: "press",
+            tabId: "tab_input",
+            webContentsId: 42,
+          });
+        }
+        expect(restoreFocus).toHaveBeenCalledTimes(3);
+
+        interruptPress = false;
+        blockCleanup = true;
+        sendCommand.mockClear();
+        getFocusedWebContents.mockReset();
+        getFocusedWebContents.mockReturnValueOnce(previousFocused).mockReturnValue(focusedGuest);
+        const cleanupPress = yield* manager
+          .automationPress("tab_input", { key: "#" })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(cleanupStarted);
+        const interruptCleanup = yield* Effect.forkChild(Fiber.interrupt(cleanupPress));
+        yield* Effect.yieldNow;
+        releaseCleanup();
+        yield* Fiber.join(interruptCleanup);
+        const cleanupExit = yield* Fiber.await(cleanupPress);
+        expect(Exit.isFailure(cleanupExit)).toBe(true);
+        expect(sendCommand).toHaveBeenCalledWith("Input.dispatchKeyEvent", {
+          type: "keyUp",
+          key: "#",
+          code: "Digit3",
+          modifiers: 0,
+          windowsVirtualKeyCode: 51,
+          location: 0,
+          isKeypad: false,
+        });
+        expect(sendCommand).toHaveBeenCalledWith("Emulation.setFocusEmulationEnabled", {
+          enabled: false,
         });
         expect(restoreFocus).toHaveBeenCalledTimes(3);
       }),
