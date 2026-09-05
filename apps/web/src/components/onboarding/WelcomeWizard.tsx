@@ -512,6 +512,7 @@ function ConnectMachinesStep({
               primaryEnvironmentId={primaryEnvironment?.environmentId ?? null}
               savedEnvironments={savedEnvironments}
               showSavedEnvironments
+              refreshWhileEmpty
               empty={
                 <p className="px-1 py-4 text-xs text-muted-foreground">
                   Waiting for your computer to connect.

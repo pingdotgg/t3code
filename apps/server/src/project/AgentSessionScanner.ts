@@ -46,9 +46,10 @@ import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
 import { expandHomePath } from "../pathExpansion.ts";
 import * as ServerSettings from "../serverSettings.ts";
 
-/** Chunk size for transcript reads; stop as soon as session metadata names its cwd. */
+/** Chunk size for full transcript reads. */
 const TRANSCRIPT_PREFIX_BYTES = 32 * 1024;
-const INITIAL_TRANSCRIPT_PREFIX_BYTES = 4 * 1024;
+/** Small reads avoid wasting the metadata budget on long Codex instruction headers. */
+const METADATA_READ_BYTES = 8 * 1024;
 /** Prevent malformed transcripts from turning project discovery into a full file scan. */
 const MAX_TRANSCRIPT_SCAN_BYTES = 1024 * 1024;
 
@@ -657,7 +658,7 @@ export const make = Effect.gen(function* () {
                 return null;
               }
               const readSize = Math.min(
-                bytesRead === 0 ? INITIAL_TRANSCRIPT_PREFIX_BYTES : TRANSCRIPT_PREFIX_BYTES,
+                METADATA_READ_BYTES,
                 maxBytes - bytesRead,
                 budget.bytesRemaining,
               );
@@ -1246,6 +1247,23 @@ export const make = Effect.gen(function* () {
             return Option.some<AgentSessionRecentThread>({ _tag: "Skipped" });
           }
           recordsRemaining -= lines.length;
+
+          // A stable replacement file can belong to a different project than the cached candidate.
+          let snapshotCwd: string | null = null;
+          for (const line of lines) {
+            snapshotCwd = extractCwd(line);
+            if (snapshotCwd !== null) break;
+          }
+          if (snapshotCwd === null) {
+            return Option.some<AgentSessionRecentThread>({ _tag: "Skipped" });
+          }
+          const expandedCwd = expandHomePath(snapshotCwd.trim());
+          if (
+            !path.isAbsolute(expandedCwd) ||
+            (yield* directoryIdentity(path.resolve(expandedCwd))) !== rootIdentity
+          ) {
+            return Option.some<AgentSessionRecentThread>({ _tag: "Skipped" });
+          }
 
           const parsedThread = parseAgentSessionTranscript(
             {
