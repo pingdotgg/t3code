@@ -25,13 +25,12 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as Schema from "effect/Schema";
 
 import type { OrchestratorV2Error } from "../orchestration-v2/Orchestrator.ts";
 import { queuedRunsInDeliveryOrder } from "../orchestration-v2/QueuedRunOrder.ts";
 import {
+  type ThreadManagementError,
   ThreadManagementService,
-  ThreadManagementThreadNotFoundError,
 } from "../orchestration-v2/ThreadManagementService.ts";
 import { interactionModeWithinMcpCeiling, runtimeModeWithinMcpCeiling } from "./McpModeCeilings.ts";
 import type { McpInvocationScope } from "./McpInvocationContext.ts";
@@ -98,25 +97,37 @@ function dispatchFailure(error: OrchestratorV2Error): QueueMcpFailure {
   }
 }
 
-const isThreadManagementThreadNotFound = Schema.is(ThreadManagementThreadNotFoundError);
-
 function projectionFailure(input: {
-  readonly error: unknown;
+  readonly error: ThreadManagementError | OrchestratorV2Error;
   readonly threadId: ThreadId;
   readonly projectId?: string;
 }): QueueMcpFailure {
-  if (isThreadManagementThreadNotFound(input.error)) {
-    return failure(
-      "thread_not_found",
-      input.projectId === undefined
-        ? `Thread '${input.threadId}' was not found.`
-        : `Thread '${input.threadId}' was not found in project '${input.projectId}'.`,
-    );
+  switch (input.error._tag) {
+    case "ThreadManagementThreadNotFoundError":
+      return failure(
+        "thread_not_found",
+        input.projectId === undefined
+          ? `Thread '${input.threadId}' was not found.`
+          : `Thread '${input.threadId}' was not found in project '${input.projectId}'.`,
+      );
+    case "ThreadManagementRunNotFoundError":
+    case "ThreadManagementThreadArchivedError":
+    case "ThreadManagementNoSteerableRunError":
+    case "ThreadManagementThreadNotInterruptibleError":
+    case "ThreadManagementProjectionLoadError":
+    case "ThreadManagementProjectThreadsListError":
+    case "ThreadManagementDurableRunProjectionError":
+    case "OrchestratorDispatchError":
+    case "OrchestratorProjectionError":
+    case "OrchestratorDomainEventStreamError":
+    case "OrchestratorProviderAdapterError":
+    case "OrchestratorCommandIdConflictError":
+    case "OrchestratorCommandPreviouslyRejectedError":
+      return failure(
+        "orchestration_error",
+        `Unable to load thread '${input.threadId}': ${errorMessage(input.error)}`,
+      );
   }
-  return failure(
-    "orchestration_error",
-    `Unable to load thread '${input.threadId}': ${errorMessage(input.error)}`,
-  );
 }
 
 function truncate(text: string, maxChars: number) {
