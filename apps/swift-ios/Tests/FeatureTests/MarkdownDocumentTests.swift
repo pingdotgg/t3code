@@ -686,6 +686,82 @@ struct MarkdownDocumentTests {
     }
 
     @Test @MainActor
+    func selectableTextRendersKnownSkillsAsPillsOutsideCodeAndLinks() throws {
+        let document = try #require(
+            MarkdownRenderCache.shared.documentImmediately(
+                for: MarkdownContentRevision(
+                    "Use $file-pr now, not `$file-pr` or [$file-pr](https://example.com)."
+                )
+            )
+        )
+        guard case let .paragraph(inline) = document.blocks.first else {
+            Issue.record("Expected a rendered paragraph")
+            return
+        }
+
+        let attributed = MarkdownSelectableTextAttributes.make(
+            from: inline,
+            lineSpacing: 4,
+            skills: [FeatureProviderSkill(name: "file-pr", displayName: "File PR")]
+        )
+
+        #expect(FeatureInlineSkillProjection.signatures(in: attributed).count == 1)
+        #expect(
+            FeatureInlineSkillProjection.plainText(from: attributed)
+                == "Use $file-pr now, not $file-pr or $file-pr."
+        )
+    }
+
+    @Test @MainActor
+    func selectableTextKeepsSkillsLiteralInsideFencedCode() throws {
+        let document = try #require(
+            MarkdownRenderCache.shared.documentImmediately(
+                for: MarkdownContentRevision("```text\n$file-pr\n```")
+            )
+        )
+        guard case let .codeBlock(_, code, inline) = document.blocks.first else {
+            Issue.record("Expected a rendered code block")
+            return
+        }
+
+        let attributed = MarkdownSelectableTextAttributes.make(
+            from: inline,
+            lineSpacing: 3,
+            skills: [FeatureProviderSkill(name: "file-pr", displayName: "File PR")]
+        )
+
+        #expect(attributed.string == code)
+        #expect(FeatureInlineSkillProjection.signatures(in: attributed).isEmpty)
+    }
+
+    @Test @MainActor
+    func selectableTextKeepsSkillBoundariesAcrossFormattedRuns() throws {
+        let document = try #require(
+            MarkdownRenderCache.shared.documentImmediately(
+                for: MarkdownContentRevision(
+                    "prefix.**$file-pr** then **$file-pr** and **$file-pr**suffix"
+                )
+            )
+        )
+        guard case let .paragraph(inline) = document.blocks.first else {
+            Issue.record("Expected a rendered paragraph")
+            return
+        }
+
+        let attributed = MarkdownSelectableTextAttributes.make(
+            from: inline,
+            lineSpacing: 4,
+            skills: [FeatureProviderSkill(name: "file-pr", displayName: "File PR")]
+        )
+
+        #expect(FeatureInlineSkillProjection.signatures(in: attributed).count == 1)
+        #expect(
+            FeatureInlineSkillProjection.plainText(from: attributed)
+                == "prefix.$file-pr then $file-pr and $file-prsuffix"
+        )
+    }
+
+    @Test @MainActor
     func codeBlocksReuseSelectableInlineRendering() throws {
         let literalCode = "x = arr[i](fn)\na **b** c\nprintf(\\\"a\\\\tb\\\");"
         let cache = MarkdownRenderCache()

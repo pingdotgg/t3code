@@ -327,6 +327,7 @@ struct FeatureComposerView: View {
                     placeholder: composerPlaceholder,
                     acceptsImages: imagesAllowed,
                     isReadOnly: voiceInputController.isBusy,
+                    skills: powerFeatures.enabledSkills,
                     selectionRequest: textSelectionRequest,
                     onSelectionChange: handleTextSelectionChange,
                     onPasteImages: attachImageProviders,

@@ -27,6 +27,10 @@ struct FeatureComposerPowerFeatures {
     }
 
     static var disabled: FeatureComposerPowerFeatures { FeatureComposerPowerFeatures() }
+
+    var enabledSkills: [FeatureProviderSkill] {
+        skills.filter(\.isEnabled)
+    }
 }
 
 enum FeatureContextCompaction {

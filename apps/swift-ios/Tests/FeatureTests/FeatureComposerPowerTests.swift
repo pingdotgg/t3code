@@ -680,6 +680,269 @@ struct FeatureComposerPowerTests {
     }
 
     @Test
+    func inlineSkillTokensUseProviderLabelsAndWebBoundaries() throws {
+        let skills = [
+            FeatureProviderSkill(name: "file-pr", displayName: "File PR"),
+            FeatureProviderSkill(name: "review-follow-up"),
+        ]
+
+        let completed = FeatureInlineSkillParser.descriptors(
+            in: "Use $file-pr then ",
+            skills: skills,
+            allowsEndBoundary: false
+        )
+        #expect(completed.map(\.rawText) == ["$file-pr"])
+        #expect(completed.map(\.displayName) == ["File PR"])
+
+        #expect(
+            FeatureInlineSkillParser.descriptors(
+                in: "$review-follow-up",
+                skills: skills,
+                allowsEndBoundary: true
+            ).map(\.displayName) == ["Review Follow Up"]
+        )
+        #expect(
+            FeatureInlineSkillParser.descriptors(
+                in: "$file-pr",
+                skills: skills,
+                allowsEndBoundary: false
+            ).isEmpty
+        )
+        #expect(
+            FeatureInlineSkillParser.descriptors(
+                in: "prefix$file-pr ",
+                skills: skills,
+                allowsEndBoundary: true
+            ).isEmpty
+        )
+    }
+
+    @Test
+    func composerInlineSkillsExcludeDisabledSkills() {
+        let powerFeatures = FeatureComposerPowerFeatures(
+            skills: [
+                FeatureProviderSkill(name: "file-pr", displayName: "File PR"),
+                FeatureProviderSkill(name: "disabled", isEnabled: false),
+            ]
+        )
+
+        let descriptors = FeatureInlineSkillParser.descriptors(
+            in: "$file-pr $disabled ",
+            skills: powerFeatures.enabledSkills,
+            allowsEndBoundary: false
+        )
+
+        #expect(descriptors.map(\.rawText) == ["$file-pr"])
+    }
+
+    @Test @MainActor
+    func inlineSkillAttachmentsRoundTripPlainTextAndSelectionOffsets() throws {
+        let source = "Use $file-pr now"
+        let descriptors = FeatureInlineSkillParser.descriptors(
+            in: source,
+            skills: [FeatureProviderSkill(name: "file-pr", displayName: "File PR")],
+            allowsEndBoundary: false
+        )
+        let font = UIFont.preferredFont(forTextStyle: .body)
+        let attributed = FeatureInlineSkillPillRenderer.attributedText(
+            source: source,
+            descriptors: descriptors,
+            baseAttributes: [.font: font],
+            font: font,
+            traits: UITraitCollection(userInterfaceStyle: .dark)
+        )
+
+        #expect(FeatureInlineSkillProjection.plainText(from: attributed) == source)
+        #expect(FeatureInlineSkillProjection.signatures(in: attributed).count == 1)
+        #expect(attributed.string == "Use \u{FFFC} now")
+
+        let plainAfterSkill = NSMaxRange(try #require(descriptors.first).range)
+        let displaySelection = FeatureInlineSkillProjection.displayRange(
+            for: NSRange(location: plainAfterSkill, length: 0),
+            in: attributed
+        )
+        #expect(displaySelection == NSRange(location: 5, length: 0))
+        #expect(
+            FeatureInlineSkillProjection.plainRange(
+                for: displaySelection,
+                in: attributed
+            ) == NSRange(location: plainAfterSkill, length: 0)
+        )
+    }
+
+    @Test @MainActor
+    func inlineSkillProjectionIgnoresPillMetadataInheritedByTypedText() throws {
+        let source = "$file-pr"
+        let descriptors = FeatureInlineSkillParser.descriptors(
+            in: source,
+            skills: [FeatureProviderSkill(name: "file-pr", displayName: "File PR")],
+            allowsEndBoundary: true
+        )
+        let font = UIFont.preferredFont(forTextStyle: .body)
+        let attributed = FeatureInlineSkillPillRenderer.attributedText(
+            source: source,
+            descriptors: descriptors,
+            baseAttributes: [.font: font],
+            font: font,
+            traits: UITraitCollection(userInterfaceStyle: .dark)
+        )
+        let typedTextAttributes = attributed.attributes(at: 0, effectiveRange: nil)
+            .filter { $0.key != .attachment }
+        let afterTyping = NSMutableAttributedString(attributedString: attributed)
+        afterTyping.append(NSAttributedString(string: "x", attributes: typedTextAttributes))
+
+        #expect(FeatureInlineSkillProjection.plainText(from: afterTyping) == "$file-prx")
+        #expect(FeatureInlineSkillProjection.signatures(in: afterTyping).count == 1)
+    }
+
+    @Test
+    func completedComposerPillSurvivesDeletingItsTrailingSpace() throws {
+        let skill = FeatureProviderSkill(name: "file-pr", displayName: "File PR")
+        let completed = try #require(
+            FeatureInlineSkillParser.descriptors(
+                in: "$file-pr ",
+                skills: [skill],
+                allowsEndBoundary: false
+            ).first
+        )
+        #expect(
+            FeatureInlineSkillParser.descriptors(
+                in: "$file-pr",
+                skills: [skill],
+                allowsEndBoundary: false,
+                preservingTrailing: completed
+            ) == [completed]
+        )
+    }
+
+    @Test @MainActor
+    func inlineSkillSynchronizationPreservesComposerUndoHistory() throws {
+        let input = FeatureComposerTextInput(
+            text: .constant("Use"),
+            focused: .constant(false),
+            placeholder: "",
+            acceptsImages: false,
+            isReadOnly: false,
+            skills: [FeatureProviderSkill(name: "file-pr", displayName: "File PR")],
+            selectionRequest: nil,
+            onSelectionChange: { _ in },
+            onPasteImages: { _ in },
+            onDismissKeyboard: nil
+        )
+        let coordinator = FeatureComposerTextInput.Coordinator(input)
+        let textView = FeatureComposerUITextView()
+        textView.delegate = coordinator
+        textView.font = UIFont.preferredFont(forTextStyle: .body)
+        textView.attributedText = NSAttributedString(string: "Use")
+        textView.selectedRange = NSRange(location: 3, length: 0)
+
+        let viewController = UIViewController()
+        let window = UIWindow(frame: UIScreen.main.bounds)
+        window.rootViewController = viewController
+        viewController.view.addSubview(textView)
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        #expect(textView.becomeFirstResponder())
+
+        let undoManager = try #require(textView.undoManager)
+        undoManager.removeAllActions()
+        undoManager.groupsByEvent = false
+
+        #expect(coordinator.textView(
+            textView,
+            shouldChangeTextIn: textView.selectedRange,
+            replacementText: " $file-pr"
+        ))
+        textView.insertText(" $file-pr")
+        #expect(FeatureInlineSkillProjection.signatures(in: textView.attributedText).isEmpty)
+
+        #expect(coordinator.textView(
+            textView,
+            shouldChangeTextIn: textView.selectedRange,
+            replacementText: " "
+        ))
+        textView.insertText(" ")
+        #expect(FeatureInlineSkillProjection.signatures(in: textView.attributedText).count == 1)
+
+        #expect(undoManager.canUndo)
+        undoManager.undo()
+        #expect(
+            FeatureInlineSkillProjection.plainText(from: textView.attributedText)
+                == "Use $file-pr"
+        )
+        undoManager.undo()
+        #expect(FeatureInlineSkillProjection.plainText(from: textView.attributedText) == "Use")
+
+        undoManager.redo()
+        #expect(
+            FeatureInlineSkillProjection.plainText(from: textView.attributedText)
+                == "Use $file-pr"
+        )
+        undoManager.redo()
+        #expect(
+            FeatureInlineSkillProjection.plainText(from: textView.attributedText)
+                == "Use $file-pr "
+        )
+        #expect(FeatureInlineSkillProjection.signatures(in: textView.attributedText).count == 1)
+    }
+
+    @Test @MainActor
+    func composerRedoPreservesTrailingSkillPill() throws {
+        let input = FeatureComposerTextInput(
+            text: .constant("$file-pr "),
+            focused: .constant(false),
+            placeholder: "",
+            acceptsImages: false,
+            isReadOnly: false,
+            skills: [FeatureProviderSkill(name: "file-pr", displayName: "File PR")],
+            selectionRequest: nil,
+            onSelectionChange: { _ in },
+            onPasteImages: { _ in },
+            onDismissKeyboard: nil
+        )
+        let coordinator = FeatureComposerTextInput.Coordinator(input)
+        let textView = FeatureComposerUITextView()
+        textView.delegate = coordinator
+        textView.font = UIFont.preferredFont(forTextStyle: .body)
+        _ = coordinator.synchronizeInlineSkills(
+            in: textView,
+            source: "$file-pr ",
+            selection: NSRange(location: 9, length: 0)
+        )
+
+        let viewController = UIViewController()
+        let window = UIWindow(frame: UIScreen.main.bounds)
+        window.rootViewController = viewController
+        viewController.view.addSubview(textView)
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        #expect(textView.becomeFirstResponder())
+
+        let undoManager = try #require(textView.undoManager)
+        undoManager.removeAllActions()
+        undoManager.groupsByEvent = false
+
+        let trailingSpace = NSRange(location: 1, length: 1)
+        #expect(coordinator.textView(
+            textView,
+            shouldChangeTextIn: trailingSpace,
+            replacementText: ""
+        ))
+        textView.selectedRange = trailingSpace
+        textView.insertText("")
+        #expect(FeatureInlineSkillProjection.plainText(from: textView.attributedText) == "$file-pr")
+        #expect(FeatureInlineSkillProjection.signatures(in: textView.attributedText).count == 1)
+
+        undoManager.undo()
+        #expect(FeatureInlineSkillProjection.plainText(from: textView.attributedText) == "$file-pr ")
+        #expect(FeatureInlineSkillProjection.signatures(in: textView.attributedText).count == 1)
+
+        undoManager.redo()
+        #expect(FeatureInlineSkillProjection.plainText(from: textView.attributedText) == "$file-pr")
+        #expect(FeatureInlineSkillProjection.signatures(in: textView.attributedText).count == 1)
+    }
+
+    @Test
     func changingInputQuestionsKeepsAValidActiveQuestionAndDropsStaleAnswers() {
         #expect(
             FeatureComposerQuestionReconciliation.index(
