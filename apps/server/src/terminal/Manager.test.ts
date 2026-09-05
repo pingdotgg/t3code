@@ -27,6 +27,7 @@ import * as TestClock from "effect/testing/TestClock";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { expect } from "vite-plus/test";
 
+import packageJson from "../../package.json" with { type: "json" };
 import * as ProcessRunner from "../processRunner.ts";
 import * as TerminalManager from "./Manager.ts";
 import * as PtyAdapter from "./PtyAdapter.ts";
@@ -1712,6 +1713,39 @@ it.layer(
       }),
   );
 
+  it.effect.each([
+    { name: "the parent has no identity", env: {} },
+    {
+      name: "the parent identifies a different terminal",
+      env: { TERM_PROGRAM: "Apple_Terminal", TERM_PROGRAM_VERSION: "2.14" },
+    },
+  ] as const)("sets T3 Code terminal identity when $name", ({ env: parentEnv }) =>
+    Effect.gen(function* () {
+      const env = Object.freeze({ ...parentEnv });
+      const { manager, ptyAdapter } = yield* createManager(5, { env });
+      yield* manager.open(openInput());
+
+      expect(ptyAdapter.spawnInputs[0]?.env.TERM_PROGRAM).toBe("t3code");
+      expect(ptyAdapter.spawnInputs[0]?.env.TERM_PROGRAM_VERSION).toBe(packageJson.version);
+      expect(env).toEqual(parentEnv);
+    }),
+  );
+
+  it.effect("preserves partial and blank terminal identity overrides on restart", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        env: { TERM_PROGRAM: "Apple_Terminal", TERM_PROGRAM_VERSION: "2.14" },
+      });
+      yield* manager.open(openInput({ env: { TERM_PROGRAM_VERSION: "custom-version" } }));
+      expect(ptyAdapter.spawnInputs[0]?.env.TERM_PROGRAM).toBe("t3code");
+      expect(ptyAdapter.spawnInputs[0]?.env.TERM_PROGRAM_VERSION).toBe("custom-version");
+
+      yield* manager.restart(restartInput({ env: { TERM_PROGRAM: "" } }));
+      expect(ptyAdapter.spawnInputs[1]?.env.TERM_PROGRAM).toBe("");
+      expect(ptyAdapter.spawnInputs[1]?.env.TERM_PROGRAM_VERSION).toBe(packageJson.version);
+    }),
+  );
+
   it.effect("filters app runtime env variables from terminal sessions", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager(5, {
@@ -1809,6 +1843,8 @@ it.layer(
             T3CODE_PROJECT_ROOT: "/repo",
             T3CODE_WORKTREE_PATH: "/repo/worktree-a",
             CUSTOM_FLAG: "1",
+            TERM_PROGRAM: "custom-terminal",
+            TERM_PROGRAM_VERSION: "custom-version",
           },
         }),
       );
@@ -1819,6 +1855,8 @@ it.layer(
       assert.equal(spawnInput.env.T3CODE_PROJECT_ROOT, "/repo");
       assert.equal(spawnInput.env.T3CODE_WORKTREE_PATH, "/repo/worktree-a");
       assert.equal(spawnInput.env.CUSTOM_FLAG, "1");
+      assert.equal(spawnInput.env.TERM_PROGRAM, "custom-terminal");
+      assert.equal(spawnInput.env.TERM_PROGRAM_VERSION, "custom-version");
     }),
   );
 
