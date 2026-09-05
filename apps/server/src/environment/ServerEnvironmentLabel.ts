@@ -1,4 +1,4 @@
-import { HostProcessHostname, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { HostProcessEnvironment, HostProcessHostname, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -179,6 +179,55 @@ const resolveFriendlyHostLabel = Effect.fn("resolveFriendlyHostLabel")(function*
   return null;
 });
 
+const isWslEnvironment = Effect.fn("isWslEnvironment")(function* () {
+  const platform = yield* HostProcessPlatform;
+  if (platform !== "linux") {
+    return false;
+  }
+
+  const fileSystem = yield* FileSystem.FileSystem;
+  const osReleasePath = "/proc/sys/kernel/osrelease";
+  
+  const content = yield* fileSystem.exists(osReleasePath).pipe(
+    Effect.mapError(
+      (cause) =>
+        new ServerEnvironmentLabelFileError({
+          operation: "inspect",
+          path: osReleasePath,
+          cause,
+        }),
+    ),
+    Effect.flatMap((exists) => 
+      exists 
+        ? fileSystem.readFileString(osReleasePath).pipe(
+            Effect.mapError(
+              (cause) =>
+                new ServerEnvironmentLabelFileError({
+                  operation: "read",
+                  path: osReleasePath,
+                  cause,
+                }),
+            ),
+          )
+        : Effect.succeed("")
+    ),
+    Effect.catchTags({
+      ServerEnvironmentLabelFileError: (error) =>
+        Effect.logDebug(error.message).pipe(
+          Effect.annotateLogs({
+            operation: error.operation,
+            path: error.path,
+            cause: error,
+          }),
+          Effect.as(""),
+        ),
+    }),
+  );
+
+  const lowerContent = content.toLowerCase();
+  return lowerContent.includes("microsoft") || lowerContent.includes("wsl");
+});
+
 export const resolveServerEnvironmentLabel = Effect.fn("resolveServerEnvironmentLabel")(function* (
   input: ResolveServerEnvironmentLabelInput,
 ) {
@@ -189,6 +238,15 @@ export const resolveServerEnvironmentLabel = Effect.fn("resolveServerEnvironment
 
   const hostname = normalizeLabel(yield* HostProcessHostname);
   if (hostname) {
+    const isWsl = yield* isWslEnvironment();
+    if (isWsl) {
+      const env = yield* HostProcessEnvironment;
+      const distroName = env["WSL_DISTRO_NAME"];
+      if (distroName && distroName.trim().length > 0) {
+        return `${hostname} (WSL: ${distroName.trim()})`;
+      }
+      return `${hostname} (WSL)`;
+    }
     return hostname;
   }
 
