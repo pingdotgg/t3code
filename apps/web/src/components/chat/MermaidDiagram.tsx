@@ -48,7 +48,10 @@ export function MermaidDiagram({
         : { status: "pending" };
 
   useEffect(() => {
-    if (getCachedMermaidSvg(code, theme) != null) return;
+    // Keyed off what the render pass read, not a fresh lookup: a cache write landing between
+    // render and here would otherwise skip the render and strand the placeholder, since the
+    // cache cannot tell React that it changed.
+    if (cached != null) return;
 
     let cancelled = false;
     void renderMermaidSvg(code, theme).then(
@@ -64,7 +67,7 @@ export function MermaidDiagram({
     return () => {
       cancelled = true;
     };
-  }, [code, key, theme]);
+  }, [cached, code, key, theme]);
 
   if (state.status === "pending") {
     return <p className="px-3 pt-1 pb-3 text-xs text-muted-foreground">Rendering diagram…</p>;

@@ -1,4 +1,3 @@
-import { fnv1a32 } from "./diffRendering";
 import { LRUCache } from "./lruCache";
 
 export type MermaidTheme = "light" | "dark";
@@ -18,8 +17,12 @@ export function isMermaidFenceLanguage(language: string): boolean {
  */
 const renderedSvgCache = new LRUCache<string>(64, 8 * 1024 * 1024);
 
+/**
+ * The source itself, not a hash of it: a diagram body is small, and a hash collision here would
+ * silently draw one pull request's diagram in place of another's.
+ */
 function cacheKey(code: string, theme: MermaidTheme): string {
-  return `${fnv1a32(code).toString(36)}:${code.length}:${theme}`;
+  return `${theme}\n${code}`;
 }
 
 export function getCachedMermaidSvg(code: string, theme: MermaidTheme): string | null {
