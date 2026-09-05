@@ -1,5 +1,7 @@
+import * as Option from "effect/Option";
 import {
   ApprovalRequestId,
+  UserInputAttachmentAnswerPayload,
   isToolLifecycleItemType,
   ProviderApprovalOption,
   ProviderRequestKind,
@@ -54,6 +56,8 @@ export interface PendingUserInput {
 export interface PendingUserInputDraftAnswer {
   readonly selectedOptionValues?: ReadonlyArray<string>;
   readonly customAnswer?: string;
+  readonly attachmentCount?: number;
+  readonly attachmentsBlocked?: boolean;
 }
 
 export interface ThreadFeedActivity {
@@ -91,6 +95,7 @@ export interface ThreadFeedActivity {
 type WorkLogToolLifecycleStatus = "inProgress" | "completed" | "failed" | "declined" | "stopped";
 
 export interface WorkLogEntry {
+  readonly questionAnswer?: UserInputAttachmentAnswerPayload;
   id: string;
   createdAt: string;
   turnId: TurnId | null;
@@ -343,6 +348,7 @@ function resolvePendingUserInputAnswer(
   question: UserInputQuestion,
   draft: PendingUserInputDraftAnswer | undefined,
 ): string | ReadonlyArray<string> | null {
+  if (draft?.attachmentsBlocked) return null;
   const customAnswer =
     question.allowCustomAnswer === false ? null : normalizeDraftAnswer(draft?.customAnswer);
   if (customAnswer) {
@@ -351,9 +357,16 @@ function resolvePendingUserInputAnswer(
 
   const selectedOptionValues = normalizeSelectedOptionValues(question, draft?.selectedOptionValues);
   if (question.multiSelect) {
-    return selectedOptionValues.length > 0 ? selectedOptionValues : null;
+    return selectedOptionValues.length > 0
+      ? selectedOptionValues
+      : question.allowCustomAnswer !== false && (draft?.attachmentCount ?? 0) > 0
+        ? ""
+        : null;
   }
-  return selectedOptionValues[0] ?? null;
+  return (
+    selectedOptionValues[0] ??
+    (question.allowCustomAnswer !== false && (draft?.attachmentCount ?? 0) > 0 ? "" : null)
+  );
 }
 
 /** Some providers settle agents through task.updated instead of task.completed. */
@@ -454,6 +467,8 @@ function isPlanBoundaryToolActivity(activity: OrchestrationThreadActivity): bool
   return typeof payload?.detail === "string" && payload.detail.startsWith("ExitPlanMode:");
 }
 
+const decodeQuestionAttachmentAnswer = Schema.decodeUnknownOption(UserInputAttachmentAnswerPayload);
+
 function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWorkLogEntry {
   const payload =
     activity.payload && typeof activity.payload === "object"
@@ -498,6 +513,11 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
           ? "info"
           : activity.tone,
     sourceActivityKind: activity.kind,
+    ...(() => {
+      if (activity.kind !== "user-input.answer-submitted") return {};
+      const answer = decodeQuestionAttachmentAnswer(activity.payload);
+      return Option.isSome(answer) ? { questionAnswer: answer.value } : {};
+    })(),
   };
   const toolCallId =
     asTrimmedString(payload?.toolCallId) ?? asTrimmedString(asRecord(payload?.data)?.toolCallId);

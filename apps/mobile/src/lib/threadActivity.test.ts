@@ -2653,3 +2653,31 @@ describe("quiet timeline: nested agents", () => {
     ]);
   });
 });
+
+it("accepts ready attachment-only answers while preserving selected options", () => {
+  const question = {
+    id: "q",
+    header: "Spec",
+    question: "Provide a specification",
+    options: [{ label: "Yes", description: "Approve" }],
+    multiSelect: false,
+  };
+  expect(buildPendingUserInputAnswers([question], { q: { attachmentCount: 1 } })).toEqual({
+    q: "",
+  });
+  expect(
+    buildPendingUserInputAnswers([question], {
+      q: { attachmentCount: 1, selectedOptionValues: ["Yes"] },
+    }),
+  ).toEqual({ q: "Yes" });
+  expect(
+    buildPendingUserInputAnswers([question], {
+      q: { attachmentCount: 1, attachmentsBlocked: true },
+    }),
+  ).toBeNull();
+  expect(
+    buildPendingUserInputAnswers([{ ...question, allowCustomAnswer: false }], {
+      q: { attachmentCount: 1 },
+    }),
+  ).toBeNull();
+});
