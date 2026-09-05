@@ -1,8 +1,12 @@
 # Frame and deliver visual evidence
 
 For PNG/GIF crops, follow Framing. For recordings, follow Recording. Both paths
-end at Inspect and deliver. Use the test skill for the affected client to obtain
-the original capture, following existing task authorization.
+end at Inspect and deliver. For supplied media, start directly with that file.
+Only when fresh capture is part of the task, use
+[test-t3-app](../../test-t3-app/SKILL.md) for web/desktop or
+[test-t3-mobile](../../test-t3-mobile/SKILL.md) for React Native mobile, following
+existing task authorization. Keep media-only work scoped to its requested
+artifact and destination.
 
 Locate the supplied source first. If it is missing or inaccessible, request the
 file or a reachable path and state what framing it needs. Pause dependent media
@@ -33,6 +37,13 @@ and framing; visual inspection establishes suitability.
 ## Recording
 
 Record the affected flow with the recorder owned by the current test surface.
+Use the attached preview's recording capability for web/desktop when exposed.
+For iOS Simulator, use XcodeBuildMCP recording when available or
+`xcrun simctl io <verified-UDID> recordVideo <output.mp4>`; stop only the recorder
+process you started. For Android, target the verified emulator serial with
+`adb -s <serial> shell screenrecord /sdcard/<unique-name>.mp4`, then pull that
+file. If the active surface has no usable recorder, name that gap and deliver
+available still evidence without claiming motion verification.
 Keep secrets and unrelated personal data outside the frame. Capture the action
 lead-in, complete gesture, and actual settled result. Preserve the raw source.
 
@@ -56,7 +67,10 @@ and relevant state must remain legible. Check GIF frames throughout the action
 and verify playback when the available tools permit it. Retain immutable raw
 sources and deliver useful detail prominently, with full context when needed.
 
-Upload PR evidence to GitHub through an authorized API, CLI, or attached preview
+For media-only work, deliver to the requested local or remote destination and
+stop here. Upload only when that destination requires it and the task authorizes it.
+
+For authorized PR publication, upload evidence to GitHub through an API, CLI, or attached preview
 path. Keep PR-only captures and receipts outside the contribution diff. Fetch
 the resulting attachment and verify successful retrieval, media type, and
 intended content. A local path, login page, or completed upload command does
