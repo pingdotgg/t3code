@@ -17,6 +17,8 @@ import { it } from "@effect/vitest";
 import { type ProviderApprovalDecision, type ProviderEvent, ThreadId } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as MonitorSession from "../../mcp/MonitorSession.ts";
 import * as Fiber from "effect/Fiber";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -233,7 +235,10 @@ describe("CodexSessionRuntime collab integration", () => {
       ]);
 
       yield* runtime.close;
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(Layer.mergeAll(NodeServices.layer, MonitorSession.layer)),
+    ),
   );
 
   it.effect("keeps child settings and reroutes newer than the resume snapshot", () =>
@@ -341,7 +346,10 @@ describe("CodexSessionRuntime collab integration", () => {
       assert.equal(readRecordedRequests().length, 1);
 
       yield* runtime.close;
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(Layer.mergeAll(NodeServices.layer, MonitorSession.layer)),
+    ),
   );
 
   it.effect("does not delay the parent turn when the child lookup fails", () =>
@@ -397,7 +405,10 @@ describe("CodexSessionRuntime collab integration", () => {
           NodeFS.rmSync(`${scriptPath}.requests`, { force: true });
         }).pipe(Effect.scoped);
       }
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(Layer.mergeAll(NodeServices.layer, MonitorSession.layer)),
+    ),
   );
 
   it.effect("replays the captured fan-out into synthetic agent events without child leaks", () =>
@@ -470,7 +481,10 @@ describe("CodexSessionRuntime collab integration", () => {
       );
 
       yield* runtime.close;
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(Layer.mergeAll(NodeServices.layer, MonitorSession.layer)),
+    ),
   );
 
   // it.live: the runtime talks to a real child process; under it.effect's
@@ -602,7 +616,10 @@ describe("CodexSessionRuntime collab integration", () => {
       assert.isTrue(interruptedThreads.has(ROOT), "parent turn must be interrupted last");
 
       yield* runtime.close;
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(Layer.mergeAll(NodeServices.layer, MonitorSession.layer)),
+    ),
   );
 
   it.live("Stop targets the active turn when Codex has accepted a queued follow-up", () =>
@@ -651,7 +668,10 @@ describe("CodexSessionRuntime collab integration", () => {
       });
 
       yield* runtime.close;
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(Layer.mergeAll(NodeServices.layer, MonitorSession.layer)),
+    ),
   );
 
   const elicitationCases = [
@@ -762,7 +782,10 @@ describe("CodexSessionRuntime collab integration", () => {
         assert.deepEqual(recordedResponse.result, response);
 
         yield* runtime.close;
-      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(Layer.mergeAll(NodeServices.layer, MonitorSession.layer)),
+      ),
     );
   }
 });

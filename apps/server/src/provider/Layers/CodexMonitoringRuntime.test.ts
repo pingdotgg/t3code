@@ -6,13 +6,14 @@ import * as NodeURL from "node:url";
 import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Fiber from "effect/Fiber";
 import * as TestClock from "effect/testing/TestClock";
 import * as Stream from "effect/Stream";
 import { ThreadId, type ProviderEvent } from "@t3tools/contracts";
-import { invokeMonitorSession } from "../../mcp/MonitorSession.ts";
+import * as MonitorSession from "../../mcp/MonitorSession.ts";
 import { makeCodexSessionRuntime } from "./CodexSessionRuntime.ts";
 
 const decodeInspection = Schema.decodeUnknownSync(
@@ -69,7 +70,7 @@ const setup = Effect.fn("setup")(function* (version = "0.153.2", mcp = false) {
       return decodeInspection(item.text);
     }),
   );
-  const subscribe = invokeMonitorSession(cwd, "subscribe", "42");
+  const subscribe = (yield* MonitorSession.MonitorSessions).invoke(cwd, "subscribe", "42");
   return { runtime, until, inspect, subscribe };
 });
 
@@ -98,7 +99,7 @@ it.effect("wakes an idle thread from tool output and stops without a shutdown wa
     const final = yield* inspect;
     assert.equal(final.cleanCount, 1);
     assert.equal(final.wakes.length, 1);
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, MonitorSession.layer))),
 );
 
 it.effect("queues watcher events until the foreground turn completes", () =>
@@ -114,7 +115,7 @@ it.effect("queues watcher events until the foreground turn completes", () =>
     yield* until("turn/completed");
     yield* until("turn/completed");
     assert.equal((yield* inspect).wakes.length, 1);
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, MonitorSession.layer))),
 );
 
 it.effect("Stop drops queued events and still interrupts if terminal cleanup fails", () =>
@@ -140,7 +141,7 @@ it.effect("Stop drops queued events and still interrupts if terminal cleanup fai
     yield* runtime.sendTurn({ input: "resume" });
     yield* until("turn/completed");
     assert.equal((yield* subscribe.pipe(Effect.result))._tag, "Failure");
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, MonitorSession.layer))),
 );
 
 it.effect("flushes a final partial event when the process exits", () =>
@@ -152,7 +153,7 @@ it.effect("flushes a final partial event when the process exits", () =>
     yield* runtime.compactThread;
     yield* until("turn/completed");
     assert.include((yield* inspect).wakes[0]!.output, "partial");
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, MonitorSession.layer))),
 );
 
 it.effect("does not register monitoring on unsupported Codex versions", () =>
@@ -167,7 +168,7 @@ it.effect("does not register monitoring on unsupported Codex versions", () =>
     const final = yield* inspect;
     assert.equal(final.cleanCount, 0);
     assert.equal(final.wakes.length, 0);
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, MonitorSession.layer))),
 );
 
 it.effect("never delivers a child command's output to the parent monitor", () =>
@@ -179,7 +180,7 @@ it.effect("never delivers a child command's output to the parent monitor", () =>
     yield* runtime.compactThread;
     yield* until("thread/name/updated");
     assert.equal((yield* inspect).wakes.length, 0);
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, MonitorSession.layer))),
 );
 
 for (const scenario of ["stall-turn", "stall-reload"]) {
@@ -199,7 +200,10 @@ for (const scenario of ["stall-turn", "stall-reload"]) {
       const final = yield* inspect;
       assert.equal(final.cleanCount, 1);
       assert.equal(final.interrupted, 1);
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(Layer.mergeAll(NodeServices.layer, MonitorSession.layer)),
+    ),
   );
 }
 
@@ -221,7 +225,7 @@ it.effect("retains an explicitly rejected wake until a user turn resumes deliver
     assert.deepStrictEqual((yield* inspect).wakes, [
       { name: "background_monitor", output: '{"taskId":"watch-command","output":"CI passed"}' },
     ]);
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, MonitorSession.layer))),
 );
 
 for (const scenario of ["reject-resume", "timeout-resume"]) {
@@ -249,7 +253,10 @@ for (const scenario of ["reject-resume", "timeout-resume"]) {
       assert.deepStrictEqual((yield* inspect).wakes, [
         { name: "background_monitor", output: '{"taskId":"watch-command","output":"CI passed"}' },
       ]);
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(Layer.mergeAll(NodeServices.layer, MonitorSession.layer)),
+    ),
   );
 }
 
@@ -271,5 +278,5 @@ it.effect("preserves timed-out wake evidence without retrying an ambiguous deliv
     yield* runtime.sendTurn({ input: "resume" });
     yield* until("turn/completed");
     assert.equal((yield* inspect).wakes.length, 0);
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, MonitorSession.layer))),
 );

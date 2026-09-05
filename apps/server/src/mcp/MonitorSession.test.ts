@@ -5,7 +5,7 @@ import * as Layer from "effect/Layer";
 import { McpSchema, McpServer } from "effect/unstable/ai";
 import { McpInvocationContext, requireMcpCapability } from "./McpInvocationContext.ts";
 import { MonitorToolkitRegistrationLive } from "./McpHttpServer.ts";
-import { registerMonitorSession } from "./MonitorSession.ts";
+import * as MonitorSession from "./MonitorSession.ts";
 import { CodexBackgroundTasks } from "../provider/Layers/CodexBackgroundTasks.ts";
 
 const scope = {
@@ -28,6 +28,7 @@ const client = McpSchema.McpServerClient.of({
 });
 const TestLayer = MonitorToolkitRegistrationLive.pipe(
   Layer.provideMerge(McpServer.McpServer.layer),
+  Layer.provideMerge(MonitorSession.layer),
 );
 
 it.effect("MCP subscription enables wakes and unsubscribe discards queued events", () =>
@@ -40,7 +41,7 @@ it.effect("MCP subscription enables wakes and unsubscribe discards queued events
       source: "unifiedExecStartup",
       command: "watch-ci",
     });
-    yield* registerMonitorSession(scope.providerSessionId, {
+    yield* (yield* MonitorSession.MonitorSessions).register(scope.providerSessionId, {
       subscribe: (id) =>
         Effect.sync(() => {
           expect(tasks.subscribe(id)).toBe(true);
@@ -69,7 +70,7 @@ it.effect("MCP tools reject other sessions, missing capability, and a closed run
     let subscribed = false;
     const call = server.callTool({ name: "monitor_subscribe", arguments: { processId: "42" } });
     yield* Effect.gen(function* () {
-      yield* registerMonitorSession(scope.providerSessionId, {
+      yield* (yield* MonitorSession.MonitorSessions).register(scope.providerSessionId, {
         subscribe: () =>
           Effect.sync(() => {
             subscribed = true;
@@ -100,6 +101,20 @@ it.effect("MCP tools reject other sessions, missing capability, and a closed run
     Effect.provideService(McpSchema.McpServerClient, client),
     Effect.provide(TestLayer),
   ),
+);
+
+it.effect("separately constructed registries isolate the same provider session ID", () =>
+  Effect.gen(function* () {
+    const first = yield* MonitorSession.make;
+    const second = yield* MonitorSession.make;
+    yield* first.register("same-session", {
+      subscribe: () => Effect.void,
+      unsubscribe: () => Effect.void,
+    });
+    expect((yield* first.invoke("same-session", "subscribe", "42")).subscribed).toBe(true);
+    const missing = yield* second.invoke("same-session", "subscribe", "42").pipe(Effect.result);
+    expect(missing._tag).toBe("Failure");
+  }).pipe(Effect.scoped),
 );
 
 it.effect("a monitoring credential cannot invoke preview tools", () =>
