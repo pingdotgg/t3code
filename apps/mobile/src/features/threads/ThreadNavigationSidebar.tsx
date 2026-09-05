@@ -41,7 +41,7 @@ import {
   THREAD_SORT_OPTIONS,
   useHomeListOptions,
 } from "../home/home-list-options";
-import { buildHomeListFilterMenu } from "../home/home-list-filter-menu";
+import { buildHomeListFilterMenu, hasActiveHomeListFilters } from "../home/home-list-filter-menu";
 import {
   buildHomeListLayout,
   DEFAULT_GROUP_DISPLAY_STATE,
@@ -649,12 +649,23 @@ function ThreadNavigationSidebarPane(
               })),
             },
           ] satisfies MenuAction[])),
+      ...(hasActiveHomeListFilters({
+        selectedEnvironmentId: options.selectedEnvironmentId,
+        selectedProjectKey,
+      })
+        ? [{ id: "clear-filters", title: "Clear filters" } satisfies MenuAction]
+        : []),
     ],
     [environments, options, projectFilterOptions, selectedProjectKey, threadListV2Enabled],
   );
   const handleListMenuAction = useCallback(
     ({ nativeEvent }: { readonly nativeEvent: { readonly event: string } }) => {
       const event = nativeEvent.event;
+      if (event === "clear-filters") {
+        setSelectedEnvironmentId(null);
+        setSelectedProjectKey(null);
+        return;
+      }
       if (event === "environment:all") {
         setSelectedEnvironmentId(null);
         return;

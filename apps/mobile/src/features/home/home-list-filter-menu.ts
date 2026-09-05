@@ -25,11 +25,22 @@ type HomeListFilterMenuSubmenu = {
   readonly type: "submenu";
   readonly title: string;
   readonly items: HomeListFilterMenuAction[];
+  /** Renders the items inline as a divider-separated group instead of nesting. */
+  readonly displayInline?: boolean;
 };
 
 export interface HomeListFilterMenu {
   readonly title: string;
   readonly items: Array<HomeListFilterMenuAction | HomeListFilterMenuSubmenu>;
+}
+
+/** True when the environment or project scope narrows the list. Sort order
+    is a preference, not a filter, so it never counts here. */
+export function hasActiveHomeListFilters(scope: {
+  readonly selectedEnvironmentId: EnvironmentId | null;
+  readonly selectedProjectKey: string | null;
+}): boolean {
+  return scope.selectedEnvironmentId !== null || scope.selectedProjectKey !== null;
 }
 
 export function buildHomeListFilterMenu(props: {
@@ -118,6 +129,26 @@ export function buildHomeListFilterMenu(props: {
         })),
       },
     );
+  }
+
+  // Reset lives in its own trailing group, where iOS puts reset actions.
+  if (hasActiveHomeListFilters(props)) {
+    items.push({
+      type: "submenu",
+      title: "",
+      displayInline: true,
+      items: [
+        {
+          type: "action",
+          title: "Clear filters",
+          subtitle: "Show all environments and projects",
+          onPress: () => {
+            props.onEnvironmentChange(null);
+            props.onProjectChange(null);
+          },
+        },
+      ],
+    });
   }
 
   return {

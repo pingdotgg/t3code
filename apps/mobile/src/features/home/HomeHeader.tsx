@@ -24,6 +24,7 @@ import type { HomeProjectSortOrder } from "./homeThreadList";
 import { WorkspaceConnectionTitle } from "./WorkspaceConnectionTitle";
 import {
   buildHomeListFilterMenu,
+  hasActiveHomeListFilters,
   type HomeListFilterMenuEnvironment,
   type HomeListFilterMenuProject,
 } from "./home-list-filter-menu";
@@ -135,6 +136,9 @@ function AndroidHomeHeader(props: HomeHeaderProps) {
               })),
             },
           ] satisfies MenuAction[])),
+      ...(hasActiveHomeListFilters(props)
+        ? [{ id: "clear-filters", title: "Clear filters" } satisfies MenuAction]
+        : []),
     ],
     [
       props.environments,
@@ -149,6 +153,11 @@ function AndroidHomeHeader(props: HomeHeaderProps) {
   const handleMenuAction = useCallback(
     (event: { nativeEvent: { event: string } }) => {
       const id = event.nativeEvent.event;
+      if (id === "clear-filters") {
+        props.onEnvironmentChange(null);
+        props.onProjectChange(null);
+        return;
+      }
       if (id === "environment:all") {
         props.onEnvironmentChange(null);
         return;
@@ -470,6 +479,19 @@ function IosHomeHeader(props: HomeHeaderProps) {
                 ))}
               </NativeHeaderToolbar.Menu>
             )}
+            {hasActiveHomeListFilters(props) ? (
+              <NativeHeaderToolbar.Menu inline>
+                <NativeHeaderToolbar.MenuAction
+                  onPress={() => {
+                    props.onEnvironmentChange(null);
+                    props.onProjectChange(null);
+                  }}
+                  subtitle="Show all environments and projects"
+                >
+                  <NativeHeaderToolbar.Label>Clear filters</NativeHeaderToolbar.Label>
+                </NativeHeaderToolbar.MenuAction>
+              </NativeHeaderToolbar.Menu>
+            ) : null}
           </NativeHeaderToolbar.Menu>
           <NativeHeaderToolbar.Spacer flexible />
           <NativeHeaderToolbar.Button
