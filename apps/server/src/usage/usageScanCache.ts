@@ -26,7 +26,11 @@ import type { CodexScanState, UsageRecord } from "./usageTranscripts.ts";
 // entries would keep serving double-counted records forever.
 // v3: entries carry the parse position and reducer state so a grown file
 // re-parses only its appended bytes instead of starting over.
-export const USAGE_SCAN_CACHE_VERSION = 3 as const;
+// v4: records carry the session's cwd for project attribution; v3 entries
+// would pin every cached file to "no project" forever.
+// v5: Claude records retain cache TTLs and expanded fallback iterations.
+// v6: Claude iterations without their own model inherit the serving model.
+export const USAGE_SCAN_CACHE_VERSION = 6 as const;
 
 export interface CachedFile {
   readonly size: number;
@@ -61,6 +65,9 @@ type SerializedRecord = readonly [
   reasoningTokens: number,
   dedupeKey: string | null,
   reportedCostUsd: number | null,
+  cwdIndex: number,
+  cacheCreation5mTokens: number,
+  cacheCreation1hTokens: number,
 ];
 
 interface SerializedFile {
@@ -82,15 +89,18 @@ interface SerializedCache {
   readonly version: number;
   readonly models: readonly string[];
   readonly sessions: readonly string[];
+  readonly cwds: readonly string[];
   readonly files: Readonly<Record<string, SerializedFile>>;
 }
 
-/** Serialises the cache, interning the repeated model and session strings. */
+/** Serialises the cache, interning the repeated model, session and cwd strings. */
 export function encodeScanCache(cache: ScanCache): SerializedCache {
   const models: string[] = [];
   const sessions: string[] = [];
+  const cwds: string[] = [];
   const modelIndex = new Map<string, number>();
   const sessionIndex = new Map<string, number>();
+  const cwdIndex = new Map<string, number>();
 
   const intern = (table: string[], index: Map<string, number>, value: string): number => {
     const existing = index.get(value);
@@ -101,18 +111,31 @@ export function encodeScanCache(cache: ScanCache): SerializedCache {
     return next;
   };
 
-  const serializeRecord = (record: UsageRecord): SerializedRecord => [
-    record.timestampMs,
-    intern(models, modelIndex, record.model),
-    intern(sessions, sessionIndex, record.sessionId),
-    record.totals.uncachedInputTokens,
-    record.totals.cachedInputTokens,
-    record.totals.cacheCreationTokens,
-    record.totals.outputTokens,
-    record.totals.reasoningTokens,
-    record.dedupeKey,
-    record.reportedCostUsd,
-  ];
+  const serializeRecord = (record: UsageRecord): SerializedRecord => {
+    const oneHour = Math.min(
+      record.totals.cacheCreationTokens,
+      Math.max(0, record.totals.cacheCreation1hTokens ?? 0),
+    );
+    const fiveMinute = Math.min(
+      record.totals.cacheCreationTokens - oneHour,
+      Math.max(0, record.totals.cacheCreation5mTokens ?? 0),
+    );
+    return [
+      record.timestampMs,
+      intern(models, modelIndex, record.model),
+      intern(sessions, sessionIndex, record.sessionId),
+      record.totals.uncachedInputTokens,
+      record.totals.cachedInputTokens,
+      record.totals.cacheCreationTokens,
+      record.totals.outputTokens,
+      record.totals.reasoningTokens,
+      record.dedupeKey,
+      record.reportedCostUsd,
+      intern(cwds, cwdIndex, record.cwd),
+      fiveMinute,
+      oneHour,
+    ];
+  };
 
   const files: Record<string, SerializedFile> = {};
   for (const [path, entry] of cache) {
@@ -129,11 +152,15 @@ export function encodeScanCache(cache: ScanCache): SerializedCache {
     };
   }
 
-  return { version: USAGE_SCAN_CACHE_VERSION, models, sessions, files };
+  return { version: USAGE_SCAN_CACHE_VERSION, models, sessions, cwds, files };
 }
 
 function isRecordArray(value: unknown): value is readonly unknown[] {
   return Array.isArray(value);
+}
+
+function isNonNegativeInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0;
 }
 
 /**
@@ -148,7 +175,9 @@ export function decodeScanCache(document: unknown): ScanCache {
 
   const root = document as Partial<SerializedCache>;
   if (root.version !== USAGE_SCAN_CACHE_VERSION) return cache;
-  if (!isRecordArray(root.models) || !isRecordArray(root.sessions)) return cache;
+  if (!isRecordArray(root.models) || !isRecordArray(root.sessions) || !isRecordArray(root.cwds)) {
+    return cache;
+  }
   if (typeof root.files !== "object" || root.files === null) return cache;
 
   // The intern tables must be all strings: a numeric entry would pass the
@@ -156,8 +185,10 @@ export function decodeScanCache(document: unknown): ScanCache {
   // at lookupRate. A corrupt table rejects the whole cache.
   if (!root.models.every((value) => typeof value === "string")) return cache;
   if (!root.sessions.every((value) => typeof value === "string")) return cache;
+  if (!root.cwds.every((value) => typeof value === "string")) return cache;
   const models = root.models as readonly string[];
   const sessions = root.sessions as readonly string[];
+  const cwds = root.cwds as readonly string[];
 
   // Any corrupt row disqualifies the whole entry. Keeping the survivors
   // under the original (size, mtime) would read as a valid warm hit and the
@@ -168,7 +199,7 @@ export function decodeScanCache(document: unknown): ScanCache {
   ): UsageRecord[] | null => {
     const records: UsageRecord[] = [];
     for (const row of rows) {
-      if (!isRecordArray(row) || row.length < 10) return null;
+      if (!isRecordArray(row) || row.length < 13) return null;
       const [
         timestampMs,
         modelIndex,
@@ -180,18 +211,31 @@ export function decodeScanCache(document: unknown): ScanCache {
         reasoning,
         dedupeKey,
         reportedCostUsd,
+        cwdIndex,
+        cacheCreation5m,
+        cacheCreation1h,
       ] = row as SerializedRecord;
 
       const model = typeof modelIndex === "number" ? models[modelIndex] : undefined;
+      const session = typeof sessionIndex === "number" ? sessions[sessionIndex] : undefined;
+      const cwd = typeof cwdIndex === "number" ? cwds[cwdIndex] : undefined;
       if (
         typeof timestampMs !== "number" ||
         !Number.isFinite(timestampMs) ||
         model === undefined ||
-        !Number.isFinite(uncached) ||
-        !Number.isFinite(cached) ||
-        !Number.isFinite(cacheCreation) ||
-        !Number.isFinite(output) ||
-        !Number.isFinite(reasoning)
+        !Number.isInteger(modelIndex) ||
+        session === undefined ||
+        !Number.isInteger(sessionIndex) ||
+        cwd === undefined ||
+        !Number.isInteger(cwdIndex) ||
+        !isNonNegativeInteger(uncached) ||
+        !isNonNegativeInteger(cached) ||
+        !isNonNegativeInteger(cacheCreation) ||
+        !isNonNegativeInteger(cacheCreation5m) ||
+        !isNonNegativeInteger(cacheCreation1h) ||
+        cacheCreation5m + cacheCreation1h > cacheCreation ||
+        !isNonNegativeInteger(output) ||
+        !isNonNegativeInteger(reasoning)
       ) {
         return null;
       }
@@ -200,11 +244,14 @@ export function decodeScanCache(document: unknown): ScanCache {
         provider,
         timestampMs,
         model,
-        sessionId: (typeof sessionIndex === "number" ? sessions[sessionIndex] : undefined) ?? "",
+        sessionId: session,
+        cwd,
         totals: {
           uncachedInputTokens: uncached,
           cachedInputTokens: cached,
           cacheCreationTokens: cacheCreation,
+          ...(cacheCreation5m === 0 ? {} : { cacheCreation5mTokens: cacheCreation5m }),
+          ...(cacheCreation1h === 0 ? {} : { cacheCreation1hTokens: cacheCreation1h }),
           outputTokens: output,
           reasoningTokens: reasoning,
         },
@@ -277,6 +324,7 @@ function decodeCodexState(value: unknown): CodexScanState | null | undefined {
   if (
     typeof state.model !== "string" ||
     typeof state.sessionId !== "string" ||
+    typeof state.cwd !== "string" ||
     (state.lastUsageSignature !== null && typeof state.lastUsageSignature !== "string") ||
     typeof state.sawSessionMeta !== "boolean" ||
     typeof state.suppressingForkCopies !== "boolean" ||
@@ -288,6 +336,7 @@ function decodeCodexState(value: unknown): CodexScanState | null | undefined {
   return {
     model: state.model,
     sessionId: state.sessionId,
+    cwd: state.cwd,
     lastUsageSignature: state.lastUsageSignature ?? null,
     sawSessionMeta: state.sawSessionMeta,
     suppressingForkCopies: state.suppressingForkCopies,
@@ -343,22 +392,18 @@ export function pruneScanCache(cache: ScanCache, options: PruneOptions): number 
   return removed;
 }
 
-/**
- * Within-file de-duplication, applied before an entry is cached.
- *
- * Callers stitching an incremental parse together pass one `seen` set across
- * the line and tail record batches so the whole file stays deduplicated as a
- * unit; the set is mutated in place.
- */
-export function dedupeWithinFile(
-  records: readonly UsageRecord[],
-  seen: Set<string> = new Set(),
-): readonly UsageRecord[] {
+/** Within-file de-duplication, retaining the final complete Claude snapshot. */
+export function dedupeWithinFile(records: readonly UsageRecord[]): readonly UsageRecord[] {
+  const indexByKey = new Map<string, number>();
   const kept: UsageRecord[] = [];
   for (const record of records) {
     if (record.dedupeKey !== null) {
-      if (seen.has(record.dedupeKey)) continue;
-      seen.add(record.dedupeKey);
+      const existing = indexByKey.get(record.dedupeKey);
+      if (existing !== undefined) {
+        kept[existing] = record;
+        continue;
+      }
+      indexByKey.set(record.dedupeKey, kept.length);
     }
     kept.push(record);
   }
