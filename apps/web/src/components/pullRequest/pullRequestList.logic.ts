@@ -469,7 +469,11 @@ export function pullRequestStatsKeysToRequest(
     [...enteredKeys].filter((key) => {
       const entry = entriesByKey.get(key);
       return (
-        entry !== undefined && !requested.has(key) && !statsByRow.has(pullRequestDiffStatKey(entry))
+        entry !== undefined &&
+        entry.additions === 0 &&
+        entry.deletions === 0 &&
+        !requested.has(key) &&
+        !statsByRow.has(pullRequestDiffStatKey(entry))
       );
     }),
   );
@@ -1006,11 +1010,10 @@ export function rankPullRequestMatches<Entry extends PullRequestListEntry>(
  * verdict, then everything else still open. Drafts stay in that third tier because their author
  * has not made them mergeable yet. Finished work follows open work when all states are visible. A
  * known conflict is never ready, whatever its checks, review or state say, so it stays at the
- * bottom. Smaller measured changes come first within a tier; recency only breaks a remaining tie.
+ * bottom. Recency breaks ties, so optional diff counts never move the queue beneath the reader.
  */
 export function rankPullRequestsByMergeReadiness<Entry extends PullRequestListEntry>(
   entries: ReadonlyArray<Entry>,
-  hasMeasuredSize: (entry: Entry) => boolean = (entry) => entry.additions + entry.deletions > 0,
 ): ReadonlyArray<Entry> {
   const tier = (entry: Entry) => {
     if (entry.mergeability === "conflicting") return 4;
@@ -1023,10 +1026,7 @@ export function rankPullRequestsByMergeReadiness<Entry extends PullRequestListEn
   return entries.toSorted((left, right) => {
     const byTier = tier(left) - tier(right);
     if (byTier !== 0) return byTier;
-    const byMeasurement = Number(hasMeasuredSize(right)) - Number(hasMeasuredSize(left));
-    if (byMeasurement !== 0) return byMeasurement;
-    const bySize = left.additions + left.deletions - (right.additions + right.deletions);
-    return bySize !== 0 ? bySize : right.updatedAt.localeCompare(left.updatedAt);
+    return right.updatedAt.localeCompare(left.updatedAt);
   });
 }
 
@@ -1042,7 +1042,7 @@ export function sortPullRequestGroups<Entry extends PullRequestListEntry>(
 
   if (sort === "ready") {
     return searchText.trim().length === 0
-      ? sortWithinGroups((entries) => rankPullRequestsByMergeReadiness(entries, hasMeasuredSize))
+      ? sortWithinGroups(rankPullRequestsByMergeReadiness)
       : groups;
   }
   if (sort === "updated") return groups;
