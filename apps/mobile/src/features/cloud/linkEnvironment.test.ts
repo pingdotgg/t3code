@@ -152,6 +152,17 @@ function validLinkResponse(environmentId = "env-1") {
   };
 }
 
+function validCloudLinkState() {
+  return {
+    linked: true,
+    cloudUserId: "user_123",
+    relayUrl: "https://relay.example.test",
+    relayIssuer: "https://relay.example.test",
+    managedTunnelActive: true,
+    publishAgentActivity: true,
+  };
+}
+
 function validLinkChallengeResponse() {
   return {
     challenge: "link-challenge",
@@ -749,6 +760,9 @@ describe("mobile cloud link environment client", () => {
         if (String(url).endsWith("/v1/client/environment-links")) {
           return Promise.resolve(Response.json(validLinkResponse()));
         }
+        if (String(url).endsWith("/api/connect/preferences")) {
+          return Promise.resolve(Response.json(validCloudLinkState()));
+        }
         return Promise.resolve(
           Response.json({ ok: true, endpointRuntimeStatus: { status: "configured" } }),
         );
@@ -783,6 +797,9 @@ describe("mobile cloud link environment client", () => {
         cloudUserId: "user_123",
         environmentCredential: "environment-credential",
       });
+      // Turning Live Activities off must still leave the environment
+      // publishing: the relay falls back to plain alert pushes in that mode.
+      expect(bodies[4]).toMatchObject({ publishAgentActivity: true });
     }),
   );
 
@@ -803,6 +820,9 @@ describe("mobile cloud link environment client", () => {
         }
         if (String(url).endsWith("/v1/client/environment-links")) {
           return Promise.resolve(Response.json(validLinkResponse()));
+        }
+        if (String(url).endsWith("/api/connect/preferences")) {
+          return Promise.resolve(Response.json(validCloudLinkState()));
         }
         return Promise.resolve(
           Response.json({ ok: true, endpointRuntimeStatus: { status: "configured" } }),
