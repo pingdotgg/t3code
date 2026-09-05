@@ -16,7 +16,6 @@ import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Data from "effect/Data";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
-import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Encoding from "effect/Encoding";
 import * as Exit from "effect/Exit";
