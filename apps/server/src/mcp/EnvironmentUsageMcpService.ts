@@ -26,6 +26,21 @@ const DAY_MS = 24 * 60 * 60 * 1_000;
 const MAX_HOURLY_WINDOW_MS = DAY_MS;
 const MAX_TIME_ZONE_CHARACTERS = 128;
 
+const failure = (code: EnvironmentUsageMcpFailure["code"]) =>
+  new EnvironmentUsageMcpFailure({
+    code,
+    message:
+      code === "capability_denied"
+        ? "This MCP credential cannot read environment usage."
+        : code === "environment_unavailable"
+          ? "The current environment service is unavailable."
+          : code === "environment_mismatch"
+            ? "This MCP credential belongs to a different environment."
+            : code === "invalid_request"
+              ? "The requested usage window is invalid."
+              : "Environment usage could not be read.",
+  });
+
 export class EnvironmentUsageMcpService extends Context.Service<
   EnvironmentUsageMcpService,
   {
@@ -83,7 +98,7 @@ const validateTimeZone = (timeZone: string) =>
       if (Array.from(timeZone).length > MAX_TIME_ZONE_CHARACTERS) throw new Error();
       void new Intl.DateTimeFormat("en-US", { timeZone });
     },
-    catch: () => new EnvironmentUsageMcpFailure({ code: "invalid_request" }),
+    catch: () => failure("invalid_request"),
   });
 
 const validateInput = Effect.fn("EnvironmentUsageMcpService.validateInput")(function* (
@@ -92,37 +107,37 @@ const validateInput = Effect.fn("EnvironmentUsageMcpService.validateInput")(func
   const sinceDay = validDay(input.sinceDay);
   const untilDay = validDay(input.untilDay);
   if (Option.isNone(sinceDay) || Option.isNone(untilDay)) {
-    return yield* new EnvironmentUsageMcpFailure({ code: "invalid_request" });
+    return yield* failure("invalid_request");
   }
 
   const daySpan =
     (DateTime.toEpochMillis(untilDay.value) - DateTime.toEpochMillis(sinceDay.value)) / DAY_MS + 1;
   if (daySpan < 1 || daySpan > ENVIRONMENT_USAGE_MCP_MAX_DAYS) {
-    return yield* new EnvironmentUsageMcpFailure({ code: "invalid_request" });
+    return yield* failure("invalid_request");
   }
   yield* validateTimeZone(input.timeZone);
 
   const resolution = input.resolution ?? "day";
   if (resolution === "hour") {
     if (input.sinceTime === undefined || input.untilTime === undefined) {
-      return yield* new EnvironmentUsageMcpFailure({ code: "invalid_request" });
+      return yield* failure("invalid_request");
     }
     const sinceTime = DateTime.make(input.sinceTime);
     const untilTime = DateTime.make(input.untilTime);
     if (Option.isNone(sinceTime) || Option.isNone(untilTime)) {
-      return yield* new EnvironmentUsageMcpFailure({ code: "invalid_request" });
+      return yield* failure("invalid_request");
     }
     const durationMs =
       DateTime.toEpochMillis(untilTime.value) - DateTime.toEpochMillis(sinceTime.value);
     if (durationMs <= 0 || durationMs > MAX_HOURLY_WINDOW_MS) {
-      return yield* new EnvironmentUsageMcpFailure({ code: "invalid_request" });
+      return yield* failure("invalid_request");
     }
     const toDay = makeDayFormatter(input.timeZone);
     if (
       toDay(DateTime.toEpochMillis(sinceTime.value)) !== input.sinceDay ||
       toDay(DateTime.toEpochMillis(untilTime.value) - 1) !== input.untilDay
     ) {
-      return yield* new EnvironmentUsageMcpFailure({ code: "invalid_request" });
+      return yield* failure("invalid_request");
     }
   }
 
@@ -143,17 +158,17 @@ export const make = Effect.gen(function* () {
     scope: McpInvocationScope,
   ) {
     if (!scope.capabilities.has("orchestration")) {
-      return yield* new EnvironmentUsageMcpFailure({ code: "capability_denied" });
+      return yield* failure("capability_denied");
     }
     const environmentId = yield* environment.getEnvironmentId.pipe(
       Effect.catchCause((cause) =>
         Cause.hasInterrupts(cause)
           ? Effect.failCause(cause).pipe(Effect.orDie)
-          : Effect.fail(new EnvironmentUsageMcpFailure({ code: "environment_unavailable" })),
+          : Effect.fail(failure("environment_unavailable")),
       ),
     );
     if (environmentId !== scope.environmentId) {
-      return yield* new EnvironmentUsageMcpFailure({ code: "environment_mismatch" });
+      return yield* failure("environment_mismatch");
     }
   });
 
@@ -170,10 +185,10 @@ export const make = Effect.gen(function* () {
           }
           const usageError = Option.getOrUndefined(Cause.findErrorOption(cause));
           if (usageError?.reason === "invalidWindow") {
-            return yield* new EnvironmentUsageMcpFailure({ code: "invalid_request" });
+            return yield* failure("invalid_request");
           }
           yield* Effect.logWarning("environment usage service failed", { cause });
-          return yield* new EnvironmentUsageMcpFailure({ code: "usage_unavailable" });
+          return yield* failure("usage_unavailable");
         }),
       ),
     );

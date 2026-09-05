@@ -1,6 +1,7 @@
 import { assert, expect, it } from "@effect/vitest";
 import {
   EnvironmentId,
+  EnvironmentUsageMcpFailure,
   EnvironmentUsageMcpResult,
   ProviderInstanceId,
   ThreadId,
@@ -19,6 +20,7 @@ import * as EnvironmentUsageMcp from "./EnvironmentUsageMcpService.ts";
 import type { McpInvocationScope } from "./McpInvocationContext.ts";
 
 const encodeEnvironmentUsageResult = Schema.encodeUnknownEffect(EnvironmentUsageMcpResult);
+const encodeEnvironmentUsageFailure = Schema.encodeUnknownEffect(EnvironmentUsageMcpFailure);
 const environmentId = EnvironmentId.make("environment-usage-test");
 const scope: McpInvocationScope = {
   environmentId,
@@ -302,6 +304,11 @@ it.effect("maps usage scan failures to a finite public reason", () =>
     assert.equal(failure.code, "usage_unavailable");
     expect(failure).not.toHaveProperty("cause");
     expect(failure.message).toBe("Environment usage could not be read.");
+    expect(yield* encodeEnvironmentUsageFailure(failure)).toEqual({
+      _tag: "EnvironmentUsageMcpFailure",
+      code: "usage_unavailable",
+      message: "Environment usage could not be read.",
+    });
   }).pipe(
     Effect.provide(
       serviceLayer(() =>

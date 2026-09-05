@@ -144,20 +144,6 @@ export class EnvironmentUsageMcpFailure extends Schema.TaggedErrorClass<Environm
       "invalid_request",
       "usage_unavailable",
     ]),
+    message: Schema.String,
   },
-) {
-  override get message(): string {
-    switch (this.code) {
-      case "capability_denied":
-        return "This MCP credential cannot read environment usage.";
-      case "environment_unavailable":
-        return "The current environment service is unavailable.";
-      case "environment_mismatch":
-        return "This MCP credential belongs to a different environment.";
-      case "invalid_request":
-        return "The requested usage window is invalid.";
-      case "usage_unavailable":
-        return "Environment usage could not be read.";
-    }
-  }
-}
+) {}
