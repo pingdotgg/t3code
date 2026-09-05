@@ -165,6 +165,10 @@ it.layer(NodeServices.layer)("CursorTextGeneration", (it) => {
       const pendingSend = new Promise((resolve) => {
         resolveSend = resolve;
       });
+      let signalSendStarted!: () => void;
+      const sendStarted = new Promise<void>((resolve) => {
+        signalSendStarted = resolve;
+      });
       let resolveWait!: (result: unknown) => void;
       const pendingWait = new Promise((resolve) => {
         resolveWait = resolve;
@@ -202,7 +206,10 @@ it.layer(NodeServices.layer)("CursorTextGeneration", (it) => {
           },
         };
       });
-      cursorSdkMock.send.mockImplementationOnce(() => pendingSend);
+      cursorSdkMock.send.mockImplementationOnce(() => {
+        signalSendStarted();
+        return pendingSend;
+      });
       cursorSdkMock.wait.mockImplementation(async () => {
         const result = await pendingWait;
         order.push("wait-settled");
@@ -238,6 +245,7 @@ it.layer(NodeServices.layer)("CursorTextGeneration", (it) => {
           },
         })
         .pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Effect.promise(() => sendStarted);
       yield* TestClock.adjust(180_000);
       const error = yield* Fiber.join(fiber).pipe(Effect.flip);
 
