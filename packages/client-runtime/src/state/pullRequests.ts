@@ -75,8 +75,8 @@ export function pullRequestDetailToVcsStatus(
 }
 
 /**
- * Every read shells out to the GitHub CLI, so results are reused for a short while and
- * refreshed explicitly. Mutations run serially per environment: `gh` actions on the same
+ * Reopening a PR within a minute reuses detail and activity. Explicit refreshes and
+ * turn notifications still revalidate. Mutations run serially per environment: actions on the same
  * pull request are order-sensitive, and the detail view refetches after each one.
  */
 export function createPullRequestEnvironmentAtoms<R, E>(
@@ -91,7 +91,7 @@ export function createPullRequestEnvironmentAtoms<R, E>(
   const activity = createEnvironmentRpcQueryAtomFamily(runtime, {
     label: "environment-data:pull-requests:activity",
     tag: WS_METHODS.pullRequestsActivity,
-    staleTimeMs: 15_000,
+    staleTimeMs: 60_000,
     refreshTrigger: ({ environmentId }) => refreshes({ environmentId, input: {} }),
   });
   return {
@@ -118,7 +118,7 @@ export function createPullRequestEnvironmentAtoms<R, E>(
     detail: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:pull-requests:detail",
       tag: WS_METHODS.pullRequestsDetail,
-      staleTimeMs: 15_000,
+      staleTimeMs: 60_000,
       refreshTrigger: ({ environmentId }) => refreshes({ environmentId, input: {} }),
     }),
     activity,
