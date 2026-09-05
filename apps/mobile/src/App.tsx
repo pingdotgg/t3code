@@ -23,6 +23,8 @@ import { OverlayPortalHost } from "./components/OverlayPortal";
 import { appBlurTargetRef } from "./lib/appBlurTarget";
 import { useMobileNavigationTheme } from "./lib/useMobileNavigationTheme";
 
+import { SubscriptionUsageCoordinator } from "./widgets/SubscriptionUsageCoordinator";
+
 import "../global.css";
 
 if (process.env.EXPO_PUBLIC_SHOWCASE === "1") {
@@ -76,6 +78,7 @@ function AppContent() {
   return (
     <>
       <SplashScreenCoordinator />
+      <SubscriptionUsageCoordinator />
       <GestureHandlerRootView className="flex-1">
         <KeyboardProvider statusBarTranslucent>
           <SafeAreaProvider>

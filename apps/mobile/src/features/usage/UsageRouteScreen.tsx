@@ -1,4 +1,4 @@
-import { useNavigation } from "@react-navigation/native";
+import { type RouteProp, useNavigation, useRoute } from "@react-navigation/native";
 import type { DailyTotals, MergedUsage } from "@t3tools/shared/usageMerge";
 import {
   enumerateDays,
@@ -54,9 +54,21 @@ const CHART_HEIGHT = 180;
  * pull to refresh, each refreshing its own data.
  */
 export function UsageRouteScreen() {
+  const route = useRoute<RouteProp<{ Usage: { tab?: string } | undefined }, "Usage">>();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
-  const [tab, setTab] = useState<UsageTab>("usage");
+  const [selection, setSelection] = useState(() => ({
+    params: route.params,
+    tab: (route.params?.tab === "limits" ? "limits" : "usage") as UsageTab,
+  }));
+  if (selection.params !== route.params) {
+    setSelection({
+      params: route.params,
+      tab: route.params?.tab === "limits" ? "limits" : "usage",
+    });
+  }
+  const { tab } = selection;
+  const setTab = (tab: UsageTab) => setSelection({ params: route.params, tab });
   const [windowSelection, setWindowSelection] = useState(() => ({
     days: 30,
     window: makeWindow(30),
