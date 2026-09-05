@@ -197,6 +197,74 @@ it.effect("clones a looked-up repository into the requested destination", () =>
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
+it.effect("returns actionable, transport-safe clone failures", () => {
+  const cases = [
+    {
+      stderr: "Host key verification failed.\nfatal: Could not read from remote repository.\n",
+      expected:
+        "SSH could not verify the source control host. Add its host key to known_hosts and try again.",
+    },
+    {
+      stderr: "git@example.com: Permission denied (publickey).\n",
+      expected:
+        "SSH authentication failed. Add an SSH key to your source control account and try again.",
+    },
+    {
+      stderr:
+        "fatal: could not read Username for 'https://example.com': terminal prompts disabled\n",
+      expected:
+        "HTTPS authentication failed. Configure Git credentials for the source control host and try again.",
+    },
+    {
+      stderr:
+        "ssh: Could not resolve hostname example.com: nodename nor servname provided\nfatal: Could not read from remote repository.\n",
+      expected:
+        "The source control host could not be resolved. Check your network or VPN connection and try again.",
+    },
+    {
+      stderr: "fatal: an unrecognized clone failure\n",
+      expected:
+        "Git could not clone the repository. Verify that the remote works in a terminal and try again.",
+    },
+  ] as const;
+
+  return Effect.forEach(cases, ({ stderr, expected }) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const parent = yield* fs.makeTempDirectoryScoped({
+        prefix: "t3-source-control-clone-failure-",
+      });
+      const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
+      const error = yield* Effect.flip(
+        service.cloneRepository({
+          remoteUrl: CLONE_URLS.sshUrl,
+          destinationPath: `${parent}/t3code`,
+        }),
+      );
+
+      assert.strictEqual(error.operation, "cloneRepository");
+      assert.strictEqual(error.provider, "github");
+      assert.strictEqual(error.detail, expected);
+      assert.instanceOf(error.cause, GitCommandError);
+      assert.strictEqual(error.cause.detail, expected);
+      assert.strictEqual(error.cause.stderrLength, stderr.length);
+    }).pipe(
+      Effect.provide(
+        makeLayer({
+          git: {
+            execute: () =>
+              Effect.succeed({
+                ...processOutput(),
+                exitCode: ChildProcessSpawner.ExitCode(128),
+                stderr,
+              }),
+          },
+        }),
+      ),
+    ),
+  ).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
+});
+
 it.effect("preserves destination probe failures instead of treating them as missing paths", () => {
   const fileSystemCause = PlatformError.systemError({
     _tag: "PermissionDenied",
