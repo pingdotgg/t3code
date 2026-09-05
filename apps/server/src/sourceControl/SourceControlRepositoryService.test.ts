@@ -2,10 +2,15 @@ import * as NodePath from "@effect/platform-node/NodePath";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
 import * as FileSystem from "effect/FileSystem";
+import * as Fiber from "effect/Fiber";
 import * as Path from "effect/Path";
 import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
+import * as Sink from "effect/Sink";
+import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import { GitCommandError, SourceControlProviderError } from "@t3tools/contracts";
@@ -195,6 +200,59 @@ it.effect("clones a looked-up repository into the requested destination", () =>
       ),
     );
   }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("allows a clone to finish after more than two minutes", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const parent = yield* fs.makeTempDirectoryScoped();
+    const path = yield* Path.Path;
+    const destinationPath = path.join(parent, "t3code");
+    const started = yield* Deferred.make<void>();
+    const git = yield* GitVcsDriver.make.pipe(
+      Effect.provideService(
+        ChildProcessSpawner.ChildProcessSpawner,
+        ChildProcessSpawner.make(() =>
+          Effect.succeed(
+            ChildProcessSpawner.makeHandle({
+              pid: ChildProcessSpawner.ProcessId(1),
+              exitCode: Deferred.succeed(started, undefined).pipe(
+                Effect.andThen(Effect.sleep("3 minutes")),
+                Effect.as(ChildProcessSpawner.ExitCode(0)),
+              ),
+              isRunning: Effect.succeed(true),
+              kill: () => Effect.void,
+              unref: Effect.succeed(Effect.void),
+              stdin: Sink.drain,
+              stdout: Stream.empty,
+              stderr: Stream.empty,
+              all: Stream.empty,
+              getInputFd: () => Sink.drain,
+              getOutputFd: () => Stream.empty,
+            }),
+          ),
+        ),
+      ),
+    );
+    const clone = yield* Effect.gen(function* () {
+      const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
+      return yield* service.cloneRepository({ remoteUrl: CLONE_URLS.sshUrl, destinationPath });
+    }).pipe(Effect.provide(makeLayer({ git })), Effect.forkChild);
+
+    yield* Deferred.await(started);
+    yield* TestClock.adjust("3 minutes");
+    assert.deepStrictEqual(yield* Fiber.join(clone), {
+      cwd: destinationPath,
+      remoteUrl: CLONE_URLS.sshUrl,
+      repository: null,
+    });
+  }).pipe(
+    Effect.provide(
+      ServerConfig.layerTest(process.cwd(), { prefix: "t3-clone-timeout-" }).pipe(
+        Layer.provideMerge(NodeServices.layer),
+      ),
+    ),
+  ),
 );
 
 it.effect("preserves destination probe failures instead of treating them as missing paths", () => {
