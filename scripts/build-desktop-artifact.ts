@@ -1308,6 +1308,8 @@ ${associatedDomains}
     <true/>
     <key>com.apple.security.cs.disable-library-validation</key>
     <true/>
+    <key>com.apple.security.device.audio-input</key>
+    <true/>
   </dict>
 </plist>
 `;
@@ -2632,11 +2634,6 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
         NSMicrophoneUsageDescription:
           "T3 Code uses the microphone for voice dictation into the composer.",
       },
-      // Same reason for the hardened-runtime entitlement: unsigned local
-      // builds inherit neither, but signed/shipped builds need both.
-      ...(signed
-        ? {}
-        : { entitlements: path.join(repoRoot, "apps/desktop/resources/entitlements.mac.plist") }),
       protocols: [
         {
           name: "T3 Code",
