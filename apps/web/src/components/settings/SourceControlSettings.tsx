@@ -279,12 +279,7 @@ function DiscoveryItemRow({
   }, [item.kind, searchTargetId]);
 
   return (
-    <div
-      className={cn(
-        "rounded-xl transition-colors hover:bg-muted/20",
-        isVcsNotReady(item) && "opacity-80",
-      )}
-    >
+    <div className={cn("transition-colors hover:bg-muted/20", isVcsNotReady(item) && "opacity-80")}>
       <div className="px-3 py-3 sm:px-4">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0 flex-1 space-y-1">
@@ -431,7 +426,7 @@ function SourceControlSectionSkeleton({
   return (
     <SettingsSection title={title} headerAction={headerAction}>
       {SOURCE_CONTROL_SKELETON_ROWS.map((row) => (
-        <div key={row} className="rounded-xl px-3 py-3 sm:px-4">
+        <div key={row} className="px-3 py-3 sm:px-4">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="min-w-0 flex-1 space-y-2">
               <div className="flex items-center gap-2">

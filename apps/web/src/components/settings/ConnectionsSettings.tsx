@@ -394,7 +394,7 @@ function formatDesktopSshConnectionError(error: unknown): string {
   return withoutTaggedErrorPrefix.trim() || fallback;
 }
 
-const ENDPOINT_ROW_CLASSNAME = "rounded-xl px-3 py-2.5 sm:px-4";
+const ENDPOINT_ROW_CLASSNAME = "px-3 py-2.5 sm:px-4";
 
 type AccessSectionPresentation = "current" | "endpoint-rail";
 
@@ -404,7 +404,7 @@ function accessRowClassName(_presentation: AccessSectionPresentation) {
 
 function endpointRowClassName(presentation: AccessSectionPresentation, isAvailable: boolean) {
   if (presentation === "endpoint-rail") {
-    return cn("relative rounded-xl px-3 py-3 sm:px-4", !isAvailable && "bg-muted/15");
+    return cn("relative px-3 py-3 sm:px-4", !isAvailable && "bg-muted/15");
   }
 
   return cn(ENDPOINT_ROW_CLASSNAME, !isAvailable && "bg-muted/24");
