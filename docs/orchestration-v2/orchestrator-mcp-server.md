@@ -140,7 +140,7 @@ selection model-visible without allowing a request that cannot run.
 
 ## Tool Surface
 
-The server exposes eleven orchestration tools.
+The server exposes the following orchestration tools.
 
 ### `orchestrator_capabilities`
 
@@ -150,7 +150,8 @@ Returns:
 - the parent runtime and interaction modes;
 - registered provider instances and advertised models;
 - whether each provider can run a child task; and
-- feature flags for polling, cancellation, and batch thread creation.
+- feature flags for polling, cancellation, batch thread creation, incremental
+  reads, and thread search.
 
 Unavailable providers include model-visible constraints such as missing V2
 adapter support, disabled state, missing executable, or missing authentication.
@@ -275,13 +276,40 @@ timeline. The default `messages` view returns user messages, assistant
 messages, and proposed plans. The `activity` view also returns summarized tool,
 reasoning, checkpoint, handoff, and runtime-request items. Large item text is
 bounded and reports whether it was truncated. `afterPosition` and
-`nextPosition` support incremental reads.
+`nextPosition` support incremental reads. A search hit with a non-null
+`readAnchor` can instead be passed as `anchor`; the read starts inclusively at
+that currently visible source message. `anchor` and `afterPosition` are
+mutually exclusive, and an anchor that is no longer visible fails rather than
+falling back to a raw stored ordinal.
 
 Thread and message results include required `createdBy` and `creationSource`
 provenance. MCP-created threads and user-role messages use `createdBy: "agent"`
 and `creationSource: "mcp"`; provider output uses `creationSource: "provider"`.
 Actor and ingress are separate so agent-authored user-role messages remain
 distinguishable from human-authored messages.
+
+### `t3_thread_search`
+
+Searches durable thread titles and locally stored visible user and assistant
+messages in the calling thread's project. Archived threads are excluded by
+default and can be included explicitly; deleted threads, deleted projects, and
+threads from other projects are always excluded. Streaming messages,
+rolled-back runs, cancelled queued messages, and inherited-only fork content
+are not search candidates. This avoids duplicating source text under every
+fork and keeps the result aligned with canonical durable history.
+
+The literal query is 2–200 Unicode code points, display titles are bounded to
+500 code points, and `snippetChars` accepts 64–1,000 code points. Bounds never
+split a valid surrogate pair. Literal `%`, `_`, and `!` characters are escaped
+rather than treated as SQL wildcard syntax; NUL is rejected because SQLite
+cannot apply literal `LIKE` matching to it reliably. Pages and traversal
+cursors are bounded. Results report source kind, storage origin, stable V2
+identities when available, and whether the bounded display title or snippet
+was truncated. Legacy matches keep nullable anchors instead of inventing V2
+item IDs. `nextCursor` continues a live query, not a snapshot: concurrent
+projection updates can shift later pages. When the bounded traversal ceiling
+is reached, `hasMore` remains true, `traversalTruncated` is true, and no further
+cursor is returned.
 
 ### `t3_thread_send`
 

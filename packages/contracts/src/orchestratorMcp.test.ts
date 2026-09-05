@@ -8,6 +8,7 @@ import {
   OrchestratorMcpThreadInterruptInput,
   OrchestratorMcpThreadListInput,
   OrchestratorMcpThreadReadInput,
+  OrchestratorMcpThreadSearchInput,
   OrchestratorMcpThreadSendInput,
   OrchestratorMcpThreadStartInput,
   OrchestratorMcpThreadWaitInput,
@@ -19,6 +20,7 @@ const decodeDelegateTaskResult = Schema.decodeUnknownSync(OrchestratorMcpDelegat
 const decodeThreadInterruptInput = Schema.decodeUnknownSync(OrchestratorMcpThreadInterruptInput);
 const decodeThreadListInput = Schema.decodeUnknownSync(OrchestratorMcpThreadListInput);
 const decodeThreadReadInput = Schema.decodeUnknownSync(OrchestratorMcpThreadReadInput);
+const decodeThreadSearchInput = Schema.decodeUnknownSync(OrchestratorMcpThreadSearchInput);
 const decodeThreadSendInput = Schema.decodeUnknownSync(OrchestratorMcpThreadSendInput);
 const decodeThreadStartInput = Schema.decodeUnknownSync(OrchestratorMcpThreadStartInput);
 const decodeThreadWaitInput = Schema.decodeUnknownSync(OrchestratorMcpThreadWaitInput);
@@ -149,6 +151,14 @@ describe("orchestrator MCP contracts", () => {
       }).afterPosition,
     ).toBe(10);
     expect(
+      decodeThreadSearchInput({
+        query: "  durable result  ",
+        includeArchived: true,
+        limit: 25,
+        snippetChars: 300,
+      }).query,
+    ).toBe("durable result");
+    expect(
       decodeThreadSendInput({
         threadId: "thread-loop-1",
         message: "Continue with the next iteration.",
@@ -169,5 +179,13 @@ describe("orchestrator MCP contracts", () => {
         reason: "Loop converged.",
       }).reason,
     ).toBe("Loop converged.");
+
+    expect(() =>
+      decodeThreadReadInput({
+        threadId: "thread-loop-1",
+        afterPosition: 10,
+        anchor: { sourceThreadId: "thread-loop-1", messageId: "message-loop-1" },
+      }),
+    ).toThrow(/anchor and afterPosition/);
   });
 });

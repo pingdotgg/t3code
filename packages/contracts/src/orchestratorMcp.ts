@@ -13,6 +13,7 @@ import {
   RunId,
   ScheduledTaskId,
   ThreadId,
+  TrimmedString,
   TrimmedNonEmptyString,
   TurnItemId,
 } from "./baseSchemas.ts";
@@ -44,6 +45,18 @@ const OrchestratorMcpTitle = TrimmedNonEmptyString.check(Schema.isMaxLength(512)
 const OrchestratorMcpClientRequestId = TrimmedNonEmptyString.check(
   Schema.isMaxLength(256),
 ).annotate({ description: "Stable idempotency key to reuse when retrying this mutation." });
+
+const unicodeCodePointLength = (minimum: number, maximum: number) =>
+  Schema.makeFilter((input: string) => {
+    if (input.length > maximum * 2) {
+      return `Expected between ${minimum} and ${maximum} Unicode code points.`;
+    }
+    const length = Array.from(input).length;
+    return (
+      (length >= minimum && length <= maximum) ||
+      `Expected between ${minimum} and ${maximum} Unicode code points.`
+    );
+  });
 
 /**
  * OpenCode 1.15 has been observed serializing nested MCP union objects as JSON
@@ -326,14 +339,87 @@ export const OrchestratorMcpThreadListResult = Schema.Struct({
 });
 export type OrchestratorMcpThreadListResult = typeof OrchestratorMcpThreadListResult.Type;
 
+export const OrchestratorMcpThreadSearchInput = Schema.Struct({
+  query: TrimmedString.check(unicodeCodePointLength(2, 200)).annotate({
+    description:
+      "Literal text to find, from 2 to 200 Unicode code points; %, _, and ! are ordinary characters.",
+  }),
+  threadId: Schema.optional(
+    ThreadId.annotate({ description: "Optional thread in the calling project to search." }),
+  ),
+  includeArchived: Schema.optional(
+    Schema.Boolean.annotate({
+      description: "Include archived threads. Defaults to false; deleted threads stay excluded.",
+    }),
+  ),
+  cursor: Schema.optional(
+    NonNegativeInt.check(Schema.isLessThanOrEqualTo(10_000)).annotate({
+      description: "Live-query continuation cursor returned by the previous page.",
+    }),
+  ),
+  limit: Schema.optional(PositiveInt.check(Schema.isLessThanOrEqualTo(50))),
+  snippetChars: Schema.optional(
+    PositiveInt.check(Schema.isBetween({ minimum: 64, maximum: 1_000 })).annotate({
+      description: "Maximum Unicode code points in each returned snippet. Defaults to 240.",
+    }),
+  ),
+});
+export type OrchestratorMcpThreadSearchInput = typeof OrchestratorMcpThreadSearchInput.Type;
+
+export const OrchestratorMcpThreadReadAnchor = Schema.Struct({
+  sourceThreadId: ThreadId,
+  messageId: MessageId,
+});
+export type OrchestratorMcpThreadReadAnchor = typeof OrchestratorMcpThreadReadAnchor.Type;
+
+export const OrchestratorMcpThreadSearchHit = Schema.Struct({
+  threadId: ThreadId,
+  projectId: ProjectId,
+  threadTitle: Schema.String.check(unicodeCodePointLength(0, 500)),
+  threadTitleTruncated: Schema.Boolean,
+  archived: Schema.Boolean,
+  source: Schema.Literals(["title", "user", "assistant"]),
+  origin: Schema.Literals(["legacy", "v2"]),
+  snippet: Schema.String.check(unicodeCodePointLength(0, 1_000)),
+  snippetTruncated: Schema.Boolean,
+  matchedAt: IsoDateTime,
+  messageId: Schema.NullOr(MessageId),
+  runId: Schema.NullOr(RunId),
+  itemId: Schema.NullOr(TurnItemId),
+  readAnchor: Schema.NullOr(OrchestratorMcpThreadReadAnchor),
+});
+export type OrchestratorMcpThreadSearchHit = typeof OrchestratorMcpThreadSearchHit.Type;
+
+export const OrchestratorMcpThreadSearchResult = Schema.Struct({
+  projectId: ProjectId,
+  hits: Schema.Array(OrchestratorMcpThreadSearchHit),
+  nextCursor: Schema.NullOr(NonNegativeInt),
+  hasMore: Schema.Boolean,
+  traversalTruncated: Schema.Boolean,
+  consistency: Schema.Literal("live"),
+});
+export type OrchestratorMcpThreadSearchResult = typeof OrchestratorMcpThreadSearchResult.Type;
+
 export const OrchestratorMcpThreadReadInput = Schema.Struct({
   threadId: ThreadId,
   view: Schema.optional(Schema.Literals(["messages", "activity"])),
   afterPosition: Schema.optional(NonNegativeInt),
+  anchor: Schema.optional(
+    OrchestratorMcpThreadReadAnchor.annotate({
+      description:
+        "Start inclusively at a visible source message returned by t3_thread_search. Cannot be combined with afterPosition.",
+    }),
+  ),
   limit: Schema.optional(PositiveInt.check(Schema.isLessThanOrEqualTo(100))),
   runLimit: Schema.optional(PositiveInt.check(Schema.isLessThanOrEqualTo(50))),
   maxCharsPerItem: Schema.optional(PositiveInt.check(Schema.isLessThanOrEqualTo(50_000))),
-});
+}).check(
+  Schema.makeFilter(
+    (input) =>
+      !(input.anchor !== undefined && input.afterPosition !== undefined) ||
+      "anchor and afterPosition cannot be specified together",
+  ),
+);
 export type OrchestratorMcpThreadReadInput = typeof OrchestratorMcpThreadReadInput.Type;
 
 export const OrchestratorMcpThreadDetail = Schema.Struct({
@@ -484,6 +570,7 @@ export const OrchestratorMcpCapabilitiesResult = Schema.Struct({
     batchThreadCreation: Schema.Boolean,
     threadManagement: Schema.Boolean,
     incrementalThreadRead: Schema.Boolean,
+    threadSearch: Schema.optional(Schema.Boolean),
     scheduledTasks: Schema.Boolean,
     maxBatchThreads: Schema.Number,
   }),
