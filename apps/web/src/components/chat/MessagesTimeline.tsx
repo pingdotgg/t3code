@@ -623,6 +623,12 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   // sees the settled positions. One frame is shared across bursts of size
   // changes.
   const contentOverflowFrameRef = useRef<number | null>(null);
+  const cancelContentOverflowFrame = useCallback(() => {
+    if (contentOverflowFrameRef.current !== null) {
+      cancelAnimationFrame(contentOverflowFrameRef.current);
+      contentOverflowFrameRef.current = null;
+    }
+  }, []);
   const reportContentOverflow = useCallback(() => {
     if (!onContentOverflowChange || contentOverflowFrameRef.current !== null) return;
     contentOverflowFrameRef.current = requestAnimationFrame(() => {
@@ -630,19 +636,16 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onContentOverflowChange(measureContentOverflow());
     });
   }, [measureContentOverflow, onContentOverflowChange]);
-  useEffect(() => {
-    return () => {
-      if (contentOverflowFrameRef.current !== null) {
-        cancelAnimationFrame(contentOverflowFrameRef.current);
-      }
-    };
-  }, []);
+  useEffect(() => cancelContentOverflowFrame, [cancelContentOverflowFrame]);
   // The list's own layout effects have already run here, so estimated row
   // positions are in place. Reporting before the first paint lets a thread
   // open in its final composer layout instead of correcting it a frame later.
+  // A frame scheduled with the previous inset would overwrite this read, so
+  // it is dropped first.
   useLayoutEffect(() => {
+    cancelContentOverflowFrame();
     onContentOverflowChange?.(measureContentOverflow());
-  }, [measureContentOverflow, onContentOverflowChange, rows.length]);
+  }, [cancelContentOverflowFrame, measureContentOverflow, onContentOverflowChange, rows.length]);
 
   const handleScroll = useCallback(() => {
     const state = listRef.current?.getState?.();

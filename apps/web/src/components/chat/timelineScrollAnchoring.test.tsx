@@ -38,6 +38,12 @@ describe("timelineContentOverflowsViewport", () => {
 
   it("treats an empty or unmeasured list as fitting", () => {
     expect(timelineContentOverflowsViewport(undefined, inset)).toBe(false);
+    expect(
+      timelineContentOverflowsViewport(
+        buildState({ positions: [0, 200], sizes: [200, 400], scrollLength: 0 }),
+        inset,
+      ),
+    ).toBe(false);
     expect(timelineContentOverflowsViewport(buildState({ positions: [], sizes: [] }), inset)).toBe(
       false,
     );
