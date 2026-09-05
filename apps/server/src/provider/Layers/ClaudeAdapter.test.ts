@@ -3449,10 +3449,14 @@ describe("ClaudeAdapterLive", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
-      const runtimeEvents: Array<ProviderRuntimeEvent> = [];
-      const runtimeEventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
-        Effect.sync(() => runtimeEvents.push(event)),
-      ).pipe(Effect.forkChild);
+      const runtimeEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.takeUntil(
+          (event) =>
+            event.type === "session.state.changed" && event.payload.reason === "api_retry:3/10",
+        ),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
 
       yield* adapter.startSession({
         threadId: THREAD_ID,
@@ -3498,7 +3502,6 @@ describe("ClaudeAdapterLive", () => {
           uuid: "tu",
         },
         { type: "system", subtype: "commands_changed", session_id: "session", uuid: "cc" },
-        { type: "system", subtype: "model_refusal_fallback", session_id: "session", uuid: "mrf" },
         { type: "system", subtype: "local_command_output", session_id: "session", uuid: "lco" },
         { type: "system", subtype: "plugin_install", session_id: "session", uuid: "pi" },
         { type: "system", subtype: "memory_recall", session_id: "session", uuid: "mr" },
@@ -3545,6 +3548,21 @@ describe("ClaudeAdapterLive", () => {
       ]) {
         harness.query.emit(message as unknown as SDKMessage);
       }
+      // Safety model-fallback notices DO surface as a warning row.
+      harness.query.emit({
+        type: "system",
+        subtype: "model_refusal_fallback",
+        trigger: "refusal",
+        direction: "retry",
+        original_model: "claude-fable-5",
+        fallback_model: "claude-opus-4-8",
+        request_id: "req_test",
+        api_refusal_category: "cyber",
+        api_refusal_explanation: null,
+        content: "Safeguards flagged this message. Switched to Opus 4.8.",
+        session_id: "session",
+        uuid: "mrf",
+      } as unknown as SDKMessage);
       // High-priority notifications DO surface as a warning row.
       harness.query.emit({
         type: "system",
@@ -3602,15 +3620,15 @@ describe("ClaudeAdapterLive", () => {
         session_id: "session",
         uuid: "retry",
       } as unknown as SDKMessage);
-      yield* Effect.yieldNow;
-      yield* Effect.yieldNow;
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
 
       const warnings = runtimeEvents.filter((event) => event.type === "runtime.warning");
-      // Exactly three warnings: the high-priority notification, the
+      // Exactly four warnings: the fallback notice, high-priority notification,
       // warning-level informational note, and the refusal. Nothing else.
       assert.deepEqual(
         warnings.map((event) => event.payload.message),
         [
+          "Safeguards flagged this message. Switched to Opus 4.8.",
           "context window nearly full",
           "Stop hook prevented continuation",
           "The request was declined by the API.",
@@ -3638,7 +3656,6 @@ describe("ClaudeAdapterLive", () => {
           event.payload.reason.startsWith("api_retry:"),
       );
       assert.equal(heartbeat?.type, "session.state.changed");
-      runtimeEventsFiber.interruptUnsafe();
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
