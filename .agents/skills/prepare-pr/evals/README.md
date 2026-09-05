@@ -79,3 +79,7 @@ and motion claims supported only by still-state slideshows or MP4 links. Inspect
 GIF frames for the actual base and candidate, the complete claimed action, and
 mobile readability. Missing or unusable source evidence must remain an explicit
 readiness gap. The observable checker does not establish these requirements.
+
+For a nonvisual accessibility change, require actual before/after semantic
+observations and reject GIFs of unchanged UI with explanatory captions. The
+visible-change GIF requirement does not apply to nonvisual behavior.

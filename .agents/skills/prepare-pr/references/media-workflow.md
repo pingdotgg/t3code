@@ -16,7 +16,8 @@ file or a reachable path and state what framing it needs. Pause dependent media
 work until it arrives; report the missing input rather than claiming completion.
 
 For PR evidence, apply the parent skill's required animated GIF comparison and
-vertical-layout rules. Produce labeled base/candidate GIFs (or one sequential
+vertical-layout rules. Omit GIFs for nonvisual changes; use observed accessibility
+properties or other direct checks instead. For visible changes, produce labeled base/candidate GIFs (or one sequential
 comparison GIF) and a recording-derived GIF for each motion claim. MP4s remain
 supporting evidence. For artifact-only requests, deliver the requested formats.
 

@@ -105,7 +105,7 @@ environment, viewport/device, theme, scroll position, selections, and relevant
 loading or failure state. State the conditions that matter next to the media.
 Explain deliberate differences, such as a feature changing the default view.
 
-For every user-visible change, the minimum evidence is embedded animated GIFs
+For changes with a visible before/after difference, the minimum evidence is embedded animated GIFs
 showing **Before (base)** and **After (candidate)**. Use two vertically stacked,
 labeled GIFs or one GIF that shows the labeled base and candidate sequentially.
 Candidate-only interaction footage does not satisfy this comparison. For a
@@ -113,7 +113,14 @@ static change, a labeled alternating-state GIF made from actual base/candidate
 captures is acceptable; disclose that it is a still-state comparison. Preserve
 screenshots and source recordings as supporting evidence.
 
-Every motion or interaction needed to demonstrate the change must appear in an
+When the changed behavior is not visible, omit animated GIFs. Accessible names,
+ARIA relationships, and other nonvisual semantics need actual before/after
+accessibility-tree or DOM observations and focused checks. Unchanged screenshots
+with different added captions, or footage of an unchanged interaction, do not
+make a nonvisual fix visible. Static screenshots may provide control context;
+clearly distinguish that context from proof of the changed behavior.
+
+Every visible motion or interaction needed to demonstrate the change must appear in an
 animated GIF derived from the actual recording, including the action and settled
 result. A still-state slideshow cannot prove motion. MP4 links supplement these
 GIFs; they do not replace them. Missing base evidence or a required GIF is an
@@ -252,7 +259,7 @@ rendered PR view. Require these conditions before calling the packet ready:
 - Before/after and recording labels identify the scenario and visible result;
   screenshots, captions, and crops are readable at a 390 CSS-pixel mobile viewport
   within the PR content column; add contextual detail crops when needed.
-- The published body embeds the required base/candidate animated GIF comparison
+- For visible changes, the published body embeds the required base/candidate animated GIF comparison
   and GIFs covering every claimed motion or interaction. Decode and inspect their
   frames and playback; a .gif extension or successful upload alone is insufficient.
 - Evidence is stacked vertically; no evidence appears in side-by-side tables,
