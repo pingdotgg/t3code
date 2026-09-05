@@ -275,8 +275,13 @@ async function mountHookRouter(
     path: "/connect",
     component: () => null,
   });
+  const welcomeRoute = createRoute({
+    getParentRoute: () => root,
+    path: "/welcome",
+    component: () => null,
+  });
   const router = createRouter({
-    routeTree: root.addChildren([shellRoute, connectRoute]),
+    routeTree: root.addChildren([shellRoute, connectRoute, welcomeRoute]),
     history: createMemoryHistory({ initialEntries: ["/"] }),
     isServer: false,
   });
@@ -303,24 +308,41 @@ async function mountHookRouter(
 }
 
 describe("unvisited completion observation", () => {
-  it("retains the live hook baseline across shell-connect-shell navigation", async () => {
-    const client = harness();
-    const mounted = await mountHookRouter(client);
-    try {
-      await act(() => {
-        client.connect([LOCAL]);
-        client.emit("live", snapshot([thread(null, "running")]));
-      });
-      await act(() => mounted.router.navigate({ to: "/connect" }));
-      expect(mounted.router.state.location.pathname).toBe("/connect");
-      await act(() => client.emit("live", snapshot([thread()])));
-      await act(() => mounted.router.navigate({ to: "/" }));
-      expect(mounted.lifetime).toEqual({ mounts: 1, unmounts: 0 });
-      expect(unread()).toBe(true);
-    } finally {
-      await mounted.close();
-    }
-  });
+  it.each(["/connect", "/welcome"] as const)(
+    "retains the live hook baseline across %s navigation",
+    async (route) => {
+      const client = harness();
+      const mounted = await mountHookRouter(client);
+      try {
+        await act(() => {
+          client.connect([LOCAL]);
+          client.emit("live", snapshot([thread(null, "running")]));
+        });
+        await act(() => mounted.router.navigate({ to: route }));
+        expect(mounted.router.state.location.pathname).toBe(route);
+        const imported = {
+          ...INITIAL,
+          id: ThreadId.make("import:codex:history"),
+          settledOverride: "settled" as const,
+          settledAt: COMPLETED_AT,
+          updatedAt: COMPLETED_AT,
+        };
+        await act(() => client.emit("live", snapshot([thread(null, "running"), imported])));
+        expect(useUiStateStore.getState().threadLastVisitedAtById).toEqual({});
+        await act(() => client.emit("live", snapshot([thread(), imported])));
+        await act(() => mounted.router.navigate({ to: "/" }));
+        expect(mounted.lifetime).toEqual({ mounts: 1, unmounts: 0 });
+        expect(unread()).toBe(true);
+        expect(
+          useUiStateStore.getState().threadLastVisitedAtById[
+            scopedThreadKey(scopeThreadRef(LOCAL, imported.id))
+          ],
+        ).toBeUndefined();
+      } finally {
+        await mounted.close();
+      }
+    },
+  );
 
   it("demonstrates the old shell-only subtree losing completions on connect", async () => {
     const client = harness();
