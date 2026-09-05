@@ -23,9 +23,28 @@ import type {
   TurnId,
 } from "@t3tools/contracts";
 import type * as Effect from "effect/Effect";
+import type * as Duration from "effect/Duration";
 import type * as Stream from "effect/Stream";
 
 export type ProviderSessionModelSwitchMode = "in-session" | "unsupported";
+
+/** Shared by the adapter and the provider's advertised compact command. */
+export type ProviderCompactionStrategy = {
+  readonly completionTimeout: Duration.Input;
+} & (
+  | { readonly type: "native" }
+  | { readonly type: "slash-command"; readonly command: `/${string}` }
+);
+
+export type ProviderCompaction<TError> =
+  | Extract<ProviderCompactionStrategy, { readonly type: "slash-command" }>
+  | (Extract<ProviderCompactionStrategy, { readonly type: "native" }> & {
+      /** Starts compaction. The adapter must emit a compacted state when it finishes. */
+      readonly start: (
+        threadId: ThreadId,
+        modelSelection?: ProviderSendTurnInput["modelSelection"],
+      ) => Effect.Effect<void, TError>;
+    });
 
 export interface ProviderAdapterCapabilities {
   /**
@@ -70,10 +89,8 @@ export interface ProviderAdapterShape<TError> {
     input: ProviderSendTurnInput,
   ) => Effect.Effect<ProviderTurnStartResult, TError>;
 
-  readonly compactThread?: (
-    threadId: ThreadId,
-    modelSelection?: ProviderSendTurnInput["modelSelection"],
-  ) => Effect.Effect<void, TError>;
+  /** Omitted when this adapter does not support manual context compaction. */
+  readonly compaction?: ProviderCompaction<TError>;
 
   /**
    * Interrupt an active turn.

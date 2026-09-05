@@ -1064,7 +1064,8 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
         threadId,
         runtimeMode: "full-access",
       });
-      yield* adapter.compactThread!(
+      NodeAssert.ok(adapter.compaction?.type === "native");
+      yield* adapter.compaction.start(
         threadId,
         createModelSelection(ProviderInstanceId.make("opencode"), "openai/gpt-5"),
       );

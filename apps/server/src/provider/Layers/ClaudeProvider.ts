@@ -24,7 +24,6 @@ import {
 
 import {
   buildServerProvider,
-  COMPACT_SLASH_COMMAND,
   DEFAULT_TIMEOUT_MS,
   isCommandMissingCause,
   parseGenericCliVersion,
@@ -32,6 +31,7 @@ import {
   spawnAndCollect,
   type ServerProviderDraft,
 } from "../providerSnapshot.ts";
+import { CLAUDE_COMPACTION } from "../Services/ClaudeAdapter.ts";
 import { resolveClaudeSdkExecutablePath } from "../Drivers/ClaudeExecutable.ts";
 import { makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
 import { discoverClaudeSkills } from "../Drivers/ClaudeSkills.ts";
@@ -533,8 +533,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     ? yield* resolveCapabilities(claudeSettings).pipe(Effect.orElseSucceed(() => undefined))
     : undefined;
   const skills = yield* discoverClaudeSkills(claudeSettings, cwd, resolvedEnvironment);
-  const slashCommands = [COMPACT_SLASH_COMMAND, ...(capabilities?.slashCommands ?? [])];
-  const dedupedSlashCommands = dedupeSlashCommands(slashCommands);
+  const slashCommands = dedupeSlashCommands(capabilities?.slashCommands ?? []);
 
   if (!capabilities) {
     return buildServerProvider({
@@ -542,7 +541,8 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
       enabled: claudeSettings.enabled,
       checkedAt,
       models,
-      slashCommands: dedupedSlashCommands,
+      compaction: CLAUDE_COMPACTION,
+      slashCommands,
       skills,
       probe: {
         installed: true,
@@ -572,7 +572,8 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     enabled: claudeSettings.enabled,
     checkedAt,
     models,
-    slashCommands: dedupedSlashCommands,
+    compaction: CLAUDE_COMPACTION,
+    slashCommands,
     skills,
     probe: {
       installed: true,

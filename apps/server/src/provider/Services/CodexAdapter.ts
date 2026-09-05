@@ -4,13 +4,18 @@
  * Historically this module exposed a `Context.Service` tag so consumers
  * could inject the adapter through the Effect layer graph. The driver
  * model ({@link ../Drivers/CodexDriver}) bundles one adapter per
- * instance as a captured closure instead, so the tag is gone — we only
- * retain the shape interface as a naming anchor for the driver bundle.
+ * instance as a captured closure instead. This module defines the adapter
+ * shape and the compaction strategy used by its runtime and advertised command.
  *
  * @module CodexAdapter
  */
 import type { ProviderAdapterError } from "../Errors.ts";
-import type { ProviderAdapterShape } from "./ProviderAdapter.ts";
+import type { ProviderAdapterShape, ProviderCompactionStrategy } from "./ProviderAdapter.ts";
+
+export const CODEX_COMPACTION = {
+  type: "native",
+  completionTimeout: "10 minutes",
+} satisfies ProviderCompactionStrategy;
 
 /**
  * CodexAdapterShape — per-instance Codex adapter contract. Carries

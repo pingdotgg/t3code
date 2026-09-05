@@ -13,12 +13,12 @@ import { createModelCapabilities } from "@t3tools/shared/model";
 import { compareSemverVersions } from "@t3tools/shared/semver";
 import {
   buildServerProvider,
-  COMPACT_SLASH_COMMAND,
   nonEmptyTrimmed,
   parseGenericCliVersion,
   providerModelsFromSettings,
   type ServerProviderDraft,
 } from "../providerSnapshot.ts";
+import { OPENCODE_COMPACTION } from "../Services/OpenCodeAdapter.ts";
 import {
   MINIMUM_OPENCODE_VERSION,
   OpenCodeRuntime,
@@ -526,7 +526,7 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
     checkedAt,
     models,
     skills,
-    slashCommands: [COMPACT_SLASH_COMMAND],
+    compaction: OPENCODE_COMPACTION,
     probe: {
       installed: true,
       version,

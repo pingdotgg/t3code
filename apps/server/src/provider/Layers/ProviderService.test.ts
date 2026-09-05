@@ -59,6 +59,9 @@ import {
   type ProviderAdapterError,
 } from "../Errors.ts";
 import type { ProviderAdapterShape } from "../Services/ProviderAdapter.ts";
+import { CLAUDE_COMPACTION } from "../Services/ClaudeAdapter.ts";
+import { CODEX_COMPACTION } from "../Services/CodexAdapter.ts";
+import { CURSOR_COMPACTION } from "../Services/CursorAdapter.ts";
 import * as ProviderAdapterRegistry from "../Services/ProviderAdapterRegistry.ts";
 import * as ProviderService from "../Services/ProviderService.ts";
 import * as ProviderSessionDirectory from "../Services/ProviderSessionDirectory.ts";
@@ -187,7 +190,7 @@ function makeFakeCodexAdapter(
       Effect.void,
   );
 
-  const compactThread = vi.fn((threadId: ThreadId) =>
+  const compactThread = vi.fn((threadId: ThreadId): Effect.Effect<void, ProviderAdapterError> =>
     Effect.sync(() =>
       emit({
         type: "thread.state.changed",
@@ -275,7 +278,13 @@ function makeFakeCodexAdapter(
     },
     startSession,
     sendTurn,
-    ...(provider === CODEX_DRIVER ? { compactThread } : {}),
+    ...(provider === CODEX_DRIVER
+      ? { compaction: { ...CODEX_COMPACTION, start: compactThread } }
+      : provider === CURSOR_DRIVER
+        ? { compaction: CURSOR_COMPACTION }
+        : provider === CLAUDE_AGENT_DRIVER
+          ? { compaction: CLAUDE_COMPACTION }
+          : {}),
     interruptTurn,
     respondToRequest,
     respondToUserInput,
@@ -977,6 +986,398 @@ it.effect("ProviderServiceLive rejects new sessions for disabled custom instance
 );
 
 const routing = makeProviderServiceLayer();
+
+const customCompactionDriver = ProviderDriverKind.make("custom-compaction-provider");
+const nativeCompactionInstanceId = ProviderInstanceId.make("native-compaction");
+const slashCompactionInstanceId = ProviderInstanceId.make("slash-compaction");
+const unsupportedCompactionInstanceId = ProviderInstanceId.make("unsupported-compaction");
+const otherCompactionInstanceId = ProviderInstanceId.make("other-compaction");
+const customNativeCompaction = makeFakeCodexAdapter(customCompactionDriver);
+const customSlashCompaction = makeFakeCodexAdapter(customCompactionDriver);
+const unsupportedCompaction = makeFakeCodexAdapter(customCompactionDriver);
+const otherCompactionInstance = makeFakeCodexAdapter(customCompactionDriver);
+const declaredCompaction = makeProviderServiceLayer({
+  registry: makeStaticInstanceRegistry([
+    [
+      nativeCompactionInstanceId,
+      {
+        ...customNativeCompaction.adapter,
+        compaction: {
+          type: "native",
+          completionTimeout: "45 seconds",
+          start: customNativeCompaction.compactThread,
+        },
+      },
+    ],
+    [
+      slashCompactionInstanceId,
+      {
+        ...customSlashCompaction.adapter,
+        compaction: {
+          type: "slash-command",
+          command: "/reduce-context",
+          completionTimeout: "45 seconds",
+        },
+      },
+    ],
+    [unsupportedCompactionInstanceId, unsupportedCompaction.adapter],
+    [otherCompactionInstanceId, otherCompactionInstance.adapter],
+  ]),
+});
+
+declaredCompaction.layer("ProviderService declared compaction", (it) => {
+  it.effect("keeps native compaction exclusive until its start request returns", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const threadId = asThreadId("custom-native-early-completion");
+      const requestId = MessageId.make("custom-native-request");
+      const releaseStart = yield* Deferred.make<void>();
+      yield* provider.startSession(threadId, {
+        providerInstanceId: nativeCompactionInstanceId,
+        threadId,
+        runtimeMode: "full-access",
+      });
+      const eventsFiber = yield* provider.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId),
+        Stream.take(2),
+        Stream.runCollect,
+        Effect.forkChild({ startImmediately: true }),
+      );
+      customNativeCompaction.compactThread.mockClear();
+      customNativeCompaction.compactThread.mockImplementationOnce(() =>
+        Effect.gen(function* () {
+          customNativeCompaction.emit({
+            type: "thread.state.changed",
+            eventId: asEventId("custom-native-compacted"),
+            provider: customCompactionDriver,
+            createdAt: "2026-01-01T00:00:00.000Z",
+            threadId,
+            payload: { state: "compacted" },
+          });
+          customNativeCompaction.emit({
+            type: "thread.state.changed",
+            eventId: asEventId("custom-native-idle"),
+            provider: customCompactionDriver,
+            createdAt: "2026-01-01T00:00:00.000Z",
+            threadId,
+            payload: { state: "idle" },
+          });
+          yield* Deferred.await(releaseStart);
+        }),
+      );
+
+      const compactionFiber = yield* provider
+        .compactThread(threadId, undefined, requestId)
+        .pipe(Effect.forkChild);
+      const events = yield* Fiber.join(eventsFiber);
+      assert.equal(events[0]?.requestId, String(requestId));
+      assert.equal(compactionFiber.pollUnsafe(), undefined);
+      const overlap = yield* provider.compactThread(threadId).pipe(Effect.flip);
+      assert.instanceOf(overlap, ProviderAdapterRequestError);
+      assert.include(overlap.message, "already in progress");
+      assert.equal(customNativeCompaction.compactThread.mock.calls.length, 1);
+
+      yield* Deferred.succeed(releaseStart, undefined);
+      yield* Fiber.join(compactionFiber);
+      assert.equal(customNativeCompaction.sendTurn.mock.calls.length, 0);
+      yield* provider.stopSession({ threadId });
+    }),
+  );
+
+  it.effect("uses the declared native timeout and keeps quarantine local to its instance", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const threadId = asThreadId("custom-native-timeout");
+      const startAccepted = yield* Deferred.make<void>();
+      yield* provider.startSession(threadId, {
+        providerInstanceId: nativeCompactionInstanceId,
+        threadId,
+        runtimeMode: "full-access",
+      });
+      customNativeCompaction.compactThread.mockImplementationOnce(() =>
+        Deferred.succeed(startAccepted, undefined).pipe(Effect.asVoid),
+      );
+      const resultFiber = yield* provider
+        .compactThread(threadId)
+        .pipe(Effect.result, Effect.forkChild);
+      yield* Deferred.await(startAccepted);
+
+      customNativeCompaction.emit({
+        type: "turn.completed",
+        eventId: asEventId("custom-native-unrelated-turn"),
+        provider: customCompactionDriver,
+        createdAt: "2026-01-01T00:00:01.000Z",
+        threadId,
+        turnId: asTurnId("unrelated-turn"),
+        payload: { state: "completed" },
+      });
+      yield* TestClock.adjust("31 seconds");
+      assert.equal(resultFiber.pollUnsafe(), undefined);
+      yield* TestClock.adjust("14 seconds");
+      const result = yield* Fiber.join(resultFiber);
+      assert.equal(result._tag, "Failure");
+      if (result._tag === "Failure") {
+        assert.instanceOf(result.failure, ProviderAdapterRequestError);
+        assert.include(result.failure.message, "45s");
+      }
+
+      const lateEvent = {
+        type: "thread.state.changed",
+        eventId: asEventId("custom-native-stale-instance-completion"),
+        provider: customCompactionDriver,
+        createdAt: "2026-01-01T00:01:00.000Z",
+        threadId,
+        payload: { state: "compacted" },
+      } satisfies ProviderRuntimeEvent;
+      const staleEventFiber = yield* provider.streamEvents.pipe(
+        Stream.filter((event) => event.eventId === lateEvent.eventId),
+        Stream.runHead,
+        Effect.forkChild({ startImmediately: true }),
+      );
+      otherCompactionInstance.emit(lateEvent);
+      yield* Fiber.join(staleEventFiber);
+      const callsBeforeRetry = customNativeCompaction.compactThread.mock.calls.length;
+      const blocked = yield* provider.compactThread(threadId).pipe(Effect.flip);
+      assert.instanceOf(blocked, ProviderAdapterRequestError);
+      assert.include(blocked.message, "may still be running");
+      assert.equal(customNativeCompaction.compactThread.mock.calls.length, callsBeforeRetry);
+
+      const completionEventId = asEventId("custom-native-late-completion");
+      const lateEventFiber = yield* provider.streamEvents.pipe(
+        Stream.filter((event) => event.eventId === completionEventId),
+        Stream.runHead,
+        Effect.forkChild({ startImmediately: true }),
+      );
+      customNativeCompaction.emit({ ...lateEvent, eventId: completionEventId });
+      yield* Fiber.join(lateEventFiber);
+      yield* provider.compactThread(threadId);
+      yield* provider.stopSession({ threadId });
+    }),
+  );
+
+  it.effect("does not correlate late compacted state with a failed native request", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const threadId = asThreadId("custom-native-failed");
+      const requestId = MessageId.make("custom-native-failed-request");
+      yield* provider.startSession(threadId, {
+        providerInstanceId: nativeCompactionInstanceId,
+        threadId,
+        runtimeMode: "full-access",
+      });
+      const eventsFiber = yield* provider.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId),
+        Stream.take(2),
+        Stream.runCollect,
+        Effect.forkChild({ startImmediately: true }),
+      );
+      customNativeCompaction.compactThread.mockImplementationOnce(() =>
+        Effect.gen(function* () {
+          customNativeCompaction.emit({
+            type: "turn.completed",
+            eventId: asEventId("custom-native-failure"),
+            provider: customCompactionDriver,
+            createdAt: "2026-01-01T00:00:00.000Z",
+            threadId,
+            payload: { state: "failed" },
+          });
+          customNativeCompaction.emit({
+            type: "thread.state.changed",
+            eventId: asEventId("custom-native-compacted-after-failure"),
+            provider: customCompactionDriver,
+            createdAt: "2026-01-01T00:00:00.000Z",
+            threadId,
+            payload: { state: "compacted" },
+          });
+          yield* Fiber.join(eventsFiber);
+        }),
+      );
+      const failure = yield* provider
+        .compactThread(threadId, undefined, requestId)
+        .pipe(Effect.flip);
+      assert.instanceOf(failure, ProviderAdapterRequestError);
+      assert.include(failure.message, "ended with failed");
+      const events = yield* Fiber.join(eventsFiber);
+      assert.equal(events[1]?.requestId, undefined);
+      yield* provider.compactThread(threadId);
+      yield* provider.stopSession({ threadId });
+    }),
+  );
+
+  it.effect("uses the declared slash command and buffers completion until its turn is known", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const threadId = asThreadId("custom-slash-early-completion");
+      const turnId = asTurnId("custom-slash-turn");
+      const requestId = MessageId.make("custom-slash-request");
+      const modelSelection = createModelSelection(slashCompactionInstanceId, "custom-model");
+      const releaseStart = yield* Deferred.make<void>();
+      const idleEventId = asEventId("custom-slash-idle");
+      yield* provider.startSession(threadId, {
+        providerInstanceId: slashCompactionInstanceId,
+        threadId,
+        runtimeMode: "full-access",
+      });
+      const eventsFiber = yield* provider.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId),
+        Stream.take(3),
+        Stream.runCollect,
+        Effect.forkChild({ startImmediately: true }),
+      );
+      const idleEventFiber = yield* provider.streamEvents.pipe(
+        Stream.filter((event) => event.eventId === idleEventId),
+        Stream.runHead,
+        Effect.forkChild({ startImmediately: true }),
+      );
+      customSlashCompaction.sendTurn.mockClear();
+      customSlashCompaction.sendTurn.mockImplementationOnce(() =>
+        Effect.gen(function* () {
+          customSlashCompaction.emit({
+            type: "thread.state.changed",
+            eventId: asEventId("custom-slash-compacted"),
+            provider: customCompactionDriver,
+            createdAt: "2026-01-01T00:00:00.000Z",
+            threadId,
+            turnId,
+            payload: { state: "compacted" },
+          });
+          customSlashCompaction.emit({
+            type: "turn.completed",
+            eventId: asEventId("custom-slash-completed"),
+            provider: customCompactionDriver,
+            createdAt: "2026-01-01T00:00:00.000Z",
+            threadId,
+            turnId,
+            payload: { state: "completed" },
+          });
+          customSlashCompaction.emit({
+            type: "thread.state.changed",
+            eventId: idleEventId,
+            provider: customCompactionDriver,
+            createdAt: "2026-01-01T00:00:00.000Z",
+            threadId,
+            payload: { state: "idle" },
+          });
+          yield* Deferred.await(releaseStart);
+          return { threadId, turnId };
+        }),
+      );
+
+      const compactionFiber = yield* provider
+        .compactThread(threadId, modelSelection, requestId)
+        .pipe(Effect.forkChild);
+      yield* Fiber.join(idleEventFiber);
+      assert.equal(compactionFiber.pollUnsafe(), undefined);
+      const overlap = yield* provider.compactThread(threadId).pipe(Effect.flip);
+      assert.instanceOf(overlap, ProviderAdapterRequestError);
+      assert.include(overlap.message, "already in progress");
+      assert.equal(customSlashCompaction.sendTurn.mock.calls.length, 1);
+      assert.equal(customSlashCompaction.sendTurn.mock.calls[0]?.[0].input, "/reduce-context");
+      assert.deepEqual(
+        customSlashCompaction.sendTurn.mock.calls[0]?.[0].modelSelection,
+        modelSelection,
+      );
+
+      yield* Deferred.succeed(releaseStart, undefined);
+      yield* Fiber.join(compactionFiber);
+      const compacted = (yield* Fiber.join(eventsFiber)).filter(
+        (event) => event.type === "thread.state.changed" && event.payload.state === "compacted",
+      );
+      assert.equal(compacted.length, 1);
+      assert.equal(compacted[0]?.requestId, String(requestId));
+      yield* provider.stopSession({ threadId });
+    }),
+  );
+
+  it.effect("does not correlate buffered compacted state after a failed slash turn", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const threadId = asThreadId("custom-slash-failed");
+      const turnId = asTurnId("custom-slash-failed-turn");
+      const requestId = MessageId.make("custom-slash-failed-request");
+      const idleEventId = asEventId("custom-slash-failed-idle");
+      yield* provider.startSession(threadId, {
+        providerInstanceId: slashCompactionInstanceId,
+        threadId,
+        runtimeMode: "full-access",
+      });
+      const idleEventFiber = yield* provider.streamEvents.pipe(
+        Stream.filter((event) => event.eventId === idleEventId),
+        Stream.runHead,
+        Effect.forkChild({ startImmediately: true }),
+      );
+      const compactedEventFiber = yield* provider.streamEvents.pipe(
+        Stream.filter(
+          (event) =>
+            event.threadId === threadId &&
+            event.type === "thread.state.changed" &&
+            event.payload.state === "compacted",
+        ),
+        Stream.runHead,
+        Effect.forkChild({ startImmediately: true }),
+      );
+      customSlashCompaction.sendTurn.mockImplementationOnce(() =>
+        Effect.gen(function* () {
+          customSlashCompaction.emit({
+            type: "turn.completed",
+            eventId: asEventId("custom-slash-failed-completion"),
+            provider: customCompactionDriver,
+            createdAt: "2026-01-01T00:00:00.000Z",
+            threadId,
+            turnId,
+            payload: { state: "failed" },
+          });
+          customSlashCompaction.emit({
+            type: "thread.state.changed",
+            eventId: asEventId("custom-slash-compacted-after-failure"),
+            provider: customCompactionDriver,
+            createdAt: "2026-01-01T00:00:00.000Z",
+            threadId,
+            turnId,
+            payload: { state: "compacted" },
+          });
+          customSlashCompaction.emit({
+            type: "thread.state.changed",
+            eventId: idleEventId,
+            provider: customCompactionDriver,
+            createdAt: "2026-01-01T00:00:00.000Z",
+            threadId,
+            payload: { state: "idle" },
+          });
+          yield* Fiber.join(idleEventFiber);
+          return { threadId, turnId };
+        }),
+      );
+
+      const failure = yield* provider
+        .compactThread(threadId, undefined, requestId)
+        .pipe(Effect.flip);
+      assert.instanceOf(failure, ProviderAdapterRequestError);
+      assert.include(failure.message, "ended with failed");
+      const compacted = Option.getOrThrow(yield* Fiber.join(compactedEventFiber));
+      assert.equal(compacted.requestId, undefined);
+      yield* provider.stopSession({ threadId });
+    }),
+  );
+
+  it.effect("rejects unsupported compaction without sending a prompt", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const threadId = asThreadId("custom-unsupported-compaction");
+      yield* provider.startSession(threadId, {
+        providerInstanceId: unsupportedCompactionInstanceId,
+        threadId,
+        runtimeMode: "full-access",
+      });
+      const failure = yield* provider.compactThread(threadId).pipe(Effect.flip);
+      assert.instanceOf(failure, ProviderValidationError);
+      assert.include(failure.message, "does not support context compaction");
+      assert.equal(unsupportedCompaction.sendTurn.mock.calls.length, 0);
+      assert.equal(unsupportedCompaction.compactThread.mock.calls.length, 0);
+      yield* provider.stopSession({ threadId });
+    }),
+  );
+});
 
 const antigravityDriver = ProviderDriverKind.make("antigravity");
 const replacementAntigravity = makeFakeCodexAdapter(antigravityDriver);
