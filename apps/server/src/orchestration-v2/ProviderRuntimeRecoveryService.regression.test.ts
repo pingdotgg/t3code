@@ -15,6 +15,7 @@ import * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "./IdAllocator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderRuntimeRecovery from "./ProviderRuntimeRecoveryService.ts";
+import * as ServerSettings from "../serverSettings.ts";
 
 it("uses the thread provider for stale background work without provider threads", async () => {
   const threadId = ThreadId.make("thread_recovery_background_no_provider_threads");
@@ -46,6 +47,7 @@ it("uses the thread provider for stale background work without provider threads"
     ],
   } as unknown as OrchestrationV2ThreadProjection;
   const layer = ProviderRuntimeRecovery.layer.pipe(
+    Layer.provide(ServerSettings.layerTest()),
     Layer.provide(
       Layer.mergeAll(
         Layer.mock(ProjectionStore.ProjectionStoreV2)({
@@ -59,7 +61,9 @@ it("uses the thread provider for stale background work without provider threads"
           },
         }),
         IdAllocator.layer,
-        Layer.mock(EffectWorker.OrchestrationEffectWorkerV2)({ runOnce: Effect.succeed(false) }),
+        Layer.mock(EffectWorker.OrchestrationEffectWorkerV2)({
+          runRecoveryOnce: Effect.succeed(false),
+        }),
         Layer.mock(EffectOutbox.EffectOutboxV2)({
           reconcileAfterProcessLoss: Effect.succeed({ requeued: 0, cancelled: 0 }),
         }),

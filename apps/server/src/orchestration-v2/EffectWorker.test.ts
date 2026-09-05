@@ -38,6 +38,8 @@ import { ProviderTurnControlServiceV2 } from "./ProviderTurnControlService.ts";
 import { ProviderTurnStartError, ProviderTurnStartServiceV2 } from "./ProviderTurnStartService.ts";
 import { RuntimeRequestServiceV2 } from "./RuntimeRequestService.ts";
 import { ThreadTitleRegenerationService } from "./ThreadTitleRegenerationService.ts";
+import { ThreadManagementService } from "./ThreadManagementService.ts";
+import * as ServerSettings from "../serverSettings.ts";
 
 const threadId = ThreadId.make("thread:effect-worker-restart");
 const oldSessionId = ProviderSessionId.make("provider-session:effect-worker-restart:old");
@@ -151,7 +153,15 @@ function makeExecutorLayer(input: {
       }),
     ),
   );
-  return executorLayer.pipe(Layer.provide(dependencies));
+  return executorLayer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        dependencies,
+        Layer.mock(ThreadManagementService)({}),
+        ServerSettings.layerTest(),
+      ),
+    ),
+  );
 }
 
 it("does not retry pure interrupt races where the turn is already gone", () => {
@@ -612,6 +622,7 @@ it.effect("uses durable deadlines, notifications, and a slow liveness poll", () 
     );
     const worker = OrchestrationEffectWorkerV2.of({
       awaitWork: Queue.take(available),
+      runRecoveryOnce: Effect.succeed(false),
       runOnce: Effect.gen(function* () {
         const count = yield* Ref.updateAndGet(attempts, (current) => current + 1);
         if (count === 2) {
@@ -659,6 +670,7 @@ it.effect("does not hot-loop when a claim fails", () =>
     const now = yield* DateTime.now;
     const worker = OrchestrationEffectWorkerV2.of({
       awaitWork: Effect.never,
+      runRecoveryOnce: Effect.succeed(false),
       runOnce: Ref.update(attempts, (count) => count + 1).pipe(
         Effect.andThen(
           new OrchestrationEffectWorkerError({
@@ -690,6 +702,7 @@ it.effect("backs off briefly when a due deadline loses a claim race", () =>
     const now = yield* DateTime.now;
     const worker = OrchestrationEffectWorkerV2.of({
       awaitWork: Effect.never,
+      runRecoveryOnce: Effect.succeed(false),
       runOnce: Ref.update(attempts, (count) => count + 1).pipe(Effect.as(false)),
       nextClaimableAt: Effect.succeed(Option.some(now)),
       drain: () => Effect.succeed(0),

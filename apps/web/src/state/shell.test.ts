@@ -21,10 +21,11 @@ function shellState(status: EnvironmentShellState["status"]): EnvironmentShellSt
       status === "empty"
         ? Option.none()
         : Option.some({
+            schemaVersion: 1,
             snapshotSequence: 1,
-            updatedAt: "2026-09-04T00:00:00.000Z",
             projects: [],
             threads: [],
+            archivedThreads: [],
           }),
     error: Option.none(),
   };

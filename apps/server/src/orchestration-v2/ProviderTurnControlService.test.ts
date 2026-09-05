@@ -218,7 +218,22 @@ it.effect(
           getThreadShell: () => Effect.die("unused getThreadShell"),
           getThread: () => Ref.get(projection).pipe(Effect.map((state) => state.thread)),
           getSettlementCandidates: () => Effect.die("unused getSettlementCandidates"),
-          getThreadProjection: () => Ref.get(projection),
+          getThreadProjection: () => Effect.die("control effects must not load transcript"),
+          getRuntimeRequest: () => Effect.die("unused getRuntimeRequest"),
+          getProviderControlContext: (_threadId, target) =>
+            Ref.get(projection).pipe(
+              Effect.map((current) => ({
+                providerThread: current.providerThreads.find(
+                  (thread) => thread.id === target.providerThreadId,
+                ),
+                providerTurn: current.providerTurns.find(
+                  (turn) => turn.id === target.providerTurnId,
+                ),
+                attempt: current.attempts.find((attempt) => attempt.id === target.attemptId),
+                message: undefined,
+                run: undefined,
+              })),
+            ),
           getCheckpointContext: () => Effect.die("not used"),
           getRecoveryThreadIds: () => Effect.die("unused getRecoveryThreadIds"),
           getUnreadableThreadIds: () => Effect.die("unused getUnreadableThreadIds"),

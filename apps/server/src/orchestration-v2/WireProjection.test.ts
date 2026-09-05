@@ -1,5 +1,6 @@
 import {
   MessageId,
+  EventId,
   ProjectId,
   ProviderInstanceId,
   ThreadId,
@@ -10,7 +11,7 @@ import {
 import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 
-import { projectTurnItemForWire } from "./WireProjection.ts";
+import { projectTurnItemForWire, projectDomainEventForWire } from "./WireProjection.ts";
 import { threadShellFromProjection } from "./ProjectionStore.ts";
 
 const base = {
@@ -34,6 +35,23 @@ const base = {
 };
 
 describe("orchestration V2 wire projection", () => {
+  it("preserves provider notices in bounded items and live events", () => {
+    const item = {
+      ...base,
+      type: "system_notice" as const,
+      message: "Safeguards flagged this message. Switched to Opus 4.8.",
+    };
+    expect(projectTurnItemForWire(item)).toEqual(item);
+    const event = {
+      id: EventId.make("notice-wire-event"),
+      type: "turn-item.updated" as const,
+      threadId: item.threadId,
+      occurredAt: item.updatedAt,
+      payload: item,
+    };
+    expect(projectDomainEventForWire(event)).toEqual(event);
+  });
+
   it("keeps transcript bodies out of shell rows", () => {
     const now = DateTime.makeUnsafe("2026-08-13T00:00:00.000Z");
     const threadId = ThreadId.make("thread-shell-budget");

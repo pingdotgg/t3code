@@ -4955,7 +4955,10 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
             Effect.gen(function* () {
               const threadId = yield* getNativeThreadId(turnInput.providerThread);
 
-              const codexInput = yield* toCodexInput(turnInput);
+              const codexInput =
+                turnInput.restartContinuationOfRunId === undefined
+                  ? yield* toCodexInput(turnInput)
+                  : [];
               const mcpSession = McpProviderSession.readMcpProviderSession(turnInput.threadId);
               const turnStartParams = yield* buildCodexTurnStartParams({
                 nativeThreadId: threadId,

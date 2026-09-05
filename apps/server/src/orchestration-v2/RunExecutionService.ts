@@ -1288,6 +1288,11 @@ export const layer: Layer.Layer<
             runId: input.run.id,
             runOrdinal: input.run.ordinal,
             providerTurnOrdinal: input.providerTurnOrdinal,
+            ...(input.run.restartContinuationOfRunId === undefined
+              ? {}
+              : {
+                  restartContinuationOfRunId: input.run.restartContinuationOfRunId,
+                }),
             attemptId: input.attemptId,
             rootNodeId: input.rootNode.id,
             providerThread: input.providerThread,
