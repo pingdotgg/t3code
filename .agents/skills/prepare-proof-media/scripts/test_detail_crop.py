@@ -143,6 +143,48 @@ class DetailCropTests(unittest.TestCase):
         self.assertEqual(receipt["method"], "full-context-no-detected-change")
         self.assertEqual(receipt["crop"], dict(x=0, y=0, width=640, height=480))
 
+    def test_gif_missing_infinite_and_finite_loop_extensions_round_trip(self):
+        source = self.root / "loop.gif"
+        self.magick("-size", "320x180", "-delay", "10", "xc:red", "xc:blue", "-loop", "0", source)
+        raw = source.read_bytes()
+        marker = b"\x21\xff\x0bNETSCAPE2.0\x03\x01"
+        start = raw.index(marker)
+        count = start + len(marker)
+        for loops in (None, 0, 1, 2, 65535):
+            with self.subTest(loops=loops):
+                data = (raw[:start] + raw[count + 3:] if loops is None else
+                        raw[:count] + loops.to_bytes(2, "little") + raw[count + 2:])
+                source.write_bytes(data)
+                receipt = self.render(source, overwrite=True)
+                output = Path(receipt["artifacts"]["after"]["path"])
+                self.assertEqual(crop.gif_loop(output), loops)
+                self.assertEqual(source.read_bytes(), data)
+
+    def test_single_frame_gif_retains_its_loop_extension(self):
+        source = self.root / "single.gif"
+        self.magick("-size", "640x480", "xc:red", source)
+        raw = source.read_bytes()
+        offset = 13 + 3 * (2 ** ((raw[10] & 7) + 1))
+        for loops in (0, 2):
+            with self.subTest(loops=loops):
+                extension = b"\x21\xff\x0bNETSCAPE2.0\x03\x01" + loops.to_bytes(2, "little") + b"\x00"
+                source.write_bytes(raw[:offset] + extension + raw[offset:])
+                receipt = self.render(source, region=[crop.parse_region("0.1,0.1,0.2,0.2")], overwrite=True)
+                output = Path(receipt["artifacts"]["after"]["path"])
+                self.assertEqual(crop.gif_loop(output), loops)
+                self.assertEqual(receipt["artifacts"]["after"]["frames"], 1)
+
+    def test_gif_uses_effective_loop_count_when_extensions_are_normalized(self):
+        source = self.root / "multiple-loops.gif"
+        self.magick("-size", "320x180", "-delay", "10", "xc:red", "xc:blue", "-loop", "0", source)
+        raw = source.read_bytes()
+        extension = b"\x21\xff\x0bNETSCAPE2.0\x03\x01\x00\x00\x00"
+        offset = raw.index(extension) + len(extension)
+        last = extension[:-3] + b"\x02\x00\x00"
+        source.write_bytes(raw[:offset] + last + raw[offset:])
+        receipt = self.render(source)
+        self.assertEqual(crop.gif_loop(Path(receipt["artifacts"]["after"]["path"])), 2)
+
     def test_output_cannot_overwrite_source_or_existing_proof(self):
         source = self.screenshot("proof-after-detail.png")
         with self.assertRaisesRegex(crop.ProofMediaError, "overwrite an input"):
