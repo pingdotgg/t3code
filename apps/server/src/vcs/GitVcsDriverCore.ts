@@ -2849,19 +2849,46 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
 
     // `git worktree add` leaves submodules empty, so a repo that keeps agent
     // skills, tooling or source in one gets a worktree that is quietly missing
-    // them. Best-effort: the objects are usually already in the parent's
-    // `.git/modules`, but a first-ever clone needs the network, and failing to
-    // populate a submodule must not roll back the caller's thread.
+    // them. Submodule Git directories belong to each worktree, so Git otherwise
+    // clones the objects again even when the source already has them locally.
     const hasSubmodules = yield* fileSystem
       .exists(path.join(worktreePath, ".gitmodules"))
       .pipe(Effect.orElseSucceed(() => false));
     if (hasSubmodules) {
+      const references = yield* executeGit(
+        "GitVcsDriver.createWorktree.submoduleReferences",
+        input.cwd,
+        ["submodule", "foreach", "--quiet", "--recursive", 'printf "%s\\0" "$displaypath"'],
+      ).pipe(
+        Effect.map(splitNullSeparatedGitStdoutPaths),
+        Effect.orElseSucceed(() => []),
+      );
+      // Borrow only during cloning: removing or pruning the source must not
+      // break the new worktree. Git still fetches objects absent from references.
+      const referenceArgs = references.length
+        ? [
+            "--dissociate",
+            ...references.flatMap((ref) => ["--reference", path.resolve(input.cwd, ref)]),
+          ]
+        : [];
       yield* runGit("GitVcsDriver.createWorktree.updateSubmodules", worktreePath, [
         "submodule",
         "update",
         "--init",
         "--recursive",
+        ...referenceArgs,
       ]).pipe(
+        // A reference can disappear or be unsuitable (for example, shallow).
+        // Retry without this optimization before retaining best-effort failure.
+        Effect.catch((cause) =>
+          referenceArgs.length
+            ? runGit(
+                "GitVcsDriver.createWorktree.updateSubmodulesWithoutReferences",
+                worktreePath,
+                ["submodule", "update", "--init", "--recursive"],
+              )
+            : Effect.fail(cause),
+        ),
         Effect.catch((cause) =>
           Effect.logWarning("worktree submodule checkout failed; submodule paths are empty", {
             worktreePath,
