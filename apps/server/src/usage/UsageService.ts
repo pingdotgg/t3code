@@ -50,6 +50,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import { resolveClaudeHomePath } from "../provider/Drivers/ClaudeHome.ts";
 import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
 import { makeProjectResolver, UsageAggregator } from "./usageAggregation.ts";
+import { dedicatedUsageWorktreePath } from "./usagePaths.ts";
 import { createOverrideRateTable, parseRateTable, type RateTable } from "./usagePricing.ts";
 import {
   listTranscriptFiles,
@@ -319,7 +320,8 @@ export const make = Effect.gen(function* () {
   const resolveProjects = Effect.fn("UsageService.resolveProjects")(function* () {
     const projects = yield* projectRepository
       .listAll()
-      .pipe(Effect.catchCause(() => Effect.succeed<readonly never[]>([])));
+      .pipe(Effect.catchCause(() => Effect.succeed(null)));
+    if (projects === null) return undefined;
     const projectRoots = yield* Effect.forEach(
       projects,
       Effect.fnUntraced(function* (project) {
@@ -341,7 +343,7 @@ export const make = Effect.gen(function* () {
       }),
       { concurrency: 8 },
     );
-    return makeProjectResolver(projectRoots.flat(), path.sep);
+    return makeProjectResolver(projectRoots.flat());
   });
 
   /**
@@ -402,7 +404,7 @@ export const make = Effect.gen(function* () {
       ) {
         return cached.tailRecords.length === 0
           ? cached.records
-          : [...cached.records, ...cached.tailRecords];
+          : dedupeWithinFile([...cached.records, ...cached.tailRecords]);
       }
 
       // Only a strictly grown file may resume. Same size with a new mtime, or
@@ -420,13 +422,11 @@ export const make = Effect.gen(function* () {
       if (parsed === null) return [];
 
       // Stored already de-duplicated within the file, which is 99% of all
-      // duplicates. The aggregator still runs the cross-file dedupe pass. One
-      // seen set spans the cached base, the new lines, and the tail so a
-      // resumed parse dedupes exactly like a full one.
+      // duplicates. The final snapshot wins so a resumed Claude parse can
+      // replace an earlier progressive snapshot from the cached base.
       const base = parsed.resumed && cached !== undefined ? cached.records : [];
-      const seen = new Set<string>();
-      const records = dedupeWithinFile([...base, ...parsed.records], seen);
-      const tailRecords = dedupeWithinFile(parsed.tailRecords, seen);
+      const records = dedupeWithinFile([...base, ...parsed.records]);
+      const tailRecords = dedupeWithinFile(parsed.tailRecords);
 
       fileCache.set(filePath, {
         size,
@@ -437,7 +437,7 @@ export const make = Effect.gen(function* () {
         position: parsed.position,
       });
       cacheDirty = true;
-      return tailRecords.length === 0 ? records : [...records, ...tailRecords];
+      return tailRecords.length === 0 ? records : dedupeWithinFile([...records, ...tailRecords]);
     });
 
   /** One provider directory's walk and parse, before rates are involved. */
@@ -608,6 +608,7 @@ export const make = Effect.gen(function* () {
     const scannedDirs = currentSnapshot.dirs;
     const sourceReadAtMs = currentSnapshot.completedAtMs;
 
+    const resolveProject = yield* resolveProjects();
     const aggregator = new UsageAggregator({
       timeZone: input.timeZone,
       sinceDay: input.sinceDay,
@@ -615,7 +616,7 @@ export const make = Effect.gen(function* () {
       resolution: input.resolution ?? "day",
       ...hourlyWindow,
       rates,
-      resolveProject: yield* resolveProjects(),
+      ...(resolveProject === undefined ? {} : { resolveProject }),
       priceOverrides: createOverrideRateTable(settings.usagePriceOverrides),
     });
 
@@ -640,10 +641,6 @@ export const make = Effect.gen(function* () {
       walkedRoots.push(dir);
       let scannedFiles = 0;
       let skippedFiles = 0;
-      // Distinct per directory. Buckets carry per-cell session counts, but a
-      // session spans days and models, so clients total this figure instead.
-      const sessionIds = new Set<string>();
-
       for (const file of files) {
         livePaths.add(file.path);
         if (file.records.length === 0) {
@@ -652,11 +649,7 @@ export const make = Effect.gen(function* () {
         }
         scannedFiles += 1;
         for (const record of file.records) {
-          // Only sessions that contributed in-window count: the mtime slack
-          // admits boundary files whose records fall outside the range.
-          if (aggregator.add(record) && record.sessionId.length > 0) {
-            sessionIds.add(record.sessionId);
-          }
+          aggregator.add(record);
         }
       }
 
@@ -666,7 +659,7 @@ export const make = Effect.gen(function* () {
         scannedFiles,
         skippedFiles,
         malformedRecords: 0,
-        distinctSessions: sessionIds.size,
+        distinctSessions: aggregator.distinctSessions(provider),
         message: null,
       });
     }
@@ -770,10 +763,10 @@ export const make = Effect.gen(function* () {
       for (const thread of threads) {
         const title = thread.title.trim();
         if (title.length > 0) titles.set(thread.threadId, title);
-        const worktree = thread.worktreePath?.trim() ?? "";
+        const worktree = dedicatedUsageWorktreePath(project.workspaceRoot, thread.worktreePath);
         // The project root is not a dedicated worktree: interactive sessions
         // run there too, and several threads usually share it.
-        if (worktree.length === 0 || worktree === project.workspaceRoot) continue;
+        if (worktree === null) continue;
         const ref: ThreadRef = { threadId: thread.threadId, title: title || thread.threadId };
         const claim = worktreeClaims.get(worktree);
         if (claim === undefined) worktreeClaims.set(worktree, { ref, shared: false });
@@ -784,9 +777,16 @@ export const make = Effect.gen(function* () {
       if (!claim.shared) worktreeToThread.set(worktree, claim.ref);
     }
 
-    const runtimes = yield* runtimeRepository
-      .list()
-      .pipe(Effect.catchCause(() => Effect.succeed<readonly never[]>([])));
+    const runtimes = yield* runtimeRepository.list().pipe(
+      Effect.catchCause(
+        (cause) =>
+          new UsageReadError({
+            reason: "scanFailed",
+            detail: "Provider runtime state could not be read",
+            cause: Cause.squash(cause),
+          }),
+      ),
+    );
     for (const runtime of runtimes) {
       const cursor = runtime.resumeCursor;
       if (typeof cursor !== "object" || cursor === null) continue;
@@ -869,6 +869,7 @@ export const make = Effect.gen(function* () {
     const windowStartMs =
       (exactWindow?.sinceTimeMs ?? DateTime.toEpochMillis(windowStart.value)) - MTIME_SLACK_MS;
 
+    const resolveProject = yield* resolveProjects();
     const accumulator = new ThreadUsageAccumulator({
       timeZone: input.timeZone,
       sinceDay: input.sinceDay,
@@ -876,7 +877,7 @@ export const make = Effect.gen(function* () {
       ...exactWindow,
       rates,
       priceOverrides: createOverrideRateTable(settings.usagePriceOverrides),
-      resolveProject: yield* resolveProjects(),
+      ...(resolveProject === undefined ? {} : { resolveProject }),
     });
 
     // Preferred transcript per session for title extraction: the main file,

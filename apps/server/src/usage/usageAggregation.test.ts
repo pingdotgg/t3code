@@ -76,17 +76,25 @@ describe("UsageAggregator", () => {
     ).toThrow("requires exact time bounds");
   });
 
-  it("keeps only the first record for a repeated dedupe key", () => {
+  it("uses the final complete snapshot for a repeated dedupe key", () => {
     const result = aggregate([
-      record({ dedupeKey: "msg_1:" }),
-      record({ dedupeKey: "msg_1:" }),
-      record({ dedupeKey: "msg_1:" }),
+      record({ dedupeKey: "msg_1:", totals: { ...record().totals, outputTokens: 1 } }),
+      record({ dedupeKey: "msg_1:", totals: { ...record().totals, outputTokens: 310 } }),
     ]);
 
-    expect(result.duplicatesDropped).toBe(2);
+    expect(result.duplicatesDropped).toBe(1);
     expect(result.buckets).toHaveLength(1);
     expect(result.buckets[0]?.records).toBe(1);
-    expect(result.buckets[0]?.totals.outputTokens).toBe(50);
+    expect(result.buckets[0]?.totals.outputTokens).toBe(310);
+  });
+
+  it("applies the window to the final complete snapshot", () => {
+    const result = aggregate([
+      record({ dedupeKey: "msg_1:" }),
+      record({ dedupeKey: "msg_1:", timestampMs: Date.parse("2026-09-01T00:00:00Z") }),
+    ]);
+
+    expect(result).toMatchObject({ buckets: [], duplicatesDropped: 1, outOfWindow: 1 });
   });
 
   it("still sums records that carry no dedupe key", () => {
@@ -234,7 +242,7 @@ describe("UsageAggregator", () => {
     expect(result.buckets).toHaveLength(0);
   });
 
-  it("reports whether a record contributed", () => {
+  it("reports whether a record falls in the window", () => {
     const aggregator = new UsageAggregator({
       timeZone: "UTC",
       sinceDay: "2026-08-01",
@@ -243,7 +251,7 @@ describe("UsageAggregator", () => {
     });
 
     expect(aggregator.add(record({ dedupeKey: "msg_1:" }))).toBe(true);
-    expect(aggregator.add(record({ dedupeKey: "msg_1:" }))).toBe(false);
+    expect(aggregator.add(record({ dedupeKey: "msg_1:" }))).toBe(true);
     expect(aggregator.add(record({ timestampMs: Date.parse("2026-07-01T12:00:00Z") }))).toBe(false);
   });
 
@@ -264,36 +272,33 @@ describe("makeProjectResolver", () => {
   const legacyDeletedId = ProjectId.make("project-legacy-deleted");
   const legacyId = ProjectId.make("project-legacy");
   const untitledId = ProjectId.make("project-untitled");
-  const resolver = makeProjectResolver(
-    [
-      { projectId: appId, workspaceRoot: "/work/app", title: "App", deleted: false },
-      {
-        projectId: vendoredId,
-        workspaceRoot: "/work/app/vendored",
-        title: "Vendored",
-        deleted: false,
-      },
-      {
-        projectId: legacyDeletedId,
-        workspaceRoot: "/work/legacy",
-        title: "Legacy Was Deleted",
-        deleted: true,
-      },
-      {
-        projectId: legacyId,
-        workspaceRoot: "/work/legacy",
-        title: "Legacy",
-        deleted: false,
-      },
-      {
-        projectId: untitledId,
-        workspaceRoot: "/work/untitled",
-        title: "   ",
-        deleted: false,
-      },
-    ],
-    "/",
-  );
+  const resolver = makeProjectResolver([
+    { projectId: appId, workspaceRoot: "/work/app", title: "App", deleted: false },
+    {
+      projectId: vendoredId,
+      workspaceRoot: "/work/app/vendored",
+      title: "Vendored",
+      deleted: false,
+    },
+    {
+      projectId: legacyDeletedId,
+      workspaceRoot: "/work/legacy",
+      title: "Legacy Was Deleted",
+      deleted: true,
+    },
+    {
+      projectId: legacyId,
+      workspaceRoot: "/work/legacy",
+      title: "Legacy",
+      deleted: false,
+    },
+    {
+      projectId: untitledId,
+      workspaceRoot: "/work/untitled",
+      title: "   ",
+      deleted: false,
+    },
+  ]);
 
   it("matches the root itself and any path under it", () => {
     expect(resolver("/work/app")).toEqual({ projectId: appId, title: "App" });
@@ -322,11 +327,20 @@ describe("makeProjectResolver", () => {
 
   it("matches descendants when the project root is the filesystem root", () => {
     const rootId = ProjectId.make("project-root");
-    const rootResolver = makeProjectResolver(
-      [{ projectId: rootId, workspaceRoot: "/", title: "Root", deleted: false }],
-      "/",
-    );
+    const rootResolver = makeProjectResolver([
+      { projectId: rootId, workspaceRoot: "/", title: "Root", deleted: false },
+    ]);
 
     expect(rootResolver("/work/app")).toEqual({ projectId: rootId, title: "Root" });
+  });
+
+  it("matches mixed slash styles and normalized segments", () => {
+    expect(resolver("\\work\\app\\src")).toEqual({ projectId: appId, title: "App" });
+    expect(resolver("/work/app/other/../src")).toEqual({ projectId: appId, title: "App" });
+
+    const windowsResolver = makeProjectResolver([
+      { projectId: appId, workspaceRoot: "C:\\Work\\App", title: "App", deleted: false },
+    ]);
+    expect(windowsResolver("c:/work/app/src")).toEqual({ projectId: appId, title: "App" });
   });
 });

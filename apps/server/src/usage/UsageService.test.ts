@@ -21,17 +21,24 @@ import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import * as ServerConfig from "../config.ts";
 import { ProjectionProjectRepositoryLive } from "../persistence/Layers/ProjectionProjects.ts";
 import { ProjectionThreadRepositoryLive } from "../persistence/Layers/ProjectionThreads.ts";
+import { ProjectionProjectRepository } from "../persistence/Services/ProjectionProjects.ts";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import * as ProviderSessionRuntime from "../persistence/ProviderSessionRuntime.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as UsageService from "./UsageService.ts";
 
-function claudeLine(id: number, outputTokens: number, model = "claude-fable-5"): string {
+function claudeLine(
+  id: number,
+  outputTokens: number,
+  model = "claude-fable-5",
+  cwd?: string,
+): string {
   return `${JSON.stringify({
     type: "assistant",
     timestamp: "2026-08-01T10:00:00Z",
     requestId: `req_${id}`,
     sessionId: "session-1",
+    ...(cwd === undefined ? {} : { cwd }),
     message: {
       id: `msg_${id}`,
       model,
@@ -80,6 +87,8 @@ const serviceLayers = (input: {
   readonly onRatesFetch?: () => void;
   /** Defaults to an unparsable document so every scan retries the fetch. */
   readonly ratesDocument?: unknown;
+  readonly projectRepository?: ProjectionProjectRepository["Service"];
+  readonly runtimeRepository?: ProviderSessionRuntime.ProviderSessionRuntimeRepository["Service"];
 }) =>
   ServerConfig.layerTest(process.cwd(), { prefix: input.prefix }).pipe(
     Layer.provideMerge(NodeServices.layer),
@@ -102,9 +111,16 @@ const serviceLayers = (input: {
     ),
     Layer.provideMerge(
       Layer.mergeAll(
-        ProjectionProjectRepositoryLive.pipe(Layer.provideMerge(SqlitePersistenceMemory)),
+        input.projectRepository === undefined
+          ? ProjectionProjectRepositoryLive.pipe(Layer.provideMerge(SqlitePersistenceMemory))
+          : Layer.succeed(ProjectionProjectRepository, input.projectRepository),
         ProjectionThreadRepositoryLive.pipe(Layer.provideMerge(SqlitePersistenceMemory)),
-        ProviderSessionRuntime.layer.pipe(Layer.provideMerge(SqlitePersistenceMemory)),
+        input.runtimeRepository === undefined
+          ? ProviderSessionRuntime.layer.pipe(Layer.provideMerge(SqlitePersistenceMemory))
+          : Layer.succeed(
+              ProviderSessionRuntime.ProviderSessionRuntimeRepository,
+              input.runtimeRepository,
+            ),
         SqlitePersistenceMemory,
       ),
     ),
@@ -175,6 +191,81 @@ describe("UsageService", () => {
       // grown transcript resumes at its cached byte position.
       const second = yield* service.readSummary(WINDOW);
       assert.strictEqual(totalOutputTokens(second), 12);
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("replaces a cached progressive snapshot when a transcript grows", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
+
+      const service = yield* UsageService.make.pipe(
+        Effect.provide(serviceLayers({ prefix: "usage-service-progressive-test", home, settings })),
+      );
+
+      const first = yield* service.readSummary(WINDOW);
+      assert.strictEqual(totalOutputTokens(first), 5);
+
+      yield* Effect.promise(() => NodeFSP.appendFile(transcript, claudeLine(1, 12)));
+      const second = yield* service.readSummary({ ...WINDOW, refreshToken: "progressive-final" });
+      assert.strictEqual(totalOutputTokens(second), 12);
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("keeps project attribution unknown when the project repository cannot be read", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      yield* Effect.promise(() =>
+        NodeFSP.writeFile(transcript, claudeLine(1, 5, "claude-fable-5", "/work/app")),
+      );
+      const repositoryFailure = Effect.die(new Error("project repository unavailable"));
+      const projectRepository: ProjectionProjectRepository["Service"] = {
+        upsert: () => repositoryFailure,
+        getById: () => repositoryFailure,
+        listAll: () => repositoryFailure,
+        deleteById: () => repositoryFailure,
+      };
+      const service = yield* UsageService.make.pipe(
+        Effect.provide(
+          serviceLayers({
+            prefix: "usage-service-project-failure-test",
+            home,
+            settings,
+            projectRepository,
+          }),
+        ),
+      );
+
+      const summary = yield* service.readSummary(WINDOW);
+      assert.strictEqual(summary.buckets[0]?.projectAttribution, "unknown");
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("returns a usage read error when provider runtime state cannot be read", () =>
+    Effect.gen(function* () {
+      const { settings, home } = yield* setup;
+      const repositoryFailure = Effect.die(new Error("runtime repository unavailable"));
+      const runtimeRepository: ProviderSessionRuntime.ProviderSessionRuntimeRepository["Service"] =
+        {
+          upsert: () => repositoryFailure,
+          getByThreadId: () => repositoryFailure,
+          list: () => repositoryFailure,
+          deleteByThreadId: () => repositoryFailure,
+        };
+      const service = yield* UsageService.make.pipe(
+        Effect.provide(
+          serviceLayers({
+            prefix: "usage-service-runtime-failure-test",
+            home,
+            settings,
+            runtimeRepository,
+          }),
+        ),
+      );
+
+      const error = yield* service.readThreadBreakdown(WINDOW).pipe(Effect.flip);
+      assert.strictEqual(error.reason, "scanFailed");
+      assert.strictEqual(error.detail, "Provider runtime state could not be read");
     }).pipe(Effect.scoped),
   );
 
