@@ -1509,10 +1509,12 @@ export const layerWithOptions = (
                   }
                 }
                 const key = sessionKey(input.providerSessionId);
+                const existing = (yield* Ref.get(sessions)).get(key);
                 const pending = Array.from(releasing.values()).find(
                   (release) =>
                     release.entry.runtime.providerSessionId === input.providerSessionId ||
-                    release.threadIds.has(input.threadId),
+                    (release.threadIds.has(input.threadId) &&
+                      !existing?.attachedThreadIds.has(input.threadId)),
                 );
                 if (pending !== undefined) {
                   return yield* new ProviderSessionOpenError({
@@ -1521,7 +1523,6 @@ export const layerWithOptions = (
                     cause: `Provider session ${pending.entry.runtime.providerSessionId} has not finished cleanup.`,
                   });
                 }
-                const existing = (yield* Ref.get(sessions)).get(key);
                 if (existing !== undefined) {
                   if (
                     !existing.attachedThreadIds.has(input.threadId) &&
@@ -1663,12 +1664,16 @@ export const layerWithOptions = (
             )
             .pipe((open) =>
               Effect.gen(function* () {
-                // Reject promptly instead of waiting behind a hung cleanup's lock.
+                // Reusing an attached live session starts no new provider work.
+                const existing = (yield* Ref.get(sessions)).get(
+                  sessionKey(input.providerSessionId),
+                );
                 if (
                   Array.from(releasing.values()).some(
                     (release) =>
                       release.entry.runtime.providerSessionId === input.providerSessionId ||
-                      release.threadIds.has(input.threadId),
+                      (release.threadIds.has(input.threadId) &&
+                        !existing?.attachedThreadIds.has(input.threadId)),
                   )
                 ) {
                   return yield* new ProviderSessionOpenError({

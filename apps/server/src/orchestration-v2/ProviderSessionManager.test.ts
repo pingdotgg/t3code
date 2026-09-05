@@ -1587,6 +1587,102 @@ it.effect(
     }),
 );
 
+for (const cleanupOutcome of ["success", "failure"] as const) {
+  it.effect(
+    `ProviderSessionManagerV2 reuses an attached live session during peer cleanup ${cleanupOutcome}`,
+    () =>
+      Effect.gen(function* () {
+        const state = yield* Ref.make(emptyState);
+        const closes = yield* Ref.make(0);
+        const closeEntered = yield* Deferred.make<void>();
+        const closeGate = yield* Deferred.make<void>();
+        yield* Effect.gen(function* () {
+          const eventSink = yield* EventSinkV2;
+          const idAllocator = yield* IdAllocatorV2;
+          const manager = yield* ProviderSessionManagerV2;
+          const threadId = ThreadId.make(`thread-live-peer-${cleanupOutcome}`);
+          const otherThreadId = ThreadId.make(`thread-new-attachment-${cleanupOutcome}`);
+          for (const id of [threadId, otherThreadId]) {
+            yield* eventSink.write({
+              events: [
+                yield* makeThreadCreatedEvent({
+                  idAllocator,
+                  threadId: id,
+                  now: yield* DateTime.now,
+                }),
+              ],
+            });
+          }
+          const allocate = idAllocator.allocate.providerSession({
+            providerInstanceId: modelSelection.instanceId,
+            threadId,
+          });
+          const oldId = yield* allocate;
+          const liveId = yield* allocate;
+          const newId = yield* allocate;
+          const open = (providerSessionId: ProviderSessionId, attachedThreadId = threadId) =>
+            manager.open({
+              threadId: attachedThreadId,
+              providerSessionId,
+              modelSelection,
+              runtimePolicy,
+            });
+          yield* open(oldId);
+          yield* open(oldId, otherThreadId);
+          const liveRuntime = yield* open(liveId);
+          const closing = yield* manager.close(oldId).pipe(Effect.result, Effect.forkChild);
+          yield* Deferred.await(closeEntered);
+          assert.strictEqual(yield* open(liveId), liveRuntime);
+          assert.equal((yield* open(newId).pipe(Effect.flip))._tag, "ProviderSessionOpenError");
+          assert.equal((yield* open(oldId).pipe(Effect.flip))._tag, "ProviderSessionOpenError");
+          assert.equal(
+            (yield* open(liveId, otherThreadId).pipe(Effect.flip))._tag,
+            "ProviderSessionOpenError",
+          );
+          yield* TestClock.adjust("30 seconds");
+          assert.equal((yield* Fiber.join(closing))._tag, "Failure");
+          assert.strictEqual(yield* open(liveId), liveRuntime);
+          assert.equal((yield* Ref.get(state)).openCount, 2);
+          assert.equal((yield* Ref.get(state)).closeCount, 0);
+          yield* Deferred.succeed(closeGate, undefined);
+          const completed = yield* manager.close(oldId).pipe(Effect.result);
+          assert.equal(completed._tag, cleanupOutcome === "success" ? "Success" : "Failure");
+          assert.strictEqual(yield* open(liveId), liveRuntime);
+          if (cleanupOutcome === "success") {
+            assert.strictEqual(yield* open(liveId, otherThreadId), liveRuntime);
+          } else {
+            assert.equal(
+              (yield* open(liveId, otherThreadId).pipe(Effect.flip))._tag,
+              "ProviderSessionOpenError",
+            );
+            assert.equal((yield* open(newId).pipe(Effect.flip))._tag, "ProviderSessionOpenError");
+          }
+          assert.equal((yield* Ref.get(state)).openCount, 2);
+        }).pipe(
+          Effect.ensuring(Deferred.succeed(closeGate, undefined)),
+          Effect.provide(
+            makeTestLayer({
+              state,
+              idleTimeoutMs: 3_600_000,
+              beforeClose: Ref.getAndUpdate(closes, (n) => n + 1).pipe(
+                Effect.flatMap((n) =>
+                  n === 0
+                    ? Deferred.succeed(closeEntered, undefined).pipe(
+                        Effect.andThen(Deferred.await(closeGate)),
+                        Effect.andThen(
+                          cleanupOutcome === "failure" ? Effect.die("cleanup failed") : Effect.void,
+                        ),
+                      )
+                    : Effect.void,
+                ),
+              ),
+            }),
+          ),
+        );
+      }),
+  );
+}
+
 it.effect("ProviderSessionManagerV2 blocks replacement when cleanup fails", () =>
   Effect.gen(function* () {
     const cleanupDefect = "private adapter output that must not reach the client";
