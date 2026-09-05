@@ -3366,7 +3366,7 @@ export default function ChatView(props: ChatViewProps) {
     gitCwd,
     storeNewTerminal,
   ]);
-  const closeTerminal = useCallback(
+  const closeTerminalSession = useCallback(
     (terminalId: string) => {
       if (!activeThreadId || !activeThreadRef) return;
       const fallbackExitWrite = () =>
@@ -3388,7 +3388,6 @@ export default function ChatView(props: ChatViewProps) {
         }
       })();
       storeCloseTerminal(activeThreadRef, terminalId);
-      setTerminalFocusRequestId((value) => value + 1);
     },
     [
       activeThreadId,
@@ -3398,6 +3397,13 @@ export default function ChatView(props: ChatViewProps) {
       storeCloseTerminal,
       writeTerminal,
     ],
+  );
+  const closeTerminal = useCallback(
+    (terminalId: string) => {
+      closeTerminalSession(terminalId);
+      setTerminalFocusRequestId((value) => value + 1);
+    },
+    [closeTerminalSession],
   );
   const runProjectScript = useCallback(
     async (
@@ -4126,17 +4132,12 @@ export default function ChatView(props: ChatViewProps) {
   const closePanelTerminal = useCallback(
     (terminalId: string) => {
       if (!activeThreadRef || activeRightPanelSurface?.kind !== "terminal") return;
-      void closeTerminalMutation({
-        environmentId: activeThreadRef.environmentId,
-        input: { threadId: activeThreadRef.threadId, terminalId, deleteHistory: true },
-      });
-      storeCloseTerminal(activeThreadRef, terminalId);
+      closeTerminal(terminalId);
       useRightPanelStore
         .getState()
         .closeTerminal(activeThreadRef, activeRightPanelSurface.id, terminalId);
-      setTerminalFocusRequestId((value) => value + 1);
     },
-    [activeRightPanelSurface, activeThreadRef, closeTerminalMutation, storeCloseTerminal],
+    [activeRightPanelSurface, activeThreadRef, closeTerminal],
   );
   const requestCloseTerminal = useCallback(
     (terminalId: string) => {
@@ -4200,22 +4201,12 @@ export default function ChatView(props: ChatViewProps) {
         }
         if (surface.kind === "terminal") {
           for (const terminalId of surface.terminalIds) {
-            storeCloseTerminal(activeThreadRef, terminalId);
-            void closeTerminalMutation({
-              environmentId: activeThreadRef.environmentId,
-              input: { threadId: activeThreadRef.threadId, terminalId, deleteHistory: true },
-            });
+            closeTerminalSession(terminalId);
           }
         }
       }
     },
-    [
-      activeThreadRef,
-      activePreviewState.sessions,
-      closePreview,
-      closeTerminalMutation,
-      storeCloseTerminal,
-    ],
+    [activeThreadRef, activePreviewState.sessions, closePreview, closeTerminalSession],
   );
   const closeAfterAgentBrowserConfirmation = useCallback(
     (surfaces: readonly RightPanelSurface[], closeSurfaces: () => void) => {
