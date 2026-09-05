@@ -20,6 +20,20 @@ on Windows and Linux to start a new thread and immediately open another draft. T
 next draft keeps the workspace mode and base branch you selected. With **New
 worktree**, each background submission creates its own worktree.
 
+## Filter the thread list
+
+On web and desktop, use the project picker above the thread list to focus on one
+project. Choose **All projects** in that picker to clear the project filter.
+
+When more than one environment is listed, open **Environments** beside the
+project picker and select the environments whose threads you want to see. At
+least one environment must stay selected. Choose **All environments** to clear
+this filter.
+
+The filters work together: the list shows threads from the selected project in
+the selected environments. Clear both filters to see threads across all projects
+and environments again.
+
 ## Pin and reorder threads
 
 Pin a thread from its menu to keep it above your active work. Drag pinned threads

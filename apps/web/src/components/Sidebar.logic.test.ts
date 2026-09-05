@@ -9,6 +9,7 @@ import {
   createThreadJumpHintVisibilityController,
   filterSidebarProjectScopeItems,
   getSidebarThreadIdsToPrewarm,
+  pruneDisabledEnvironmentIds,
   resolveAdjacentThreadId,
   reduceSidebarProjectScopeMenuState,
   getFallbackThreadIdAfterDelete,
@@ -37,6 +38,7 @@ import {
   sortScopedProjectsForSidebar,
   shouldCreateNewThreadInCurrentProject,
   THREAD_JUMP_HINT_SHOW_DELAY_MS,
+  toggleDisabledEnvironmentId,
 } from "./Sidebar.logic";
 import {
   EnvironmentId,
@@ -1650,5 +1652,118 @@ describe("sortLogicalProjectsForSidebar", () => {
         (project) => project.projectKey,
       ),
     ).toEqual(["logical-newer", "logical-older"]);
+  });
+});
+
+describe("toggleDisabledEnvironmentId", () => {
+  const envA = EnvironmentId.make("env-a");
+  const envB = EnvironmentId.make("env-b");
+  const all = [envA, envB];
+
+  it("disables an environment", () => {
+    const next = toggleDisabledEnvironmentId({
+      disabledIds: new Set(),
+      environmentId: envA,
+      enabled: false,
+      allEnvironmentIds: all,
+    });
+    expect([...next]).toEqual([envA]);
+  });
+
+  it("re-enables a disabled environment", () => {
+    const next = toggleDisabledEnvironmentId({
+      disabledIds: new Set([envA]),
+      environmentId: envA,
+      enabled: true,
+      allEnvironmentIds: all,
+    });
+    expect(next.size).toBe(0);
+  });
+
+  it("refuses to disable the last enabled environment", () => {
+    const current: ReadonlySet<EnvironmentId> = new Set([envA]);
+    const next = toggleDisabledEnvironmentId({
+      disabledIds: current,
+      environmentId: envB,
+      enabled: false,
+      allEnvironmentIds: all,
+    });
+    expect(next).toBe(current);
+  });
+
+  it("returns the same instance when disabling an already-disabled environment", () => {
+    const current: ReadonlySet<EnvironmentId> = new Set([envA]);
+    const next = toggleDisabledEnvironmentId({
+      disabledIds: current,
+      environmentId: envA,
+      enabled: false,
+      allEnvironmentIds: all,
+    });
+    expect(next).toBe(current);
+  });
+
+  it("returns the same instance when enabling an already-enabled environment", () => {
+    const current: ReadonlySet<EnvironmentId> = new Set([envB]);
+    const next = toggleDisabledEnvironmentId({
+      disabledIds: current,
+      environmentId: envA,
+      enabled: true,
+      allEnvironmentIds: all,
+    });
+    expect(next).toBe(current);
+  });
+});
+
+describe("pruneDisabledEnvironmentIds", () => {
+  const envA = EnvironmentId.make("env-a");
+  const envB = EnvironmentId.make("env-b");
+  const envC = EnvironmentId.make("env-c");
+
+  it("returns the same instance when nothing is disabled", () => {
+    const current: ReadonlySet<EnvironmentId> = new Set();
+    expect(
+      pruneDisabledEnvironmentIds({
+        disabledIds: current,
+        connectedEnvironmentIds: new Set([envA]),
+      }),
+    ).toBe(current);
+  });
+
+  it("drops disabled environments that left the catalog", () => {
+    const next = pruneDisabledEnvironmentIds({
+      disabledIds: new Set([envA, envC]),
+      connectedEnvironmentIds: new Set([envA, envB]),
+    });
+    expect([...next]).toEqual([envA]);
+  });
+
+  it("returns the same instance when every disabled environment is still connected", () => {
+    const current: ReadonlySet<EnvironmentId> = new Set([envA]);
+    expect(
+      pruneDisabledEnvironmentIds({
+        disabledIds: current,
+        connectedEnvironmentIds: new Set([envA, envB]),
+      }),
+    ).toBe(current);
+  });
+
+  it("returns all-enabled for the render where the last enabled environment disconnects", () => {
+    // envB (the only enabled environment) disconnected; keeping envA disabled
+    // would hide every thread while the filter button no longer renders.
+    const current = new Set<EnvironmentId>([envA]);
+    const next = pruneDisabledEnvironmentIds({
+      disabledIds: current,
+      connectedEnvironmentIds: new Set([envA]),
+    });
+    expect(next).not.toBe(current);
+    expect(next.size).toBe(0);
+  });
+
+  it("clears the filter when the catalog is empty", () => {
+    const next = pruneDisabledEnvironmentIds({
+      disabledIds: new Set([envA]),
+      connectedEnvironmentIds: new Set(),
+    });
+    expect(next.size).toBe(0);
   });
 });
