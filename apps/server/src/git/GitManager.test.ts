@@ -5,8 +5,10 @@ import * as NodeChildProcess from "node:child_process";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
@@ -42,6 +44,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as GitManager from "./GitManager.ts";
 
 interface FakeGhScenario {
+  beforePrListResult?: Effect.Effect<void>;
   prListSequence?: string[];
   prListByHeadSelector?: Record<string, string>;
   prListSequenceByHeadSelector?: Record<string, string[]>;
@@ -385,7 +388,7 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
           ? scenario.prListByHeadSelector?.[headSelector]
           : undefined;
       const stdout = (mappedQueue ?? mappedStdout ?? prListQueue.shift() ?? "[]") + "\n";
-      return Effect.succeed(fakeGhOutput(stdout));
+      return (scenario.beforePrListResult ?? Effect.void).pipe(Effect.as(fakeGhOutput(stdout)));
     }
 
     if (args[0] === "pr" && args[1] === "create") {
@@ -1380,6 +1383,11 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         branch: "feature/repointed-lookup",
       });
       expect(first?.state).toBe("merged");
+      yield* manager.observePullRequestMerge({
+        provider: "github",
+        url: "https://github.com/old-owner/old-repository/pull/219",
+        mergedAt: "2026-04-06T15:00:00.000Z",
+      });
 
       const replacementRemoteDir = yield* createBareRemote();
       yield* configureVisibleRemoteUrlWithLocalRewrite(
@@ -1436,6 +1444,187 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       expect(status.pr?.state).toBe("merged");
       expect(pullRequest?.state).toBe("merged");
       expect(ghCalls.filter((call) => call.startsWith("pr list "))).toHaveLength(1);
+    }),
+  );
+
+  it.effect("shares a confirmed merge with its worktrees and leaves other PRs cached", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      const headBranch = "feature/shared-merge";
+      yield* runGit(repoDir, ["checkout", "-b", headBranch]);
+      yield* runGit(repoDir, ["push", "-u", "origin", headBranch]);
+      const worktreeDir = yield* makeTempDir("t3code-git-merge-worktree-");
+      yield* runGit(repoDir, [
+        "worktree",
+        "add",
+        "-b",
+        "review/renamed-merge",
+        worktreeDir,
+        `origin/${headBranch}`,
+      ]);
+      yield* configureVisibleRemoteUrlWithLocalRewrite(
+        repoDir,
+        "origin",
+        "https://github.com/owner/repository.git",
+        remoteDir,
+      );
+      const pullRequest = {
+        number: 42,
+        title: "Shared merge",
+        url: "https://github.com/owner/repository/pull/42",
+        baseRefName: "main",
+        headRefName: headBranch,
+        state: "OPEN",
+        updatedAt: "2026-09-01T00:00:00Z",
+      };
+      const unrelated = [
+        {
+          ...pullRequest,
+          headRefName: "feature/other-host",
+          url: "https://work.example.test/owner/repository/pull/42",
+          remoteUrl: "https://work.example.test/owner/repository.git",
+        },
+        {
+          ...pullRequest,
+          headRefName: "feature/other-owner",
+          url: "https://github.com/other-owner/repository/pull/42",
+          remoteUrl: "https://github.com/other-owner/repository.git",
+        },
+        {
+          ...pullRequest,
+          headRefName: "feature/other-port",
+          url: "https://github.com:8443/owner/repository/pull/42",
+          remoteUrl: "https://github.com:8443/owner/repository.git",
+        },
+        {
+          ...pullRequest,
+          number: 99,
+          headRefName: "feature/other-pr",
+          url: "https://github.com/owner/repository/pull/99",
+          remoteUrl: "https://github.com/owner/repository.git",
+        },
+      ];
+      const scenario: FakeGhScenario = {
+        prListByHeadSelector: Object.fromEntries(
+          [pullRequest, ...unrelated].map((pr) => [
+            pr.headRefName,
+            // Fake gh returns raw JSON stdout at the CLI boundary.
+            JSON.stringify([pr]),
+          ]),
+        ),
+      };
+      const { manager, ghCalls } = yield* makeManager({ ghScenario: scenario });
+      yield* manager.status({ cwd: repoDir });
+      yield* manager.branchPullRequest({ cwd: worktreeDir, branch: "review/renamed-merge" });
+      const otherCheckouts = [];
+      for (const pr of unrelated) {
+        const cwd = yield* makeTempDir("t3code-git-other-pr-");
+        yield* initRepo(cwd);
+        yield* runGit(cwd, ["remote", "add", "origin", remoteDir]);
+        yield* runGit(cwd, ["checkout", "-b", pr.headRefName]);
+        yield* runGit(cwd, ["push", "-u", "origin", pr.headRefName]);
+        yield* configureVisibleRemoteUrlWithLocalRewrite(cwd, "origin", pr.remoteUrl, remoteDir);
+        otherCheckouts.push({ cwd, status: yield* manager.remoteStatus({ cwd }) });
+      }
+      const callsBeforeMerge = ghCalls.length;
+      const merge = {
+        provider: "github" as const,
+        url: pullRequest.url,
+        mergedAt: "2026-09-03T00:00:00.000Z",
+      };
+      expect(yield* manager.observePullRequestMerge({ ...merge, provider: "gitlab" })).toEqual([]);
+      expect((yield* manager.branchPullRequest({ cwd: repoDir, branch: headBranch }))?.state).toBe(
+        "open",
+      );
+
+      const affected = yield* manager.observePullRequestMerge(merge);
+
+      expect(affected.toSorted((left, right) => left.cwd.localeCompare(right.cwd))).toEqual(
+        [
+          { cwd: repoDir, branch: headBranch },
+          { cwd: worktreeDir, branch: "review/renamed-merge" },
+        ].toSorted((left, right) => left.cwd.localeCompare(right.cwd)),
+      );
+      expect((yield* manager.status({ cwd: repoDir })).pr?.state).toBe("merged");
+      expect(
+        yield* manager.branchPullRequest({ cwd: worktreeDir, branch: "review/renamed-merge" }),
+      ).toEqual({ state: "merged", updatedAt: merge.mergedAt });
+      for (const checkout of otherCheckouts) {
+        expect(yield* manager.remoteStatus({ cwd: checkout.cwd })).toBe(checkout.status);
+      }
+      expect(ghCalls).toHaveLength(callsBeforeMerge);
+
+      scenario.failAfterCalls = ghCalls.length;
+      scenario.failWith = new GitHubCli.GitHubCliUnavailableError({
+        command: "gh",
+        cwd: repoDir,
+        cause: new Error("rate limited"),
+      });
+      yield* manager.invalidateStatus(repoDir);
+      expect((yield* manager.status({ cwd: repoDir })).pr?.state).toBe("merged");
+    }),
+  );
+
+  it.effect("keeps a confirmed merge after a late open response without claiming a newer PR", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      const branch = "feature/late-merge";
+      yield* runGit(repoDir, ["checkout", "-b", branch]);
+      yield* runGit(repoDir, ["push", "-u", "origin", branch]);
+      const started = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const pullRequest = {
+        number: 42,
+        title: "Late response",
+        url: "https://github.com/owner/repository/pull/42",
+        baseRefName: "main",
+        headRefName: branch,
+        state: "OPEN",
+        updatedAt: "2026-09-01T00:00:00Z",
+      };
+      const { manager, ghCalls } = yield* makeManager({
+        ghScenario: {
+          beforePrListResult: Deferred.succeed(started, undefined).pipe(
+            Effect.andThen(Deferred.await(release)),
+          ),
+          prListSequence: [
+            // Fake gh returns raw JSON stdout at the CLI boundary.
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify([pullRequest]),
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify([
+              { ...pullRequest, number: 43, url: "https://github.com/owner/repository/pull/43" },
+            ]),
+          ],
+        },
+      });
+      const lookup = yield* manager
+        .branchPullRequest({ cwd: repoDir, branch })
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(started);
+      const merge = {
+        provider: "github" as const,
+        url: pullRequest.url,
+        mergedAt: "2026-09-03T00:00:00.000Z",
+      };
+      expect(yield* manager.observePullRequestMerge(merge)).toEqual([]);
+      yield* Deferred.succeed(release, undefined);
+
+      expect(yield* Fiber.join(lookup)).toEqual({ state: "merged", updatedAt: merge.mergedAt });
+      expect((yield* manager.status({ cwd: repoDir })).pr?.state).toBe("merged");
+      expect(ghCalls.filter((call) => call.startsWith("pr list "))).toHaveLength(1);
+
+      yield* manager.invalidateStatus(repoDir);
+      const next = yield* manager.status({ cwd: repoDir });
+      expect(next.pr).toMatchObject({ number: 43, state: "open" });
+      expect(yield* manager.observePullRequestMerge(merge)).toEqual([]);
     }),
   );
 
@@ -2124,7 +2313,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
                 url: "https://github.com/pingdotgg/codething-mvp/pull/91",
                 baseRefName: "main",
                 headRefName: "feature/fork-settle",
-                state: "MERGED",
+                state: "OPEN",
                 updatedAt: "2026-05-02T10:00:00Z",
                 isCrossRepository: true,
                 headRepository: { nameWithOwner: "contributor/codething-mvp" },
@@ -2135,12 +2324,17 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         },
       });
 
-      const pullRequest = yield* manager.branchPullRequest({
+      const input = {
         cwd: repoDir,
         branch: "feature/fork-settle",
+      };
+      expect((yield* manager.branchPullRequest(input))?.state).toBe("open");
+      yield* manager.observePullRequestMerge({
+        provider: "github",
+        url: "https://github.com/pingdotgg/codething-mvp/pull/91",
+        mergedAt: "2026-05-02T10:00:00.000Z",
       });
-
-      expect(pullRequest).toEqual({
+      expect(yield* manager.branchPullRequest(input)).toEqual({
         state: "merged",
         updatedAt: "2026-05-02T10:00:00.000Z",
       });

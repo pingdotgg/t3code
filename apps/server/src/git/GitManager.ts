@@ -30,6 +30,7 @@ import {
   VcsStatusResult,
   ModelSelection,
   SourceControlProviderError,
+  type SourceControlProviderKind,
   type SourceControlWritingStyleSettings,
 } from "@t3tools/contracts";
 import {
@@ -103,6 +104,12 @@ export class GitManager extends Context.Service<
       { readonly state: "open" | "closed" | "merged"; readonly updatedAt: string | null } | null,
       GitManagerServiceError
     >;
+    /** Share a confirmed merge with checkouts already associated with that PR. */
+    readonly observePullRequestMerge: (input: {
+      readonly provider: SourceControlProviderKind;
+      readonly url: string;
+      readonly mergedAt: string;
+    }) => Effect.Effect<ReadonlyArray<{ readonly cwd: string; readonly branch: string }>>;
     readonly invalidateLocalStatus: (cwd: string) => Effect.Effect<void, never>;
     readonly invalidateRemoteStatus: (cwd: string) => Effect.Effect<void, never>;
     readonly invalidateStatus: (cwd: string) => Effect.Effect<void, never>;
@@ -169,6 +176,7 @@ interface OpenPrInfo {
 }
 
 interface PullRequestInfo extends OpenPrInfo, PullRequestHeadRemoteInfo {
+  provider: SourceControlProviderKind;
   state: "open" | "closed" | "merged";
   isDraft?: boolean;
   updatedAt: Option.Option<DateTime.Utc>;
@@ -326,7 +334,9 @@ function resolveExpectedHeadIdentity(
   };
 }
 
-function resolvePullRequestHeadIdentity(pr: PullRequestInfo): PullRequestHeadIdentity {
+function resolvePullRequestHeadIdentity(
+  pr: Omit<PullRequestInfo, "provider">,
+): PullRequestHeadIdentity {
   const repositoryNameWithOwner = normalizeOptionalRepositoryNameWithOwner(
     resolvePullRequestHeadRepositoryNameWithOwner(pr),
   );
@@ -339,7 +349,7 @@ function resolvePullRequestHeadIdentity(pr: PullRequestInfo): PullRequestHeadIde
 }
 
 export function matchesBranchHeadContext(
-  pr: PullRequestInfo,
+  pr: Omit<PullRequestInfo, "provider">,
   headContext: Pick<
     BranchHeadContext,
     "headBranch" | "headRepositoryNameWithOwner" | "headRepositoryOwnerLogin" | "isCrossRepository"
@@ -397,8 +407,12 @@ export function matchesBranchHeadContext(
   return true;
 }
 
-function toPullRequestInfo(summary: ChangeRequest): PullRequestInfo {
+function toPullRequestInfo(
+  summary: ChangeRequest,
+  provider: SourceControlProviderKind,
+): PullRequestInfo {
   return {
+    provider,
     number: summary.number,
     title: summary.title,
     url: summary.url,
@@ -1000,6 +1014,18 @@ export const make = Effect.gen(function* () {
     prLookupFailureStreakByKey.set(key, streak);
     return prLookupFailureTtl(streak);
   };
+  // A branch lookup owns the association. A confirmed merge belongs to the
+  // provider's full PR URL, including its host, port and repository path.
+  // Keep it separate so an older in-flight lookup cannot restore an open state.
+  const mergedPrByIdentity = new Map<string, DateTime.Utc>();
+  const prIdentity = (pr: { readonly provider: SourceControlProviderKind; readonly url: string }) =>
+    JSON.stringify([pr.provider, pr.url]);
+  const withObservedMerge = (pr: PullRequestInfo): PullRequestInfo => {
+    const mergedAt = mergedPrByIdentity.get(prIdentity(pr));
+    return mergedAt === undefined
+      ? pr
+      : { ...pr, state: "merged", updatedAt: Option.some(mergedAt) };
+  };
   const prLookupCache = yield* Cache.makeWith(
     (key: string) => {
       const [
@@ -1052,6 +1078,7 @@ export const make = Effect.gen(function* () {
   // branch retargeted to another remote/fork cannot inherit the old badge.
   interface LastKnownPr {
     readonly pr: ReturnType<typeof toStatusPr> | null;
+    readonly provider: SourceControlProviderKind | null;
     readonly upstreamRef: string | null;
     readonly headBranch: string;
     readonly remoteName: string | null;
@@ -1128,18 +1155,20 @@ export const make = Effect.gen(function* () {
     }
     return yield* Cache.get(prLookupCache, cacheKey).pipe(
       Effect.map(({ latest, headContext }) => {
-        if (!latest) return { pr: null, headContext };
+        if (!latest) return { pr: null, provider: null, headContext };
+        const observed = withObservedMerge(latest);
         // On the default branch, only surface open PRs.
         // Merged/closed matches are usually reverse-merge history, not the thread's PR context.
-        if (details.isDefaultBranch && latest.state !== "open") {
-          return { pr: null, headContext };
+        if (details.isDefaultBranch && observed.state !== "open") {
+          return { pr: null, provider: null, headContext };
         }
-        return { pr: toStatusPr(latest), headContext };
+        return { pr: toStatusPr(observed), provider: latest.provider, headContext };
       }),
-      Effect.tap(({ pr, headContext }) =>
+      Effect.tap(({ pr, provider, headContext }) =>
         Effect.sync(() =>
           rememberLastKnownPr(branchKey, {
             pr,
+            provider,
             upstreamRef: details.upstreamRef,
             headBranch: headContext.headBranch,
             remoteName: headContext.remoteName,
@@ -1508,14 +1537,15 @@ export const make = Effect.gen(function* () {
       | "isCrossRepository"
     >,
   ) {
+    const provider = yield* sourceControlProvider(cwd);
     for (const headSelector of headContext.headSelectors) {
-      const pullRequests = yield* (yield* sourceControlProvider(cwd)).listChangeRequests({
+      const pullRequests = yield* provider.listChangeRequests({
         cwd,
         headSelector,
         state: "open",
         limit: 1,
       });
-      const normalizedPullRequests = pullRequests.map(toPullRequestInfo);
+      const normalizedPullRequests = pullRequests.map((pr) => toPullRequestInfo(pr, provider.kind));
 
       const firstPullRequest = normalizedPullRequests.find((pullRequest) =>
         matchesBranchHeadContext(pullRequest, headContext),
@@ -1537,16 +1567,17 @@ export const make = Effect.gen(function* () {
     headContext: BranchHeadContext,
   ) {
     const parsedByNumber = new Map<number, PullRequestInfo>();
+    const provider = yield* sourceControlProvider(cwd);
 
     for (const headSelector of headContext.headSelectors) {
-      const pullRequests = yield* (yield* sourceControlProvider(cwd)).listChangeRequests({
+      const pullRequests = yield* provider.listChangeRequests({
         cwd,
         headSelector,
         state: "all",
         limit: 20,
       });
 
-      for (const pr of pullRequests.map(toPullRequestInfo)) {
+      for (const pr of pullRequests.map((pr) => toPullRequestInfo(pr, provider.kind))) {
         if (!matchesBranchHeadContext(pr, headContext)) {
           continue;
         }
@@ -2147,17 +2178,49 @@ export const make = Effect.gen(function* () {
         });
       }
     }
-    const { latest } = cached;
-    if (latest === null) return null;
-    if (
+    const latest = cached.latest === null ? null : withObservedMerge(cached.latest);
+    const hidesTerminalPr =
       (branch === defaultBranch ||
         (defaultBranch === null && (branch === "main" || branch === "master"))) &&
-      latest.state !== "open"
-    ) {
-      return null;
-    }
-    const statusPr = toStatusPr(latest);
+      latest?.state !== "open";
+    const statusPr = latest === null || hidesTerminalPr ? null : toStatusPr(latest);
+    rememberLastKnownPr(`${cacheCwd}\u0000${branch}`, {
+      pr: statusPr,
+      provider: latest?.provider ?? null,
+      upstreamRef,
+      headBranch: cached.headContext.headBranch,
+      remoteName: cached.headContext.remoteName,
+      headRemoteUrlKey: cached.headContext.headRemoteUrlKey,
+    });
+    if (statusPr === null) return null;
     return { state: statusPr.state, updatedAt: statusPr.updatedAt };
+  });
+  const observePullRequestMerge: GitManager["Service"]["observePullRequestMerge"] = Effect.fn(
+    "observePullRequestMerge",
+  )(function* (input) {
+    const identity = prIdentity(input);
+    if (!mergedPrByIdentity.has(identity) && mergedPrByIdentity.size >= PR_LOOKUP_CACHE_CAPACITY) {
+      const oldest = mergedPrByIdentity.keys().next().value;
+      if (oldest !== undefined) mergedPrByIdentity.delete(oldest);
+    }
+    const mergedAt = DateTime.makeUnsafe(input.mergedAt);
+    mergedPrByIdentity.set(identity, mergedAt);
+    const branches: Array<{ readonly cwd: string; readonly branch: string }> = [];
+    const cwds = new Set<string>();
+    for (const [branchKey, known] of lastKnownPrByBranchKey) {
+      if (known.pr?.url !== input.url || known.provider !== input.provider) continue;
+      const [cwd = "", branch = ""] = branchKey.split("\u0000");
+      branches.push({ cwd, branch });
+      cwds.add(cwd);
+      lastKnownPrByBranchKey.set(branchKey, {
+        ...known,
+        pr: { ...known.pr, state: "merged", updatedAt: DateTime.formatIso(mergedAt) },
+      });
+    }
+    yield* Effect.forEach(cwds, (cwd) => Cache.invalidate(remoteStatusResultCache, cwd), {
+      discard: true,
+    });
+    return branches;
   });
   const invalidateLocalStatus: GitManager["Service"]["invalidateLocalStatus"] = Effect.fn(
     "invalidateLocalStatus",
@@ -2707,6 +2770,7 @@ export const make = Effect.gen(function* () {
     remoteStatus,
     status,
     branchPullRequest,
+    observePullRequestMerge,
     invalidateLocalStatus,
     invalidateRemoteStatus,
     invalidateStatus,
