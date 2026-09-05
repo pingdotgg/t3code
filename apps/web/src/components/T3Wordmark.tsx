@@ -1,5 +1,7 @@
 import type { SVGProps } from "react";
 
+import { cn } from "../lib/utils";
+
 export function T3Wordmark(props: SVGProps<SVGSVGElement>) {
   return (
     <svg {...props} viewBox="15.5309 37 94.3941 56.96" xmlns="http://www.w3.org/2000/svg">
@@ -8,5 +10,26 @@ export function T3Wordmark(props: SVGProps<SVGSVGElement>) {
         fill="currentColor"
       />
     </svg>
+  );
+}
+
+/**
+ * The "T3 Code" brand lockup: wordmark and label aligned by baseline. The
+ * wordmark takes the surrounding text colour; `labelClassName` colours the
+ * label, which is muted by default.
+ */
+export function T3CodeBrand({ labelClassName }: { readonly labelClassName?: string | undefined }) {
+  return (
+    <span className="inline-flex min-w-0 items-baseline gap-1">
+      <T3Wordmark aria-label="T3" className="h-2.5 w-auto shrink-0" />
+      <span
+        className={cn(
+          "truncate text-sm font-medium tracking-tight",
+          labelClassName ?? "text-muted-foreground",
+        )}
+      >
+        Code
+      </span>
+    </span>
   );
 }

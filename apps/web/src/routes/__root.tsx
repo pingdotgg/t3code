@@ -14,6 +14,11 @@ import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import { APP_BASE_NAME, APP_DISPLAY_NAME, APP_STAGE_LABEL, APP_VERSION } from "../branding";
 import { resolveServerBackedAppDisplayName } from "../branding.logic";
 import { AppSidebarLayout } from "../components/AppSidebarLayout";
+import {
+  StandaloneSurface,
+  StandaloneSurfaceHeading,
+  StandaloneSurfacePanel,
+} from "../components/StandaloneSurface";
 import { CommandPalette } from "../components/CommandPalette";
 import { ConfirmDialogHost } from "../components/ConfirmDialogHost";
 import { FirstRunGate } from "../components/onboarding/FirstRunGate";
@@ -306,39 +311,25 @@ function RootRouteErrorView({ error, reset }: ErrorComponentProps) {
   const report = useMemo(() => errorReport(error, pathname), [error, pathname]);
 
   return (
-    <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-background px-4 py-10 text-foreground sm:px-6">
-      <div className="pointer-events-none absolute inset-0 opacity-80">
-        <div className="absolute inset-x-0 top-0 h-44 bg-[radial-gradient(44rem_16rem_at_top,color-mix(in_srgb,var(--color-red-500)_16%,transparent),transparent)]" />
-        <div className="absolute inset-0 bg-[linear-gradient(145deg,color-mix(in_srgb,var(--background)_90%,var(--color-black))_0%,var(--background)_55%)]" />
-      </div>
+    <StandaloneSurface>
+      <StandaloneSurfaceHeading title="Something went wrong." description={message} />
 
-      <section className="relative w-full max-w-xl rounded-2xl border border-border/80 bg-card/90 p-6 shadow-2xl shadow-black/20 backdrop-blur-md sm:p-8">
-        <p className="text-[11px] font-semibold tracking-[0.18em] text-muted-foreground uppercase">
-          {APP_DISPLAY_NAME}
-        </p>
-        <h1 className="mt-3 text-2xl font-semibold tracking-tight sm:text-3xl">
-          Something went wrong.
-        </h1>
-        <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{message}</p>
-
-        <div className="mt-5 flex flex-wrap gap-2">
+      <StandaloneSurfacePanel>
+        <div className="flex flex-wrap items-center gap-2 px-4 py-3">
           <Button size="sm" onClick={() => reset()}>
             Try again
           </Button>
-          <Button size="sm" variant="outline" onClick={() => window.location.reload()}>
+          <Button size="sm" variant="ghost" onClick={() => window.location.reload()}>
             Reload app
           </Button>
           <CopyErrorButton report={report} />
         </div>
-
-        <div className="mt-5 overflow-hidden rounded-lg border border-border/70 bg-background/55">
-          <p className="px-3 py-1.5 text-xs font-medium text-muted-foreground">Error report</p>
-          <pre className="max-h-64 overflow-auto border-t border-border/70 bg-background/80 px-3 py-2 text-xs whitespace-pre-wrap text-foreground/85">
-            {report}
-          </pre>
-        </div>
-      </section>
-    </div>
+        <p className="px-4 py-2 text-xs font-medium text-muted-foreground">Error report</p>
+        <pre className="max-h-64 overflow-auto px-4 py-3 text-xs whitespace-pre-wrap text-foreground/85">
+          {report}
+        </pre>
+      </StandaloneSurfacePanel>
+    </StandaloneSurface>
   );
 }
 
@@ -347,7 +338,7 @@ function CopyErrorButton({ report }: { report: string }) {
   const { copyToClipboard, isCopied } = useCopyToClipboard({ target: "error-report" });
 
   return (
-    <Button size="sm" variant="outline" onClick={() => copyToClipboard(report)}>
+    <Button size="sm" variant="ghost" onClick={() => copyToClipboard(report)}>
       {isCopied ? <CheckIcon className="text-success" /> : <CopyIcon />}
       {isCopied ? "Copied" : "Copy error"}
     </Button>
