@@ -199,12 +199,12 @@ const parseLenientJsonGetter = SchemaGetter.onSome((input: string) => {
  * strips trailing commas and JS-style comments before parsing.
  * Encoding produces strict JSON via `JSON.stringify`.
  */
-export const fromLenientJsonString = new SchemaTransformation.Transformation(
+const fromLenientJsonString = new SchemaTransformation.Transformation(
   parseLenientJsonGetter,
   SchemaGetter.stringifyJson(),
 );
 
-export const prettyJsonString = SchemaGetter.parseJson<string>().compose(
+const prettyJsonString = SchemaGetter.parseJson<string>().compose(
   SchemaGetter.stringifyJson({ space: 2 }),
 );
 

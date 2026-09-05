@@ -5,7 +5,7 @@ import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 
-export const DEFAULT_HTTP_READY_PROBE_TIMEOUT_MS = 1_000;
+const DEFAULT_HTTP_READY_PROBE_TIMEOUT_MS = 1_000;
 
 /**
  * Normalizes an arbitrary readiness probe failure into a plain, structured value
