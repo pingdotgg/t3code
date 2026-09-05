@@ -207,7 +207,7 @@ available.
 - Provider: GitHub Releases (`provider: github`) configured at build time.
 - Repository slug source:
   - `T3CODE_DESKTOP_UPDATE_REPOSITORY` (format `owner/repo`), if set.
-- otherwise `GITHUB_REPOSITORY` from GitHub Actions.
+  - otherwise `GITHUB_REPOSITORY` from GitHub Actions.
 
 ### Custom desktop release sources
 
@@ -228,12 +228,13 @@ T3 Tools, so this setting should only be used with a release source you control.
 
 Downstream builds that coexist with an upstream installation must set
 `T3CODE_DESKTOP_DISTRIBUTION` while building every artifact. For example, `Fork` produces the
-product name `T3 Code (Fork Nightly)`, bundle ID `com.t3tools.t3code.fork-466f726b`, and
-package/updater cache name `t3code-fork-466f726b`. The encoded suffix keeps distinct labels from
-sharing an update identity. Keep the distribution value stable across releases and install the first
-downstream build manually. Do not rename the `.app` bundle after installing it. The desktop checks
-that its bundle path is canonical for the same distribution and either packaged channel before it
-stops backends or asks the native updater to quit.
+stable product name `T3 Code (Fork)`, the stage-aware About label `T3 Code (Fork Nightly)`, and
+bundle/package identities with a bounded `fork-<sha256>` suffix. The digest keeps distinct labels
+from sharing an update identity without expanding filesystem names. Keep the distribution value
+stable across releases and install the first downstream build manually. Do not rename the `.app`
+bundle after installing it. The desktop checks that its bundle path is canonical for the same
+distribution and either packaged channel before it stops backends or asks the native updater to
+quit.
 
 Downstream branding also isolates Electron's browser profile and encrypted connection catalog. The
 downstream app still shares `~/.t3` projects, threads, settings, and backend data with the upstream
@@ -362,7 +363,7 @@ Checklist:
    - `APPLE_API_KEY`: contents of the downloaded `.p8`
    - `APPLE_API_KEY_ID`: Key ID
    - `APPLE_API_ISSUER`: Issuer ID
-10. Complete the Clerk Native API and AASA setup in [T3 Connect Clerk Setup](../internals/t3-connect.md#desktop-passkeys).
+10. Complete the Clerk Native API and AASA setup in [T3 Connect setup](./connect-setup.md#desktop-passkeys).
 11. Re-run a tag release and confirm macOS artifacts are signed/notarized and contain the expected
     `com.apple.developer.associated-domains` entitlement.
 

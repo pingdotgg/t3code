@@ -9,17 +9,25 @@ import {
 import { runAtomCommand, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type {
   ChatFileAttachment,
+  ChatImageAttachment,
   EnvironmentId,
   UploadChatImageAttachment,
 } from "@t3tools/contracts";
+import { PROVIDER_SEND_TURN_SUPPORTED_IMAGE_MIME_TYPES } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 
 import { appAtomRegistry } from "../state/atom-registry";
 import { assetEnvironment } from "../state/assets";
 import { attachmentEnvironment } from "../state/attachments";
 import { environmentSession } from "../state/session";
+import { retainComposerAttachmentFileForPreview } from "../state/use-composer-drafts";
 import { resolveOwnedComposerAttachmentFileUri } from "./composerAttachmentFiles";
-import { toUploadChatImageAttachments, type DraftComposerAttachment } from "./composerImages";
+import {
+  isFileBackedComposerAttachment,
+  type DraftComposerAttachment,
+  type DraftComposerImageAttachment,
+} from "./composerImages";
+import { uuidv4 } from "./uuid";
 
 /**
  * This module owns the server side of a composer attachment's lifecycle.
@@ -31,7 +39,10 @@ import { toUploadChatImageAttachments, type DraftComposerAttachment } from "./co
  * owned by `removeThreadOutboxMessage` / the composer draft mutators, which
  * release files through `releaseUnusedComposerAttachmentFiles`.
  */
-export type UploadedMobileAttachment = UploadChatImageAttachment | ChatFileAttachment;
+export type UploadedMobileAttachment =
+  | UploadChatImageAttachment
+  | ChatImageAttachment
+  | ChatFileAttachment;
 
 export function validateDraftFileAttachments(input: {
   readonly attachments: ReadonlyArray<DraftComposerAttachment>;
@@ -56,7 +67,7 @@ export function validateDraftFileAttachments(input: {
   return oversized ? fileAttachmentTooLargeMessage(oversized.name, maxBytes) : null;
 }
 
-/** Keep uploaded file ids on durable drafts so a later send can reuse their bytes. */
+/** Keep uploaded ids alongside the local bytes so a later send can reuse them. */
 export function withUploadedMobileAttachmentReferences(input: {
   readonly environmentId: EnvironmentId;
   readonly attachments: ReadonlyArray<DraftComposerAttachment>;
@@ -65,8 +76,9 @@ export function withUploadedMobileAttachmentReferences(input: {
   return input.attachments.map((attachment, index) => {
     const uploaded = input.uploadedAttachments[index];
     if (
-      attachment.type !== "file" ||
-      uploaded?.type !== "file" ||
+      !uploaded ||
+      !("id" in uploaded) ||
+      attachment.type !== uploaded.type ||
       (attachment.uploadedAttachmentId === uploaded.id &&
         attachment.uploadEnvironmentId === input.environmentId)
     ) {
@@ -145,21 +157,119 @@ export type PrepareTurnAttachmentsResult =
   | PreparedTurnAttachments
   | { readonly status: "abandoned" };
 
+function uploadedReference(
+  attachment: DraftComposerAttachment,
+  id: string,
+): ChatImageAttachment | ChatFileAttachment {
+  const fields = {
+    id,
+    name: attachment.name,
+    mimeType: attachment.mimeType,
+    sizeBytes: attachment.sizeBytes,
+  };
+  return attachment.type === "image" ? { type: "image", ...fields } : { type: "file", ...fields };
+}
+
+function attachmentUploadInput(attachment: DraftComposerAttachment) {
+  const fields = {
+    name: attachment.name,
+    mimeType: attachment.mimeType,
+    sizeBytes: attachment.sizeBytes,
+  };
+  if (attachment.type === "file") return { type: "file" as const, ...fields };
+  const mimeType = PROVIDER_SEND_TURN_SUPPORTED_IMAGE_MIME_TYPES.find(
+    (type) => type === attachment.mimeType.toLowerCase(),
+  );
+  if (!mimeType) throw new Error(`Unsupported image type for '${attachment.name}'.`);
+  return { ...fields, mimeType };
+}
+
+/**
+ * Wire shape for startTurn on servers without attachment uploads: pure inline
+ * uploads without client draft id / previewUri. File-backed images read their
+ * base64 from disk lazily, only when this legacy path is actually taken.
+ */
+async function toUploadChatImageAttachments(
+  attachments: ReadonlyArray<DraftComposerImageAttachment>,
+): Promise<ReadonlyArray<UploadChatImageAttachment>> {
+  return Promise.all(
+    attachments.map(async (attachment) => ({
+      type: attachment.type,
+      name: attachment.name,
+      mimeType: attachment.mimeType,
+      sizeBytes: attachment.sizeBytes,
+      dataUrl: await composerImageAttachmentDataUrl(attachment),
+    })),
+  );
+}
+
+/** Inline bytes for one image: legacy drafts carry them, file-backed ones read them from disk. */
+async function composerImageAttachmentDataUrl(
+  attachment: DraftComposerImageAttachment,
+): Promise<string> {
+  if (attachment.dataUrl !== undefined) {
+    return attachment.dataUrl;
+  }
+  if (!isFileBackedComposerAttachment(attachment)) {
+    throw new Error(`'${attachment.name}' is no longer available. Attach the image again.`);
+  }
+  const release = retainComposerAttachmentFileForPreview(attachment);
+  try {
+    const { File, Paths } = await import("expo-file-system");
+    const uri =
+      resolveOwnedComposerAttachmentFileUri(attachment.fileUri, Paths.document.uri) ??
+      attachment.fileUri;
+    const base64 = await new File(uri).base64();
+    return `data:${attachment.mimeType};base64,${base64}`;
+  } finally {
+    release();
+  }
+}
+
 async function uploadFileBytes(
-  attachment: Extract<DraftComposerAttachment, { readonly type: "file" }>,
+  attachment: DraftComposerAttachment,
   url: string,
+  signal: AbortSignal,
+  onProgress?: (progress: number) => void,
 ): Promise<void> {
   const { File, Paths, UploadType } = await import("expo-file-system");
-  const fileUri =
-    resolveOwnedComposerAttachmentFileUri(attachment.fileUri, Paths.document.uri) ??
-    attachment.fileUri;
-  const result = await new File(fileUri).upload(url, {
-    httpMethod: "POST",
-    uploadType: UploadType.BINARY_CONTENT,
-    headers: { "Content-Type": attachment.mimeType },
-  });
-  if (result.status < 200 || result.status >= 300) {
-    throw new Error(`Upload failed for '${attachment.name}' (${result.status}).`);
+  if (signal.aborted) throw new Error("Upload cancelled.");
+  // Legacy image drafts persisted inline bytes and stage them in a temp cache
+  // file for the native uploader. Everything else uploads its owned copy.
+  const fileUri = attachment.fileUri;
+  const inlineDataUrl = attachment.type === "image" ? attachment.dataUrl : undefined;
+  if (fileUri === undefined && inlineDataUrl === undefined) {
+    throw new Error(`'${attachment.name}' is no longer available. Attach the image again.`);
+  }
+  const file =
+    fileUri === undefined
+      ? new File(Paths.cache, `t3-upload-${uuidv4()}`)
+      : new File(resolveOwnedComposerAttachmentFileUri(fileUri, Paths.document.uri) ?? fileUri);
+  try {
+    if (fileUri === undefined && inlineDataUrl !== undefined) {
+      file.create();
+      file.write(inlineDataUrl.slice(inlineDataUrl.indexOf(",") + 1), {
+        encoding: "base64",
+      });
+    }
+    const result = await file.upload(url, {
+      httpMethod: "POST",
+      uploadType: UploadType.BINARY_CONTENT,
+      headers: { "Content-Type": attachment.mimeType },
+      signal,
+      ...(onProgress
+        ? {
+            onProgress: ({ bytesSent, totalBytes }) => {
+              if (totalBytes > 0) onProgress(bytesSent / totalBytes);
+            },
+          }
+        : {}),
+    });
+    if (result.status < 200 || result.status >= 300) {
+      throw new Error(`Upload failed for '${attachment.name}' (${result.status}).`);
+    }
+  } finally {
+    if (fileUri === undefined && file.exists) file.delete();
   }
 }
 
@@ -176,11 +286,16 @@ async function uploadFileBytes(
 export async function prepareTurnAttachments(input: {
   readonly environmentId: EnvironmentId;
   readonly attachments: ReadonlyArray<DraftComposerAttachment>;
+  /** Older environments continue to receive inline images. */
+  readonly supportsImageUploads?: boolean;
+  readonly signal?: AbortSignal;
+  readonly onUploadProgress?: (attachmentId: string, progress: number) => void;
   readonly persistUploadedReferences?: (
     draftAttachments: ReadonlyArray<DraftComposerAttachment>,
   ) => Promise<"persisted" | "abandon">;
 }): Promise<PrepareTurnAttachmentsResult> {
   const { environmentId } = input;
+  if (input.signal?.aborted) return { status: "abandoned" };
   const files = input.attachments.filter((attachment) => attachment.type === "file");
   const ready = (
     attachments: ReadonlyArray<UploadedMobileAttachment>,
@@ -194,14 +309,17 @@ export async function prepareTurnAttachments(input: {
     releaseUploads: () => releasePendingAttachmentUploads(environmentId, pendingAttachmentIds),
   });
 
-  if (files.length === 0) {
-    return ready(
-      toUploadChatImageAttachments(
+  if (input.attachments.length === 0 || (files.length === 0 && !input.supportsImageUploads)) {
+    try {
+      const imageAttachments = await toUploadChatImageAttachments(
         input.attachments.filter((attachment) => attachment.type === "image"),
-      ),
-      [],
-      input.attachments,
-    );
+      );
+      if (input.signal?.aborted) return { status: "abandoned" };
+      return ready(imageAttachments, [], input.attachments);
+    } catch (error) {
+      if (input.signal?.aborted) return { status: "abandoned" };
+      throw error;
+    }
   }
 
   const connection = appAtomRegistry.get(
@@ -214,10 +332,14 @@ export async function prepareTurnAttachments(input: {
   const uploadedAttachments: UploadedMobileAttachment[] = [];
   const pendingAttachmentIds: string[] = [];
   const createdAttachmentIds: string[] = [];
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  input.signal?.addEventListener("abort", abort, { once: true });
   try {
     for (const attachment of input.attachments) {
-      if (attachment.type === "image") {
-        uploadedAttachments.push(...toUploadChatImageAttachments([attachment]));
+      if (controller.signal.aborted) throw new Error("Upload cancelled.");
+      if (attachment.type === "image" && !input.supportsImageUploads) {
+        uploadedAttachments.push(...(await toUploadChatImageAttachments([attachment])));
         continue;
       }
 
@@ -238,13 +360,7 @@ export async function prepareTurnAttachments(input: {
         }
         if (verification.status === "verified") {
           pendingAttachmentIds.push(attachment.uploadedAttachmentId);
-          uploadedAttachments.push({
-            type: "file",
-            id: attachment.uploadedAttachmentId,
-            name: attachment.name,
-            mimeType: attachment.mimeType,
-            sizeBytes: attachment.sizeBytes,
-          });
+          uploadedAttachments.push(uploadedReference(attachment, attachment.uploadedAttachmentId));
           continue;
         }
         // "missing": the pending upload expired, upload the bytes again.
@@ -255,12 +371,7 @@ export async function prepareTurnAttachments(input: {
         createUploadUrl: attachmentEnvironment.createUploadUrl,
         remove: attachmentEnvironment.remove,
         environmentId,
-        upload: {
-          type: "file",
-          name: attachment.name,
-          mimeType: attachment.mimeType,
-          sizeBytes: attachment.sizeBytes,
-        },
+        upload: attachmentUploadInput(attachment),
         // Read the connection at transfer time: the environment may have
         // reconnected on a new base URL since this cycle started.
         resolveUploadUrl: (relativeUrl) => {
@@ -272,11 +383,18 @@ export async function prepareTurnAttachments(input: {
             : resolveAssetUrl(currentConnection.value.httpBaseUrl, relativeUrl);
         },
         transport: (url) => ({
-          done: uploadFileBytes(attachment, url),
-          // expo-file-system uploads cannot abort mid-flight.
-          abort: () => {},
+          done: uploadFileBytes(
+            attachment,
+            url,
+            controller.signal,
+            input.onUploadProgress
+              ? (progress) => input.onUploadProgress?.(attachment.id, progress)
+              : undefined,
+          ),
+          abort,
         }),
         onMinted: (attachmentId) => {
+          if (controller.signal.aborted) return "cancel";
           pendingAttachmentIds.push(attachmentId);
           createdAttachmentIds.push(attachmentId);
           return "continue";
@@ -287,14 +405,10 @@ export async function prepareTurnAttachments(input: {
           ? result.error
           : new Error(`Upload failed for '${attachment.name}'.`);
       }
-      uploadedAttachments.push({
-        type: "file",
-        id: result.attachmentId,
-        name: attachment.name,
-        mimeType: attachment.mimeType,
-        sizeBytes: attachment.sizeBytes,
-      });
+      uploadedAttachments.push(uploadedReference(attachment, result.attachmentId));
     }
+
+    if (controller.signal.aborted) throw new Error("Upload cancelled.");
 
     const draftAttachments = withUploadedMobileAttachmentReferences({
       environmentId,
@@ -313,6 +427,9 @@ export async function prepareTurnAttachments(input: {
     return ready(uploadedAttachments, pendingAttachmentIds, draftAttachments);
   } catch (error) {
     await releaseCreatedUploadsQuietly(environmentId, createdAttachmentIds);
+    if (controller.signal.aborted) return { status: "abandoned" };
     throw error;
+  } finally {
+    input.signal?.removeEventListener("abort", abort);
   }
 }

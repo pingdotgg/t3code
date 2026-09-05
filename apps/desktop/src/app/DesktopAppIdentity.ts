@@ -48,25 +48,38 @@ const normalizeCommitHash = (value: string): Option.Option<string> => {
 export const resolveUserDataPath = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const fileSystem = yield* FileSystem.FileSystem;
-  // Electron locks its internal app name before application code runs. A
-  // branded distribution therefore cannot safely reuse the official app's
-  // live Chromium profile or safeStorage identity by calling app.setName().
+  const inspectPath = (candidate: string) =>
+    fileSystem.exists(candidate).pipe(
+      Effect.mapError(
+        (cause) =>
+          new DesktopUserDataPathResolutionError({
+            legacyPath: candidate,
+            cause,
+          }),
+      ),
+    );
+
   if (environment.isDownstreamDistribution) {
-    return environment.path.join(environment.appDataDirectory, environment.userDataDirName);
+    const stablePath = environment.path.join(
+      environment.appDataDirectory,
+      environment.userDataDirName,
+    );
+    if (yield* inspectPath(stablePath)) {
+      return stablePath;
+    }
+    for (const legacyDirName of environment.legacyDownstreamUserDataDirNames) {
+      const legacyPath = environment.path.join(environment.appDataDirectory, legacyDirName);
+      if (yield* inspectPath(legacyPath)) {
+        return legacyPath;
+      }
+    }
+    return stablePath;
   }
   const legacyPath = environment.path.join(
     environment.appDataDirectory,
     environment.legacyUserDataDirName,
   );
-  const legacyPathExists = yield* fileSystem.exists(legacyPath).pipe(
-    Effect.mapError(
-      (cause) =>
-        new DesktopUserDataPathResolutionError({
-          legacyPath,
-          cause,
-        }),
-    ),
-  );
+  const legacyPathExists = yield* inspectPath(legacyPath);
   return legacyPathExists
     ? legacyPath
     : environment.path.join(environment.appDataDirectory, environment.userDataDirName);

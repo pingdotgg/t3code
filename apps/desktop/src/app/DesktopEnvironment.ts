@@ -4,6 +4,10 @@ import type {
   DesktopRuntimeArch,
   DesktopRuntimeInfo,
 } from "@t3tools/contracts";
+import {
+  resolveDesktopRuntimeIdentity,
+  type DesktopPackagedAppIdentity,
+} from "@t3tools/shared/desktopBuild";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -23,6 +27,7 @@ export interface MakeDesktopEnvironmentInput {
   readonly processArch: string;
   readonly appVersion: string;
   readonly appName?: string;
+  readonly packagedIdentity?: DesktopPackagedAppIdentity;
   readonly appPath: string;
   readonly isPackaged: boolean;
   readonly resourcesPath: string;
@@ -48,6 +53,7 @@ export class DesktopEnvironment extends Context.Service<
     readonly desktopSettingsPath: string;
     readonly clientSettingsPath: string;
     readonly connectionCatalogPath: string;
+    readonly legacyConnectionCatalogPaths: readonly string[];
     readonly savedEnvironmentRegistryPath: string;
     readonly serverSettingsPath: string;
     readonly logDir: string;
@@ -73,6 +79,8 @@ export class DesktopEnvironment extends Context.Service<
     readonly otlpExportIntervalMs: number;
     readonly branding: DesktopAppBranding;
     readonly displayName: string;
+    readonly productName: string;
+    readonly distributionId: string | null;
     readonly appUserModelId: string;
     readonly linuxDesktopEntryName: string;
     readonly linuxWmClass: string;
@@ -80,6 +88,7 @@ export class DesktopEnvironment extends Context.Service<
     readonly appImagePath: Option.Option<string>;
     readonly isDownstreamDistribution: boolean;
     readonly userDataDirName: string;
+    readonly legacyDownstreamUserDataDirNames: readonly string[];
     readonly legacyUserDataDirName: string;
     readonly defaultDesktopSettings: DesktopAppSettings.DesktopSettings;
     readonly runtimeInfo: DesktopRuntimeInfo;
@@ -91,10 +100,9 @@ export class DesktopEnvironment extends Context.Service<
 const APP_BASE_NAME = "T3 Code";
 
 function resolveConnectionCatalogFileName(input: {
-  readonly isDownstreamDistribution: boolean;
-  readonly displayName: string;
+  readonly distributionId: string | null;
 }): string {
-  if (!input.isDownstreamDistribution) {
+  if (input.distributionId === null) {
     return "connection-catalog.json";
   }
 
@@ -102,7 +110,11 @@ function resolveConnectionCatalogFileName(input: {
   // Keep its encrypted catalog separate from the official app's catalog so
   // both applications can use the shared T3 backend state without attempting
   // to decrypt or overwrite each other's credentials.
-  const scope = Array.from(input.displayName, (character) =>
+  return `connection-catalog.${input.distributionId}.json`;
+}
+
+function legacyConnectionCatalogFileName(displayName: string): string {
+  const scope = Array.from(displayName, (character) =>
     character.codePointAt(0)!.toString(16).padStart(4, "0"),
   ).join("");
   return `connection-catalog.${scope}.json`;
@@ -121,20 +133,25 @@ function resolveDesktopAppStageLabel(input: {
 
 function resolveDesktopAppBranding(input: {
   readonly isDevelopment: boolean;
-  readonly isPackaged: boolean;
   readonly appVersion: string;
-  readonly appName?: string;
 }): DesktopAppBranding {
   const stageLabel = resolveDesktopAppStageLabel(input);
-  const packagedDisplayName = input.appName?.trim();
   return {
     baseName: APP_BASE_NAME,
     stageLabel,
-    displayName:
-      input.isPackaged && packagedDisplayName
-        ? packagedDisplayName
-        : `${APP_BASE_NAME} (${stageLabel})`,
+    displayName: `${APP_BASE_NAME} (${stageLabel})`,
   };
+}
+
+export function currentDesktopAppIdentity(input: {
+  readonly isDevelopment: boolean;
+  readonly isPackaged: boolean;
+  readonly appVersion: string;
+  readonly appName?: string;
+  readonly packagedIdentity?: DesktopPackagedAppIdentity;
+}) {
+  const stageLabel = resolveDesktopAppStageLabel(input);
+  return resolveDesktopRuntimeIdentity({ ...input, stageLabel });
 }
 
 function normalizeDesktopArch(arch: string): DesktopRuntimeArch {
@@ -194,15 +211,22 @@ const make = Effect.fn("desktop.environment.make")(function* (
     input.isPackaged && input.platform === "win32"
       ? path.join(input.resourcesPath, "server.asar")
       : appRoot;
-  const branding = resolveDesktopAppBranding({
+  const fallbackBranding = resolveDesktopAppBranding({
+    isDevelopment,
+    appVersion: input.appVersion,
+  });
+  const resolvedIdentity = currentDesktopAppIdentity({
     isDevelopment,
     isPackaged: input.isPackaged,
     appVersion: input.appVersion,
     ...(input.appName === undefined ? {} : { appName: input.appName }),
+    ...(input.packagedIdentity === undefined ? {} : { packagedIdentity: input.packagedIdentity }),
   });
-  const displayName = branding.displayName;
-  const isDownstreamDistribution =
-    input.isPackaged && displayName !== `${APP_BASE_NAME} (${branding.stageLabel})`;
+  const branding = { ...fallbackBranding, displayName: resolvedIdentity.displayName };
+  const displayName = resolvedIdentity.displayName;
+  const productName = resolvedIdentity.productName;
+  const distributionId = resolvedIdentity.distributionId;
+  const isDownstreamDistribution = input.isPackaged && distributionId !== null;
   const stateDir = resolveDesktopStateDir({
     baseDir,
     isDevelopment,
@@ -212,14 +236,26 @@ const make = Effect.fn("desktop.environment.make")(function* (
   const connectionCatalogPath = path.join(
     stateDir,
     resolveConnectionCatalogFileName({
-      isDownstreamDistribution,
-      displayName,
+      distributionId,
     }),
+  );
+  const legacyDownstreamStages =
+    branding.stageLabel === "Nightly"
+      ? (["Nightly", "Alpha"] as const)
+      : (["Alpha", "Nightly"] as const);
+  const legacyDownstreamUserDataDirNames =
+    isDownstreamDistribution && resolvedIdentity.distributionName
+      ? legacyDownstreamStages.map(
+          (stage) => `T3 Code (${resolvedIdentity.distributionName} ${stage})`,
+        )
+      : [];
+  const legacyConnectionCatalogPaths = legacyDownstreamUserDataDirNames.map((legacyDisplayName) =>
+    path.join(stateDir, legacyConnectionCatalogFileName(legacyDisplayName)),
   );
   const userDataDirName = isDevelopment
     ? "t3code-dev"
     : isDownstreamDistribution
-      ? displayName
+      ? productName
       : "t3code";
   const legacyUserDataDirName = isDevelopment ? "T3 Code (Dev)" : "T3 Code (Alpha)";
   const linuxApplicationsDir = path.join(
@@ -245,6 +281,7 @@ const make = Effect.fn("desktop.environment.make")(function* (
     desktopSettingsPath: path.join(stateDir, "desktop-settings.json"),
     clientSettingsPath: path.join(stateDir, "client-settings.json"),
     connectionCatalogPath,
+    legacyConnectionCatalogPaths,
     savedEnvironmentRegistryPath: path.join(stateDir, "saved-environments.json"),
     serverSettingsPath: path.join(stateDir, "settings.json"),
     logDir: path.join(stateDir, "logs"),
@@ -266,15 +303,18 @@ const make = Effect.fn("desktop.environment.make")(function* (
     otlpExportIntervalMs: config.otlpExportIntervalMs,
     branding,
     displayName,
+    productName,
+    distributionId,
     appUserModelId: Option.getOrElse(config.appUserModelIdOverride, () =>
-      isDevelopment ? "com.t3tools.t3code.dev" : "com.t3tools.t3code",
+      isDevelopment ? "com.t3tools.t3code.dev" : resolvedIdentity.appId,
     ),
-    linuxDesktopEntryName: isDevelopment ? "t3code-dev.desktop" : "t3code.desktop",
-    linuxWmClass: isDevelopment ? "t3code-dev" : "t3code",
+    linuxDesktopEntryName: `${resolvedIdentity.packageName}.desktop`,
+    linuxWmClass: resolvedIdentity.packageName,
     linuxApplicationsDir,
     appImagePath: config.appImagePath,
     isDownstreamDistribution,
     userDataDirName,
+    legacyDownstreamUserDataDirNames,
     legacyUserDataDirName,
     defaultDesktopSettings: DesktopAppSettings.resolveDefaultDesktopSettings(input.appVersion),
     runtimeInfo: resolveDesktopRuntimeInfo({

@@ -383,6 +383,22 @@ export const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const savedEnvironments = yield* DesktopSavedEnvironments.DesktopSavedEnvironments;
   const catalogPath = environment.connectionCatalogPath;
+  const resolveCatalogReadPath = Effect.gen(function* () {
+    for (const candidate of [catalogPath, ...environment.legacyConnectionCatalogPaths]) {
+      const exists = yield* fileSystem
+        .exists(candidate)
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new DesktopConnectionCatalogStoreReadError({ catalogPath: candidate, cause }),
+          ),
+        );
+      if (exists) {
+        return candidate;
+      }
+    }
+    return catalogPath;
+  });
   const encryptionAvailable = safeStorage.isEncryptionAvailable.pipe(
     Effect.mapError(
       (cause) =>
@@ -477,27 +493,40 @@ export const make = Effect.gen(function* () {
 
   return DesktopConnectionCatalogStore.of({
     get: Effect.gen(function* () {
-      const document = yield* readDocument(fileSystem, catalogPath);
+      const readPath = yield* resolveCatalogReadPath;
+      const document = yield* readDocument(fileSystem, readPath);
       if (Option.isNone(document)) {
         return yield* migrateLegacyCatalog;
       }
       if (!(yield* encryptionAvailable)) {
         return Option.none<string>();
       }
-      const decrypted = yield* decodeSecretBytes(catalogPath, document.value.encryptedCatalog).pipe(
+      const decrypted = yield* decodeSecretBytes(readPath, document.value.encryptedCatalog).pipe(
         Effect.flatMap((encryptedCatalog) =>
           safeStorage.decryptString(encryptedCatalog).pipe(
             Effect.mapError(
               (cause) =>
                 new DesktopConnectionCatalogStoreProtectionError({
                   operation: "decrypt-catalog",
-                  catalogPath,
+                  catalogPath: readPath,
                   cause,
                 }),
             ),
           ),
         ),
       );
+      if (readPath !== catalogPath) {
+        yield* writeCatalog(decrypted).pipe(
+          Effect.mapError(
+            (cause) =>
+              new DesktopConnectionCatalogStoreMigrationError({
+                operation: "persist-catalog",
+                catalogPath,
+                cause,
+              }),
+          ),
+        );
+      }
       return Option.some(decrypted);
     }).pipe(Effect.withSpan("desktop.connectionCatalogStore.get")),
     set: Effect.fn("desktop.connectionCatalogStore.set")(function* (catalog) {

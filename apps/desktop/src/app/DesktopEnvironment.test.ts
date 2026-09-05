@@ -1,3 +1,4 @@
+import * as NodePath from "@effect/platform-node/NodePath";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -26,7 +27,11 @@ const makeEnvironmentLayer = (
   DesktopEnvironment.layer({
     ...defaultInput,
     ...overrides,
-  }).pipe(Layer.provide(Layer.mergeAll(NodeServices.layer, DesktopConfig.layerTest(env))));
+  }).pipe(
+    Layer.provide(
+      Layer.mergeAll(NodeServices.layer, NodePath.layerPosix, DesktopConfig.layerTest(env)),
+    ),
+  );
 
 const makeEnvironment = (
   overrides: Partial<DesktopEnvironment.MakeDesktopEnvironmentInput> = {},
@@ -35,7 +40,7 @@ const makeEnvironment = (
   DesktopEnvironment.DesktopEnvironment.pipe(Effect.provide(makeEnvironmentLayer(overrides, env)));
 
 describe("DesktopEnvironment", () => {
-  it.effect("uses the packaged product name as the updater-safe display name", () =>
+  it.effect("separates downstream display branding from its stable runtime identity", () =>
     Effect.gen(function* () {
       const environment = yield* makeEnvironment({
         isPackaged: true,
@@ -49,10 +54,15 @@ describe("DesktopEnvironment", () => {
       assert.equal(environment.branding.displayName, "T3 Code (Fork Nightly)");
       assert.equal(environment.branding.stageLabel, "Nightly");
       assert.isTrue(environment.isDownstreamDistribution);
-      assert.equal(environment.userDataDirName, "T3 Code (Fork Nightly)");
+      assert.equal(environment.productName, "T3 Code (Fork)");
+      assert.equal(environment.userDataDirName, "T3 Code (Fork)");
+      assert.deepEqual(environment.legacyDownstreamUserDataDirNames, [
+        "T3 Code (Fork Nightly)",
+        "T3 Code (Fork Alpha)",
+      ]);
       assert.equal(
         environment.connectionCatalogPath,
-        "/Users/alice/.t3/userdata/connection-catalog.0054003300200043006f00640065002000280046006f0072006b0020004e0069006700680074006c00790029.json",
+        "/Users/alice/.t3/userdata/connection-catalog.fork-8e5b1a73152cf01c1ce614f31711fc4159e8ecc177cd4c02975ed0145b3d3d45.json",
       );
     }),
   );
@@ -71,8 +81,49 @@ describe("DesktopEnvironment", () => {
       );
       assert.isFalse(environment.isDownstreamDistribution);
       assert.equal(environment.userDataDirName, "t3code");
+      assert.equal(environment.productName, "T3 Code (Nightly)");
     }),
   );
+
+  it.effect("keeps downstream profile and catalog identity stable across update channels", () =>
+    Effect.gen(function* () {
+      const alpha = yield* makeEnvironment({
+        isPackaged: true,
+        appVersion: "0.0.38",
+        appName: "T3 Code (Fork)",
+      });
+      const nightly = yield* makeEnvironment({
+        isPackaged: true,
+        appVersion: "0.0.38-nightly.20260901.1",
+        appName: "T3 Code (Fork)",
+      });
+
+      assert.equal(alpha.userDataDirName, nightly.userDataDirName);
+      assert.equal(alpha.connectionCatalogPath, nightly.connectionCatalogPath);
+      assert.equal(alpha.productName, nightly.productName);
+      assert.notEqual(alpha.displayName, nightly.displayName);
+      assert.deepEqual(alpha.legacyDownstreamUserDataDirNames, [
+        "T3 Code (Fork Alpha)",
+        "T3 Code (Fork Nightly)",
+      ]);
+      assert.deepEqual(nightly.legacyDownstreamUserDataDirNames, [
+        "T3 Code (Fork Nightly)",
+        "T3 Code (Fork Alpha)",
+      ]);
+    }),
+  );
+
+  it("preserves an unrecognized packaged app name as its display name", () => {
+    const identity = DesktopEnvironment.currentDesktopAppIdentity({
+      isDevelopment: false,
+      isPackaged: true,
+      appVersion: "0.0.38-nightly.20260901.1",
+      appName: "Acme Code",
+    });
+
+    assert.equal(identity.productName, "Acme Code");
+    assert.equal(identity.displayName, "Acme Code");
+  });
 
   it.effect("derives state paths and development identity inside Effect", () =>
     Effect.gen(function* () {

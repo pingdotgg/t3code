@@ -3,6 +3,7 @@ import type { DesktopUpdateActionResult, DesktopUpdateState } from "@t3tools/con
 export type DesktopUpdateButtonAction = "download" | "install" | "none";
 
 const DEFAULT_DESKTOP_RELEASE_REPOSITORY = "pingdotgg/t3code";
+const DESKTOP_RELEASE_HISTORY_URL = "https://github.com/pingdotgg/t3code/releases";
 
 /**
  * The main process fills `downloadedVersion` from the updater's `update-downloaded`
@@ -22,6 +23,13 @@ export function getDesktopUpdateReleaseUrl(
   if (!normalizedVersion) return null;
   const releaseRepository = repository?.trim() || DEFAULT_DESKTOP_RELEASE_REPOSITORY;
   return `https://github.com/${releaseRepository}/releases/tag/v${encodeURIComponent(normalizedVersion)}`;
+}
+
+export function getDesktopUpdateReleaseHistoryUrl(repository: string | null = null): string {
+  const releaseRepository = repository?.trim();
+  return releaseRepository
+    ? `https://github.com/${releaseRepository}/releases`
+    : DESKTOP_RELEASE_HISTORY_URL;
 }
 
 export function resolveDesktopUpdateButtonAction(
@@ -122,11 +130,6 @@ export function getDesktopUpdateActionError(result: DesktopUpdateActionResult): 
 
 export function shouldToastDesktopUpdateActionResult(result: DesktopUpdateActionResult): boolean {
   return getDesktopUpdateActionError(result) !== null;
-}
-
-export function shouldHighlightDesktopUpdateError(state: DesktopUpdateState | null): boolean {
-  if (!state || state.status !== "error") return false;
-  return state.errorContext === "download" || state.errorContext === "install";
 }
 
 export function canCheckForUpdate(state: DesktopUpdateState | null): boolean {

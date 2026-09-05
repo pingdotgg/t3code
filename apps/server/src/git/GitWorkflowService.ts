@@ -43,7 +43,7 @@ export class GitWorkflowService extends Context.Service<
     ) => Effect.Effect<VcsStatusLocalResult, GitManagerServiceError>;
     readonly remoteStatus: (
       input: VcsStatusInput,
-      options?: GitVcsDriver.GitRemoteStatusOptions,
+      options?: GitManager.GitRemoteStatusOptions,
     ) => Effect.Effect<VcsStatusRemoteResult | null, GitManagerServiceError>;
     readonly invalidateLocalStatus: (cwd: string) => Effect.Effect<void, never>;
     readonly invalidateRemoteStatus: (cwd: string) => Effect.Effect<void, never>;
@@ -72,6 +72,11 @@ export class GitWorkflowService extends Context.Service<
     readonly remoteExists: (input: {
       readonly cwd: string;
       readonly remoteName: string;
+    }) => Effect.Effect<boolean, GitCommandError>;
+    readonly remoteBranchExists: (input: {
+      readonly cwd: string;
+      readonly remoteName: string;
+      readonly refName: string;
     }) => Effect.Effect<boolean, GitCommandError>;
     readonly resolveRemoteTrackingCommit: (input: {
       readonly cwd: string;
@@ -313,6 +318,10 @@ export const make = Effect.gen(function* () {
     remoteExists: (input) =>
       ensureGitCommand("GitWorkflowService.remoteExists", input.cwd).pipe(
         Effect.andThen(git.remoteExists(input)),
+      ),
+    remoteBranchExists: (input) =>
+      ensureGitCommand("GitWorkflowService.remoteBranchExists", input.cwd).pipe(
+        Effect.andThen(git.remoteBranchExists(input)),
       ),
     resolveRemoteTrackingCommit: (input) =>
       ensureGitCommand("GitWorkflowService.resolveRemoteTrackingCommit", input.cwd).pipe(

@@ -13,6 +13,7 @@ const {
   isDefaultProtocolClientMock,
   onMock,
   quitMock,
+  readFileMock,
   relaunchMock,
   removeListenerMock,
   removeSwitchMock,
@@ -35,6 +36,7 @@ const {
   isDefaultProtocolClientMock: vi.fn(() => false),
   onMock: vi.fn(),
   quitMock: vi.fn(),
+  readFileMock: vi.fn(() => Promise.resolve('{"name":"t3code"}')),
   relaunchMock: vi.fn(),
   removeListenerMock: vi.fn(),
   removeSwitchMock: vi.fn(),
@@ -46,6 +48,10 @@ const {
   setNameMock: vi.fn(),
   setPathMock: vi.fn(),
   whenReadyMock: vi.fn(() => Promise.resolve()),
+}));
+
+vi.mock("node:fs/promises", () => ({
+  readFile: readFileMock,
 }));
 
 vi.mock("electron", () => ({
@@ -93,6 +99,8 @@ describe("ElectronApp", () => {
     exitMock.mockClear();
     onMock.mockClear();
     quitMock.mockClear();
+    readFileMock.mockClear();
+    readFileMock.mockResolvedValue('{"name":"t3code"}');
     relaunchMock.mockClear();
     removeListenerMock.mockClear();
     removeSwitchMock.mockClear();
@@ -113,6 +121,47 @@ describe("ElectronApp", () => {
       });
     }).pipe(Effect.provide(ElectronApp.layer)),
   );
+
+  it.effect("reads the packaged desktop identity from package metadata", () => {
+    readFileMock.mockResolvedValueOnce(
+      JSON.stringify({
+        t3codeDesktopIdentity: {
+          appId: "com.t3tools.t3code.fork",
+          packageName: "t3code-fork",
+          productName: "T3 Code (Fork Nightly)",
+          displayName: "T3 Code (Fork Nightly Nightly)",
+          distributionName: "Fork Nightly",
+          distributionId: "fork-nightly",
+        },
+      }),
+    );
+
+    return Effect.gen(function* () {
+      const electronApp = yield* ElectronApp.ElectronApp;
+      const metadata = yield* electronApp.metadata;
+
+      assert.equal(metadata.packagedIdentity?.distributionName, "Fork Nightly");
+      assert.equal(metadata.packagedIdentity?.displayName, "T3 Code (Fork Nightly Nightly)");
+    }).pipe(Effect.provide(ElectronApp.layer));
+  });
+
+  it.effect("rejects malformed packaged desktop identity metadata", () => {
+    readFileMock.mockResolvedValueOnce(
+      JSON.stringify({
+        t3codeDesktopIdentity: {
+          appId: "",
+        },
+      }),
+    );
+
+    return Effect.gen(function* () {
+      const electronApp = yield* ElectronApp.ElectronApp;
+      const error = yield* electronApp.metadata.pipe(Effect.flip);
+
+      assert.instanceOf(error, ElectronApp.ElectronAppMetadataReadError);
+      assert.equal(error.property, "package-metadata");
+    }).pipe(Effect.provide(ElectronApp.layer));
+  });
 
   it.effect("reads the OS locale through the service", () =>
     Effect.gen(function* () {

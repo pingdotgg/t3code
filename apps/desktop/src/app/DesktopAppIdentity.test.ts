@@ -1,3 +1,4 @@
+import * as NodePath from "@effect/platform-node/NodePath";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -88,6 +89,7 @@ const makeEnvironmentLayer = (overrides: TestEnvironmentInput = {}) => {
     Layer.provide(
       Layer.mergeAll(
         NodeServices.layer,
+        NodePath.layerPosix,
         DesktopConfig.layerTest({
           ...env,
         }),
@@ -109,6 +111,7 @@ const withIdentity = <A, E, R>(
     readonly calls?: ElectronAppCalls;
     readonly environment?: TestEnvironmentInput;
     readonly legacyPathExists?: boolean;
+    readonly existingUserDataDirName?: string;
     readonly legacyPathProbeError?: PlatformError.PlatformError;
     readonly packageJson?: string;
     readonly pngIconPath?: Option.Option<string>;
@@ -129,7 +132,8 @@ const withIdentity = <A, E, R>(
               input.legacyPathProbeError
                 ? Effect.fail(input.legacyPathProbeError)
                 : Effect.succeed(
-                    input.legacyPathExists === true && path.includes("T3 Code (Alpha)"),
+                    input.legacyPathExists === true &&
+                      path.endsWith(input.existingUserDataDirName ?? "T3 Code (Alpha)"),
                   ),
             readFileString: () =>
               Effect.succeed(input.packageJson ?? '{"t3codeCommitHash":"abcdef1234567890"}'),
@@ -189,13 +193,30 @@ describe("DesktopAppIdentity", () => {
         const identity = yield* DesktopAppIdentity.DesktopAppIdentity;
         const userDataPath = yield* identity.resolveUserDataPath;
 
+        assert.equal(userDataPath, "/Users/alice/Library/Application Support/T3 Code (Fork)");
+      }),
+      {
+        legacyPathExists: true,
+        environment: {
+          appName: "T3 Code (Fork Nightly)",
+          appVersion: "0.0.38-nightly.20260901.1243",
+        },
+      },
+    ),
+  );
+
+  it.effect("uses an existing stage-named downstream profile during identity migration", () =>
+    withIdentity(
+      Effect.gen(function* () {
+        const identity = yield* DesktopAppIdentity.DesktopAppIdentity;
         assert.equal(
-          userDataPath,
-          "/Users/alice/Library/Application Support/T3 Code (Fork Nightly)",
+          yield* identity.resolveUserDataPath,
+          "/Users/alice/Library/Application Support/T3 Code (Fork Alpha)",
         );
       }),
       {
         legacyPathExists: true,
+        existingUserDataDirName: "T3 Code (Fork Alpha)",
         environment: {
           appName: "T3 Code (Fork Nightly)",
           appVersion: "0.0.38-nightly.20260901.1243",
