@@ -132,6 +132,28 @@ const CODEX_PROVIDER = ProviderDriverKind.make("codex");
 export const CODEX_DRIVER_KIND = CODEX_PROVIDER;
 export const CODEX_DEFAULT_INSTANCE_ID = defaultInstanceIdForDriver(CODEX_DRIVER_KIND);
 
+/** Describe approval scope even when Codex omits or blanks the optional reason. */
+export function codexFileChangeApprovalPrompt(input: {
+  readonly reason?: string | null;
+  readonly grantRoot?: string | null;
+  readonly fileChanges?: CodexSchema.ServerRequest__ApplyPatchApprovalParams["fileChanges"];
+}): string | undefined {
+  const reason = input.reason?.trim();
+  if (reason) return reason;
+  const entries = Object.entries(input.fileChanges ?? {}).toSorted(([left], [right]) =>
+    left.localeCompare(right),
+  );
+  if (entries.length > 0) {
+    const described = entries.slice(0, 20).map(([path, change]) => {
+      const movePath = change.type === "update" ? change.move_path : undefined;
+      return movePath ? `${change.type} ${path} -> ${movePath}` : `${change.type} ${path}`;
+    });
+    const remaining = entries.length - described.length;
+    return remaining > 0 ? `${described.join("\n")}\n+${remaining} more` : described.join("\n");
+  }
+  return input.grantRoot?.trim() || undefined;
+}
+
 export function codexProviderTurnTokenUsage(
   tokenUsage: CodexSchema.V2ThreadTokenUsageUpdatedNotification["tokenUsage"],
   updatedAt: string,
@@ -4094,7 +4116,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               nativeItemId: payload.itemId,
               nativeRequestId: payload.itemId,
               requestKind: "file-change",
-              ...(payload.reason === undefined ? {} : { prompt: payload.reason }),
+              prompt: codexFileChangeApprovalPrompt(payload) ?? null,
             });
             const decision = yield* Deferred.make<ProviderApprovalDecision, never>();
             yield* Ref.update(pendingRuntimeRequests, (current) => {
@@ -4359,7 +4381,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               nativeItemId: payload.callId,
               nativeRequestId: payload.callId,
               requestKind: "file-change",
-              prompt: payload.reason ?? Object.keys(payload.fileChanges).join(", "),
+              prompt: codexFileChangeApprovalPrompt(payload) ?? null,
             });
             const decision = yield* Deferred.make<ProviderApprovalDecision, never>();
             yield* Ref.update(pendingRuntimeRequests, (current) => {

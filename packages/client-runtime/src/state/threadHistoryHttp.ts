@@ -2,13 +2,12 @@ import type { ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
+import type { RemoteEnvironmentAuthorization } from "../authorization/service.ts";
 import type { PreparedConnection } from "../connection/model.ts";
 import { environmentEndpointUrl } from "../environment/endpoint.ts";
 import { ManagedRelayDpopSigner } from "../relay/managedRelay.ts";
-import { executeEnvironmentHttpRequest, makeEnvironmentHttpApiClient } from "../rpc/http.ts";
 import {
-  buildEnvironmentAuthHeaders,
-  withEnvironmentCredentials,
+  executeAuthenticatedEnvironmentHttpRequest,
   withOrchestrationProtocolHeader,
 } from "./environmentHttpAuth.ts";
 
@@ -21,29 +20,20 @@ export const fetchEnvironmentThreadHistoryPage = Effect.fn(
   readonly threadId: ThreadId;
   readonly cursor: string;
   readonly signer: Option.Option<ManagedRelayDpopSigner["Service"]>;
+  readonly remoteAuthorization?: Option.Option<RemoteEnvironmentAuthorization["Service"]>;
   readonly timeoutMs?: number;
 }) {
-  const requestUrl = environmentEndpointUrl(
-    input.prepared.httpBaseUrl,
-    `/api/orchestration/threads/${input.threadId}/history`,
-  );
-  const client = yield* makeEnvironmentHttpApiClient(input.prepared.httpBaseUrl);
-  const headers = yield* buildEnvironmentAuthHeaders(
-    input.prepared.httpAuthorization,
-    "GET",
-    requestUrl,
-    input.signer,
-  );
-  return yield* executeEnvironmentHttpRequest(
-    requestUrl,
-    input.timeoutMs ?? DEFAULT_THREAD_HISTORY_TIMEOUT_MS,
-    withEnvironmentCredentials(
-      input.prepared.httpAuthorization,
+  return yield* executeAuthenticatedEnvironmentHttpRequest({
+    ...input,
+    method: "GET",
+    url: (httpBaseUrl) =>
+      environmentEndpointUrl(httpBaseUrl, `/api/orchestration/threads/${input.threadId}/history`),
+    timeoutMs: input.timeoutMs ?? DEFAULT_THREAD_HISTORY_TIMEOUT_MS,
+    request: ({ client, headers }) =>
       client.orchestration.threadHistoryPage({
         params: { threadId: input.threadId },
         query: { cursor: input.cursor },
         headers: withOrchestrationProtocolHeader(headers),
       }),
-    ),
-  );
+  });
 });

@@ -220,6 +220,7 @@ import { useClientSettingsHydrated, useEnvironmentSettings } from "../hooks/useS
 import { useNowMinute } from "../hooks/useNowMinute";
 import { usePanelAnimationSettings, usePanelPresence } from "../panelAnimations";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
+import { useOpenPanelPullRequestUrl } from "../hooks/useOpenPanelPullRequestUrl";
 import { resolveAppModelSelectionForInstance } from "../modelSelection";
 import { deriveLatestContextWindowSnapshot } from "../lib/contextWindow";
 import { getTerminalFocusOwner } from "../lib/terminalFocus";
@@ -5216,7 +5217,7 @@ export default function ChatView(props: ChatViewProps) {
 
   const onToolOutputCollapsedAtEnd = useCallback(() => {
     composerRef.current?.restoreAfterTimelineReachedEnd();
-  }, []);
+  }, [composerRef]);
 
   const onIsAtEndChange = useCallback((isAtEnd: boolean) => {
     if (
@@ -5490,16 +5491,24 @@ export default function ChatView(props: ChatViewProps) {
       threadRepository,
     ],
   );
+  const openPanelPullRequestUrl = useOpenPanelPullRequestUrl(activeThreadRef);
   const activeThreadReferenceCopyTarget = useMemo(
     () =>
       activeThreadId === null || !isServerThread
         ? null
         : resolveThreadReferenceCopyTarget({
             threadId: activeThreadId,
+            openPanelPullRequestUrl,
             linkedPullRequestUrl: linkedThreadPullRequest?.url ?? null,
             detectedPullRequestUrl: activeThreadPr?.url ?? null,
           }),
-    [activeThreadId, activeThreadPr?.url, isServerThread, linkedThreadPullRequest?.url],
+    [
+      activeThreadId,
+      activeThreadPr?.url,
+      isServerThread,
+      linkedThreadPullRequest?.url,
+      openPanelPullRequestUrl,
+    ],
   );
   const copyActiveThreadReference = useCallback(() => {
     const target = activeThreadReferenceCopyTarget;
