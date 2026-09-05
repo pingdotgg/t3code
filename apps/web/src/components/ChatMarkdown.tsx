@@ -370,19 +370,36 @@ function meaningfulHastChildren(node: MarkdownImageHastNode): MarkdownImageHastN
  * in a sentence — stay inline at their natural size, since a placeholder taller
  * than the image would move the page more than the image itself does.
  */
-function markStandaloneImages(node: MarkdownImageHastNode) {
+/** Containers whose sole child image reads as a figure rather than part of a sentence. */
+const STANDALONE_IMAGE_BLOCKS = new Set([
+  "p",
+  "div",
+  "li",
+  "td",
+  "th",
+  "figure",
+  "center",
+  "blockquote",
+]);
+
+function soleImageDescendant(node: MarkdownImageHastNode): MarkdownImageHastNode | undefined {
   const children = meaningfulHastChildren(node);
-  // Only a block can make its image standalone; a link that wraps an image
-  // is still inline content of whatever block holds the link.
-  if (children.length === 1 && node.tagName !== "a") {
-    let only = children[0];
-    if (only?.type === "element" && only.tagName === "a") {
-      const linkChildren = meaningfulHastChildren(only);
-      only = linkChildren.length === 1 ? linkChildren[0] : undefined;
-    }
-    if (only?.type === "element" && only.tagName === "img") {
-      only.properties = { ...only.properties, dataStandalone: true };
-    }
+  if (children.length !== 1) return undefined;
+  const only = children[0];
+  if (only?.type !== "element") return undefined;
+  if (only.tagName === "img") return only;
+  // A link, emphasis, or similar inline wrapper around the image still counts
+  // as long as nothing else shares the block.
+  return only.tagName === "a" || only.tagName === "strong" || only.tagName === "em"
+    ? soleImageDescendant(only)
+    : undefined;
+}
+
+function markStandaloneImages(node: MarkdownImageHastNode) {
+  // A raw `<img>` on its own line reaches the root without a paragraph.
+  if (node.type === "root" || (node.tagName && STANDALONE_IMAGE_BLOCKS.has(node.tagName))) {
+    const image = soleImageDescendant(node);
+    if (image) image.properties = { ...image.properties, dataStandalone: true };
   }
   node.children?.forEach((child) => {
     if (child.type === "element") markStandaloneImages(child);

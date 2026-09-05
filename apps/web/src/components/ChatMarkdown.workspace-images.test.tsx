@@ -231,10 +231,15 @@ describe("ChatMarkdown workspace images", () => {
     expect(html).toContain("aspect-video");
   });
 
-  it("keeps a linked image inline when text shares its line", () => {
-    const html = render("Figure: [![shot](.t3/workspace-image.svg)](https://example.com)");
+  it.each([
+    ["a link", "Figure: [![shot](.t3/workspace-image.svg)](https://example.com)"],
+    ["emphasis", "**![shot](.t3/workspace-image.svg)** caption"],
+  ])("keeps an image wrapped in %s inline when text shares its block", (_wrapper, markdown) => {
+    expect(render(markdown)).not.toContain("aspect-video");
+  });
 
-    expect(html).not.toContain("aspect-video");
+  it("reserves a slot for an image that is alone in a list item", () => {
+    expect(render("- ![shot](.t3/workspace-image.svg)")).toContain("aspect-video");
   });
 
   it("retains an authored SVG fragment on the signed URL", () => {
