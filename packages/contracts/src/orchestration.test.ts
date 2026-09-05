@@ -41,6 +41,10 @@ const decodeProjectCreatedPayload = Schema.decodeUnknownEffect(ProjectCreatedPay
 const decodeProjectMetaUpdatedPayload = Schema.decodeUnknownEffect(ProjectMetaUpdatedPayload);
 const decodeThreadTurnStartCommand = Schema.decodeUnknownEffect(ThreadTurnStartCommand);
 const decodeClientOrchestrationCommand = Schema.decodeUnknownEffect(ClientOrchestrationCommand);
+const encodeUnknownJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
+const decodeClientOrchestrationCommandJson = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(ClientOrchestrationCommand),
+);
 const decodeOrchestrationMessage = Schema.decodeUnknownEffect(OrchestrationMessage);
 const decodeThreadMessageSentPayload = Schema.decodeUnknownEffect(ThreadMessageSentPayload);
 const decodeThreadTurnStartRequestedPayload = Schema.decodeUnknownEffect(
@@ -235,7 +239,7 @@ it.effect("preserves optional composer provenance across client and internal com
       undefined,
       { ranges: [] },
       { ranges: [[0, 5]], leadingWhitespace: " \n" },
-    ]) {
+    ] as const) {
       const command = {
         type: "thread.turn.start",
         commandId: "recall-command",
@@ -251,7 +255,8 @@ it.effect("preserves optional composer provenance across client and internal com
         },
         createdAt: "2026-09-05T00:00:00Z",
       };
-      const client = yield* decodeClientOrchestrationCommand(JSON.parse(JSON.stringify(command)));
+      const json = yield* encodeUnknownJson(command);
+      const client = yield* decodeClientOrchestrationCommandJson(json);
       assert.strictEqual(client.type, "thread.turn.start");
       if (client.type !== "thread.turn.start") return;
       const persisted = yield* decodeThreadTurnStartCommand(client);
