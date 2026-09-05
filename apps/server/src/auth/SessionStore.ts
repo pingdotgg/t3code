@@ -535,6 +535,16 @@ export const make = Effect.gen(function* () {
       );
     });
 
+  const setLastConnectedAtNow = (sessionId: AuthSessionId) =>
+    DateTime.now.pipe(
+      Effect.flatMap((lastConnectedAt) =>
+        authSessions.setLastConnectedAt({
+          sessionId,
+          lastConnectedAt,
+        }),
+      ),
+    );
+
   const markConnected: SessionStore["Service"]["markConnected"] = (sessionId) =>
     Ref.modify(connectedSessionsRef, (current) => {
       const next = new Map(current);
@@ -543,16 +553,7 @@ export const make = Effect.gen(function* () {
       return [wasDisconnected, next] as const;
     }).pipe(
       Effect.flatMap((wasDisconnected) =>
-        wasDisconnected
-          ? DateTime.now.pipe(
-              Effect.flatMap((lastConnectedAt) =>
-                authSessions.setLastConnectedAt({
-                  sessionId,
-                  lastConnectedAt,
-                }),
-              ),
-            )
-          : Effect.void,
+        wasDisconnected ? setLastConnectedAtNow(sessionId) : Effect.void,
       ),
       Effect.flatMap(() => loadActiveSession(sessionId)),
       Effect.flatMap((session) =>
@@ -592,7 +593,7 @@ export const make = Effect.gen(function* () {
           );
 
   const markDisconnected: SessionStore["Service"]["markDisconnected"] = (sessionId) =>
-    Ref.update(connectedSessionsRef, (current) => {
+    Ref.modify(connectedSessionsRef, (current) => {
       const next = new Map(current);
       const remaining = (next.get(sessionId) ?? 0) - 1;
       if (remaining > 0) {
@@ -600,8 +601,11 @@ export const make = Effect.gen(function* () {
       } else {
         next.delete(sessionId);
       }
-      return next;
+      return [remaining === 0, next] as const;
     }).pipe(
+      Effect.flatMap((becameDisconnected) =>
+        becameDisconnected ? setLastConnectedAtNow(sessionId) : Effect.void,
+      ),
       Effect.flatMap(() => loadActiveSession(sessionId)),
       Effect.flatMap((session) =>
         Option.isSome(session) ? emitUpsert(session.value) : emitRemoved(sessionId),
