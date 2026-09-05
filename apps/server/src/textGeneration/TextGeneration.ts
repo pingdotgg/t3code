@@ -1,12 +1,27 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import type { ChatAttachment, ModelSelection, ProviderInstanceId } from "@t3tools/contracts";
+import {
+  ProviderDriverKind,
+  type ChatAttachment,
+  type ModelSelection,
+  type ProviderInstanceId,
+} from "@t3tools/contracts";
 import { TextGenerationError } from "@t3tools/contracts";
 
 import * as ProviderInstanceRegistry from "../provider/Services/ProviderInstanceRegistry.ts";
 import type { ProviderInstance } from "../provider/ProviderDriver.ts";
 import type { TextGenerationPolicy } from "./TextGenerationPolicy.ts";
+
+const CODEX_DRIVER_KIND = ProviderDriverKind.make("codex");
+
+export function findAvailableCodexInstance(
+  instances: ReadonlyArray<ProviderInstance>,
+): ProviderInstance | undefined {
+  return instances.find(
+    (instance) => instance.enabled && instance.driverKind === CODEX_DRIVER_KIND,
+  );
+}
 
 export type TextGenerationProvider = "codex" | "claudeAgent" | "cursor" | "grok" | "opencode";
 
@@ -73,6 +88,17 @@ export interface ThreadTitleGenerationResult {
   title: string;
 }
 
+export interface HandoverGenerationInput {
+  cwd: string;
+  threadContents: string;
+  /** The handover action supplies GPT-5.6 Luna with high reasoning explicitly. */
+  modelSelection: ModelSelection;
+}
+
+export interface HandoverGenerationResult {
+  handover: string;
+}
+
 /**
  * TextGeneration - Service tag for commit and change request text generation.
  */
@@ -104,6 +130,11 @@ export class TextGeneration extends Context.Service<
     readonly generateThreadTitle: (
       input: ThreadTitleGenerationInput,
     ) => Effect.Effect<ThreadTitleGenerationResult, TextGenerationError>;
+
+    /** Generate the compact continuation document for an oversized thread. */
+    readonly generateHandover: (
+      input: HandoverGenerationInput,
+    ) => Effect.Effect<HandoverGenerationResult, TextGenerationError>;
   }
 >()("t3/textGeneration/TextGeneration") {}
 
@@ -111,7 +142,8 @@ type TextGenerationOp =
   | "generateCommitMessage"
   | "generatePrContent"
   | "generateBranchName"
-  | "generateThreadTitle";
+  | "generateThreadTitle"
+  | "generateHandover";
 
 const resolveInstance = (
   registry: ProviderInstanceRegistry.ProviderInstanceRegistry["Service"],
@@ -151,6 +183,20 @@ export const makeTextGenerationFromRegistry = (
       resolveInstance(registry, "generateThreadTitle", input.modelSelection.instanceId).pipe(
         Effect.flatMap((textGeneration) => textGeneration.generateThreadTitle(input)),
       ),
+    generateHandover: (input) =>
+      resolveInstance(registry, "generateHandover", input.modelSelection.instanceId).pipe(
+        Effect.flatMap((textGeneration) => textGeneration.generateHandover(input)),
+      ),
+  });
+
+export const unsupportedHandoverGeneration = (
+  provider: TextGenerationProvider | "antigravity",
+): TextGeneration["Service"]["generateHandover"] =>
+  Effect.fn(`${provider}.generateHandover.unsupported`)(function* () {
+    return yield* new TextGenerationError({
+      operation: "generateHandover",
+      detail: `${provider} does not support handover generation.`,
+    });
   });
 
 export const make = Effect.gen(function* () {

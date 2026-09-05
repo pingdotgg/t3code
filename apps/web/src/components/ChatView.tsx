@@ -48,7 +48,10 @@ import {
 } from "@t3tools/shared/model";
 import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
 import { truncate } from "@t3tools/shared/String";
-import { resolveThreadReferenceCopyTarget } from "@t3tools/shared/threadReference";
+import {
+  resolveThreadReferenceCopyTarget,
+  threadHandoverSourceKey,
+} from "@t3tools/shared/threadReference";
 import {
   getTerminalLabel,
   nextTerminalId,
@@ -67,6 +70,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
 } from "react";
 import { flushSync } from "react-dom";
 import { useLocation, useNavigate } from "@tanstack/react-router";
@@ -221,6 +225,7 @@ import {
   useEnvironmentSettings,
 } from "../hooks/useSettings";
 import { useNowMinute } from "../hooks/useNowMinute";
+import { contextWindowReachedThreadLimit } from "../lib/contextWindow";
 import { usePanelAnimationSettings, usePanelPresence } from "../panelAnimations";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import { useOpenPanelPullRequestUrl } from "../hooks/useOpenPanelPullRequestUrl";
@@ -333,6 +338,7 @@ import {
   useLinkedThreadPullRequest,
 } from "./ThreadStatusIndicators";
 import type { ComposerBannerStackItem } from "./chat/ComposerBannerStack";
+import { buildContextLimitBannerItem } from "./chat/ContextLimitBanner";
 import { ComposerSurface } from "./chat/ComposerSurface";
 import {
   hasAvailableCompactionProvider,
@@ -446,12 +452,14 @@ import {
   supportsServerUpdateThreadContinuation,
 } from "../versionSkew";
 import { useAssetUrls } from "../assets/assetUrls";
+import { createPendingHandoverStore } from "../pendingHandoverStore";
 import { ATTACHMENT_ONLY_BOOTSTRAP_PROMPT } from "./chat/composerPromptHistory";
 
 const EMPTY_ACTIVITIES: OrchestrationThreadActivity[] = [];
 const EMPTY_PROVIDERS: ServerProvider[] = [];
 const EMPTY_PROVIDER_SKILLS: ServerProvider["skills"] = [];
 const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
+const pendingThreadHandovers = createPendingHandoverStore();
 function useDraftHeroLayoutTransition(isDraftHeroState: boolean) {
   const transitionGroupRef = useRef<HTMLDivElement | null>(null);
   const composerAnchorRef = useRef<HTMLDivElement | null>(null);
@@ -1377,6 +1385,18 @@ export default function ChatView(props: ChatViewProps) {
     [environmentId, threadId],
   );
   const routeThreadKey = useMemo(() => scopedThreadKey(routeThreadRef), [routeThreadRef]);
+  const routeHandoverKey = useMemo(
+    () => threadHandoverSourceKey(routeThreadRef.environmentId, routeThreadRef.threadId),
+    [routeThreadRef],
+  );
+  const routeHandoverKeyRef = useRef<string | null>(routeHandoverKey);
+  routeHandoverKeyRef.current = routeHandoverKey;
+  useEffect(() => {
+    routeHandoverKeyRef.current = routeHandoverKey;
+    return () => {
+      routeHandoverKeyRef.current = null;
+    };
+  }, [routeHandoverKey]);
   const updateProject = useAtomCommand(projectEnvironment.update, { reportFailure: false });
   const upsertKeybinding = useAtomCommand(serverEnvironment.upsertKeybinding, {
     reportFailure: false,
@@ -1385,6 +1405,9 @@ export default function ChatView(props: ChatViewProps) {
   const writeTerminal = useAtomCommand(terminalEnvironment.write, "terminal write");
   const closeTerminalMutation = useAtomCommand(terminalEnvironment.close, "terminal close");
   const createThread = useAtomCommand(threadEnvironment.create, { reportFailure: false });
+  const generateThreadHandover = useAtomCommand(threadEnvironment.generateHandover, {
+    reportFailure: false,
+  });
   const deleteThread = useAtomCommand(threadEnvironment.delete, { reportFailure: false });
   const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
@@ -2540,6 +2563,9 @@ export default function ChatView(props: ChatViewProps) {
     () => deriveLatestContextWindowSnapshot(threadActivities),
     [threadActivities],
   );
+  const activeThreadReachedContextLimit =
+    serverConfig !== null &&
+    contextWindowReachedThreadLimit(activeContextWindow, settings.threadContextTokenLimit);
   const workLogEntries = useMemo(() => deriveWorkLogEntries(threadActivities), [threadActivities]);
   // Native subagent fold: memoized by activity-list identity, shared by the
   // Agents surface, live strip, and workflow cards. v2Projection is null
@@ -5440,6 +5466,157 @@ export default function ChatView(props: ChatViewProps) {
     handleStopBackgroundWork,
     isStoppingBackgroundWork,
   ]);
+  useSyncExternalStore(
+    pendingThreadHandovers.subscribe,
+    pendingThreadHandovers.getVersion,
+    pendingThreadHandovers.getVersion,
+  );
+  const activeThreadHandoverKey = activeThread
+    ? threadHandoverSourceKey(activeThread.environmentId, activeThread.id)
+    : null;
+  const isGeneratingHandover = activeThreadHandoverKey
+    ? pendingThreadHandovers.isGenerating(activeThreadHandoverKey)
+    : false;
+  const pendingHandoverAttempt = activeThreadHandoverKey
+    ? pendingThreadHandovers.get(activeThreadHandoverKey)
+    : undefined;
+  const handleGenerateHandover = useCallback(async () => {
+    if (
+      !activeThread ||
+      !activeProject ||
+      !isServerThread ||
+      !activeThreadReachedContextLimit ||
+      isGeneratingHandover ||
+      activeThreadHandoverKey === null
+    ) {
+      return;
+    }
+    const sourceThreadKey = activeThreadHandoverKey;
+    if (pendingThreadHandovers.isGenerating(sourceThreadKey)) return;
+    pendingThreadHandovers.setGenerating(sourceThreadKey, true);
+    try {
+      let attempt = pendingThreadHandovers.get(sourceThreadKey);
+      if (attempt === undefined) {
+        const result = await generateThreadHandover({
+          environmentId: activeThread.environmentId,
+          input: { threadId: activeThread.id },
+        });
+        if (result._tag === "Failure") {
+          if (!isAtomCommandInterrupted(result)) {
+            const error = squashAtomCommandFailure(result);
+            toastManager.add(
+              stackedThreadToast({
+                type: "error",
+                title: "Could not create handover",
+                description: error instanceof Error ? error.message : "Handover generation failed.",
+              }),
+            );
+          }
+          return;
+        }
+        attempt = { handover: result.value.handover };
+        pendingThreadHandovers.save(sourceThreadKey, attempt);
+      }
+      const handoverAttempt = attempt;
+      const handover = handoverAttempt.handover;
+
+      if (routeHandoverKeyRef.current !== sourceThreadKey) {
+        return;
+      }
+
+      const opened = await handleNewThread(
+        scopeProjectRef(activeThread.environmentId, activeProject.id),
+        {
+          branch: activeThread.branch,
+          worktreePath: activeThread.worktreePath,
+          envMode: activeThread.worktreePath ? "worktree" : "local",
+          startFromOrigin: false,
+          initialPrompt: handover,
+          ...(handoverAttempt.draftId === undefined
+            ? {}
+            : { reopenDraftId: handoverAttempt.draftId }),
+          onDraftReady: (draftId) => {
+            pendingThreadHandovers.save(sourceThreadKey, { ...handoverAttempt, draftId });
+          },
+        },
+      );
+      if (opened === null) {
+        try {
+          await writeTextToClipboard(handover, "thread handover");
+          toastManager.add(
+            stackedThreadToast({
+              type: "info",
+              title: "Handover saved",
+              description:
+                "The draft could not be opened, so the handover was copied to your clipboard. Try again from this thread.",
+            }),
+          );
+        } catch (error) {
+          throw new Error(
+            "The replacement draft could not be opened and the handover could not be copied.",
+            {
+              cause: error,
+            },
+          );
+        }
+        return;
+      }
+      pendingThreadHandovers.delete(sourceThreadKey);
+    } catch (error) {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Could not create handover",
+          description: error instanceof Error ? error.message : "Handover generation failed.",
+        }),
+      );
+    } finally {
+      pendingThreadHandovers.setGenerating(sourceThreadKey, false);
+    }
+  }, [
+    activeProject,
+    activeThread,
+    activeThreadReachedContextLimit,
+    activeThreadHandoverKey,
+    generateThreadHandover,
+    handleNewThread,
+    isGeneratingHandover,
+    isServerThread,
+  ]);
+  const contextLimitBannerItem = useMemo<ComposerBannerStackItem | null>(() => {
+    if (!activeThreadReachedContextLimit || !activeThread) return null;
+    const supportsGeneration =
+      activeProject !== null &&
+      serverConfig?.environment.capabilities.threadHandoverGeneration === true;
+    return buildContextLimitBannerItem({
+      threadId: activeThread.id,
+      tokenLimit: settings.threadContextTokenLimit,
+      canChangeTokenLimit: primaryEnvironment?.environmentId === environmentId,
+      supportsGeneration,
+      isGeneratingHandover,
+      hasSavedHandover: pendingHandoverAttempt !== undefined,
+      onChangeTokenLimit: () => {
+        void navigate({
+          to: "/settings/general",
+          hash: "thread-context-token-limit",
+          hashScrollIntoView: false,
+        });
+      },
+      onGenerateHandover: () => void handleGenerateHandover(),
+    });
+  }, [
+    activeThread,
+    activeThreadReachedContextLimit,
+    activeProject,
+    environmentId,
+    handleGenerateHandover,
+    isGeneratingHandover,
+    pendingHandoverAttempt,
+    navigate,
+    primaryEnvironment?.environmentId,
+    serverConfig?.environment.capabilities.threadHandoverGeneration,
+    settings.threadContextTokenLimit,
+  ]);
   // A woken thread announces itself in the open view, not just the sidebar
   // pill. Dismissing marks the wake as seen (same acknowledgment as the
   // pill); sending a message clears it as a side effect of the send path.
@@ -5512,6 +5689,7 @@ export default function ChatView(props: ChatViewProps) {
     ) ?? false;
   const compactThreadUnavailable =
     !activeThread ||
+    activeThreadReachedContextLimit ||
     !activeThreadHasCompactableConversation ||
     !activeProject ||
     !isServerThread ||
@@ -5526,13 +5704,15 @@ export default function ChatView(props: ChatViewProps) {
     showPlanFollowUpPrompt;
   const compactDisabled = compactThreadUnavailable || composerHasUnsentContent;
   const compactDisabledReason = compactDisabled
-    ? composerHasUnsentContent
-      ? "Send or clear your draft before compacting"
-      : !activeProject
-        ? "Choose a project before compacting"
-        : !manualCompactionProviderAvailable
-          ? "Compaction is unavailable for this provider"
-          : "Compacting is unavailable right now"
+    ? activeThreadReachedContextLimit
+      ? "Thread token limit reached. Hand over to a new thread"
+      : composerHasUnsentContent
+        ? "Send or clear your draft before compacting"
+        : !activeProject
+          ? "Choose a project before compacting"
+          : !manualCompactionProviderAvailable
+            ? "Compaction is unavailable for this provider"
+            : "Compacting is unavailable right now"
     : null;
   const resumeCompactionBannerItem = useMemo<ComposerBannerStackItem | null>(() => {
     if (
@@ -5615,8 +5795,10 @@ export default function ChatView(props: ChatViewProps) {
       resumeCompactionBannerItem === null ? [] : [resumeCompactionBannerItem];
     const wokeThreadItems = wokeThreadBannerItem === null ? [] : [wokeThreadBannerItem];
     const parkedThreadItems = parkedThreadBannerItem === null ? [] : [parkedThreadBannerItem];
+    const contextLimitItems = contextLimitBannerItem === null ? [] : [contextLimitBannerItem];
     if (!localCheckoutBranchMismatch || !showBranchMismatchBanner || !activeBranchMismatchKey) {
       return [
+        ...contextLimitItems,
         ...systemComposerBannerItems,
         ...backgroundLivenessItems,
         ...resumeCompactionItems,
@@ -5625,6 +5807,7 @@ export default function ChatView(props: ChatViewProps) {
       ];
     }
     return [
+      ...contextLimitItems,
       ...systemComposerBannerItems,
       ...backgroundLivenessItems,
       ...resumeCompactionItems,
@@ -5672,6 +5855,7 @@ export default function ChatView(props: ChatViewProps) {
   }, [
     activeBranchMismatchKey,
     backgroundLivenessBannerItem,
+    contextLimitBannerItem,
     handleRestoreThreadBranch,
     isRestoringThreadBranch,
     localCheckoutBranchMismatch,
@@ -7958,9 +8142,11 @@ export default function ChatView(props: ChatViewProps) {
                             sendDisabledReason={
                               feedbackUploading
                                 ? "Sending feedback"
-                                : threadDetailLoading
-                                  ? "Messages loading"
-                                  : null
+                                : activeThreadReachedContextLimit && activePendingProgress === null
+                                  ? "Thread token limit reached"
+                                  : threadDetailLoading
+                                    ? "Messages loading"
+                                    : null
                             }
                             isPreparingWorktree={isPreparingWorktree}
                             bannerItems={composerBannerItems}

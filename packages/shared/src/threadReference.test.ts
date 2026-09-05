@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { resolveThreadReferenceCopyTarget } from "./threadReference.ts";
+import { resolveThreadReferenceCopyTarget, threadHandoverSourceKey } from "./threadReference.ts";
 
 describe("resolveThreadReferenceCopyTarget", () => {
   it("does not copy another reference while the open panel URL is unavailable", () => {
@@ -63,5 +63,11 @@ describe("resolveThreadReferenceCopyTarget", () => {
       successTitle: "Thread ID copied",
       failureTitle: "Failed to copy thread ID",
     });
+  });
+});
+
+describe("threadHandoverSourceKey", () => {
+  it("keeps opaque environment and thread IDs unambiguous", () => {
+    expect(threadHandoverSourceKey("a:b", "c")).not.toBe(threadHandoverSourceKey("a", "b:c"));
   });
 });

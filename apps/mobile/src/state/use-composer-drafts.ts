@@ -1092,6 +1092,7 @@ export function mergeComposerDraftContentState(
   current: Record<string, ComposerDraft>,
   draftKey: string,
   content: ComposerDraftContent,
+  settings?: Partial<ComposerDraftSettingsUpdate>,
 ): Record<string, ComposerDraft> {
   const existing = normalizeDraft(current[draftKey]);
   if (content.sourceShareId && existing.importedShareIds?.includes(content.sourceShareId)) {
@@ -1114,6 +1115,7 @@ export function mergeComposerDraftContentState(
     ? [...(existing.importedShareIds ?? []), content.sourceShareId]
     : existing.importedShareIds;
   if (
+    settings === undefined &&
     text === existing.text &&
     attachments.length === existing.attachments.length &&
     importedShareIds === existing.importedShareIds
@@ -1127,17 +1129,20 @@ export function mergeComposerDraftContentState(
       text,
       attachments,
       ...(importedShareIds ? { importedShareIds } : {}),
+      ...settings,
     },
   };
 }
 
 /**
- * Atomically moves an incoming share into a project-scoped composer draft.
- * The durable write happens before the share inbox item can be acknowledged.
+ * Atomically merges incoming content, its receipt, and optional destination
+ * settings into a project-scoped composer draft. The durable write happens
+ * before the share inbox item can be acknowledged.
  */
 export async function mergeComposerDraftContent(
   draftKey: string,
   content: ComposerDraftContent,
+  settings?: Partial<ComposerDraftSettingsUpdate>,
 ): Promise<{ readonly skippedAttachmentCount: number }> {
   ensureComposerDraftsLoaded();
   if (loadPromise !== null) {
@@ -1148,7 +1153,7 @@ export async function mergeComposerDraftContent(
     persistTimer = null;
   }
   const current = appAtomRegistry.get(composerDraftsAtom);
-  const next = mergeComposerDraftContentState(current, draftKey, content);
+  const next = mergeComposerDraftContentState(current, draftKey, content, settings);
   const currentAttachmentIds = new Set(
     normalizeDraft(current[draftKey]).attachments.map((attachment) => attachment.id),
   );

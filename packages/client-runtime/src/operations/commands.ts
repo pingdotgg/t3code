@@ -1,6 +1,7 @@
 import {
   CommandId,
   ORCHESTRATION_WS_METHODS,
+  type OrchestrationGenerateHandoverInput,
   type ClientOrchestrationCommand,
 } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
@@ -53,6 +54,7 @@ export type RevertThreadCheckpointInput = CommandInput<"thread.checkpoint.revert
 export type StopThreadSessionInput = CommandInput<"thread.session.stop">;
 
 type DispatchTag = typeof ORCHESTRATION_WS_METHODS.dispatchCommand;
+type GenerateHandoverTag = typeof ORCHESTRATION_WS_METHODS.generateHandover;
 type CommandEffect = Effect.Effect<
   EnvironmentRpcSuccess<DispatchTag>,
   EnvironmentRpcFailure<DispatchTag> | EnvironmentRpcUnavailableError,
@@ -85,6 +87,13 @@ function timestampedCommandMetadata(input: {
 function dispatch(command: ClientOrchestrationCommand) {
   return request(ORCHESTRATION_WS_METHODS.dispatchCommand, command);
 }
+
+export const generateThreadHandover = (input: OrchestrationGenerateHandoverInput) =>
+  request(ORCHESTRATION_WS_METHODS.generateHandover, input) satisfies Effect.Effect<
+    EnvironmentRpcSuccess<GenerateHandoverTag>,
+    EnvironmentRpcFailure<GenerateHandoverTag> | EnvironmentRpcUnavailableError,
+    EnvironmentSupervisor
+  >;
 
 export const createProject: (input: CreateProjectInput) => CommandEffect = Effect.fn(
   "EnvironmentCommands.createProject",

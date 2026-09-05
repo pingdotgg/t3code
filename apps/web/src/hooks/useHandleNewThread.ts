@@ -77,6 +77,12 @@ export function useNewThreadHandler() {
         envMode?: DraftThreadEnvMode;
         startFromOrigin?: boolean;
         replace?: boolean;
+        /** Written before navigation so the composer cannot mount an empty draft. */
+        initialPrompt?: string;
+        /** Reopens a draft retained by a caller after its first navigation failed. */
+        reopenDraftId?: DraftId;
+        /** Runs after draft registration and prompt initialization, before navigation. */
+        onDraftReady?: (draftId: DraftId) => void;
       },
       // Which draft the thread ended up in, so a caller that has something to put in it — a
       // prepared checkout, a task to write — addresses that one rather than looking the project
@@ -92,7 +98,17 @@ export function useNewThreadHandler() {
         setDraftThreadContext,
         setLogicalProjectDraftThreadId,
         setModelSelection,
+        setPrompt,
       } = useComposerDraftStore.getState();
+      const writeInitialPrompt = (draftId: DraftId) => {
+        if (options?.initialPrompt !== undefined) {
+          setPrompt(draftId, options.initialPrompt);
+        }
+      };
+      const prepareDraft = (draftId: DraftId) => {
+        writeInitialPrompt(draftId);
+        options?.onDraftReady?.(draftId);
+      };
       const requestingRouteHref = router.state.location.href;
       const routeChangedSinceRequest = () => router.state.location.href !== requestingRouteHref;
       const currentRouteTarget = getCurrentRouteTarget();
@@ -163,6 +179,35 @@ export function useNewThreadHandler() {
       const logicalProjectKey = project
         ? deriveLogicalProjectKeyFromSettings(project, projectGroupingSettings)
         : scopedProjectKey(projectRef);
+      const reopenDraftId = options?.reopenDraftId;
+      const reopenDraft = reopenDraftId === undefined ? null : getDraftSession(reopenDraftId);
+      if (
+        reopenDraftId !== undefined &&
+        reopenDraft !== null &&
+        reopenDraft.logicalProjectKey === logicalProjectKey &&
+        reopenDraft.promotedTo == null &&
+        readThreadShell(scopeThreadRef(reopenDraft.environmentId, reopenDraft.threadId)) === null
+      ) {
+        // A failed navigation already initialized this exact draft. Preserve
+        // any edits made since; only a cleared draft needs its prompt restored.
+        if (!composerDraftHasUserContent(getComposerDraft(reopenDraftId))) {
+          writeInitialPrompt(reopenDraftId);
+        }
+        options?.onDraftReady?.(reopenDraftId);
+        if (currentRouteTarget?.kind === "draft" && currentRouteTarget.draftId === reopenDraftId) {
+          return Promise.resolve({
+            draftId: reopenDraftId,
+            threadId: reopenDraft.threadId,
+          });
+        }
+        return router
+          .navigate({
+            to: "/draft/$draftId",
+            params: { draftId: reopenDraftId },
+            replace: options?.replace ?? false,
+          })
+          .then(() => ({ draftId: reopenDraftId, threadId: reopenDraft.threadId }));
+      }
       const hasBranchOption = options?.branch !== undefined;
       const hasWorktreePathOption = options?.worktreePath !== undefined;
       const hasEnvModeOption = options?.envMode !== undefined;
@@ -306,6 +351,7 @@ export function useNewThreadHandler() {
             draftId: emptyStoredDraftThread.draftId,
             threadId: emptyStoredDraftThread.threadId,
           };
+          prepareDraft(opened.draftId);
           // Re-read the route: the snapshot from before the await is stale
           // once a concurrent invocation's navigation lands, and navigating
           // again would push a duplicate history entry.
@@ -349,6 +395,7 @@ export function useNewThreadHandler() {
           interactionMode: latestActiveDraftThread.interactionMode,
           ...pickExplicitWorkspaceOptions(options),
         });
+        prepareDraft(currentRouteTarget.draftId);
         return Promise.resolve({
           draftId: currentRouteTarget.draftId,
           threadId: latestActiveDraftThread.threadId,
@@ -377,6 +424,13 @@ export function useNewThreadHandler() {
           racedDraft.draftId !== storedDraftThread?.draftId &&
           readThreadShell(scopeThreadRef(racedDraft.environmentId, racedDraft.threadId)) === null
         ) {
+          // A caller-specific prompt belongs to this invocation, not to the
+          // winner that registered while defaults were loading. Report the
+          // collision so the caller can retain/recover its payload instead of
+          // treating an untouched winner as a successful delivery.
+          if (options?.initialPrompt !== undefined) {
+            return null;
+          }
           // Same remap the reuse paths above perform: point the draft at the
           // caller's project member and apply explicit workspace options if
           // the caller passed any. Without explicit options the winner's
@@ -421,6 +475,7 @@ export function useNewThreadHandler() {
           // state. The project default wins when both are present.
           setModelSelection(draftId, modelSelectionOverride, { replaceOptions: true });
         }
+        prepareDraft(draftId);
         await router.navigate({
           to: "/draft/$draftId",
           params: { draftId },

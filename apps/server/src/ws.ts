@@ -30,6 +30,7 @@ import {
   type GitActionProgressEvent,
   type GitManagerServiceError,
   OrchestrationDispatchCommandError,
+  OrchestrationGenerateHandoverError,
   type OrchestrationEvent,
   type OrchestrationShellStreamEvent,
   type OrchestrationShellStreamItem,
@@ -148,9 +149,16 @@ import * as VcsDriverRegistry from "./vcs/VcsDriverRegistry.ts";
 import * as VcsProjectConfig from "./vcs/VcsProjectConfig.ts";
 import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
 import * as SessionStore from "./auth/SessionStore.ts";
+import {
+  formatThreadForHandover,
+  makeHandoverModelSelection,
+} from "./orchestration/ThreadHandover.ts";
+import * as UsageLimitReservations from "./orchestration/UsageLimitReservations.ts";
+import * as TextGeneration from "./textGeneration/TextGeneration.ts";
 import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
 import * as RelayClient from "@t3tools/shared/relayClient";
 const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchCommandError);
+const isOrchestrationGenerateHandoverError = Schema.is(OrchestrationGenerateHandoverError);
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 const CONFIG_DISCOVERY_TIMEOUT = Duration.seconds(5);
@@ -516,6 +524,8 @@ const makeWsRpcLayer = (
       const portDiscovery = yield* PortScanner.PortDiscovery;
       const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
       const providerService = yield* ProviderService.ProviderService;
+      const textGeneration = yield* TextGeneration.TextGeneration;
+      const usageLimitReservations = yield* UsageLimitReservations.UsageLimitReservations;
       const providerSessionDirectory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
       const providerMaintenanceRunner = yield* ProviderMaintenanceRunner.ProviderMaintenanceRunner;
       const providerAuth = yield* ProviderAuthService;
@@ -1357,6 +1367,79 @@ const makeWsRpcLayer = (
                   ? cause
                   : new OrchestrationDispatchCommandError({
                       message: "Failed to dispatch orchestration command",
+                      cause,
+                    }),
+              ),
+            ),
+            { "rpc.aggregate": "orchestration" },
+          ),
+        [ORCHESTRATION_WS_METHODS.generateHandover]: ({ threadId }) =>
+          observeRpcEffect(
+            ORCHESTRATION_WS_METHODS.generateHandover,
+            Effect.gen(function* () {
+              const thread = yield* projectionSnapshotQuery.getThreadDetailById(threadId).pipe(
+                Effect.flatMap(
+                  Option.match({
+                    onNone: () =>
+                      Effect.fail(
+                        new OrchestrationGenerateHandoverError({
+                          message: `Thread '${threadId}' was not found.`,
+                        }),
+                      ),
+                    onSome: Effect.succeed,
+                  }),
+                ),
+              );
+              const project = yield* projectionSnapshotQuery
+                .getProjectShellById(thread.projectId)
+                .pipe(
+                  Effect.flatMap(
+                    Option.match({
+                      onNone: () =>
+                        Effect.fail(
+                          new OrchestrationGenerateHandoverError({
+                            message: `Project '${thread.projectId}' was not found.`,
+                          }),
+                        ),
+                      onSome: Effect.succeed,
+                    }),
+                  ),
+                );
+              const codexInstance = TextGeneration.findAvailableCodexInstance(
+                yield* providerInstances.listInstances,
+              );
+              if (!codexInstance) {
+                return yield* Effect.fail(
+                  new OrchestrationGenerateHandoverError({
+                    message: "No enabled Codex provider is available for handover generation.",
+                  }),
+                );
+              }
+              const reservationKey = `handover:${threadId}`;
+              const usageLimitViolation = yield* usageLimitReservations.reserveHandover({
+                key: reservationKey,
+                threadId,
+              });
+              if (usageLimitViolation) {
+                return yield* Effect.fail(
+                  new OrchestrationGenerateHandoverError({
+                    message: usageLimitViolation.detail,
+                  }),
+                );
+              }
+              return yield* textGeneration
+                .generateHandover({
+                  cwd: thread.worktreePath ?? project.workspaceRoot,
+                  threadContents: formatThreadForHandover(thread),
+                  modelSelection: makeHandoverModelSelection(codexInstance.instanceId),
+                })
+                .pipe(Effect.ensuring(usageLimitReservations.release(reservationKey)));
+            }).pipe(
+              Effect.mapError((cause) =>
+                isOrchestrationGenerateHandoverError(cause)
+                  ? cause
+                  : new OrchestrationGenerateHandoverError({
+                      message: "Failed to generate a thread handover.",
                       cause,
                     }),
               ),

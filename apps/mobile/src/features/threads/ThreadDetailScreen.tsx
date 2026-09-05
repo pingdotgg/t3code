@@ -119,6 +119,9 @@ export interface ThreadDetailScreenProps {
   readonly threadCwd: string | null;
   readonly selectedThreadQueueCount: number;
   readonly serverConfig: T3ServerConfig | null;
+  readonly contextLimitReached: boolean;
+  readonly isGeneratingHandover: boolean;
+  readonly onGenerateHandover?: () => void;
   readonly layoutVariant?: LayoutVariant;
   readonly usesAutomaticContentInsets?: boolean;
   readonly onHeaderMaterialVisibilityChange?: (visible: boolean) => void;
@@ -614,6 +617,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   ]);
 
   const handleSendMessage = useCallback(async () => {
+    if (props.contextLimitReached) return null;
     const targetThreadKey = selectedThreadKey;
     const hasUserMessage = selectedThreadFeed.some(
       (entry) => entry.type === "message" && entry.message.role === "user",
@@ -637,6 +641,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
     return messageId;
   }, [
     anchorMessageId,
+    props.contextLimitReached,
     props.onSendMessage,
     props.selectedThread.latestTurn,
     props.selectedThreadQueueCount,
@@ -835,6 +840,9 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                   selectedThread={props.selectedThread}
                   hasCompactableConversation={hasCompactableConversation && !props.isCompacting}
                   serverConfig={props.serverConfig}
+                  contextLimitReached={props.contextLimitReached}
+                  isGeneratingHandover={props.isGeneratingHandover}
+                  onGenerateHandover={props.onGenerateHandover}
                   queueCount={props.selectedThreadQueueCount}
                   environmentId={props.environmentId}
                   projectCwd={props.threadCwd ?? props.projectWorkspaceRoot}

@@ -264,5 +264,6 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
     generatePrContent,
     generateBranchName,
     generateThreadTitle,
+    generateHandover: TextGeneration.unsupportedHandoverGeneration("cursor"),
   } satisfies TextGeneration.TextGeneration["Service"];
 });
