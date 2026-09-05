@@ -1,5 +1,6 @@
 import type {
   DesktopBridge,
+  DesktopThreadDeepLinkPayload,
   DesktopPreviewPointerEvent,
   DesktopPreviewRecordingFrame,
   DesktopPreviewTabState,
@@ -128,6 +129,62 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     ipcRenderer.on(IpcChannels.MENU_ACTION_CHANNEL, wrappedListener);
     return () => {
       ipcRenderer.removeListener(IpcChannels.MENU_ACTION_CHANNEL, wrappedListener);
+    };
+  },
+  onDeepLink: (listener) => {
+    let active = true;
+    const parsePayload = (payload: unknown): DesktopThreadDeepLinkPayload | null => {
+      if (typeof payload !== "object" || payload === null) return null;
+      const { environmentId, threadId } = payload as {
+        environmentId?: unknown;
+        threadId?: unknown;
+      };
+      if (typeof environmentId !== "string" || typeof threadId !== "string") return null;
+      return { environmentId, threadId };
+    };
+    const deliver = (payload: unknown) => {
+      if (!active) return;
+      const parsed = parsePayload(payload);
+      if (parsed !== null) listener(parsed);
+    };
+    const wrappedListener = (_event: Electron.IpcRendererEvent, payload: unknown) => {
+      deliver(payload);
+    };
+
+    ipcRenderer.on(IpcChannels.DEEP_LINK_CHANNEL, wrappedListener);
+    // Handshake: registering tells the main process this renderer is ready
+    // for pushes, and returns the link buffered while no renderer was
+    // (cold start) — or null.
+    ipcRenderer
+      .invoke(IpcChannels.DEEP_LINK_SUBSCRIBE_CHANNEL)
+      .then((result) => {
+        const response =
+          typeof result === "object" && result !== null && "payload" in result
+            ? (result as { payload?: unknown; generation?: unknown })
+            : { payload: result, generation: null };
+        if (active) {
+          deliver(response.payload);
+          return;
+        }
+        const parsed = parsePayload(response.payload);
+        if (parsed !== null && typeof response.generation === "number") {
+          ipcRenderer
+            .invoke(IpcChannels.DEEP_LINK_REQUEUE_CHANNEL, {
+              payload: parsed,
+              generation: response.generation,
+            })
+            .catch(() => undefined);
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+      ipcRenderer.removeListener(IpcChannels.DEEP_LINK_CHANNEL, wrappedListener);
+      // Tell the main process to drop this renderer from the push registry.
+      // The webContents stays alive across a route unmount or reload, so
+      // without this a link would be pushed to a listener that no longer
+      // exists and lost instead of buffered for the next subscriber.
+      ipcRenderer.invoke(IpcChannels.DEEP_LINK_UNSUBSCRIBE_CHANNEL).catch(() => undefined);
     };
   },
   onQuitShortcut: (listener) => {

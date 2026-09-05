@@ -70,6 +70,7 @@ function makeElectronWindowLayer(destroyAll: Effect.Effect<void> = Effect.void) 
     setMain: () => Effect.void,
     clearMain: () => Effect.void,
     reveal: () => Effect.void,
+    fromWebContentsId: () => Effect.die("unexpected webContents lookup"),
     sendAll: () => Effect.void,
     destroyAll,
     syncAllAppearance: () => Effect.void,
