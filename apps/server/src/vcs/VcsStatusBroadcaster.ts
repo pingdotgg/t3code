@@ -6,8 +6,10 @@ import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
+import * as Result from "effect/Result";
 import * as Schedule from "effect/Schedule";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
@@ -26,8 +28,11 @@ import { mergeGitStatusParts } from "@t3tools/shared/git";
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import * as GitHeadWatcher from "./GitHeadWatcher.ts";
 
 const DEFAULT_VCS_STATUS_REFRESH_INTERVAL = Duration.seconds(30);
+const LOCAL_WATCH_RESTART_DELAY = Duration.seconds(1);
+const LOCAL_WATCH_MAX_RESTART_DELAY = Duration.seconds(30);
 const VCS_STATUS_REFRESH_FAILURE_BASE_DELAY = Duration.seconds(30);
 const VCS_STATUS_REFRESH_FAILURE_MAX_DELAY = Duration.minutes(15);
 const MAX_FAILURE_DIAGNOSTIC_VALUES = 8;
@@ -126,8 +131,12 @@ interface CachedValue<T> {
   readonly value: T;
 }
 
+interface CachedLocalStatus extends CachedValue<VcsStatusLocalResult> {
+  readonly readOrder: number;
+}
+
 interface CachedVcsStatus {
-  readonly local: CachedValue<VcsStatusLocalResult> | null;
+  readonly local: CachedLocalStatus | null;
   readonly remote: CachedValue<VcsStatusRemoteResult | null> | null;
 }
 
@@ -135,6 +144,12 @@ interface ActiveRemotePoller {
   readonly fiber: Fiber.Fiber<void, never>;
   readonly subscriberCount: number;
   readonly demandCwds: Ref.Ref<ReadonlyMap<string, number>>;
+}
+
+interface ActiveLocalWatcher {
+  readonly fiber: Fiber.Fiber<void, never>;
+  readonly subscriberCount: number;
+  readonly statusLock: Semaphore.Semaphore;
 }
 
 interface StreamStatusOptions {
@@ -213,8 +228,10 @@ const normalizeCwd = (cwd: string) =>
 export const make = Effect.gen(function* () {
   const autoPullPolicy = yield* VcsAutoPullPolicy;
   const workflow = yield* GitWorkflowService.GitWorkflowService;
+  const headWatcher = yield* GitHeadWatcher.GitHeadWatcher;
   const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
   const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
   const changesPubSub = yield* Effect.acquireRelease(
     PubSub.unbounded<VcsStatusChange>(),
     (pubsub) => PubSub.shutdown(pubsub),
@@ -236,6 +253,7 @@ export const make = Effect.gen(function* () {
     return lock.withPermits(1)(effect);
   };
   const pollersRef = yield* SynchronizedRef.make(new Map<string, ActiveRemotePoller>());
+  const localWatchersRef = yield* SynchronizedRef.make(new Map<string, ActiveLocalWatcher>());
 
   const getCachedStatus = Effect.fn("VcsStatusBroadcaster.getCachedStatus")(function* (
     cwd: string,
@@ -243,20 +261,40 @@ export const make = Effect.gen(function* () {
     return yield* Ref.get(cacheRef).pipe(Effect.map((cache) => cache.get(cwd) ?? null));
   });
 
+  // Order reads when they start, but advance the cache only after success. A slow
+  // local read or remote refresh must not replace a newer completed HEAD refresh.
+  let localReadOrder = 0;
+  const readLocalStatus = Effect.fn("VcsStatusBroadcaster.readLocalStatus")(function* (
+    cwd: string,
+  ) {
+    const readOrder = ++localReadOrder;
+    const value = yield* workflow.localStatus({ cwd });
+    return {
+      readOrder,
+      value,
+      fingerprint: fingerprintStatusPart(value),
+    } satisfies CachedLocalStatus;
+  });
+
   const updateCachedLocalStatus = Effect.fn("VcsStatusBroadcaster.updateCachedLocalStatus")(
-    function* (cwd: string, local: VcsStatusLocalResult, options?: { publish?: boolean }) {
-      const nextLocal = {
-        fingerprint: fingerprintStatusPart(local),
-        value: local,
-      } satisfies CachedValue<VcsStatusLocalResult>;
-      const shouldPublish = yield* Ref.modify(cacheRef, (cache) => {
+    function* (cwd: string, nextLocal: CachedLocalStatus, options?: { publish?: boolean }) {
+      const { local, shouldPublish } = yield* Ref.modify(cacheRef, (cache) => {
         const previous = cache.get(cwd) ?? { local: null, remote: null };
+        if (previous.local && previous.local.readOrder > nextLocal.readOrder) {
+          return [{ local: previous.local.value, shouldPublish: false }, cache] as const;
+        }
         const nextCache = new Map(cache);
         nextCache.set(cwd, {
           ...previous,
           local: nextLocal,
         });
-        return [previous.local?.fingerprint !== nextLocal.fingerprint, nextCache] as const;
+        return [
+          {
+            local: nextLocal.value,
+            shouldPublish: previous.local?.fingerprint !== nextLocal.fingerprint,
+          },
+          nextCache,
+        ] as const;
       });
 
       if (options?.publish && shouldPublish) {
@@ -305,28 +343,48 @@ export const make = Effect.gen(function* () {
 
   const updateCachedStatus = Effect.fn("VcsStatusBroadcaster.updateCachedStatus")(function* (
     cwd: string,
-    local: VcsStatusLocalResult,
-    remote: VcsStatusRemoteResult | null,
+    proposedLocal: CachedLocalStatus,
+    proposedRemote: VcsStatusRemoteResult | null,
     options?: { publish?: boolean },
   ) {
-    const nextLocal = {
-      fingerprint: fingerprintStatusPart(local),
-      value: local,
-    } satisfies CachedValue<VcsStatusLocalResult>;
     const nextRemote = {
-      fingerprint: fingerprintStatusPart(remote),
-      value: remote,
+      fingerprint: fingerprintStatusPart(proposedRemote),
+      value: proposedRemote,
     } satisfies CachedValue<VcsStatusRemoteResult | null>;
-    const shouldPublish = yield* Ref.modify(cacheRef, (cache) => {
+    const { local, remote, shouldPublish } = yield* Ref.modify(cacheRef, (cache) => {
       const previous = cache.get(cwd) ?? { local: null, remote: null };
+      // Remote data from an older ref must not be paired with a newer HEAD result.
+      if (
+        previous.local &&
+        previous.local.readOrder > proposedLocal.readOrder &&
+        previous.local.value.refName !== proposedLocal.value.refName
+      ) {
+        return [
+          {
+            local: previous.local.value,
+            remote: previous.remote?.value ?? null,
+            shouldPublish: false,
+          },
+          cache,
+        ] as const;
+      }
+      const nextLocal =
+        previous.local && previous.local.readOrder > proposedLocal.readOrder
+          ? previous.local
+          : proposedLocal;
       const nextCache = new Map(cache);
       nextCache.set(cwd, {
         local: nextLocal,
         remote: nextRemote,
       });
       return [
-        previous.local?.fingerprint !== nextLocal.fingerprint ||
-          previous.remote?.fingerprint !== nextRemote.fingerprint,
+        {
+          local: nextLocal.value,
+          remote: proposedRemote,
+          shouldPublish:
+            previous.local?.fingerprint !== nextLocal.fingerprint ||
+            previous.remote?.fingerprint !== nextRemote.fingerprint,
+        },
         nextCache,
       ] as const;
     });
@@ -342,13 +400,13 @@ export const make = Effect.gen(function* () {
       });
     }
 
-    return mergeGitStatusParts(local, remote);
+    return { local, remote };
   });
 
   const loadLocalStatus = Effect.fn("VcsStatusBroadcaster.loadLocalStatus")(function* (
     cwd: string,
   ) {
-    const local = yield* workflow.localStatus({ cwd });
+    const local = yield* readLocalStatus(cwd);
     return yield* updateCachedLocalStatus(cwd, local);
   });
 
@@ -378,12 +436,13 @@ export const make = Effect.gen(function* () {
         const latest = yield* getCachedStatus(cwd);
         const [local, remote] = yield* Effect.all(
           [
-            latest?.local ? Effect.succeed(latest.local.value) : workflow.localStatus({ cwd }),
+            latest?.local ? Effect.succeed(latest.local) : readLocalStatus(cwd),
             latest?.remote ? Effect.succeed(latest.remote.value) : workflow.remoteStatus({ cwd }),
           ],
           { concurrency: "unbounded" },
         );
-        return yield* updateCachedStatus(cwd, local, remote);
+        const updated = yield* updateCachedStatus(cwd, local, remote);
+        return mergeGitStatusParts(updated.local, updated.remote);
       }),
     );
   });
@@ -391,7 +450,7 @@ export const make = Effect.gen(function* () {
   const refreshLocalStatusCore = Effect.fn("VcsStatusBroadcaster.refreshLocalStatusCore")(
     function* (cwd: string) {
       yield* workflow.invalidateLocalStatus(cwd);
-      const local = yield* workflow.localStatus({ cwd });
+      const local = yield* readLocalStatus(cwd);
       return yield* updateCachedLocalStatus(cwd, local, { publish: true });
     },
   );
@@ -401,6 +460,161 @@ export const make = Effect.gen(function* () {
   )(function* (rawCwd) {
     const cwd = yield* withFileSystem(normalizeCwd(rawCwd));
     return yield* refreshLocalStatusCore(cwd);
+  });
+
+  const prepareLocalWatcher = Effect.fn("VcsStatusBroadcaster.prepareLocalWatcher")(function* (
+    cwd: string,
+  ) {
+    const initialWatchPath = yield* workflow.localStatusWatchPath({ cwd }).pipe(Effect.result);
+    if (Result.isSuccess(initialWatchPath) && initialWatchPath.success === null) {
+      return null;
+    }
+
+    const statusLock = yield* Semaphore.make(1);
+    let restartDelay = LOCAL_WATCH_RESTART_DELAY;
+    const refreshSafely = refreshLocalStatusCore(cwd).pipe(
+      statusLock.withPermits(1),
+      Effect.ignoreCause({ log: true }),
+      Effect.asVoid,
+    );
+    const watchPath = Effect.fn("VcsStatusBroadcaster.watchLocalStatusPath")(function* (
+      rawHeadPath: string | null,
+    ) {
+      if (rawHeadPath === null) return;
+
+      const headPath = path.isAbsolute(rawHeadPath) ? rawHeadPath : path.resolve(cwd, rawHeadPath);
+      const headDirectory = path.dirname(headPath);
+      const headFileName = path.basename(headPath);
+      const events = yield* headWatcher.acquire(headDirectory);
+      yield* refreshSafely;
+      yield* Stream.runForEach(
+        events.pipe(
+          Stream.filter((eventPath) => {
+            return (
+              eventPath === null ||
+              eventPath === headPath ||
+              eventPath === headFileName ||
+              path.resolve(headDirectory, eventPath) === headPath
+            );
+          }),
+          Stream.debounce(Duration.millis(50)),
+        ),
+        () =>
+          Effect.gen(function* () {
+            restartDelay = LOCAL_WATCH_RESTART_DELAY;
+            yield* refreshSafely;
+          }),
+      );
+    }, Effect.scoped);
+    const runWatchAttempt = Effect.fn("VcsStatusBroadcaster.runLocalStatusWatchAttempt")(function* <
+      E,
+      R,
+    >(attempt: Effect.Effect<void, E, R>) {
+      const [elapsed] = yield* attempt.pipe(
+        Effect.catch((error) =>
+          Effect.logWarning("Git HEAD watcher failed; restarting", {
+            cwdLength: cwd.length,
+            failureTag: diagnosticValueTag(error),
+            failureOperation: diagnosticFailureOperation(error),
+          }),
+        ),
+        Effect.timed,
+      );
+      if (Duration.isGreaterThanOrEqualTo(elapsed, LOCAL_WATCH_MAX_RESTART_DELAY)) {
+        restartDelay = LOCAL_WATCH_RESTART_DELAY;
+      }
+    });
+    const firstWatchAttempt = Effect.fromResult(initialWatchPath).pipe(Effect.flatMap(watchPath));
+    const nextWatchAttempt = workflow.localStatusWatchPath({ cwd }).pipe(Effect.flatMap(watchPath));
+
+    return {
+      statusLock,
+      run: Effect.gen(function* () {
+        yield* runWatchAttempt(firstWatchAttempt);
+        while (true) {
+          yield* Effect.sleep(restartDelay);
+          restartDelay = Duration.min(
+            Duration.times(restartDelay, 2),
+            LOCAL_WATCH_MAX_RESTART_DELAY,
+          );
+          yield* runWatchAttempt(nextWatchAttempt);
+        }
+      }),
+    };
+  });
+
+  const retainLocalWatcher = Effect.fn("VcsStatusBroadcaster.retainLocalWatcher")(function* (
+    cwd: string,
+  ) {
+    const retainedExisting = yield* SynchronizedRef.modify(localWatchersRef, (activeWatchers) => {
+      const existing = activeWatchers.get(cwd);
+      if (!existing) {
+        return [null, activeWatchers] as const;
+      }
+
+      const nextWatchers = new Map(activeWatchers);
+      nextWatchers.set(cwd, {
+        ...existing,
+        subscriberCount: existing.subscriberCount + 1,
+      });
+      return [existing.statusLock, nextWatchers] as const;
+    });
+    if (retainedExisting) {
+      return retainedExisting;
+    }
+
+    const watcher = yield* prepareLocalWatcher(cwd);
+    if (watcher === null) {
+      return null;
+    }
+
+    return yield* SynchronizedRef.modifyEffect(localWatchersRef, (activeWatchers) => {
+      const existing = activeWatchers.get(cwd);
+      if (existing) {
+        const nextWatchers = new Map(activeWatchers);
+        nextWatchers.set(cwd, {
+          ...existing,
+          subscriberCount: existing.subscriberCount + 1,
+        });
+        return Effect.succeed([existing.statusLock, nextWatchers] as const);
+      }
+
+      return watcher.run.pipe(
+        Effect.forkIn(broadcasterScope, { startImmediately: true }),
+        Effect.map((fiber) => {
+          const nextWatchers = new Map(activeWatchers);
+          nextWatchers.set(cwd, { fiber, subscriberCount: 1, statusLock: watcher.statusLock });
+          return [watcher.statusLock, nextWatchers] as const;
+        }),
+      );
+    });
+  });
+
+  const releaseLocalWatcher = Effect.fn("VcsStatusBroadcaster.releaseLocalWatcher")(function* (
+    cwd: string,
+  ) {
+    const watcherToInterrupt = yield* SynchronizedRef.modify(localWatchersRef, (activeWatchers) => {
+      const existing = activeWatchers.get(cwd);
+      if (!existing) {
+        return [null, activeWatchers] as const;
+      }
+      if (existing.subscriberCount > 1) {
+        const nextWatchers = new Map(activeWatchers);
+        nextWatchers.set(cwd, {
+          ...existing,
+          subscriberCount: existing.subscriberCount - 1,
+        });
+        return [null, nextWatchers] as const;
+      }
+      return [
+        existing.fiber,
+        new Map([...activeWatchers].filter(([activeCwd]) => activeCwd !== cwd)),
+      ] as const;
+    });
+
+    if (watcherToInterrupt) {
+      yield* Fiber.interrupt(watcherToInterrupt).pipe(Effect.ignore);
+    }
   });
 
   const maybeAutoPull = Effect.fn("VcsStatusBroadcaster.maybeAutoPull")(function* (
@@ -429,11 +643,10 @@ export const make = Effect.gen(function* () {
       yield* workflow.pullCurrentBranch(cwd);
       yield* workflow.invalidateStatus(cwd);
       const [refreshedLocal, refreshedRemote] = yield* Effect.all(
-        [workflow.localStatus({ cwd }), workflow.remoteStatus({ cwd }, { refreshUpstream: false })],
+        [readLocalStatus(cwd), workflow.remoteStatus({ cwd }, { refreshUpstream: false })],
         { concurrency: "unbounded" },
       );
-      yield* updateCachedStatus(cwd, refreshedLocal, refreshedRemote, { publish: true });
-      return { local: refreshedLocal, remote: refreshedRemote };
+      return yield* updateCachedStatus(cwd, refreshedLocal, refreshedRemote, { publish: true });
     }).pipe(
       Effect.catch(() =>
         Effect.logWarning("Automatic project pull failed", { cwd }).pipe(Effect.as(null)),
@@ -473,12 +686,13 @@ export const make = Effect.gen(function* () {
       Effect.gen(function* () {
         yield* workflow.invalidateStatus(cwd);
         const [local, remote] = yield* Effect.all(
-          [workflow.localStatus({ cwd }), workflow.remoteStatus({ cwd })],
+          [readLocalStatus(cwd), workflow.remoteStatus({ cwd })],
           { concurrency: "unbounded" },
         );
         const pulled = yield* maybeAutoPull(cwd, remote, [rawCwd]);
         if (pulled !== null) return mergeGitStatusParts(pulled.local, pulled.remote);
-        return yield* updateCachedStatus(cwd, local, remote, { publish: true });
+        const updated = yield* updateCachedStatus(cwd, local, remote, { publish: true });
+        return mergeGitStatusParts(updated.local, updated.remote);
       }),
     );
   });
@@ -691,18 +905,31 @@ export const make = Effect.gen(function* () {
       Effect.gen(function* () {
         const cwd = yield* withFileSystem(normalizeCwd(input.cwd));
         const subscription = yield* PubSub.subscribe(changesPubSub);
-        const initialLocal = yield* getOrLoadLocalStatus(cwd);
+        let initialLocal = yield* getOrLoadLocalStatus(cwd);
+        const localWatchStatusLock = yield* Effect.acquireRelease(
+          retainLocalWatcher(cwd),
+          (lock) => (lock === null ? Effect.void : releaseLocalWatcher(cwd)),
+        );
+        if (localWatchStatusLock) {
+          initialLocal = yield* localWatchStatusLock.withPermits(1)(
+            Effect.gen(function* () {
+              yield* workflow.invalidateLocalStatus(cwd);
+              return yield* loadLocalStatus(cwd);
+            }),
+          );
+        }
         const cachedStatus = yield* getCachedStatus(cwd);
         const initialRemote = cachedStatus?.remote?.value ?? null;
-        yield* retainRemotePoller(
-          cwd,
-          input.cwd,
-          options?.automaticRemoteRefreshInterval ??
-            Effect.succeed(DEFAULT_VCS_STATUS_REFRESH_INTERVAL),
-          cachedStatus?.remote === null || cachedStatus?.remote === undefined,
+        yield* Effect.acquireRelease(
+          retainRemotePoller(
+            cwd,
+            input.cwd,
+            options?.automaticRemoteRefreshInterval ??
+              Effect.succeed(DEFAULT_VCS_STATUS_REFRESH_INTERVAL),
+            cachedStatus?.remote === null || cachedStatus?.remote === undefined,
+          ),
+          () => releaseRemotePoller(cwd, input.cwd),
         );
-
-        const release = releaseRemotePoller(cwd, input.cwd).pipe(Effect.ignore, Effect.asVoid);
 
         return Stream.concat(
           Stream.make({
@@ -714,7 +941,7 @@ export const make = Effect.gen(function* () {
             Stream.filter((event) => event.cwd === cwd),
             Stream.map((event) => event.event),
           ),
-        ).pipe(Stream.ensuring(release));
+        );
       }),
     );
 

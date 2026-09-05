@@ -245,6 +245,7 @@ export class GitVcsDriver extends Context.Service<
       cwd: string,
       options?: GitRemoteStatusOptions,
     ) => Effect.Effect<GitRemoteStatusDetails, GitCommandError>;
+    readonly resolveHeadPath: (cwd: string) => Effect.Effect<string | null, GitCommandError>;
     readonly prepareCommitContext: (
       cwd: string,
       filePaths?: readonly string[],

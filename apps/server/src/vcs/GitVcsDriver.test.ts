@@ -112,3 +112,33 @@ it.effect("GitVcsDriver forwards execute env to the VCS process", () => {
     ),
   );
 });
+
+it.effect("resolves the checkout HEAD from root, nested, and linked-worktree directories", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const driver = yield* GitVcsDriver.GitVcsDriver;
+    const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-head-path-" });
+    const repo = path.join(root, "repo");
+    const nested = path.join(repo, "src");
+    const worktree = path.join(root, "linked");
+    yield* fileSystem.makeDirectory(nested, { recursive: true });
+    yield* runGit(repo, ["init", "-b", "main"]);
+    yield* runGit(repo, ["config", "user.name", "Test"]);
+    yield* runGit(repo, ["config", "user.email", "test@example.com"]);
+    yield* runGit(repo, ["commit", "--allow-empty", "-m", "fixture"]);
+    yield* runGit(repo, ["worktree", "add", "-b", "feature/linked", worktree]);
+
+    for (const cwd of [repo, nested, worktree]) {
+      const rawHeadPath = yield* driver.resolveHeadPath(cwd);
+      assert.isNotNull(rawHeadPath);
+      const headPath = path.resolve(cwd, rawHeadPath!);
+      const contents = yield* fileSystem.readFileString(headPath);
+      assert.equal(
+        contents.trim(),
+        cwd === worktree ? "ref: refs/heads/feature/linked" : "ref: refs/heads/main",
+      );
+      if (cwd !== worktree) assert.equal(headPath, path.join(repo, ".git", "HEAD"));
+    }
+  }).pipe(Effect.provide(GitContractLayer)),
+);

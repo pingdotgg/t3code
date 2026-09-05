@@ -152,6 +152,7 @@ import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import * as VcsDriver from "./vcs/VcsDriver.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
+import * as GitHeadWatcher from "./vcs/GitHeadWatcher.ts";
 import * as VcsDriverRegistry from "./vcs/VcsDriverRegistry.ts";
 import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
 import * as VcsProcess from "./vcs/VcsProcess.ts";
@@ -717,7 +718,10 @@ const buildAppUnderTest = (options?: {
       ? Layer.mock(VcsStatusBroadcaster.VcsStatusBroadcaster)({
           ...options.layers.vcsStatusBroadcaster,
         })
-      : VcsStatusBroadcaster.layer.pipe(Layer.provide(gitWorkflowLayer));
+      : VcsStatusBroadcaster.layer.pipe(
+          Layer.provide(gitWorkflowLayer),
+          Layer.provide(GitHeadWatcher.layer),
+        );
     const resourceTelemetryLayer = ResourceTelemetry.layer.pipe(
       Layer.provide(
         Layer.mergeAll(

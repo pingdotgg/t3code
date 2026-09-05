@@ -88,6 +88,7 @@ import * as VcsProjectConfig from "./vcs/VcsProjectConfig.ts";
 import * as VcsProcess from "./vcs/VcsProcess.ts";
 import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
+import * as GitHeadWatcher from "./vcs/GitHeadWatcher.ts";
 import * as GitWorkflowService from "./git/GitWorkflowService.ts";
 import * as ReviewService from "./review/ReviewService.ts";
 import * as SourceControlProviderRegistry from "./sourceControl/SourceControlProviderRegistry.ts";
@@ -352,6 +353,7 @@ const VcsLayerLive = Layer.empty.pipe(
   Layer.provideMerge(SourceControlRepositoryServiceLayerLive),
   Layer.provideMerge(
     VcsStatusBroadcaster.layer.pipe(
+      Layer.provide(GitHeadWatcher.layer),
       Layer.provide(GitWorkflowLayerLive),
       Layer.provide(VcsStatusBroadcaster.autoPullPolicyLayer),
     ),
