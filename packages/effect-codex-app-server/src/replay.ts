@@ -44,7 +44,7 @@ export const CodexAppServerReplayTranscript = Schema.Struct({
 export type CodexAppServerReplayTranscript = typeof CodexAppServerReplayTranscript.Type;
 const decodeOutboundJsonFrame = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 
-export class CodexAppServerReplayJsonParseError extends Schema.TaggedErrorClass<CodexAppServerReplayJsonParseError>()(
+class CodexAppServerReplayJsonParseError extends Schema.TaggedErrorClass<CodexAppServerReplayJsonParseError>()(
   "CodexAppServerReplayJsonParseError",
   {
     scenario: Schema.String,
@@ -57,7 +57,7 @@ export class CodexAppServerReplayJsonParseError extends Schema.TaggedErrorClass<
   }
 }
 
-export class CodexAppServerReplayExhaustedError extends Schema.TaggedErrorClass<CodexAppServerReplayExhaustedError>()(
+class CodexAppServerReplayExhaustedError extends Schema.TaggedErrorClass<CodexAppServerReplayExhaustedError>()(
   "CodexAppServerReplayExhaustedError",
   {
     scenario: Schema.String,
@@ -70,7 +70,7 @@ export class CodexAppServerReplayExhaustedError extends Schema.TaggedErrorClass<
   }
 }
 
-export class CodexAppServerReplayUnexpectedOutboundError extends Schema.TaggedErrorClass<CodexAppServerReplayUnexpectedOutboundError>()(
+class CodexAppServerReplayUnexpectedOutboundError extends Schema.TaggedErrorClass<CodexAppServerReplayUnexpectedOutboundError>()(
   "CodexAppServerReplayUnexpectedOutboundError",
   {
     scenario: Schema.String,
@@ -84,7 +84,7 @@ export class CodexAppServerReplayUnexpectedOutboundError extends Schema.TaggedEr
   }
 }
 
-export class CodexAppServerReplayFrameMismatchError extends Schema.TaggedErrorClass<CodexAppServerReplayFrameMismatchError>()(
+class CodexAppServerReplayFrameMismatchError extends Schema.TaggedErrorClass<CodexAppServerReplayFrameMismatchError>()(
   "CodexAppServerReplayFrameMismatchError",
   {
     scenario: Schema.String,
@@ -99,7 +99,7 @@ export class CodexAppServerReplayFrameMismatchError extends Schema.TaggedErrorCl
   }
 }
 
-export class CodexAppServerReplayRuntimeExitError extends Schema.TaggedErrorClass<CodexAppServerReplayRuntimeExitError>()(
+class CodexAppServerReplayRuntimeExitError extends Schema.TaggedErrorClass<CodexAppServerReplayRuntimeExitError>()(
   "CodexAppServerReplayRuntimeExitError",
   {
     scenario: Schema.String,
@@ -113,7 +113,7 @@ export class CodexAppServerReplayRuntimeExitError extends Schema.TaggedErrorClas
   }
 }
 
-export class CodexAppServerReplayIncompleteError extends Schema.TaggedErrorClass<CodexAppServerReplayIncompleteError>()(
+class CodexAppServerReplayIncompleteError extends Schema.TaggedErrorClass<CodexAppServerReplayIncompleteError>()(
   "CodexAppServerReplayIncompleteError",
   {
     scenario: Schema.String,
@@ -354,7 +354,7 @@ export function layerReplayWithDriver(
   return Layer.effect(CodexAppServerClient, makeReplayClientWithState(driver));
 }
 
-export const makeReplayClient = Effect.fn("effect-codex-app-server/replay.makeReplayClient")(
+const makeReplayClient = Effect.fn("effect-codex-app-server/replay.makeReplayClient")(
   function* (
     transcript: CodexAppServerReplayTranscript,
     options: CodexClient.CodexAppServerClientOptions = {},

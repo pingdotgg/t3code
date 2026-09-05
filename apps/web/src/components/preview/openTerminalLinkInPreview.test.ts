@@ -68,6 +68,33 @@ afterEach(() => {
 });
 
 describe("openTerminalLinkInPreview", () => {
+  it.each(["target", "defaults"] as const)(
+    "does not open either browser when reading %s fails",
+    async (setting) => {
+      const failure = new Error("Settings read failed");
+      if (setting === "target") {
+        linkTargetMocks.preference.mockImplementationOnce(() => {
+          throw failure;
+        });
+      } else {
+        browserDefaultsMocks.resolve.mockRejectedValueOnce(failure);
+      }
+      const fallbackToBrowser = vi.fn();
+      const openPreview = vi.fn(async () => AsyncResult.success(snapshot));
+
+      await expect(
+        openTerminalLinkInPreview({
+          url: "https://example.com/docs",
+          threadRef,
+          openPreview,
+          fallbackToBrowser,
+        }),
+      ).rejects.toBe(failure);
+      expect(fallbackToBrowser).not.toHaveBeenCalled();
+      expect(openPreview).not.toHaveBeenCalled();
+    },
+  );
+
   it("opens in the system browser while that is the configured target", async () => {
     linkTargetMocks.preference.mockReturnValue("system");
     const fallbackToBrowser = vi.fn();

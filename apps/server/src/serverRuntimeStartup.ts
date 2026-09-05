@@ -179,6 +179,8 @@ const getAutoBootstrapThreadModelSelection = (): ModelSelection => ({
 interface AutoBootstrapWelcomeTargets {
   readonly bootstrapProjectId?: ProjectId;
   readonly bootstrapThreadId?: ThreadId;
+  readonly bootstrapProjectCreated?: boolean;
+  readonly bootstrapThreadCreated?: boolean;
 }
 
 export const autoPullProjects = Effect.fn("autoPullProjects")(function* (
@@ -262,17 +264,20 @@ export const resolveAutoBootstrapWelcomeTargets = Effect.gen(function* () {
 
   let bootstrapProjectId: ProjectId | undefined;
   let bootstrapThreadId: ThreadId | undefined;
+  let bootstrapProjectCreated = false;
+  let bootstrapThreadCreated = false;
 
   if (serverConfig.autoBootstrapProjectFromCwd) {
     // Project creation has no user model choice; only the bootstrap thread
     // gets an automatic selection, and an explicit project default wins.
     const threadModelSelection = getAutoBootstrapThreadModelSelection();
-    const { project } = yield* projects.bootstrap({
+    const { project, created } = yield* projects.bootstrap({
       commandId: CommandId.make(yield* randomUUID),
       projectId: ProjectId.make(yield* randomUUID),
       title: path.basename(serverConfig.cwd) || "project",
       workspaceRoot: serverConfig.cwd,
     });
+    bootstrapProjectCreated = created;
     const shell = yield* threads.getShellSnapshot();
     const existingThread = shell.threads.find(
       (thread) =>
@@ -292,16 +297,20 @@ export const resolveAutoBootstrapWelcomeTargets = Effect.gen(function* () {
       });
       bootstrapProjectId = project.id;
       bootstrapThreadId = launched.threadId;
+      bootstrapThreadCreated = true;
     } else {
       bootstrapProjectId = project.id;
       bootstrapThreadId = existingThread.id;
     }
   }
 
-  return {
+  const targets: AutoBootstrapWelcomeTargets = {
     ...(bootstrapProjectId ? { bootstrapProjectId } : {}),
     ...(bootstrapThreadId ? { bootstrapThreadId } : {}),
-  } satisfies AutoBootstrapWelcomeTargets;
+    bootstrapProjectCreated,
+    bootstrapThreadCreated,
+  };
+  return targets;
 });
 
 const resolveStartupBrowserTarget = Effect.gen(function* () {
@@ -672,6 +681,7 @@ export const make = (options?: StartupOptions) =>
             environment,
             ...welcomeBase,
             ...bootstrapTargets,
+            bootstrapStatus: "complete",
           },
         }),
       );

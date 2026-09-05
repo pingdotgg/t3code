@@ -91,7 +91,7 @@ const V2TurnStartParamsWithCollaborationMode = CodexSchema.V2TurnStartParams.pip
   }),
 );
 
-const make = Effect.fn("effect-codex-app-server/CodexAppServerClient.make")(function* (
+export const make = Effect.fn("effect-codex-app-server/CodexAppServerClient.make")(function* (
   stdio: Stdio.Stdio,
   options: CodexAppServerClientOptions = {},
   terminationError?: Effect.Effect<CodexError.CodexAppServerError>,

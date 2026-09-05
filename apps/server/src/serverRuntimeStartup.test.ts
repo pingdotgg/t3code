@@ -1,3 +1,9 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import { ProjectId, ThreadId } from "@t3tools/contracts";
+import * as Layer from "effect/Layer";
+import * as ProjectService from "./project/ProjectService.ts";
+import * as ThreadLaunch from "./orchestration-v2/ThreadLaunchService.ts";
+import * as ThreadManagement from "./orchestration-v2/ThreadManagementService.ts";
 import { assert, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -170,3 +176,68 @@ it.effect("automatic pull only updates enabled, behind, clean default-branch che
     assert.deepStrictEqual(pulled, ["/clean"]);
   }),
 );
+
+for (const projectCreated of [true, false]) {
+  it.effect(`reports first-run provenance when project created is ${projectCreated}`, () =>
+    Effect.gen(function* () {
+      const projectId = ProjectId.make("bootstrap-project");
+      const threadId = ThreadId.make("bootstrap-thread");
+      const result = yield* ServerRuntimeStartup.resolveAutoBootstrapWelcomeTargets.pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            Layer.mock(ProjectService.ProjectService)({
+              bootstrap: () =>
+                Effect.succeed({
+                  created: projectCreated,
+                  project: {
+                    id: projectId,
+                    title: "Project",
+                    workspaceRoot: "/repo",
+                    defaultModelSelection: null,
+                    scripts: [],
+                    createdAt: "2026-09-05T00:00:00Z",
+                    updatedAt: "2026-09-05T00:00:00Z",
+                    deletedAt: null,
+                  },
+                }),
+            }),
+            Layer.mock(ThreadManagement.ThreadManagementService)({
+              getShellSnapshot: () =>
+                Effect.succeed({
+                  schemaVersion: 1,
+                  snapshotSequence: 0,
+                  threads: [],
+                  archivedThreads: [],
+                }),
+            }),
+            Layer.mock(ThreadLaunch.ThreadLaunchService)({
+              launch: () =>
+                Effect.succeed({
+                  threadId,
+                  resumed: false,
+                  get projection(): never {
+                    throw new Error("Bootstrap must not read the launched projection");
+                  },
+                }),
+            }),
+            Layer.effect(
+              ServerConfig.ServerConfig,
+              Effect.gen(function* () {
+                const config = yield* ServerConfig.ServerConfig;
+                return { ...config, autoBootstrapProjectFromCwd: true };
+              }),
+            ).pipe(
+              Layer.provide(ServerConfig.layerTest("/repo", { prefix: "startup-provenance-" })),
+            ),
+          ).pipe(Layer.provideMerge(NodeServices.layer)),
+        ),
+      );
+      assert.deepEqual(result, {
+        bootstrapProjectId: projectId,
+        bootstrapThreadId: threadId,
+        bootstrapProjectCreated: projectCreated,
+        bootstrapThreadCreated: true,
+      });
+    }),
+  );
+}

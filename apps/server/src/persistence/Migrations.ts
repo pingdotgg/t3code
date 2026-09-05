@@ -71,6 +71,7 @@ import Migration0056 from "./Migrations/056_LegacyV1ImportState.ts";
 import Migration0057 from "./Migrations/057_ApplicationEventSequenceIndexes.ts";
 import Migration0058 from "./Migrations/058_OrchestrationV2RecoveryIndexes.ts";
 import Migration0059 from "./Migrations/059_OrchestrationV2ShellIndexes.ts";
+import Migration0060 from "./Migrations/060_AgentSessionImportSources.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -142,6 +143,7 @@ export const migrationEntries = [
   [57, "ApplicationEventSequenceIndexes", Migration0057],
   [58, "OrchestrationV2RecoveryIndexes", Migration0058],
   [59, "OrchestrationV2ShellIndexes", Migration0059],
+  [60, "AgentSessionImportSources", Migration0060],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);
