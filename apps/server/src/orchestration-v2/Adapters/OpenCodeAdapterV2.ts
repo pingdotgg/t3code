@@ -1099,7 +1099,9 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
             scope,
             Effect.suspend(() =>
               Effect.forEach(
-                Array.from(threads.keys()),
+                Array.from(threads.values())
+                  .filter((state) => state.parentSubagent === null)
+                  .map((state) => state.nativeSessionId),
                 (sessionId) =>
                   Effect.gen(function* () {
                     yield* sdkCall("session.abort", { sessionID: sessionId }, (signal) =>
