@@ -331,7 +331,7 @@ export const make = Effect.gen(function* () {
   const resolveProjects = Effect.fn("UsageService.resolveProjects")(function* () {
     const projects = yield* projectRepository
       .listAll()
-      .pipe(Effect.catchCause(() => Effect.succeed(null)));
+      .pipe(Effect.catch(() => Effect.succeed(null)));
     if (projects === null) return undefined;
     const projectRoots = yield* Effect.forEach(
       projects,
@@ -622,6 +622,28 @@ export const make = Effect.gen(function* () {
     );
   });
 
+  const getReusableSourceSnapshot = Effect.fn("UsageService.getReusableSourceSnapshot")(function* (
+    windowStartMs: number,
+    settings: ServerSettingsValue,
+  ) {
+    return yield* sourceScanSemaphore.withPermits(1)(
+      Effect.gen(function* () {
+        const currentSnapshot = sourceSnapshot;
+        if (currentSnapshot === null) return null;
+        const now = yield* Clock.currentTimeMillis;
+        const sourceKey = encodeSourceKey([
+          settings.providers.claudeAgent,
+          settings.providers.codex,
+        ]);
+        return currentSnapshot.windowStartMs <= windowStartMs &&
+          currentSnapshot.sourceKey === sourceKey &&
+          now - currentSnapshot.completedAtMs < SOURCE_SCAN_TTL_MS
+          ? currentSnapshot
+          : null;
+      }),
+    );
+  });
+
   const scanSummary = Effect.fn("UsageService.scanSummary")(function* (
     input: UsageSummaryInput,
     settings: ServerSettingsValue,
@@ -829,7 +851,7 @@ export const make = Effect.gen(function* () {
 
     const projects = yield* projectRepository
       .listAll()
-      .pipe(Effect.catchCause(() => Effect.succeed<readonly never[]>([])));
+      .pipe(Effect.catch(() => Effect.succeed<readonly never[]>([])));
     const worktreeClaims = new Map<string, { ref: ThreadRef; shared: boolean }>();
     for (const project of projects) {
       const threads = yield* threadRepository
@@ -933,11 +955,13 @@ export const make = Effect.gen(function* () {
     const target =
       input.threadId === undefined ? null : threadTranscriptTarget(attribution, input.threadId);
 
-    const dirs = yield* resolveTranscriptDirs(settings).pipe(
-      Effect.provideService(Path.Path, path),
-    );
     const windowStartMs =
       (exactWindow?.sinceTimeMs ?? DateTime.toEpochMillis(windowStart.value)) - MTIME_SLACK_MS;
+    // Reuse a summary's fresh parsed snapshot when one exists, so a grown
+    // transcript cannot make its drill-down disagree during the source TTL.
+    // A thread-only read keeps the targeted identity scan below instead of
+    // cold-parsing the entire provider corpus.
+    const currentSnapshot = yield* getReusableSourceSnapshot(windowStartMs, settings);
 
     const resolveProject = yield* resolveProjects();
     const accumulator = new ThreadUsageAccumulator({
@@ -960,55 +984,95 @@ export const make = Effect.gen(function* () {
     const allPaths = new Set<string>();
     const walkedRoots: string[] = [];
 
-    for (const { provider, dir, fileName } of dirs) {
-      if (input.providers !== undefined && !input.providers.includes(provider)) continue;
-      const exists = yield* fileSystem
-        .exists(dir)
-        .pipe(Effect.catchCause(() => Effect.succeed(false)));
-      if (!exists) continue;
-      walkedRoots.push(dir);
-
-      const files = yield* Effect.promise(() =>
-        listTranscriptFiles(dir, windowStartMs, {
-          ...(fileName === undefined ? {} : { fileName }),
-          onFile: (filePath) => allPaths.add(filePath),
-        }),
-      );
-      for (const file of files) {
-        const cached = fileCache.get(file.path);
-        const identity =
-          target !== null && provider === "codex"
-            ? yield* readFileIdentity(file.path, file.size, file.mtimeMs, provider)
-            : null;
-        if (
-          target !== null &&
-          !transcriptFileMayMatchThread({
-            path,
-            filePath: file.path,
-            root: dir,
-            provider,
-            target,
-            ...(cached === undefined ? {} : { cached }),
-            ...(identity === null ? {} : { identity }),
-          })
-        ) {
-          continue;
+    const addRecords = (
+      provider: UsageProviderKind,
+      filePath: string,
+      records: readonly UsageRecord[],
+    ) => {
+      if (records.length === 0) return;
+      const isSubagent =
+        provider === "claude" && path.basename(path.dirname(filePath)) === "subagents";
+      const agentId = isSubagent ? path.basename(filePath, ".jsonl") : null;
+      for (const record of records) {
+        const sessionKey =
+          record.sessionId.length > 0
+            ? `${provider}:${record.sessionId}`
+            : `${provider}:file:${path.basename(path.dirname(filePath))}:${path.basename(filePath, ".jsonl")}`;
+        accumulator.add(record, { sessionKey, agentId });
+        if (!isSubagent && !titleFiles.has(sessionKey)) {
+          titleFiles.set(sessionKey, { path: filePath, provider });
         }
-        livePaths.add(file.path);
-        const records = yield* readFileRecords(file.path, file.size, file.mtimeMs, provider);
-        if (records.length === 0) continue;
-        const isSubagent =
-          provider === "claude" && path.basename(path.dirname(file.path)) === "subagents";
-        const agentId = isSubagent ? path.basename(file.path, ".jsonl") : null;
-        for (const record of records) {
-          const sessionKey =
-            record.sessionId.length > 0
-              ? `${provider}:${record.sessionId}`
-              : `${provider}:file:${path.basename(path.dirname(file.path))}:${path.basename(file.path, ".jsonl")}`;
-          accumulator.add(record, { sessionKey, agentId });
-          if (!isSubagent && !titleFiles.has(sessionKey)) {
-            titleFiles.set(sessionKey, { path: file.path, provider });
+      }
+    };
+
+    if (currentSnapshot !== null) {
+      for (const { provider, dir, allPaths: dirPaths, files } of currentSnapshot.dirs) {
+        if (input.providers !== undefined && !input.providers.includes(provider)) continue;
+        if (files === null) continue;
+        walkedRoots.push(dir);
+        for (const filePath of dirPaths) allPaths.add(filePath);
+        for (const file of files) {
+          if (
+            target !== null &&
+            !transcriptFileMayMatchThread({
+              path,
+              filePath: file.path,
+              root: dir,
+              provider,
+              target,
+              cached: {
+                records: file.records,
+                tailRecords: [],
+              },
+            })
+          ) {
+            continue;
           }
+          livePaths.add(file.path);
+          addRecords(provider, file.path, file.records);
+        }
+      }
+    } else {
+      const dirs = yield* resolveTranscriptDirs(settings).pipe(
+        Effect.provideService(Path.Path, path),
+      );
+      for (const { provider, dir, fileName } of dirs) {
+        if (input.providers !== undefined && !input.providers.includes(provider)) continue;
+        const exists = yield* fileSystem
+          .exists(dir)
+          .pipe(Effect.catchCause(() => Effect.succeed(false)));
+        if (!exists) continue;
+        walkedRoots.push(dir);
+
+        const files = yield* Effect.promise(() =>
+          listTranscriptFiles(dir, windowStartMs, {
+            ...(fileName === undefined ? {} : { fileName }),
+            onFile: (filePath) => allPaths.add(filePath),
+          }),
+        );
+        for (const file of files) {
+          const cached = fileCache.get(file.path);
+          const identity =
+            target !== null && provider === "codex"
+              ? yield* readFileIdentity(file.path, file.size, file.mtimeMs, provider)
+              : null;
+          if (
+            target !== null &&
+            !transcriptFileMayMatchThread({
+              path,
+              filePath: file.path,
+              root: dir,
+              provider,
+              target,
+              ...(cached === undefined ? {} : { cached }),
+              ...(identity === null ? {} : { identity }),
+            })
+          ) {
+            continue;
+          }
+          livePaths.add(file.path);
+          const records = yield* readFileRecords(file.path, file.size, file.mtimeMs, provider);
+          addRecords(provider, file.path, records);
         }
       }
     }
@@ -1059,7 +1123,10 @@ export const make = Effect.gen(function* () {
       { concurrency: 8 },
     );
 
-    const readAt = yield* DateTime.now;
+    const readAt =
+      currentSnapshot === null
+        ? yield* DateTime.now
+        : DateTime.makeUnsafe(currentSnapshot.completedAtMs);
     const finishedAtMs = yield* Clock.currentTimeMillis;
     return {
       contractVersion: USAGE_CONTRACT_VERSION,
@@ -1224,8 +1291,6 @@ export function transcriptFileMayMatchThread(input: {
   readonly provider: UsageProviderKind;
   readonly target: ThreadTranscriptTarget;
   readonly cached?: {
-    readonly size: number;
-    readonly mtimeMs: number;
     readonly records: readonly UsageRecord[];
     readonly tailRecords: readonly UsageRecord[];
   };

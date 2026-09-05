@@ -189,9 +189,7 @@ export function parseClaudeLineRecords(line: string): readonly UsageRecord[] {
           reasoningTokens: isServingIteration ? Math.min(outputTokens, topLevelThinking) : 0,
         },
         reportedCostUsd:
-          iterations.length === 0 && typeof cost === "number" && Number.isFinite(cost)
-            ? cost
-            : null,
+          isServingIteration && typeof cost === "number" && Number.isFinite(cost) ? cost : null,
         dedupeKey:
           dedupeKey === null || iterations.length === 0 || isServingIteration
             ? dedupeKey

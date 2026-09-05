@@ -87,6 +87,7 @@ describe("parseClaudeLine", () => {
         requestId: "req_fallback",
         sessionId: "session-fallback",
         cwd: "/work/app",
+        costUSD: 0.123,
         message: {
           id: "msg_fallback",
           model: "claude-opus-5",
@@ -140,6 +141,7 @@ describe("parseClaudeLine", () => {
       "msg_fallback:req_fallback:0",
       "msg_fallback:req_fallback",
     ]);
+    expect(records.map((record) => record.reportedCostUsd)).toEqual([null, 0.123]);
   });
 
   it("preserves an aggregate cache creation count when TTL details are partial", () => {
