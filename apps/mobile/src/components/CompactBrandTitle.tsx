@@ -1,54 +1,54 @@
-import { View } from "react-native";
+import Constants from "expo-constants";
+import type { NativeStackNavigationOptions } from "@react-navigation/native-stack";
+import { Platform, View } from "react-native";
 
 import { AppText as Text } from "./AppText";
 import { T3Wordmark } from "./T3Wordmark";
-import { useThemeColor } from "../lib/useThemeColor";
+import { IPAD_HOME_TITLE_OFFSET } from "../lib/layoutMetrics";
+import { resolveMobileStageLabel } from "../lib/mobileBranding";
+
+/**
+ * Horizontal correction applied to content rendered in the brand title slot,
+ * shared with the connection-status swap so both align identically.
+ */
+export function brandTitleOffset(): number {
+  if (Platform.OS !== "ios") return 0;
+  return Platform.isPad ? IPAD_HOME_TITLE_OFFSET : 0;
+}
 
 /**
  * Compact brand lockup sized for native navigation bars.
  */
-export function CompactBrandTitle() {
-  const iconColor = useThemeColor("--color-icon");
-  const mutedColor = useThemeColor("--color-foreground-muted");
-  const subtleColor = useThemeColor("--color-subtle");
+export function CompactBrandTitle(
+  props: {
+    readonly allowFontScaling?: boolean;
+  } = {},
+) {
+  const stageLabel = resolveMobileStageLabel(Constants.expoConfig?.extra?.appVariant);
+  const titleOffset = brandTitleOffset();
 
   return (
     <View
       aria-level={1}
-      accessibilityLabel="T3 Code"
+      accessibilityLabel="T3 Code, Threads"
       accessible
       role="heading"
-      style={{ alignItems: "center", flexDirection: "row", gap: 6 }}
+      className="flex-row items-center gap-1.5"
+      style={{ marginLeft: titleOffset }}
     >
-      <T3Wordmark color={iconColor} height={11} />
+      <T3Wordmark colorClassName="accent-icon" height={15} />
       <Text
-        style={{
-          color: mutedColor,
-          fontFamily: "DMSans-Medium",
-          fontSize: 14,
-          letterSpacing: -0.35,
-        }}
+        allowFontScaling={props.allowFontScaling}
+        className="font-t3-medium text-[21px] tracking-[-0.5px] text-foreground-muted"
       >
         Code
       </Text>
-      <View
-        style={{
-          backgroundColor: subtleColor,
-          borderRadius: 999,
-          paddingHorizontal: 6,
-          paddingVertical: 2,
-        }}
-      >
+      <View className="rounded-full bg-subtle px-1.5 py-0.5">
         <Text
-          style={{
-            color: mutedColor,
-            fontFamily: "DMSans-Bold",
-            fontSize: 9,
-            letterSpacing: 0.9,
-            textTransform: "uppercase",
-          }}
+          allowFontScaling={props.allowFontScaling}
+          className="font-t3-bold text-[9px] tracking-[0.9px] text-foreground-muted uppercase"
         >
-          Alpha
+          {stageLabel}
         </Text>
       </View>
     </View>
@@ -56,5 +56,16 @@ export function CompactBrandTitle() {
 }
 
 export function renderCompactBrandTitle() {
-  return <CompactBrandTitle />;
+  return <CompactBrandTitle allowFontScaling={Platform.OS === "ios"} />;
+}
+
+export function getCompactBrandHeaderOptions(
+  fallbackTitleStyle?: NativeStackNavigationOptions["headerTitleStyle"],
+): NativeStackNavigationOptions {
+  return {
+    headerTitle: renderCompactBrandTitle,
+    headerTitleStyle: fallbackTitleStyle,
+    title: "Threads",
+    unstable_headerLeftItems: undefined,
+  };
 }

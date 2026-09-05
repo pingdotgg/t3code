@@ -9,7 +9,7 @@ import {
 } from "../Auth/AuthProvider.ts";
 import { CredentialsStore, displayRedacted } from "../Auth/Credentials.ts";
 import { getEnvRedacted, retryOnce } from "../Auth/Env.ts";
-import { Profile } from "../Auth/Profile.ts";
+import { AlchemyProfile } from "../Auth/Profile.ts";
 import * as Clank from "../Util/Clank.ts";
 
 export const NEON_AUTH_PROVIDER_NAME = "Neon";
@@ -54,10 +54,10 @@ export const NeonAuth = AuthProviderLayer<
 >()(
   NEON_AUTH_PROVIDER_NAME,
   Effect.gen(function* () {
-    const profiles = yield* Profile;
+    const profiles = yield* AlchemyProfile;
     const store = yield* CredentialsStore;
 
-    const loginStored = Effect.fnUntraced(function* (profileName: string) {
+    const loginStored = Effect.fn(function* (profileName: string) {
       const apiKey = yield* Clank.password({
         message: "Neon API Key",
         validate: (v) => (v.length === 0 ? "Required" : undefined),
@@ -108,7 +108,7 @@ export const NeonAuth = AuthProviderLayer<
       Match.value(config).pipe(
         Match.when(
           { method: "env" },
-          Effect.fnUntraced(function* () {
+          Effect.fn(function* () {
             const apiKey = yield* getEnvRedacted("NEON_API_KEY");
             if (!apiKey) {
               return yield* new AuthError({
@@ -129,7 +129,7 @@ export const NeonAuth = AuthProviderLayer<
                 ? Effect.fail(
                     new AuthError({
                       message:
-                        "Neon stored credentials not found. Run: alchemy-effect login --configure",
+                        "Neon stored credentials not found. Run: alchemy login --configure",
                     }),
                   )
                 : Effect.succeed({
@@ -207,9 +207,6 @@ export const NeonAuth = AuthProviderLayer<
             Console.log(`  source: ${sourceStr}`),
           ]);
         }),
-        Effect.catch((e) =>
-          Console.error(`  Failed to retrieve credentials: ${e}`),
-        ),
       );
 
     return {

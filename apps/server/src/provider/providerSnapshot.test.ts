@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { ProviderDriverKind, type ModelCapabilities } from "@t3tools/contracts";
+import type { ModelCapabilities } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import * as Effect from "effect/Effect";
@@ -38,7 +38,6 @@ describe("providerModelsFromSettings", () => {
   it("applies the provided capabilities to custom models", () => {
     const models = providerModelsFromSettings(
       [],
-      ProviderDriverKind.make("opencode"),
       ["openai/gpt-5"],
       OPENCODE_CUSTOM_MODEL_CAPABILITIES,
     );
@@ -51,6 +50,46 @@ describe("providerModelsFromSettings", () => {
         capabilities: OPENCODE_CUSTOM_MODEL_CAPABILITIES,
       },
     ]);
+  });
+
+  it("keeps an entry's own name and capabilities over the driver default", () => {
+    const capabilities = createModelCapabilities({
+      optionDescriptors: [{ id: "fastMode", label: "Fast Mode", type: "boolean" }],
+    });
+    const models = providerModelsFromSettings(
+      [],
+      ["bare", { slug: "named", name: "Named", capabilities }],
+      OPENCODE_CUSTOM_MODEL_CAPABILITIES,
+    );
+
+    expect(models).toEqual([
+      {
+        slug: "bare",
+        name: "bare",
+        isCustom: true,
+        capabilities: OPENCODE_CUSTOM_MODEL_CAPABILITIES,
+      },
+      { slug: "named", name: "Named", isCustom: true, capabilities },
+    ]);
+  });
+
+  it("preserves a custom slug that collides with a provider alias", () => {
+    const capabilities = createModelCapabilities({ optionDescriptors: [] });
+    const models = providerModelsFromSettings(
+      [
+        {
+          slug: "claude-opus-4-8",
+          name: "Claude Opus 4.8",
+          isCustom: false,
+          capabilities,
+        },
+      ],
+      [" opus "],
+      capabilities,
+    );
+
+    expect(models.map((model) => model.slug)).toEqual(["claude-opus-4-8", "opus"]);
+    expect(models[1]?.isCustom).toBe(true);
   });
 });
 

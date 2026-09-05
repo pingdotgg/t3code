@@ -1,3 +1,8 @@
+import {
+  formatFilePathPosition,
+  splitFilePathPosition,
+} from "@t3tools/client-runtime/markdown-links";
+
 import { isMacPlatform } from "./lib/utils";
 
 export type TerminalLinkKind = "url" | "path";
@@ -36,7 +41,7 @@ export interface WrappedTerminalLinkLine {
   segments: ReadonlyArray<WrappedTerminalLinkLineSegment>;
 }
 
-const URL_PATTERN = /https?:\/\/[^\s"'`<>]+/g;
+const URL_PATTERN = /https?:\/\/[^\s"'`<>]+/giu;
 const FILE_PATH_PATTERN =
   /(?:~\/|\.{1,2}\/|\/|[A-Za-z]:[\\/]|\\\\)[^\s"'`<>]+|[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)+(?::\d+){0,2}/g;
 const TRAILING_PUNCTUATION_PATTERN = /[.,;!?]+$/;
@@ -80,7 +85,7 @@ function collectMatches(
 
     const trimmed = trimClosingDelimiters(raw);
     if (trimmed.length === 0) continue;
-    if (kind === "path" && /^https?:\/\//i.test(trimmed)) continue;
+    if (kind === "path" && isTerminalUrl(trimmed)) continue;
 
     const candidate: TerminalLinkMatch = {
       kind,
@@ -102,7 +107,7 @@ function isWindowsAbsolutePath(value: string): boolean {
   return /^[A-Za-z]:[\\/]/.test(value) || value.startsWith("\\\\");
 }
 
-function isAbsolutePath(value: string): boolean {
+export function isAbsolutePath(value: string): boolean {
   return value.startsWith("/") || isWindowsAbsolutePath(value);
 }
 
@@ -137,39 +142,14 @@ function inferHomeFromCwd(cwd: string): string | undefined {
   return undefined;
 }
 
-export function splitPathAndPosition(value: string): {
-  path: string;
-  line: string | undefined;
-  column: string | undefined;
-} {
-  let path = value;
-  let column: string | undefined;
-  let line: string | undefined;
-
-  const columnMatch = path.match(/:(\d+)$/);
-  if (!columnMatch?.[1]) {
-    return { path, line: undefined, column: undefined };
-  }
-
-  column = columnMatch[1];
-  path = path.slice(0, -columnMatch[0].length);
-
-  const lineMatch = path.match(/:(\d+)$/);
-  if (lineMatch?.[1]) {
-    line = lineMatch[1];
-    path = path.slice(0, -lineMatch[0].length);
-  } else {
-    line = column;
-    column = undefined;
-  }
-
-  return { path, line, column };
-}
-
 export function extractTerminalLinks(line: string): TerminalLinkMatch[] {
   const urlMatches = collectMatches(line, "url", URL_PATTERN, []);
   const pathMatches = collectMatches(line, "path", FILE_PATH_PATTERN, urlMatches);
   return [...urlMatches, ...pathMatches].toSorted((a, b) => a.start - b.start);
+}
+
+export function isTerminalUrl(value: string): boolean {
+  return /^https?:\/\//iu.test(value);
 }
 
 export function collectWrappedTerminalLinkLine(
@@ -267,7 +247,8 @@ export function isTerminalLinkActivation(
 }
 
 export function resolvePathLinkTarget(rawPath: string, cwd: string): string {
-  const { path, line, column } = splitPathAndPosition(rawPath);
+  const position = splitFilePathPosition(rawPath);
+  const { path } = position;
 
   let resolvedPath = path;
   if (path.startsWith("~/")) {
@@ -281,6 +262,5 @@ export function resolvePathLinkTarget(rawPath: string, cwd: string): string {
     resolvedPath = joinPath(cwd, path, separator);
   }
 
-  if (!line) return resolvedPath;
-  return `${resolvedPath}:${line}${column ? `:${column}` : ""}`;
+  return formatFilePathPosition({ ...position, path: resolvedPath });
 }

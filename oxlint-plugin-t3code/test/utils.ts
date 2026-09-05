@@ -9,6 +9,17 @@ import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import * as NodeModule from "node:module";
+
+// oxlint is only a transitive dependency (via vite-plus), so its bin placement
+// varies by package manager: pnpm hoists it into the virtual store, while
+// other layouts expose vite-plus's LSP-only wrapper instead. Resolve the real
+// package through vite-plus rather than hardcoding either layout, and do it at
+// module scope so a broken install fails once with a resolution error instead
+// of as an opaque defect in every test.
+const oxlintPackageJsonPath = NodeModule.createRequire(
+  NodeModule.createRequire(import.meta.url).resolve("vite-plus/package.json"),
+).resolve("oxlint/package.json");
 
 class OxlintFixtureFailure extends Data.TaggedError("OxlintFixtureFailure")<{
   readonly exitCode: number;
@@ -27,7 +38,7 @@ class OxlintFixtureExpectedFailure extends Data.TaggedError("OxlintFixtureExpect
   }
 }
 
-const encodeOxlintConfig = Schema.encodeEffect(Schema.UnknownFromJsonString);
+const encodeOxlintConfig = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 interface RuleHarness {
   readonly run: (
@@ -50,6 +61,8 @@ interface RuleHarness {
 
 interface RuleHarnessOptions {
   readonly filename?: string;
+  /** Rule options, as they would appear after the severity in the lint config. */
+  readonly ruleOptions?: ReadonlyArray<unknown>;
 }
 
 const collectStreamAsString = <E>(stream: Stream.Stream<Uint8Array, E>): Effect.Effect<string, E> =>
@@ -93,27 +106,26 @@ export const createOxlintRuleHarness = (
     const configPath = path.join(fixtureDir, ".oxlintrc.json");
     const sourcePath = path.join(fixtureDir, options.filename ?? "fixture.ts");
     const repoRoot = path.join(import.meta.dirname, "..", "..");
-    const oxlintBin = path.join(
-      repoRoot,
-      "node_modules",
-      ".pnpm",
-      "node_modules",
-      ".bin",
-      "oxlint",
-    );
+    const oxlintBin = path.join(path.dirname(oxlintPackageJsonPath), "bin", "oxlint");
     const pluginPath = path.join(repoRoot, "oxlint-plugin-t3code", "index.ts");
 
     yield* fs.writeFileString(
       configPath,
       yield* encodeOxlintConfig({
         jsPlugins: [{ name: "t3code", specifier: pluginPath }],
-        rules: { [ruleName]: "error" },
+        rules: { [ruleName]: ["error", ...(options.ruleOptions ?? [])] },
       }),
     );
+    yield* fs.makeDirectory(path.dirname(sourcePath), { recursive: true });
     yield* fs.writeFileString(sourcePath, source);
 
+    // Run through the current Node binary: oxlint's bin is an extensionless
+    // shebang script, which Windows cannot spawn directly and which would
+    // otherwise pick up whatever node is first on PATH.
     const output = yield* spawnAndCollectOutput(
-      ChildProcess.make(oxlintBin, ["--config", configPath, sourcePath], { cwd: repoRoot }),
+      ChildProcess.make(process.execPath, [oxlintBin, "--config", configPath, sourcePath], {
+        cwd: repoRoot,
+      }),
     );
 
     if (output.exitCode !== 0) {

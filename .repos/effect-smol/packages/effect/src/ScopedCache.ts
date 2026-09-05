@@ -1,27 +1,12 @@
 /**
- * The `ScopedCache` module provides a cache for values that acquire scoped
- * resources during lookup. Each cached entry owns a `Scope`, so resources
- * created while computing a value stay alive for as long as that entry remains
- * cached and are released when the entry is removed.
+ * Caches values that need scoped resource management.
  *
- * A `ScopedCache` is itself created inside a scope. Calls to {@link get} run the
- * lookup effect on cache misses, share the same in-flight lookup among
- * concurrent callers for the same key, and store the resulting exit according
- * to a time-to-live policy. Entries can be inserted manually with {@link set},
- * refreshed with {@link refresh}, inspected without triggering lookup with
- * {@link getOption}, and removed with {@link invalidate} or
- * {@link invalidateAll}. Capacity limits evict the oldest entries.
- *
- * **Lifecycle notes**
- *
- * - Entry scopes are closed when entries expire, are invalidated, are evicted,
- *   are replaced, or when the cache's owning scope closes
- * - Successful and failed lookup exits are both cached according to the
- *   configured TTL
- * - Expired entries may remain counted by {@link size} until a cache operation
- *   observes and removes them
- * - Once the owning scope closes, the cache is closed and lookup-style
- *   operations interrupt instead of acquiring new values
+ * Each cached entry owns its own `Scope`, so resources opened while creating a
+ * value stay alive while that entry is cached and are released when the entry is
+ * removed. A `ScopedCache` also belongs to an outer scope, which closes all
+ * remaining entries when the cache is closed. Lookups for the same missing key
+ * share one in-progress effect, and entries can expire, be refreshed, be
+ * invalidated, or be evicted by capacity limits.
  *
  * @since 4.0.0
  */
@@ -128,7 +113,7 @@ export interface Entry<A, E> {
  *
  * **When to use**
  *
- * Use when cached scoped resources need different lifetimes based on the lookup
+ * Use when you need a scoped cache whose entry lifetime depends on each lookup
  * result or key.
  *
  * **Details**

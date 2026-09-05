@@ -1,0 +1,105 @@
+# Maintainer: maria-rcks <maria at kuuro dot net>
+
+pkgname=t3code-nightly-bin
+pkgver=0.0.34_nightly.20260814.1095
+pkgrel=1
+pkgdesc='Nightly desktop control surface for local coding agents'
+arch=('x86_64')
+url='https://github.com/pingdotgg/t3code'
+license=('MIT')
+depends=(
+  'alsa-lib'
+  'at-spi2-core'
+  'cairo'
+  'dbus'
+  'expat'
+  'gdk-pixbuf2'
+  'glib2'
+  'glibc'
+  'gtk3'
+  'hicolor-icon-theme'
+  'libcups'
+  'libdrm'
+  'libgcc'
+  'libstdc++'
+  'libx11'
+  'libxcb'
+  'libxcomposite'
+  'libxdamage'
+  'libxext'
+  'libxfixes'
+  'libxkbcommon'
+  'libxrandr'
+  'mesa'
+  'nspr'
+  'nss'
+  'pango'
+  'systemd-libs'
+  'xdg-utils'
+  'zlib'
+)
+optdepends=('openai-codex: use the system-installed Codex CLI')
+provides=("t3code-nightly=$pkgver")
+conflicts=('t3code-nightly' 't3code')
+options=('!debug' '!strip')
+
+_upstream_version="${pkgver/_nightly./-nightly.}"
+_appimage="T3-Code-${_upstream_version}-x86_64.AppImage"
+source=(
+  "$_appimage::https://github.com/pingdotgg/t3code/releases/download/v${_upstream_version}/$_appimage"
+  "${pkgname}-${pkgver}-LICENSE::https://raw.githubusercontent.com/pingdotgg/t3code/v${_upstream_version}/LICENSE"
+)
+sha256sums=(
+  'c4dea5bba9ed0b51b2f60f2d4a4867e61d62b57c50ea66f2792a73112e054566' # AppImage
+  '935d8f2af0c703f9c39517ee57cc4930b19d02d533be930b63f0e82f93614b43' # upstream license
+)
+
+prepare() {
+  chmod +x "$srcdir/$_appimage"
+  rm -rf "$srcdir/squashfs-root"
+  "$srcdir/$_appimage" --appimage-extract >/dev/null
+
+  if [[ ! -x "$srcdir/squashfs-root/AppRun" ||
+        ! -f "$srcdir/squashfs-root/chrome-sandbox" ]]; then
+    echo 'The AppImage payload is missing its launcher or Chromium sandbox.' >&2
+    return 1
+  fi
+}
+
+package() {
+  install -d "$pkgdir/opt/$pkgname"
+  cp -a --no-preserve=ownership "$srcdir/squashfs-root/." "$pkgdir/opt/$pkgname/"
+  chmod -R u=rwX,go=rX "$pkgdir/opt/$pkgname"
+  chmod 4755 "$pkgdir/opt/$pkgname/chrome-sandbox"
+
+  install -Dm755 /dev/stdin "$pkgdir/usr/bin/t3code-nightly" <<'EOF'
+#!/bin/sh
+exec /opt/t3code-nightly-bin/AppRun "$@"
+EOF
+  ln -s t3code-nightly "$pkgdir/usr/bin/t3-code-nightly-desktop"
+
+  # Icon lookup only sees sizes registered in hicolor's index.theme (max 512x512).
+  local icon size_dir
+  for icon in "$srcdir"/squashfs-root/usr/share/icons/hicolor/*/apps/t3code.png; do
+    size_dir="${icon%/apps/t3code.png}"
+    install -Dm644 "$icon" \
+      "$pkgdir/usr/share/icons/hicolor/${size_dir##*/}/apps/t3code-nightly.png"
+  done
+
+  install -Dm644 /dev/stdin "$pkgdir/usr/share/applications/t3code.desktop" <<'EOF'
+[Desktop Entry]
+Name=T3 Code Nightly
+Comment=Nightly desktop control surface for local coding agents
+Exec=t3code-nightly %U
+TryExec=t3code-nightly
+Terminal=false
+Type=Application
+Icon=t3code-nightly
+StartupWMClass=t3code
+Categories=Development;
+MimeType=x-scheme-handler/t3code;
+EOF
+
+  install -Dm644 "$srcdir/${pkgname}-${pkgver}-LICENSE" \
+    "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

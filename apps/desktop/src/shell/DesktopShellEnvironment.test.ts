@@ -1,3 +1,4 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -90,7 +91,7 @@ function runShellEnvironment(input: {
   }).pipe(
     Effect.provide(
       DesktopShellEnvironment.layer.pipe(
-        Layer.provide(Layer.mergeAll(environmentLayer, spawnerLayer)),
+        Layer.provide(Layer.mergeAll(environmentLayer, NodeServices.layer, spawnerLayer)),
       ),
     ),
   );
@@ -148,6 +149,108 @@ describe("DesktopShellEnvironment", () => {
 
       assert.equal(env.PATH, "/opt/homebrew/bin:/usr/bin");
       assert.equal(env.SSH_AUTH_SOCK, "/tmp/inherited.sock");
+    }),
+  );
+
+  it.effect("hydrates the locale from the login shell on macOS", () =>
+    Effect.gen(function* () {
+      const env: NodeJS.ProcessEnv = {
+        SHELL: "/bin/zsh",
+        PATH: "/usr/bin",
+      };
+
+      yield* runShellEnvironment({
+        env,
+        platform: "darwin",
+        handler: () =>
+          envOutput({
+            PATH: "/opt/homebrew/bin:/usr/bin",
+            LANG: "de_DE.UTF-8",
+          }),
+      });
+
+      assert.equal(env.LANG, "de_DE.UTF-8");
+    }),
+  );
+
+  it.effect("preserves an inherited locale over the login shell on macOS", () =>
+    Effect.gen(function* () {
+      const env: NodeJS.ProcessEnv = {
+        SHELL: "/bin/zsh",
+        PATH: "/usr/bin",
+        LANG: "en_US.UTF-8",
+      };
+
+      yield* runShellEnvironment({
+        env,
+        platform: "darwin",
+        handler: () =>
+          envOutput({
+            PATH: "/opt/homebrew/bin:/usr/bin",
+            LANG: "de_DE.UTF-8",
+          }),
+      });
+
+      assert.equal(env.LANG, "en_US.UTF-8");
+    }),
+  );
+
+  it.effect("does not mix login-shell locale categories into an inherited locale", () =>
+    Effect.gen(function* () {
+      const env: NodeJS.ProcessEnv = {
+        SHELL: "/bin/zsh",
+        PATH: "/usr/bin",
+        LANG: "en_US.UTF-8",
+      };
+
+      yield* runShellEnvironment({
+        env,
+        platform: "darwin",
+        handler: () =>
+          envOutput({
+            PATH: "/opt/homebrew/bin:/usr/bin",
+            LC_ALL: "de_DE.UTF-8",
+          }),
+      });
+
+      assert.equal(env.LANG, "en_US.UTF-8");
+      assert.equal(env.LC_ALL, undefined);
+    }),
+  );
+
+  it.effect("falls back to a UTF-8 LC_CTYPE when no locale is available on macOS", () =>
+    Effect.gen(function* () {
+      const env: NodeJS.ProcessEnv = {
+        SHELL: "/bin/zsh",
+        PATH: "/usr/bin",
+      };
+
+      yield* runShellEnvironment({
+        env,
+        platform: "darwin",
+        handler: () => envOutput({ PATH: "/opt/homebrew/bin:/usr/bin" }),
+      });
+
+      assert.equal(env.LANG, undefined);
+      assert.equal(env.LC_ALL, undefined);
+      assert.equal(env.LC_CTYPE, "en_US.UTF-8");
+    }),
+  );
+
+  it.effect("does not apply the locale fallback on linux", () =>
+    Effect.gen(function* () {
+      const env: NodeJS.ProcessEnv = {
+        SHELL: "/bin/zsh",
+        PATH: "/usr/bin",
+      };
+
+      yield* runShellEnvironment({
+        env,
+        platform: "linux",
+        handler: () => envOutput({ PATH: "/home/linuxbrew/.linuxbrew/bin:/usr/bin" }),
+      });
+
+      assert.equal(env.LANG, undefined);
     }),
   );
 
@@ -217,7 +320,7 @@ describe("DesktopShellEnvironment", () => {
                 FNM_DIR: "C:\\Users\\testuser\\AppData\\Roaming\\fnm",
                 FNM_MULTISHELL_PATH: "C:\\Users\\testuser\\AppData\\Local\\fnm_multishells\\123",
               })
-            : envOutput({ PATH: "C:\\Custom\\Bin;C:\\Windows\\System32" });
+            : envOutput({ PATH: 'C:\\Custom\\Bin;C:";C:\\Windows\\System32' });
         },
       });
 
@@ -230,9 +333,11 @@ describe("DesktopShellEnvironment", () => {
           "C:\\Users\\testuser\\AppData\\Local\\Programs\\nodejs",
           "C:\\Users\\testuser\\AppData\\Local\\Volta\\bin",
           "C:\\Users\\testuser\\AppData\\Local\\pnpm",
+          "C:\\Users\\testuser\\.local\\bin",
           "C:\\Users\\testuser\\.bun\\bin",
           "C:\\Users\\testuser\\scoop\\shims",
           "C:\\Custom\\Bin",
+          "C:",
         ].join(";"),
       );
       assert.equal(env.FNM_DIR, "C:\\Users\\testuser\\AppData\\Roaming\\fnm");
@@ -242,6 +347,65 @@ describe("DesktopShellEnvironment", () => {
       );
     }),
   );
+
+  it.effect("prefers login-shell desktop session hints over inherited values on linux", () =>
+    Effect.gen(function* () {
+      const env: NodeJS.ProcessEnv = {
+        SHELL: "/bin/zsh",
+        PATH: "/usr/bin",
+        XDG_CURRENT_DESKTOP: "wrong-launcher",
+        XDG_SESSION_DESKTOP: "wrong-launcher",
+      };
+
+      yield* runShellEnvironment({
+        env,
+        platform: "linux",
+        handler: () =>
+          envOutput({
+            PATH: "/home/linuxbrew/.linuxbrew/bin:/usr/bin",
+            XDG_CURRENT_DESKTOP: "KDE",
+            XDG_SESSION_DESKTOP: "KDE",
+            XDG_SESSION_TYPE: "wayland",
+          }),
+      });
+
+      assert.equal(env.XDG_CURRENT_DESKTOP, "KDE");
+      assert.equal(env.XDG_SESSION_DESKTOP, "KDE");
+      assert.equal(env.XDG_SESSION_TYPE, "wayland");
+    }),
+  );
+
+  it.effect("overrides stale dbus session addresses from the login shell", () =>
+    Effect.gen(function* () {
+      const env: NodeJS.ProcessEnv = {
+        SHELL: "/bin/zsh",
+        PATH: "/usr/bin",
+        DBUS_SESSION_BUS_ADDRESS: "unix:path=/tmp/stale-bus",
+      };
+
+      yield* runShellEnvironment({
+        env,
+        platform: "linux",
+        handler: () =>
+          envOutput({
+            PATH: "/usr/bin",
+            DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/1000/bus",
+          }),
+      });
+
+      assert.equal(env.DBUS_SESSION_BUS_ADDRESS, "unix:path=/run/user/1000/bus");
+    }),
+  );
+
+  it("resolves dbus runtime dir candidates with existence checks", () => {
+    const busPath = DesktopShellEnvironment.resolveDefaultLinuxDbusSessionBusAddress({
+      env: { XDG_RUNTIME_DIR: "/tmp/stale-runtime" },
+      uid: 1000,
+      exists: (path) => path === "/run/user/1000/bus",
+    });
+
+    assert.equal(busPath, "unix:path=/run/user/1000/bus");
+  });
 
   it.effect("logs command failures with safe probe context and the exact cause", () => {
     const env: NodeJS.ProcessEnv = {

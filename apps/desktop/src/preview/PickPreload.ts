@@ -1,4 +1,4 @@
-// @effect-diagnostics globalDate:off - This isolated Electron preload does not run inside an Effect runtime.
+// @effect-diagnostics globalDate:off globalTimers:off - This isolated Electron preload does not run inside an Effect runtime.
 import { ipcRenderer } from "electron";
 import { getElementContext } from "react-grab/primitives";
 import type {
@@ -11,8 +11,10 @@ import type {
   PreviewAnnotationRegionTarget,
   PreviewAnnotationStrokeTarget,
   PreviewAnnotationStyleChange,
+  PreviewAnnotationSubmission,
 } from "@t3tools/contracts";
 
+import { resolveAnnotationSubmission } from "./AnnotationKeyboard.ts";
 import { previewAnnotationStyles } from "./AnnotationStyles.generated.ts";
 import {
   ANNOTATION_CAPTURED_CHANNEL,
@@ -20,6 +22,7 @@ import {
   CANCEL_PICK_CHANNEL,
   ELEMENT_PICKED_CHANNEL,
   HUMAN_INPUT_CHANNEL,
+  MOUSE_NAVIGATE_CHANNEL,
   START_PICK_CHANNEL,
 } from "./GuestProtocol.ts";
 const OVERLAY_ATTRIBUTE = "data-t3code-annotation-ui";
@@ -27,6 +30,8 @@ const Z_INDEX_OVERLAY = 2147483646;
 const PRIMARY = "var(--t3-primary)";
 const PRIMARY_FILL = "color-mix(in srgb, var(--t3-primary) 10%, transparent)";
 const MAX_MARQUEE_ELEMENTS = 20;
+/** Upper bound on one element's React context lookup during submit. */
+const ELEMENT_CONTEXT_TIMEOUT_MS = 5_000;
 const CONTENT_LAYER_Z_INDEX = 1;
 const CHROME_LAYER_Z_INDEX = 10;
 
@@ -99,6 +104,40 @@ const reportHumanKeyInput = (event: KeyboardEvent): void => {
 
 window.addEventListener("pointerdown", reportHumanPointerInput, true);
 window.addEventListener("keydown", reportHumanKeyInput, true);
+
+// Mouse thumb buttons: `button === 3` is Back, `button === 4` is Forward.
+const MOUSE_BUTTON_BACK = 3;
+const MOUSE_BUTTON_FORWARD = 4;
+
+const navigationDirectionForButton = (button: number): "back" | "forward" | null => {
+  if (button === MOUSE_BUTTON_BACK) return "back";
+  if (button === MOUSE_BUTTON_FORWARD) return "forward";
+  return null;
+};
+
+// Chromium routes thumb-button history navigation to the *focused* WebContents,
+// so hovering this guest without focusing it sends the host app's router back
+// instead of the preview. Suppress Chromium's default here and drive this tab's
+// history explicitly so the buttons always navigate the browser the pointer is
+// over — never the host app.
+const suppressNavigationButton = (event: MouseEvent): void => {
+  if (!event.isTrusted || navigationDirectionForButton(event.button) === null) return;
+  event.preventDefault();
+  event.stopImmediatePropagation();
+};
+
+const requestNavigationForButton = (event: MouseEvent): void => {
+  if (!event.isTrusted) return;
+  const direction = navigationDirectionForButton(event.button);
+  if (direction === null) return;
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  ipcRenderer.send(MOUSE_NAVIGATE_CHANNEL, { direction });
+};
+
+window.addEventListener("mousedown", suppressNavigationButton, true);
+window.addEventListener("mouseup", requestNavigationForButton, true);
+window.addEventListener("auxclick", suppressNavigationButton, true);
 
 const nextId = (prefix: string): string => {
   idSequence += 1;
@@ -242,25 +281,67 @@ function toStackFrame(frame: {
   };
 }
 
-async function captureElement(element: Element): Promise<PickedElementPayload | null> {
+/**
+ * Resolves to `null` instead of hanging when `promise` outlives `millis`.
+ * `getElementContext` walks the inspected page's React internals, and some
+ * pages leave it pending forever. Without a bound, the whole submit chain
+ * stalls and the overlay sits on "Capturing…".
+ */
+function withCaptureTimeout<A>(promise: Promise<A>, millis: number): Promise<A | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([
+    promise,
+    new Promise<null>((resolve) => {
+      timer = setTimeout(() => resolve(null), millis);
+    }),
+  ]).finally(() => clearTimeout(timer));
+}
+
+/** Truncation for the DOM-only preview used when React context is unavailable. */
+const HTML_PREVIEW_MAX_CHARS = 500;
+
+/**
+ * Describes a picked element. The React context lookup can stall or throw on
+ * some pages, so the element is never dropped: without context it still
+ * carries its tag, a short HTML preview, and its rect so the crop stays on the
+ * pick instead of falling back to the whole viewport.
+ */
+async function captureElement(element: Element): Promise<PickedElementPayload> {
+  const base = {
+    pageUrl: location.href,
+    pageTitle: document.title?.trim() || null,
+    tagName: element.tagName.toLowerCase(),
+    pickedAt: new Date().toISOString(),
+  };
   try {
-    const context = await getElementContext(element);
-    const stack = (context.stack ?? []).map(toStackFrame);
-    return {
-      pageUrl: location.href,
-      pageTitle: document.title?.trim() || null,
-      tagName: element.tagName.toLowerCase(),
-      selector: context.selector,
-      htmlPreview: context.htmlPreview ?? "",
-      componentName: context.componentName,
-      source: stack[0] ?? null,
-      stack,
-      styles: context.styles ?? "",
-      pickedAt: new Date().toISOString(),
-    };
+    const context = await withCaptureTimeout(
+      Promise.resolve(getElementContext(element)),
+      ELEMENT_CONTEXT_TIMEOUT_MS,
+    );
+    if (context) {
+      const stack = (context.stack ?? []).map(toStackFrame);
+      return {
+        ...base,
+        selector: context.selector,
+        htmlPreview: context.htmlPreview ?? "",
+        componentName: context.componentName,
+        source: stack[0] ?? null,
+        stack,
+        styles: context.styles ?? "",
+      };
+    }
   } catch {
-    return null;
+    // Fall through to the DOM-only payload.
   }
+  return {
+    ...base,
+    selector: null,
+    htmlPreview: element.outerHTML.slice(0, HTML_PREVIEW_MAX_CHARS),
+    componentName: null,
+    source: null,
+    stack: [],
+    styles: "",
+  };
 }
 
 function createButton(label: string, title: string): HTMLButtonElement {
@@ -426,7 +507,7 @@ function startAnnotation(): void {
     "hidden h-8 w-6 shrink-0 cursor-grab select-none border-0 bg-transparent p-0 font-sans text-lg font-bold leading-5 text-muted-foreground";
   composerRow.appendChild(dragHandle);
 
-  const submit = createButton("Attach", "Attach annotation and screenshot");
+  const submit = createButton("Attach", "Attach annotation and screenshot (Enter)");
   submit.className +=
     " h-8 shrink-0 border-primary bg-primary px-3 text-primary-foreground shadow-sm hover:bg-primary/90";
   composerRow.appendChild(submit);
@@ -1182,18 +1263,26 @@ function startAnnotation(): void {
     refreshToolButtons();
   };
 
-  submit.addEventListener("click", () => {
+  const submitAnnotation = (submission: PreviewAnnotationSubmission): void => {
     if (pendingCapture || (selected.size === 0 && regions.length === 0 && strokes.length === 0))
       return;
     pendingCapture = true;
     submit.disabled = true;
     submit.textContent = "Capturing…";
+    // Snapshot everything the annotation will carry before the capture runs.
+    // The element context lookup can take up to its timeout, and the user can
+    // keep editing meanwhile; the annotation must describe what they submitted.
+    const submittedComment = comment.value.trim();
+    const submittedRegions = [...regions];
+    const submittedStrokes = [...strokes];
+    const submittedStyleChanges = Array.from(styleChanges.values(), (change) => ({ ...change }));
     void Promise.all(
       Array.from(selected.values()).map(async (target) => {
         const element = await captureElement(target.element);
-        if (!element) return null;
-        for (const change of styleChanges.values()) {
-          if (change.targetId === target.id) change.selector = element.selector;
+        for (const change of submittedStyleChanges) {
+          if (change.targetId === target.id && element.selector !== null) {
+            change.selector = element.selector;
+          }
         }
         return {
           id: target.id,
@@ -1201,35 +1290,49 @@ function startAnnotation(): void {
           rect: rectFromDomRect(target.element.getBoundingClientRect()),
         };
       }),
-    ).then((captured) => {
-      const elements = captured.filter((target) => target !== null);
-      const annotation: PreviewAnnotationPayload = {
-        id: nextId("annotation"),
-        pageUrl: location.href,
-        pageTitle: document.title?.trim() || null,
-        comment: comment.value.trim(),
-        elements,
-        regions: [...regions],
-        strokes: [...strokes],
-        styleChanges: Array.from(styleChanges.values()),
-        screenshot: null,
-        createdAt: new Date().toISOString(),
-      };
-      editor.style.display = "none";
-      toolbar.style.display = "none";
-      hoverOutline.style.display = "none";
-      const screenshotRect = unionRects([
-        ...elements.map((target) => target.rect),
-        ...regions.map((region) => region.rect),
-        ...strokes.map((stroke) => stroke.bounds),
-      ]);
-      ipcRenderer.send(ELEMENT_PICKED_CHANNEL, annotation, screenshotRect);
-    });
-  });
-  comment.addEventListener("keydown", (event) => {
-    if (event.key !== "Enter" || !(event.metaKey || event.ctrlKey)) return;
+    )
+      .then((elements) => {
+        // The overlay may have been cancelled or replaced while the capture
+        // ran. A late submit must not deliver into the next pick's listener.
+        if (finished) return;
+        const annotation: PreviewAnnotationPayload = {
+          id: nextId("annotation"),
+          pageUrl: location.href,
+          pageTitle: document.title?.trim() || null,
+          comment: submittedComment,
+          elements,
+          regions: submittedRegions,
+          strokes: submittedStrokes,
+          styleChanges: submittedStyleChanges,
+          screenshot: null,
+          createdAt: new Date().toISOString(),
+        };
+        editor.style.display = "none";
+        toolbar.style.display = "none";
+        hoverOutline.style.display = "none";
+        const screenshotRect = unionRects([
+          ...elements.map((target) => target.rect),
+          ...submittedRegions.map((region) => region.rect),
+          ...submittedStrokes.map((stroke) => stroke.bounds),
+        ]);
+        ipcRenderer.send(ELEMENT_PICKED_CHANNEL, annotation, screenshotRect, submission);
+      })
+      .catch(() => {
+        // Last resort. Main is waiting on this message, so hand it an empty
+        // pick rather than leaving the button stuck on "Capturing…" and the
+        // renderer's pick promise pending. teardown is a no-op once finished.
+        teardown(true);
+      });
+  };
+  submit.addEventListener("click", () => submitAnnotation("attach"));
+  root.addEventListener("keydown", (event) => {
+    const submission = event.target === comment ? resolveAnnotationSubmission(event) : null;
+    // Keep this in the bubble phase so editor inputs receive the event before
+    // it is isolated from listeners installed by the inspected page.
+    event.stopImmediatePropagation();
+    if (!submission) return;
     event.preventDefault();
-    submit.click();
+    submitAnnotation(submission);
   });
 
   window.addEventListener("pointermove", onPointerMove, { capture: true, passive: false });

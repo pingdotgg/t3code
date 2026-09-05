@@ -19,6 +19,13 @@ export type ProviderUpdateCandidate = ServerProvider & {
   };
 };
 
+export type ProviderSettingsUpdateCandidate = ServerProvider & {
+  readonly versionAdvisory: NonNullable<ServerProvider["versionAdvisory"]> & {
+    readonly canUpdate: true;
+    readonly updateCommand: string;
+  };
+};
+
 export type ProviderUpdateToastType = "warning" | "loading" | "error" | "success";
 export type ProviderUpdateToastPhase = "initial" | "running" | "failed" | "unchanged" | "succeeded";
 
@@ -149,6 +156,17 @@ export function collectProviderUpdateCandidates(
   return dedupeProvidersByDriver(providers.filter(isProviderUpdateCandidate));
 }
 
+export function isProviderSettingsUpdateCandidate(
+  provider: ServerProvider,
+): provider is ProviderSettingsUpdateCandidate {
+  return (
+    provider.enabled &&
+    provider.versionAdvisory?.status === "behind_latest" &&
+    provider.versionAdvisory.canUpdate === true &&
+    provider.versionAdvisory.updateCommand !== null
+  );
+}
+
 export function hasOneClickUpdateProviderCandidate(
   candidate: ProviderUpdateCandidate,
   providers: ReadonlyArray<ServerProvider>,
@@ -202,10 +220,6 @@ export function providerUpdateNotificationKey(
   return parts.length > 0 ? parts.join("|") : null;
 }
 
-export function providerUpdateCandidateKey(provider: ProviderUpdateCandidate): string {
-  return providerUpdateNotificationKey([provider])!;
-}
-
 export function formatProviderList(providers: ReadonlyArray<Pick<ServerProvider, "driver">>) {
   const names = providers.map(
     (provider) => PROVIDER_DISPLAY_NAMES[provider.driver] ?? provider.driver,
@@ -229,6 +243,10 @@ export function getProviderUpdateInitialToastView(input: {
         ? "Install the update now or review provider settings."
         : `${formatProviderList(input.updateProviders)} can be updated from provider settings.`,
   };
+}
+
+export function shouldShowPrimaryProviderUpdateToast(view: ProviderUpdateToastView): boolean {
+  return view.phase !== "running";
 }
 
 export function getProviderUpdateRunningToastView(providerCount: number): ProviderUpdateToastView {

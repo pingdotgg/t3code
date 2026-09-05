@@ -1,0 +1,4 @@
+interface:
+  display_name: "iOS Simulator Browser"
+  short_description: "Stream iOS Simulator in the browser"
+  default_prompt: "Use $ios-simulator-browser to stream the selected iOS Simulator into the T3 Code in-app browser."

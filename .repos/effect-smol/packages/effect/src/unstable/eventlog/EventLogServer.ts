@@ -1,33 +1,10 @@
 /**
- * Builds server-side RPC handlers for the event-log remote protocol.
+ * Builds server-side handlers for the event-log remote protocol.
  *
- * Concrete transports use this module when exposing a journal to remote replicas.
- * The handlers run the hello / authenticate challenge flow, attach the
+ * Transport modules use these handlers to expose an event journal to remote
+ * replicas. The handlers run the hello/authenticate challenge flow, attach the
  * authenticated `EventLog.Identity` to later requests, accept single or chunked
  * writes, and stream changes back as single or chunked messages.
- *
- * **Mental model**
- *
- * A client first calls `Hello` to obtain a challenge tied to the RPC client
- * session, then calls `Authenticate` to bind its public key to that session.
- * Subsequent writes and change streams rely on the client annotations populated
- * during authentication, and `layerAuthMiddleware` enforces that an identity is
- * present.
- *
- * **Common tasks**
- *
- * Use `layerRpcHandlers` with callbacks for session-auth key binding, applying
- * incoming write bytes, and streaming encoded changes. Merge the resulting layer
- * with an RPC server transport that preserves client session annotations across
- * calls.
- *
- * **Gotchas**
- *
- * Session annotations are transport state, so `Hello`, `Authenticate`,
- * `WriteSingle`, `WriteChunked`, and `Changes` must share a stable client
- * session. Run the endpoint over TLS and store auth bindings with the same trust
- * boundary as the event-log data. Chunking is only framing; the supplied
- * callbacks still work with complete encoded payload bytes.
  *
  * @since 4.0.0
  */

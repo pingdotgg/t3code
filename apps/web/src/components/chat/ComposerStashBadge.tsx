@@ -1,0 +1,66 @@
+import { BookmarkIcon } from "lucide-react";
+import { memo } from "react";
+
+import { cn } from "~/lib/utils";
+import { ComposerBanner } from "./ComposerBanner";
+
+/**
+ * Bookmark tab that shows the stash count beside the composer's other attachments
+ * and opens the stash menu.
+ *
+ * On save the badge gives one quiet acknowledgement: it lifts to full
+ * opacity and the count ticks over. `pulseKey` changes per stash, remounting
+ * the count so the transition replays without a continuous animation.
+ */
+export const ComposerStashBadge = memo(function ComposerStashBadge(props: {
+  count: number;
+  menuOpen: boolean;
+  pulseKey: number;
+  pulsing: boolean;
+  onToggleMenu: () => void;
+}) {
+  if (props.count === 0) return null;
+  const count = (
+    <ComposerBanner.Count
+      key={props.pulseKey}
+      className={cn(
+        props.pulsing
+          ? "animate-[prompt-stash-count-enter_180ms_ease-out_both] text-primary motion-reduce:animate-none"
+          : "text-muted-foreground",
+      )}
+    >
+      {props.count}
+    </ComposerBanner.Count>
+  );
+
+  return (
+    <ComposerBanner.Root
+      density="comfortable"
+      width="content"
+      data-composer-shoulder-tab
+      className="ml-auto"
+    >
+      <ComposerBanner.Row
+        render={<button type="button" />}
+        data-prompt-stash-badge="true"
+        aria-label={`Stashed prompts: ${props.count}. Open stash.`}
+        aria-expanded={props.menuOpen}
+        className={cn(
+          "transition-colors duration-200",
+          props.menuOpen && "pointer-events-none",
+          props.menuOpen || props.pulsing
+            ? "text-foreground"
+            : "text-muted-foreground hover:text-foreground",
+        )}
+        onPointerDown={(event) => event.preventDefault()}
+        onClick={props.onToggleMenu}
+      >
+        <ComposerBanner.Icon>
+          <BookmarkIcon />
+        </ComposerBanner.Icon>
+        <ComposerBanner.Content>Stash</ComposerBanner.Content>
+        <ComposerBanner.Actions>{count}</ComposerBanner.Actions>
+      </ComposerBanner.Row>
+    </ComposerBanner.Root>
+  );
+});

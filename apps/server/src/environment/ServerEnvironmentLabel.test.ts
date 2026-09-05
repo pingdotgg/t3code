@@ -81,6 +81,8 @@ describe("resolveServerEnvironmentLabel", () => {
           timedOut: false,
           stdoutTruncated: false,
           stderrTruncated: false,
+          stdoutInvalidUtf8: false,
+          stderrInvalidUtf8: false,
         }),
       );
 
@@ -120,6 +122,8 @@ describe("resolveServerEnvironmentLabel", () => {
           timedOut: false,
           stdoutTruncated: false,
           stderrTruncated: false,
+          stdoutInvalidUtf8: false,
+          stderrInvalidUtf8: false,
         }),
       );
 
@@ -223,6 +227,8 @@ describe("resolveServerEnvironmentLabel", () => {
         timedOut: false,
         stdoutTruncated: false,
         stderrTruncated: false,
+        stdoutInvalidUtf8: false,
+        stderrInvalidUtf8: false,
       }),
     );
 
@@ -264,6 +270,8 @@ describe("resolveServerEnvironmentLabel", () => {
           timedOut: false,
           stdoutTruncated: false,
           stderrTruncated: false,
+          stdoutInvalidUtf8: false,
+          stderrInvalidUtf8: false,
         }),
       );
 

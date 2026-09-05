@@ -18,11 +18,36 @@ export interface CollectComposerInlineTokensOptions {
   readonly preserveTrailingFrom?: ReadonlyArray<ComposerInlineToken>;
 }
 
-const SKILL_TOKEN_REGEX = /(^|\s)\$([a-zA-Z][a-zA-Z0-9:_-]*)(?=\s)/g;
+/**
+ * A skill name may start with a digit, but compact monetary amounts and
+ * numeric expressions like "$20", "$20k", "$100M", and "$1e6" must stay prose:
+ * the composer chips any matched `$name` token, known or not. Tokens beginning
+ * with digits must not match numbers with currency/exponent suffixes, and must
+ * contain at least one letter.
+ */
+const SKILL_TOKEN_REGEX =
+  /(^|\s)\$(?![0-9][0-9_]*(?:[kKmMbBtT]|[eE][0-9]+)?(?:\s|$))(?=[a-zA-Z0-9:_-]*[a-zA-Z])([a-zA-Z0-9][a-zA-Z0-9:_-]*)(?=\s)/g;
 const MENTION_TOKEN_REGEX = /(^|\s)@(?:"((?:\\.|[^"\\])*)"|([^\s@"]+))(?=\s)/g;
-const FILE_LINK_TOKEN_REGEX = /(^|\s)\[((?:\\.|[^\]\\])*)\]\(([^)\s]+)\)(?=\s)/g;
+/**
+ * The label body is bounded rather than `*`. Unbounded, every whitespace in
+ * the composer is a candidate start: the engine scans the rest of the text for
+ * a closing `]`, fails, and rescans from the next whitespace — quadratic on
+ * input like " [[[[[…". A cap makes each attempt constant-bounded.
+ *
+ * Only a basename ever survives the `label !== basename` check below, so this
+ * cannot reject a link a user could meaningfully write; the longest filename
+ * any common filesystem allows is 255.
+ */
+const MAX_FILE_LINK_LABEL_LENGTH = 512;
+const FILE_LINK_TOKEN_REGEX = new RegExp(
+  `(^|\\s)\\[((?:\\\\.|[^\\]\\\\]){0,${MAX_FILE_LINK_LABEL_LENGTH}})\\]\\(([^)\\s]+)\\)(?=\\s)`,
+  "g",
+);
 const URI_SCHEME_REGEX = /^[A-Za-z][A-Za-z0-9+.-]*:/;
 const WINDOWS_DRIVE_PATH_REGEX = /^[A-Za-z]:[\\/]/;
+// Autocomplete emits canonical file links, so ambiguous bare @scope/package text stays a package.
+const SCOPED_PACKAGE_REFERENCE_REGEX =
+  /^[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*(?:\/[^\s@"]+)*$/;
 
 function collectMentionTokens(text: string): ComposerInlineToken[] {
   const matches: ComposerInlineToken[] = [];
@@ -60,7 +85,7 @@ function collectMentionTokens(text: string): ComposerInlineToken[] {
     const prefix = match[1] ?? "";
     const quotedPath = match[2];
     const path = quotedPath !== undefined ? quotedPath.replace(/\\(.)/g, "$1") : (match[3] ?? "");
-    if (!path) {
+    if (!path || (quotedPath === undefined && SCOPED_PACKAGE_REFERENCE_REGEX.test(path))) {
       continue;
     }
     const start = (match.index ?? 0) + prefix.length;

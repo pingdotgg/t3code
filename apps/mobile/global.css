@@ -1,13 +1,19 @@
 @import "tailwindcss";
 @import "uniwind";
+@import "./generated-uniwind-themes.css";
 
 /* ─── Theme tokens ──────────────────────────────────────────────────── */
 @layer theme {
   :root {
+    @variant android {
+      --font-mono: "monospace";
+    }
+
     @variant light {
       /* Page backgrounds */
       --color-screen: #f2f2f7;
       --color-sheet: rgba(242, 242, 247, 0.98);
+      --color-sheet-solid: #f2f2f7;
 
       /* Card / surface */
       --color-card: #ffffff;
@@ -35,13 +41,16 @@
       /* Primary action */
       --color-primary: #262626;
       --color-primary-foreground: #ffffff;
-      --color-primary-shadow: rgba(0, 0, 0, 0.18);
+      --color-primary-shadow: #000000;
 
       /* Secondary action */
       --color-secondary: #ffffff;
       --color-secondary-foreground: #262626;
       --color-secondary-border: rgba(0, 0, 0, 0.08);
-      --color-switch-active: #34c759;
+      --color-switch-active-track: #34c759;
+      --color-switch-active-thumb: #ffffff;
+      --color-switch-inactive-track: rgba(0, 0, 0, 0.08);
+      --color-switch-inactive-thumb: #8e8e93;
 
       /* Danger */
       --color-danger: #fef2f2;
@@ -52,7 +61,7 @@
       --color-input: #ffffff;
       --color-input-border: rgba(0, 0, 0, 0.1);
       --color-sidebar-search: rgba(118, 118, 128, 0.12);
-      --color-placeholder: #a3a3a3;
+      --color-placeholder: #737373;
 
       /* Icons */
       --color-icon: #262626;
@@ -86,6 +95,7 @@
       --color-user-bubble: #007aff;
       --color-user-bubble-foreground: #ffffff;
       --color-user-bubble-foreground-muted: rgba(255, 255, 255, 0.78);
+      --color-user-bubble-skill-foreground: #f0abfc;
 
       /* Drawer / modal backdrop */
       --color-backdrop: rgba(0, 0, 0, 0.22);
@@ -102,6 +112,7 @@
       /* Page backgrounds */
       --color-screen: #0a0a0a;
       --color-sheet: rgba(14, 14, 14, 0.98);
+      --color-sheet-solid: #0e0e0e;
 
       /* Card / surface */
       --color-card: #171717;
@@ -129,13 +140,16 @@
       /* Primary action */
       --color-primary: #f5f5f5;
       --color-primary-foreground: #0a0a0a;
-      --color-primary-shadow: rgba(0, 0, 0, 0.22);
+      --color-primary-shadow: #000000;
 
       /* Secondary action */
       --color-secondary: rgba(255, 255, 255, 0.04);
       --color-secondary-foreground: #f5f5f5;
       --color-secondary-border: rgba(255, 255, 255, 0.06);
-      --color-switch-active: #30d158;
+      --color-switch-active-track: #30d158;
+      --color-switch-active-thumb: #ffffff;
+      --color-switch-inactive-track: rgba(255, 255, 255, 0.06);
+      --color-switch-inactive-thumb: #8e8e93;
 
       /* Danger */
       --color-danger: rgba(239, 68, 68, 0.14);
@@ -180,6 +194,7 @@
       --color-user-bubble: #0a84ff;
       --color-user-bubble-foreground: #ffffff;
       --color-user-bubble-foreground-muted: rgba(255, 255, 255, 0.78);
+      --color-user-bubble-skill-foreground: #f0abfc;
 
       /* Drawer / modal backdrop */
       --color-backdrop: rgba(0, 0, 0, 0.48);

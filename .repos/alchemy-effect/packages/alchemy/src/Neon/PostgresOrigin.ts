@@ -7,7 +7,7 @@ import * as Redacted from "effect/Redacted";
  *
  * ```typescript
  * const branch = yield* Neon.Branch("preview", { project });
- * const hd = yield* Cloudflare.Hyperdrive("preview-hd", {
+ * const hd = yield* Cloudflare.Hyperdrive.Connection("preview-hd", {
  *   origin: branch.origin,
  * });
  * ```

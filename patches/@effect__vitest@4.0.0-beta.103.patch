@@ -1,0 +1,106 @@
+diff --git a/dist/index.d.ts b/dist/index.d.ts
+index a364638..4ee44c2 100644
+--- a/dist/index.d.ts
++++ b/dist/index.d.ts
+@@ -7,11 +7,11 @@ import type * as Layer from "effect/Layer";
+ import type * as Schema from "effect/Schema";
+ import type * as Scope from "effect/Scope";
+ import type * as FC from "effect/testing/FastCheck";
+-import * as V from "vitest";
++import * as V from "vite-plus/test";
+ /**
+  * @since 4.0.0
+  */
+-export * from "vitest";
++export * from "vite-plus/test";
+ /**
+  * @since 4.0.0
+  */
+diff --git a/dist/index.js b/dist/index.js
+index a1a89bd..687df5a 100644
+--- a/dist/index.js
++++ b/dist/index.js
+@@ -1,9 +1,9 @@
+-import * as V from "vitest";
++import * as V from "vite-plus/test";
+ import * as internal from "./internal/internal.js";
+ /**
+  * @since 4.0.0
+  */
+-export * from "vitest";
++export * from "vite-plus/test";
+ /**
+  * @since 4.0.0
+  */
+diff --git a/dist/internal/internal.js b/dist/internal/internal.js
+index fe41479..8ae751c 100644
+--- a/dist/internal/internal.js
++++ b/dist/internal/internal.js
+@@ -15,7 +15,7 @@ import * as Scope from "effect/Scope";
+ import * as fc from "effect/testing/FastCheck";
+ import * as TestClock from "effect/testing/TestClock";
+ import * as TestConsole from "effect/testing/TestConsole";
+-import * as V from "vitest";
++import * as V from "vite-plus/test";
+ const getCurrentSuite = V.TestRunner.getCurrentSuite;
+ const runPromise = /*#__PURE__*/Effect.fnUntraced(function* (effect, _ctx) {
+   const exit = yield* Effect.exit(effect);
+diff --git a/dist/utils.js b/dist/utils.js
+index 4871215..2c46e2b 100644
+--- a/dist/utils.js
++++ b/dist/utils.js
+@@ -4,7 +4,7 @@ import * as Option from "effect/Option";
+ import * as Predicate from "effect/Predicate";
+ import * as Result from "effect/Result";
+ import * as assert from "node:assert";
+-import { assert as vassert } from "vitest";
++import { assert as vassert } from "vite-plus/test";
+ // ----------------------------
+ // Primitives
+ // ----------------------------
+diff --git a/src/index.ts b/src/index.ts
+index b524786..8d4025d 100644
+--- a/src/index.ts
++++ b/src/index.ts
+@@ -7,13 +7,13 @@ import type * as Layer from "effect/Layer"
+ import type * as Schema from "effect/Schema"
+ import type * as Scope from "effect/Scope"
+ import type * as FC from "effect/testing/FastCheck"
+-import * as V from "vitest"
++import * as V from "vite-plus/test"
+ import * as internal from "./internal/internal.ts"
+ 
+ /**
+  * @since 4.0.0
+  */
+-export * from "vitest"
++export * from "vite-plus/test"
+ 
+ /**
+  * @since 4.0.0
+diff --git a/src/internal/internal.ts b/src/internal/internal.ts
+index d4040a0..f02fc9d 100644
+--- a/src/internal/internal.ts
++++ b/src/internal/internal.ts
+@@ -16,7 +16,7 @@ import * as Scope from "effect/Scope"
+ import * as fc from "effect/testing/FastCheck"
+ import * as TestClock from "effect/testing/TestClock"
+ import * as TestConsole from "effect/testing/TestConsole"
+-import * as V from "vitest"
++import * as V from "vite-plus/test"
+ import type * as Vitest from "../index.ts"
+ 
+ const getCurrentSuite = V.TestRunner.getCurrentSuite
+diff --git a/src/utils.ts b/src/utils.ts
+index 4a4612c..846bcc9 100644
+--- a/src/utils.ts
++++ b/src/utils.ts
+@@ -16,7 +16,7 @@ import * as Option from "effect/Option"
+ import * as Predicate from "effect/Predicate"
+ import * as Result from "effect/Result"
+ import * as assert from "node:assert"
+-import { assert as vassert } from "vitest"
++import { assert as vassert } from "vite-plus/test"
+ 
+ // ----------------------------
+ // Primitives

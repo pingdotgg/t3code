@@ -119,19 +119,6 @@ export const decodeJsonResult = <S extends Schema.Codec<unknown, unknown, never,
   };
 };
 
-export const decodeUnknownJsonResult = <S extends Schema.Codec<unknown, unknown, never, never>>(
-  schema: S,
-) => {
-  const decode = Schema.decodeUnknownExit(Schema.fromJsonString(schema));
-  return (input: unknown) => {
-    const result = decode(input);
-    if (Exit.isFailure(result)) {
-      return Result.fail(result.cause);
-    }
-    return Result.succeed(result.value);
-  };
-};
-
 export const formatSchemaError = (cause: Cause.Cause<Schema.SchemaError>) => {
   const issues: Array<SchemaDiagnosticIssue> = [];
   let issueCount = 0;
@@ -175,7 +162,7 @@ export const formatSchemaError = (cause: Cause.Cause<Schema.SchemaError>) => {
  *
  * Mirrors `SchemaGetter.parseJson()` but strips JSONC syntax before parsing.
  */
-const decodeJsonString = Schema.decodeEffect(Schema.UnknownFromJsonString);
+const decodeJsonString = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 const parseLenientJsonGetter = SchemaGetter.onSome((input: string) => {
   // Strip single-line comments - alternation preserves quoted strings.
@@ -190,8 +177,14 @@ const parseLenientJsonGetter = SchemaGetter.onSome((input: string) => {
     (match, stringLiteral: string | undefined) => (stringLiteral ? match : ""),
   );
 
-  // Strip trailing commas before `}` or `]`.
-  stripped = stripped.replace(/,(\s*[}\]])/g, "$1");
+  // Strip trailing commas before `}` or `]`. The alternation preserves quoted
+  // strings so a comma inside a string value (e.g. `{"note":"a,]"}`) is not
+  // mistaken for a trailing comma and removed.
+  stripped = stripped.replace(
+    /("(?:[^"\\]|\\.)*")|,(\s*[}\]])/g,
+    (match, stringLiteral: string | undefined, bracket: string | undefined) =>
+      stringLiteral ? match : (bracket ?? ""),
+  );
 
   return decodeJsonString(stripped).pipe(
     Effect.map(Option.some),

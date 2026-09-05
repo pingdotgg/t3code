@@ -1,7 +1,14 @@
 import type { PreviewAutomationOpenInput, PreviewSessionSnapshot } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { previewAutomationOpenNeedsOverlay } from "./previewAutomationOpenReadiness";
+import {
+  DEFAULT_PREVIEW_AUTOMATION_VIEWPORT,
+  explicitlySuppressesPreviewMiniPlayer,
+  previewAutomationDefaultViewport,
+  previewAutomationOpenNeedsOverlay,
+  shouldAutoShowPreviewForAutomationUse,
+  shouldOpenPreviewMiniPlayer,
+} from "./previewAutomationOpenReadiness";
 
 const snapshot = (navStatus: PreviewSessionSnapshot["navStatus"]): PreviewSessionSnapshot => ({
   threadId: "thread-1",
@@ -13,6 +20,18 @@ const snapshot = (navStatus: PreviewSessionSnapshot["navStatus"]): PreviewSessio
 });
 
 describe("preview automation open readiness", () => {
+  it("opens the inline preview by default", () => {
+    expect(shouldOpenPreviewMiniPlayer({} as PreviewAutomationOpenInput)).toBe(true);
+  });
+
+  it("supports explicit opt-out and the legacy show alias", () => {
+    expect(shouldOpenPreviewMiniPlayer({ open: false } as PreviewAutomationOpenInput)).toBe(false);
+    expect(shouldOpenPreviewMiniPlayer({ show: false } as PreviewAutomationOpenInput)).toBe(false);
+    expect(
+      shouldOpenPreviewMiniPlayer({ open: true, show: false } as PreviewAutomationOpenInput),
+    ).toBe(true);
+  });
+
   it("does not wait for a desktop overlay when opening an empty tab", () => {
     expect(
       previewAutomationOpenNeedsOverlay(
@@ -42,5 +61,81 @@ describe("preview automation open readiness", () => {
         }),
       ),
     ).toBe(true);
+  });
+
+  it("gives newly-created automation tabs a stable desktop viewport", () => {
+    expect(previewAutomationDefaultViewport(false, snapshot({ _tag: "Idle" }))).toEqual(
+      DEFAULT_PREVIEW_AUTOMATION_VIEWPORT,
+    );
+  });
+
+  it("preserves reused and already-fixed browser viewports", () => {
+    expect(previewAutomationDefaultViewport(true, snapshot({ _tag: "Idle" }))).toBeNull();
+    expect(
+      previewAutomationDefaultViewport(false, {
+        ...snapshot({ _tag: "Idle" }),
+        viewport: { _tag: "freeform", width: 900, height: 600 },
+      }),
+    ).toBeNull();
+  });
+});
+
+describe("shouldOpenPreviewMiniPlayer with the floating-preview preference", () => {
+  it("honours the preference when the agent said nothing either way", () => {
+    // `preview_open` no longer arrives with `open` pre-filled, so an agent
+    // that omitted it leaves the decision to the user's setting.
+    expect(shouldOpenPreviewMiniPlayer({}, false)).toBe(false);
+    expect(shouldOpenPreviewMiniPlayer({}, true)).toBe(true);
+  });
+
+  it("lets an explicit request outrank the preference in both directions", () => {
+    expect(shouldOpenPreviewMiniPlayer({ open: true }, false)).toBe(true);
+    expect(shouldOpenPreviewMiniPlayer({ open: false }, true)).toBe(false);
+    expect(shouldOpenPreviewMiniPlayer({ show: true }, false)).toBe(true);
+  });
+
+  it("distinguishes an explicit background request from a disabled preference", () => {
+    expect(explicitlySuppressesPreviewMiniPlayer({ open: false })).toBe(true);
+    expect(explicitlySuppressesPreviewMiniPlayer({ show: false })).toBe(true);
+    expect(explicitlySuppressesPreviewMiniPlayer({})).toBe(false);
+  });
+});
+
+describe("auto-show for existing automation tabs", () => {
+  it("records floating-preview intent whenever an agent uses the tab", () => {
+    expect(
+      shouldAutoShowPreviewForAutomationUse({
+        operation: "navigate",
+        autoShowFloatingPreview: true,
+        presentationSuppressed: false,
+      }),
+    ).toBe(true);
+  });
+
+  it("leaves explicit opens and background-only tabs alone", () => {
+    expect(
+      shouldAutoShowPreviewForAutomationUse({
+        operation: "open",
+        autoShowFloatingPreview: true,
+        presentationSuppressed: false,
+      }),
+    ).toBe(false);
+    expect(
+      shouldAutoShowPreviewForAutomationUse({
+        operation: "click",
+        autoShowFloatingPreview: true,
+        presentationSuppressed: true,
+      }),
+    ).toBe(false);
+  });
+
+  it("honours the auto-show preference for reused tabs", () => {
+    expect(
+      shouldAutoShowPreviewForAutomationUse({
+        operation: "snapshot",
+        autoShowFloatingPreview: false,
+        presentationSuppressed: false,
+      }),
+    ).toBe(false);
   });
 });

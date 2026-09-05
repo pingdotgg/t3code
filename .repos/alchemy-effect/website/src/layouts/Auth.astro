@@ -1,0 +1,162 @@
+---
+import "../styles/tokens.css";
+import ThemeProvider from "../components/ThemeProvider.astro";
+import Logo from "../components/marketing/Logo.astro";
+
+export interface Props {
+  title: string;
+  message: string;
+  variant?: "success" | "error";
+  primaryAction?: { text: string; href?: string; onClick?: string };
+  secondaryAction?: { text: string; href?: string; onClick?: string };
+}
+
+const {
+  title,
+  message,
+  variant = "success",
+  primaryAction,
+  secondaryAction,
+} = Astro.props;
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <ThemeProvider />
+    <title>{title} — Alchemy</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  </head>
+  <body class="alc-auth-body">
+    <main class="alc-auth">
+      <a href="/" class="alc-auth__brand" aria-label="Alchemy">
+        <Logo size={28} />
+      </a>
+
+      <h1 class={`alc-auth__title${variant === "error" ? " is-error" : ""}`}>
+        {title}
+      </h1>
+
+      <p class="alc-auth__message" set:html={message} />
+
+      {(primaryAction || secondaryAction) && (
+        <div class="alc-auth__actions">
+          {primaryAction && (
+            primaryAction.href ? (
+              <a href={primaryAction.href} class="alc-auth__btn alc-auth__btn--primary">
+                {primaryAction.text}
+              </a>
+            ) : (
+              <button class="alc-auth__btn alc-auth__btn--primary" onclick={primaryAction.onClick}>
+                {primaryAction.text}
+              </button>
+            )
+          )}
+          {secondaryAction && (
+            secondaryAction.href ? (
+              <a href={secondaryAction.href} class="alc-auth__btn alc-auth__btn--secondary">
+                {secondaryAction.text}
+              </a>
+            ) : (
+              <button class="alc-auth__btn alc-auth__btn--secondary" onclick={secondaryAction.onClick}>
+                {secondaryAction.text}
+              </button>
+            )
+          )}
+        </div>
+      )}
+    </main>
+
+    <style is:global>
+      html, body {
+        margin: 0;
+        padding: 0;
+        background: var(--alc-bg);
+        color: var(--alc-fg-2);
+        font-family: var(--alc-font-sans);
+        -webkit-font-smoothing: antialiased;
+      }
+    </style>
+
+    <style>
+      .alc-auth-body {
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        padding: 2rem 1.25rem;
+      }
+      .alc-auth {
+        width: 100%;
+        max-width: 28rem;
+        text-align: center;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 1.25rem;
+      }
+      .alc-auth__brand {
+        text-decoration: none;
+        margin-bottom: 1rem;
+      }
+      .alc-auth__title {
+        font-family: var(--alc-font-serif);
+        font-size: 1.875rem;
+        font-weight: 600;
+        color: var(--alc-fg-1);
+        margin: 0;
+        letter-spacing: -0.01em;
+      }
+      .alc-auth__title.is-error {
+        color: var(--alc-terracotta-deep, var(--alc-terracotta));
+      }
+      .alc-auth__message {
+        font-size: 1rem;
+        line-height: 1.6;
+        color: var(--alc-fg-2);
+        margin: 0;
+      }
+      .alc-auth__actions {
+        display: flex;
+        gap: 0.75rem;
+        margin-top: 0.75rem;
+        flex-wrap: wrap;
+        justify-content: center;
+      }
+      .alc-auth__btn {
+        padding: 0.625rem 1.5rem;
+        border-radius: 0.5rem;
+        font: inherit;
+        font-weight: 500;
+        font-size: 0.95rem;
+        cursor: pointer;
+        text-decoration: none;
+        display: inline-block;
+        transition: background 0.15s ease, border-color 0.15s ease, transform 0.1s ease;
+        border: 1px solid transparent;
+      }
+      .alc-auth__btn--primary {
+        background: var(--alc-accent);
+        color: var(--alc-fg-on-accent);
+      }
+      .alc-auth__btn--primary:hover {
+        background: var(--alc-accent-deep);
+      }
+      .alc-auth__btn--secondary {
+        background: transparent;
+        color: var(--alc-fg-1);
+        border-color: var(--alc-hairline-2);
+      }
+      .alc-auth__btn--secondary:hover {
+        background: var(--alc-bg-elev-1);
+        border-color: var(--alc-accent);
+      }
+      @media (max-width: 480px) {
+        .alc-auth__title { font-size: 1.5rem; }
+        .alc-auth__actions { flex-direction: column; width: 100%; }
+        .alc-auth__btn { width: 100%; }
+      }
+    </style>
+  </body>
+</html>

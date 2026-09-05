@@ -1,5 +1,5 @@
 import { assert, describe, it } from "@effect/vitest"
-import { Deferred, Option } from "effect"
+import { Deferred, Fiber, Option } from "effect"
 import * as Cause from "effect/Cause"
 import * as Effect from "effect/Effect"
 import * as Exit from "effect/Exit"
@@ -96,6 +96,25 @@ describe("Deferred", () => {
         assert.isFalse(yield* Deferred.interrupt(deferred))
         const result = yield* Effect.exit(Deferred.await(deferred))
         assert.deepStrictEqual(result, Exit.failCause(Cause.interrupt(-1)))
+      }))
+
+    it.effect("await - interrupting a suspended waiter removes it", () =>
+      Effect.gen(function*() {
+        const deferred = yield* Deferred.make<number>()
+        const interrupted = yield* Deferred.await(deferred).pipe(
+          Effect.forkChild({ startImmediately: true })
+        )
+        const live = yield* Deferred.await(deferred).pipe(
+          Effect.forkChild({ startImmediately: true })
+        )
+
+        assert.strictEqual(deferred.resumes?.length, 2)
+        yield* Fiber.interrupt(interrupted)
+        assert.isTrue(Exit.hasInterrupts(yield* Fiber.await(interrupted)))
+        assert.strictEqual(deferred.resumes?.length, 1)
+
+        assert.isTrue(yield* Deferred.succeed(deferred, 42))
+        assert.strictEqual(yield* Fiber.join(live), 42)
       }))
   })
 

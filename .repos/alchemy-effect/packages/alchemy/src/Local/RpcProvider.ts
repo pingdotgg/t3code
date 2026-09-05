@@ -5,10 +5,12 @@ import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 import type { Scope } from "effect/Scope";
 import * as Stream from "effect/Stream";
+import { AlchemyContext } from "../AlchemyContext.ts";
+import { Artifacts, ArtifactStore, makeScopedArtifacts } from "../Artifacts.ts";
 import { InstanceId } from "../InstanceId.ts";
 import type { Platform } from "../Platform.ts";
 import * as Provider from "../Provider.ts";
-import type { ResourceClass, ResourceLike } from "../Resource.ts";
+import type { ResourceClassLike, ResourceLike } from "../Resource.ts";
 import { Stack } from "../Stack.ts";
 import { Stage } from "../Stage.ts";
 import { RpcProviderProxy } from "./RpcProviderProxy.ts";
@@ -44,6 +46,113 @@ import { RpcProviderProxy } from "./RpcProviderProxy.ts";
  * @param eff - The Effect to use to construct the provider.
  * @returns A layer containing the RpcProvider.
  */
+/**
+ * The provider shape accepted by {@link effect}. It is identical to
+ * {@link Provider.ProviderService} except that `list` is **optional**: local /
+ * dev RPC providers frequently have no cloud enumeration API, so the factory
+ * supplies a safe `() => Effect.succeed([])` default when one is not given. A
+ * provider that *can* enumerate its in-memory/local runtime state (e.g.
+ * `LocalWorkerProvider` enumerating its running instances) just defines `list`
+ * and the factory threads it straight through.
+ */
+type RpcProviderService<
+  R extends ResourceLike,
+  ReadReq = never,
+  DiffReq = never,
+  PrecreateReq = never,
+  ReconcileReq = never,
+  DeleteReq = never,
+  TailReq = never,
+  LogsReq = never,
+  ListReq = never,
+> = Omit<
+  Provider.ProviderService<
+    R,
+    ReadReq,
+    DiffReq,
+    PrecreateReq,
+    ReconcileReq,
+    DeleteReq,
+    TailReq,
+    LogsReq,
+    ListReq
+  >,
+  "list"
+> &
+  Partial<
+    Pick<
+      Provider.ProviderService<
+        R,
+        ReadReq,
+        DiffReq,
+        PrecreateReq,
+        ReconcileReq,
+        DeleteReq,
+        TailReq,
+        LogsReq,
+        ListReq
+      >,
+      "list"
+    >
+  >;
+
+/**
+ * Ensures a provider satisfies the now-required `list()` contract. If the
+ * provider already implements `list` (enumerating its local runtime state) it
+ * is returned untouched; otherwise a safe default that enumerates nothing
+ * (`() => Effect.succeed([])`) is injected. Local/dev providers have no cloud
+ * enumeration API, so `[]` is the correct default — never throw.
+ */
+const withDefaultList = <
+  R extends ResourceLike,
+  ReadReq,
+  DiffReq,
+  PrecreateReq,
+  ReconcileReq,
+  DeleteReq,
+  TailReq,
+  LogsReq,
+  ListReq,
+>(
+  provider: RpcProviderService<
+    R,
+    ReadReq,
+    DiffReq,
+    PrecreateReq,
+    ReconcileReq,
+    DeleteReq,
+    TailReq,
+    LogsReq,
+    ListReq
+  >,
+): Provider.ProviderService<
+  R,
+  ReadReq,
+  DiffReq,
+  PrecreateReq,
+  ReconcileReq,
+  DeleteReq,
+  TailReq,
+  LogsReq,
+  ListReq
+> =>
+  (provider.list
+    ? provider
+    : {
+        ...provider,
+        list: () => Effect.succeed([]),
+      }) as Provider.ProviderService<
+    R,
+    ReadReq,
+    DiffReq,
+    PrecreateReq,
+    ReconcileReq,
+    DeleteReq,
+    TailReq,
+    LogsReq,
+    ListReq
+  >;
+
 export const effect = <
   R extends ResourceLike,
   Req = never,
@@ -54,11 +163,12 @@ export const effect = <
   DeleteReq = never,
   TailReq = never,
   LogsReq = never,
+  ListReq = never,
 >(
-  cls: ResourceClass<R> | Platform<R, any, any, any, any>,
+  cls: ResourceClassLike<R> | Platform<R, any, any, any, any>,
   serverEntryUrl: string,
   eff: Effect.Effect<
-    Provider.ProviderService<
+    RpcProviderService<
       R,
       ReadReq,
       DiffReq,
@@ -66,7 +176,8 @@ export const effect = <
       ReconcileReq,
       DeleteReq,
       TailReq,
-      LogsReq
+      LogsReq,
+      ListReq
     >,
     never,
     Req
@@ -76,10 +187,12 @@ export const effect = <
     cls,
     Effect.gen(function* () {
       const client = yield* Effect.serviceOption(RpcProviderProxy);
+      const context = yield* Effect.context();
       const stack = yield* Stack;
+      const store = yield* ArtifactStore;
 
       if (client._tag === "None") {
-        const provider = yield* eff;
+        const provider = withDefaultList(yield* eff);
         return new Proxy(provider, {
           get: (target, prop) => {
             const value = (target as any)[prop];
@@ -87,11 +200,18 @@ export const effect = <
             return (...args: any[]) => {
               const result = value(...args);
               const services = Layer.mergeAll(
+                Layer.succeedContext(context),
                 layerFallback(Stack, stack),
                 layerFallback(Stage, stack.stage),
                 Predicate.hasProperty(args[0], "instanceId") &&
                   Predicate.isString(args[0].instanceId)
-                  ? layerFallback(InstanceId, args[0].instanceId)
+                  ? Layer.merge(
+                      layerFallback(InstanceId, args[0].instanceId),
+                      Layer.succeed(
+                        Artifacts,
+                        makeScopedArtifacts(store, args[0].instanceId),
+                      ),
+                    )
                   : Layer.empty,
               );
               return result.pipe(
@@ -103,7 +223,7 @@ export const effect = <
           },
         });
       }
-      return yield* client.value.get(serverEntryUrl, cls.Type);
+      return withDefaultList(yield* client.value.get(serverEntryUrl, cls.Type));
     }),
   );
 
@@ -127,7 +247,8 @@ const layerFallback = <I, S>(
  */
 export const providerServices = <ROut, E, RIn>(
   self: Layer.Layer<ROut, E, RIn>,
-): Layer.Layer<ROut, E, RIn> => providerServicesEffect(Effect.succeed(self));
+): Layer.Layer<ROut, E, RIn | AlchemyContext> =>
+  providerServicesEffect(Effect.succeed(self));
 
 /**
  * Conditionally constructs a layer for use by an RpcProvider.
@@ -137,10 +258,12 @@ export const providerServices = <ROut, E, RIn>(
  */
 export const providerServicesEffect = <A, E1, R1, E, R>(
   self: Effect.Effect<Layer.Layer<A, E1, R1>, E, R>,
-): Layer.Layer<A, E | E1, R1 | Exclude<R, Scope>> =>
-  Effect.serviceOption(RpcProviderProxy).pipe(
-    Effect.flatMap((client) =>
-      client._tag === "None" ? self : (Effect.succeed(Layer.empty) as never),
+): Layer.Layer<A, E | E1, R1 | Exclude<R, Scope> | AlchemyContext> =>
+  Effect.zip(AlchemyContext, Effect.serviceOption(RpcProviderProxy)).pipe(
+    Effect.flatMap(([context, client]) =>
+      context.dev && client._tag === "None"
+        ? self
+        : (Effect.succeed(Layer.empty) as never),
     ),
     Layer.unwrap,
   );

@@ -15,6 +15,7 @@ const { fromPartition, sessions } = vi.hoisted(() => ({
       readonly clearStorageData: ReturnType<typeof vi.fn>;
       readonly getUserAgent: ReturnType<typeof vi.fn>;
       readonly setPermissionRequestHandler: ReturnType<typeof vi.fn>;
+      readonly setPermissionCheckHandler: ReturnType<typeof vi.fn>;
       readonly setUserAgent: ReturnType<typeof vi.fn>;
     }
   >(),
@@ -40,6 +41,7 @@ describe("BrowserSession", () => {
         clearStorageData: vi.fn(() => Promise.resolve()),
         getUserAgent: vi.fn(() => "Mozilla/5.0 Electron/41.5.0 t3code/0.0.27"),
         setPermissionRequestHandler: vi.fn(),
+        setPermissionCheckHandler: vi.fn(),
         setUserAgent: vi.fn(),
       };
       sessions.set(partition, browserSession);
@@ -58,6 +60,94 @@ describe("BrowserSession", () => {
       assert.strictEqual(partition, "persist:t3code-preview-f051bb2c68cb7b2fe969");
       assert.strictEqual(first, second);
       assert.strictEqual(fromPartition.mock.calls.length, 1);
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("keeps scopes that differ only by a lone surrogate in separate partitions", () =>
+    Effect.gen(function* () {
+      const browserSessions = yield* BrowserSession.BrowserSession;
+
+      // TextEncoder folds a lone surrogate to U+FFFD, so without escaping these
+      // two supported ids would hash to one partition and share every cookie.
+      const loneSurrogate = yield* browserSessions.getPartition("p\ud800");
+      const replacementChar = yield* browserSessions.getPartition("p\ufffd");
+      assert.notStrictEqual(loneSurrogate, replacementChar);
+
+      // The escape can't be forged with a literal backslash either.
+      const literal = yield* browserSessions.getPartition("p\\ud800");
+      assert.notStrictEqual(literal, loneSurrogate);
+
+      // And a well-formed scope still lands on its historical partition.
+      assert.strictEqual(
+        yield* browserSessions.getPartition("scope-a"),
+        "persist:t3code-preview-f051bb2c68cb7b2fe969",
+      );
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("keeps legacy defaults disjoint from nondefault profile partitions", () =>
+    Effect.gen(function* () {
+      const browserSessions = yield* BrowserSession.BrowserSession;
+
+      // These share the same scope string: default environment `a::b`, and
+      // environment `a` with nondefault profile `b`.
+      const legacyDefault = yield* browserSessions.getPartition("a::b");
+      const nondefaultProfile = yield* browserSessions.getPartition("a::b", true, "profile");
+
+      assert.strictEqual(legacyDefault, "persist:t3code-preview-78f0be89237d77f7a70e");
+      assert.strictEqual(nondefaultProfile, "persist:t3code-preview-profile-78f0be89237d77f7a70e");
+      assert.notStrictEqual(nondefaultProfile, legacyDefault);
+      assert.isTrue(browserSessions.isPartition(legacyDefault));
+      assert.isTrue(browserSessions.isPartition(nondefaultProfile));
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("grants clipboard-sanitized-write through both the request and check handlers", () =>
+    Effect.gen(function* () {
+      const browserSessions = yield* BrowserSession.BrowserSession;
+      const partition = yield* browserSessions.getPartition("scope-a");
+      yield* browserSessions.getSession("scope-a");
+
+      const browserSession = sessions.get(partition);
+      assert.isDefined(browserSession);
+
+      const requestHandler = browserSession.setPermissionRequestHandler.mock.calls[0]?.[0];
+      const checkHandler = browserSession.setPermissionCheckHandler.mock.calls[0]?.[0];
+      assert.isFunction(requestHandler);
+      assert.isFunction(checkHandler);
+
+      const requestAllows = (permission: string): boolean => {
+        let granted: boolean | undefined;
+        requestHandler(null, permission, (value: boolean) => {
+          granted = value;
+        });
+        assert.isDefined(granted);
+        return granted;
+      };
+
+      for (const permission of [
+        "clipboard-read",
+        "clipboard-sanitized-write",
+        "notifications",
+        "geolocation",
+      ]) {
+        assert.isTrue(requestAllows(permission), `request handler should allow ${permission}`);
+        assert.isTrue(
+          checkHandler(null, permission) as boolean,
+          `check handler should allow ${permission}`,
+        );
+      }
+
+      // `clipboard-write` is not a real Electron permission — the async write API
+      // uses `clipboard-sanitized-write` — so the stale name must not be granted,
+      // and unrelated permissions stay denied.
+      for (const permission of ["clipboard-write", "midi"]) {
+        assert.isFalse(requestAllows(permission), `request handler should deny ${permission}`);
+        assert.isFalse(
+          checkHandler(null, permission) as boolean,
+          `check handler should deny ${permission}`,
+        );
+      }
     }).pipe(Effect.provide(layer)),
   );
 
@@ -133,11 +223,33 @@ describe("BrowserSession", () => {
         assert.strictEqual(browserSession.clearStorageData.mock.calls.length, 1);
         assert.deepEqual(browserSession.clearStorageData.mock.calls[0], [
           {
-            storages: ["cookies", "localstorage", "indexdb", "websql", "serviceworkers"],
+            storages: ["cookies", "localstorage", "indexdb", "serviceworkers"],
           },
         ]);
         assert.strictEqual(browserSession.clearCache.mock.calls.length, 1);
       }
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("clears a partition whose session has not been opened yet", () =>
+    Effect.gen(function* () {
+      const browserSessions = yield* BrowserSession.BrowserSession;
+      const partition = yield* browserSessions.getPartition("scope-untouched");
+
+      // Deriving the partition string does not create the session, and the
+      // clear only walks sessions it already holds. Without loading it first
+      // this reports success and deletes nothing — which is what a user
+      // clearing a profile after a restart would get.
+      assert.isUndefined(sessions.get(partition));
+      yield* browserSessions.clearCookies([partition]);
+      assert.isUndefined(sessions.get(partition));
+
+      yield* browserSessions.getSession("scope-untouched");
+      yield* browserSessions.clearCookies([partition]);
+
+      const created = sessions.get(partition);
+      assert.isDefined(created);
+      assert.strictEqual(created.clearStorageData.mock.calls.length, 1);
     }).pipe(Effect.provide(layer)),
   );
 

@@ -1,6 +1,7 @@
 import {
   buildConnectClerkAuthorizeUrl,
   connectCallbackUrl,
+  connectLoopbackRedirectUri,
   CONNECT_OAUTH_SCOPES,
   type ConnectAuthorizeRequest,
 } from "@t3tools/shared/connectAuth";
@@ -34,6 +35,11 @@ export function connectCliAuthRoutesEnabled(): boolean {
  * Builds the Clerk authorize URL for a CLI-initiated connect request. The
  * state is mirrored into sessionStorage so the callback page can verify the
  * response matches a request this browser actually started.
+ *
+ * A request carrying a loopback port came from a CLI with a local callback
+ * listener: the authorization code must return to `127.0.0.1` directly, so
+ * the hosted callback page never sees it. Clerk enforces its registered
+ * redirect URI allowlist either way.
  */
 export function buildConnectCliClerkAuthorizeUrl(request: ConnectAuthorizeRequest): string | null {
   const { clerkPublishableKey } = resolveCloudPublicConfig();
@@ -44,11 +50,31 @@ export function buildConnectCliClerkAuthorizeUrl(request: ConnectAuthorizeReques
   return buildConnectClerkAuthorizeUrl({
     authorizationEndpoint: `${clerkFrontendApiUrlFromPublishableKey(clerkPublishableKey)}/oauth/authorize`,
     clientId,
-    redirectUri: connectCallbackUrl(configuredHostedAppUrl()),
+    redirectUri:
+      request.loopbackPort === undefined
+        ? connectCallbackUrl(configuredHostedAppUrl())
+        : connectLoopbackRedirectUri(request.loopbackPort),
     scopes: CONNECT_OAUTH_SCOPES,
     state: request.state,
     challenge: request.challenge,
   });
+}
+
+/**
+ * Where Clerk sends the browser once the sign-in modal on /connect completes.
+ * It has to be the authorize endpoint rather than this page: /connect carries
+ * the CLI request in its fragment, so navigating back to the same URL is a
+ * same-document fragment navigation the browser never reloads — and Clerk
+ * treats any post-sign-in navigation as a page unload and skips the state emit
+ * that would otherwise re-render the surface, so the session never arrives
+ * either. Falls back to the current URL when the authorize URL cannot be
+ * built, which only happens on a deployment without the CLI OAuth config.
+ */
+export function connectCliSignInRedirectUrl(
+  request: ConnectAuthorizeRequest,
+  currentHref: string,
+): string {
+  return buildConnectCliClerkAuthorizeUrl(request) ?? currentHref;
 }
 
 export function rememberConnectCliAuthState(state: string): void {

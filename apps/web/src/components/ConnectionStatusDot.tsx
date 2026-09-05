@@ -1,5 +1,27 @@
+import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
+
 import { cn } from "~/lib/utils";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
+
+/** Canonical connection-phase → dot color mapping shared by every status dot. */
+export function connectionPhaseDotClassName(phase: EnvironmentConnectionPhase): string {
+  switch (phase) {
+    case "connected":
+      return "bg-success";
+    case "connecting":
+    case "reconnecting":
+      return "bg-warning";
+    case "error":
+      return "bg-destructive";
+    default:
+      return "bg-muted-foreground/40";
+  }
+}
+
+/** Ping halo for transitional phases; null renders no ping. */
+export function connectionPhasePingClassName(phase: EnvironmentConnectionPhase): string | null {
+  return phase === "connecting" || phase === "reconnecting" ? "bg-warning/60 duration-2000" : null;
+}
 
 type ConnectionStatusDotProps = {
   tooltipText?: string | null;
@@ -37,7 +59,6 @@ export function ConnectionStatusDot({
   const dot = (
     <button
       type="button"
-      title={tooltipText}
       aria-label={tooltipText}
       className="relative flex size-3 shrink-0 cursor-help items-center justify-center rounded-full outline-hidden"
     >

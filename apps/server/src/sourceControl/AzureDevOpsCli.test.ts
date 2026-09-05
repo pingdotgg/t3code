@@ -332,6 +332,28 @@ describe("AzureDevOpsCli.layer", () => {
     }).pipe(Effect.provide(layer)),
   );
 
+  it.effect("forwards explicit output limits to the process boundary", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(Effect.succeed(processOutput("")));
+
+      const az = yield* AzureDevOpsCli.AzureDevOpsCli;
+      yield* az.execute({
+        cwd: "/repo",
+        args: ["repos", "pr", "list"],
+        maxOutputBytes: 16 * 1024 * 1024,
+      });
+
+      expect(mockRun).toHaveBeenCalledWith({
+        operation: "AzureDevOpsCli.execute",
+        command: "az",
+        args: ["repos", "pr", "list"],
+        cwd: "/repo",
+        timeoutMs: 30_000,
+        maxOutputBytes: 16 * 1024 * 1024,
+      });
+    }).pipe(Effect.provide(layer)),
+  );
+
   it.effect("preserves VCS causes without copying upstream details into messages", () =>
     Effect.gen(function* () {
       const cause = new VcsProcessExitError({
@@ -403,6 +425,27 @@ describe("AzureDevOpsCli.layer", () => {
         error.message,
         "Azure DevOps CLI failed in getPullRequest: Azure DevOps CLI returned invalid pull request JSON.",
       );
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("preserves rate-limit failures as a distinct error", () =>
+    Effect.gen(function* () {
+      const cause = new VcsProcessExitError({
+        operation: "AzureDevOpsCli.execute",
+        command: "az",
+        cwd: "/repo",
+        argumentCount: 2,
+        exitCode: 1,
+        detail: "API rate limit exceeded.",
+        failureKind: "rate-limited",
+      });
+      mockRun.mockReturnValueOnce(Effect.fail(cause));
+
+      const az = yield* AzureDevOpsCli.AzureDevOpsCli;
+      const error = yield* az.execute({ cwd: "/repo", args: ["repos", "list"] }).pipe(Effect.flip);
+
+      assert.instanceOf(error, AzureDevOpsCli.AzureDevOpsCliRateLimitError);
+      assert.strictEqual(error.cause, cause);
     }).pipe(Effect.provide(layer)),
   );
 });

@@ -26,7 +26,6 @@ import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
 
 import {
   buildConnectAuthorizeRequestUrl,
-  buildConnectClerkAuthorizeUrl,
   checkConnectAuthCode,
   connectCallbackUrl,
 } from "@t3tools/shared/connectAuth";
@@ -90,9 +89,10 @@ export const waitForLoopbackAuthorization = Effect.fn(
       while (true) {
         const result = yield* Effect.raceFirst(
           input.callback.pipe(
-            Effect.map(
-              (code): LoopbackAuthorizationResult => ({ _tag: "AuthorizationCode", code }),
-            ),
+            Effect.map((code): LoopbackAuthorizationResult => ({
+              _tag: "AuthorizationCode",
+              code,
+            })),
           ),
           readLoopbackAuthorizationAction(terminalInput),
         );
@@ -367,6 +367,7 @@ export const make = Effect.gen(function* () {
 
   const login = Effect.fn("cloud.cli_token.login")(function* () {
     const metadata = yield* cloudCliOAuthConfig;
+    const hostedAppUrl = yield* hostedAppUrlConfig;
     const { verifier, challenge, state } = yield* makePkceRequest;
     const callback = yield* Deferred.make<string>();
     const callbackRoute = HttpRouter.add(
@@ -392,19 +393,21 @@ export const make = Effect.gen(function* () {
       Layer.provide(
         NodeHttpServer.layer(NodeHttp.createServer, {
           host: "127.0.0.1",
-          port: 34338,
+          port: metadata.loopbackPort,
           disablePreemptiveShutdown: true,
         }),
       ),
       Layer.build,
     );
-    const authorizationUrl = buildConnectClerkAuthorizeUrl({
-      authorizationEndpoint: metadata.authorizationEndpoint,
-      clientId: metadata.clientId,
-      redirectUri: metadata.redirectUri,
-      scopes: metadata.scopes,
+    // The hosted /connect page establishes a Clerk session before forwarding
+    // the request to /oauth/authorize with the loopback redirect URI. Sending
+    // a signed-out browser to /oauth/authorize directly loses the authorize
+    // parameters across Clerk's sign-in redirect (#5051).
+    const authorizationUrl = buildConnectAuthorizeRequestUrl({
+      hostedAppUrl,
       state,
       challenge,
+      loopbackPort: metadata.loopbackPort,
     });
     yield* Console.log(formatLoopbackAuthorizationPrompt(authorizationUrl));
     const authorization = yield* waitForLoopbackAuthorization({

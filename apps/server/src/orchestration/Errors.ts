@@ -1,3 +1,4 @@
+import { ThreadId } from "@t3tools/contracts";
 import * as SchemaIssue from "effect/SchemaIssue";
 import * as Schema from "effect/Schema";
 
@@ -40,6 +41,24 @@ export class OrchestrationCommandInvariantError extends Schema.TaggedErrorClass<
   }
 }
 
+export class OrchestrationThreadSettleBlockedError extends Schema.TaggedErrorClass<OrchestrationThreadSettleBlockedError>()(
+  "OrchestrationThreadSettleBlockedError",
+  {
+    threadId: ThreadId,
+  },
+) {
+  override get message(): string {
+    return "This thread still needs attention. Resolve or interrupt it first, then try again.";
+  }
+}
+
+export const OrchestrationCommandRejection = Schema.Union([
+  OrchestrationCommandInvariantError,
+  OrchestrationThreadSettleBlockedError,
+]);
+export type OrchestrationCommandRejection = typeof OrchestrationCommandRejection.Type;
+export const isOrchestrationCommandRejection = Schema.is(OrchestrationCommandRejection);
+
 export class OrchestrationCommandPreviouslyRejectedError extends Schema.TaggedErrorClass<OrchestrationCommandPreviouslyRejectedError>()(
   "OrchestrationCommandPreviouslyRejectedError",
   {
@@ -50,6 +69,21 @@ export class OrchestrationCommandPreviouslyRejectedError extends Schema.TaggedEr
 ) {
   override get message(): string {
     return `Command previously rejected (${this.commandId}): ${this.detail}`;
+  }
+}
+
+export class OrchestrationCommandIdConflictError extends Schema.TaggedErrorClass<OrchestrationCommandIdConflictError>()(
+  "OrchestrationCommandIdConflictError",
+  {
+    commandId: Schema.String,
+    receiptAggregateKind: Schema.String,
+    receiptAggregateId: Schema.String,
+    commandAggregateKind: Schema.String,
+    commandAggregateId: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Command id '${this.commandId}' already used for ${this.receiptAggregateKind} '${this.receiptAggregateId}'; refusing to replay its receipt for ${this.commandAggregateKind} '${this.commandAggregateId}'.`;
   }
 }
 
@@ -81,7 +115,8 @@ export class OrchestrationListenerCallbackError extends Schema.TaggedErrorClass<
 
 export type OrchestrationDispatchError =
   | ProjectionRepositoryError
-  | OrchestrationCommandInvariantError
+  | OrchestrationCommandRejection
+  | OrchestrationCommandIdConflictError
   | OrchestrationCommandPreviouslyRejectedError
   | OrchestrationProjectorDecodeError
   | OrchestrationListenerCallbackError;

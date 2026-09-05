@@ -31,6 +31,7 @@ export function createInitialDesktopUpdateState(
     availableVersion: null,
     downloadedVersion: null,
     releaseNotes: [],
+    omittedReleaseCount: 0,
     downloadPercent: null,
     checkedAt: null,
     message: null,
@@ -43,13 +44,15 @@ export function reduceDesktopUpdateStateOnCheckStart(
   state: DesktopUpdateState,
   checkedAt: string,
 ): DesktopUpdateState {
+  const hasDownloadedUpdate = state.downloadedVersion !== null;
   return {
     ...state,
     status: "checking",
     checkedAt,
-    releaseNotes: [],
+    releaseNotes: hasDownloadedUpdate ? state.releaseNotes : [],
+    omittedReleaseCount: hasDownloadedUpdate ? state.omittedReleaseCount : 0,
     message: null,
-    downloadPercent: null,
+    downloadPercent: hasDownloadedUpdate ? 100 : null,
     errorContext: null,
     canRetry: false,
   };
@@ -60,6 +63,18 @@ export function reduceDesktopUpdateStateOnCheckFailure(
   message: string,
   checkedAt: string,
 ): DesktopUpdateState {
+  if (state.downloadedVersion !== null) {
+    return {
+      ...state,
+      status: "downloaded",
+      message: null,
+      checkedAt,
+      downloadPercent: 100,
+      errorContext: null,
+      canRetry: true,
+    };
+  }
+
   return {
     ...state,
     status: "error",
@@ -76,18 +91,22 @@ export function reduceDesktopUpdateStateOnUpdateAvailable(
   version: string,
   checkedAt: string,
   releaseNotes: ReadonlyArray<DesktopUpdateReleaseNote> = [],
+  omittedReleaseCount = 0,
 ): DesktopUpdateState {
+  const isDownloadedVersion = state.downloadedVersion === version;
+  const preserveReleaseNotes = isDownloadedVersion && releaseNotes.length === 0;
   return {
     ...state,
-    status: "available",
+    status: isDownloadedVersion ? "downloaded" : "available",
     availableVersion: version,
-    downloadedVersion: null,
-    releaseNotes,
-    downloadPercent: null,
+    downloadedVersion: isDownloadedVersion ? version : null,
+    releaseNotes: preserveReleaseNotes ? state.releaseNotes : releaseNotes,
+    omittedReleaseCount: preserveReleaseNotes ? state.omittedReleaseCount : omittedReleaseCount,
+    downloadPercent: isDownloadedVersion ? 100 : null,
     checkedAt,
     message: null,
     errorContext: null,
-    canRetry: false,
+    canRetry: isDownloadedVersion,
   };
 }
 
@@ -95,12 +114,26 @@ export function reduceDesktopUpdateStateOnNoUpdate(
   state: DesktopUpdateState,
   checkedAt: string,
 ): DesktopUpdateState {
+  if (state.downloadedVersion !== null) {
+    return {
+      ...state,
+      status: "downloaded",
+      availableVersion: state.downloadedVersion,
+      downloadPercent: 100,
+      checkedAt,
+      message: null,
+      errorContext: null,
+      canRetry: true,
+    };
+  }
+
   return {
     ...state,
     status: "up-to-date",
     availableVersion: null,
     downloadedVersion: null,
     releaseNotes: [],
+    omittedReleaseCount: 0,
     downloadPercent: null,
     checkedAt,
     message: null,

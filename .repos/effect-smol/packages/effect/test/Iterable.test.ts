@@ -396,6 +396,48 @@ describe("Iterable", () => {
     deepStrictEqual(toArray(Iter.flatten([[1], [2], [3]])), [1, 2, 3])
   })
 
+  it("cartesianWith", () => {
+    const right = (function*() {
+      yield* [1, 2, 3]
+    })()
+    deepStrictEqual(toArray(Iter.cartesianWith(["a", "b"], right, (a, b) => `${a}${b}`)), [
+      "a1",
+      "a2",
+      "a3",
+      "b1",
+      "b2",
+      "b3"
+    ])
+  })
+
+  it("cartesian", () => {
+    const right = (function*() {
+      yield* [1, 2, 3]
+    })()
+    deepStrictEqual(toArray(Iter.cartesian(["a", "b"], right)), [
+      ["a", 1],
+      ["a", 2],
+      ["a", 3],
+      ["b", 1],
+      ["b", 2],
+      ["b", 3]
+    ])
+  })
+
+  it("cartesian keeps the right input lazy", () => {
+    const right: Iterable<number> = {
+      *[Symbol.iterator]() {
+        yield* [1, 2, 3]
+        throw new Error("right input was consumed eagerly")
+      }
+    }
+    deepStrictEqual(toArray(Iter.take(Iter.cartesian(["a", "b"], right), 3)), [
+      ["a", 1],
+      ["a", 2],
+      ["a", 3]
+    ])
+  })
+
   it("groupWith", () => {
     const groupWith = Iter.groupWith(Equivalence.strictEqual<number>())
     deepStrictEqual(toArray(groupWith([1, 2, 1, 1])), [[1], [2], [1, 1]])

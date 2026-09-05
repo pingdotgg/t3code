@@ -28,4 +28,16 @@ describe("Config", () => {
     type S = Config.Success<typeof c>
     expect<S>().type.toBe<"a" | "b">()
   })
+
+  it("Record", () => {
+    const c = Config.schema(Config.Record(Schema.String, Schema.FiniteFromString))
+
+    expect(c).type.toBe<Config.Config<{ readonly [x: string]: number }>>()
+  })
+
+  it("Array", () => {
+    const c = Config.schema(Config.Array(Schema.FiniteFromString))
+
+    expect(c).type.toBe<Config.Config<ReadonlyArray<number>>>()
+  })
 })

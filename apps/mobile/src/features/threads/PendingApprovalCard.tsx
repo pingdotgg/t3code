@@ -1,4 +1,8 @@
-import type { ApprovalRequestId, ProviderApprovalDecision } from "@t3tools/contracts";
+import type {
+  ApprovalRequestId,
+  ProviderApprovalDecision,
+  ProviderApprovalOption,
+} from "@t3tools/contracts";
 import { Pressable, View } from "react-native";
 
 import { AppText as Text } from "../../components/AppText";
@@ -13,44 +17,63 @@ export interface PendingApprovalCardProps {
   ) => Promise<unknown>;
 }
 
+const DEFAULT_APPROVAL_OPTIONS: ReadonlyArray<ProviderApprovalOption> = [
+  { decision: "accept", label: "Allow once" },
+  { decision: "acceptForSession", label: "Allow session" },
+  { decision: "decline", label: "Decline" },
+];
+
 export function PendingApprovalCard(props: PendingApprovalCardProps) {
+  const options: ReadonlyArray<ProviderApprovalOption> =
+    props.approval.options ?? DEFAULT_APPROVAL_OPTIONS;
+  const warning = options.find((option) => option.warning)?.warning;
+  // Opaque for the same reason as PendingUserInputCard: nothing blurs the feed
+  // behind this card, so a translucent surface bleeds messages through it.
   return (
-    <View className="gap-2.5 rounded-[20px] border border-neutral-200 bg-neutral-100/80 p-4 dark:border-white/6 dark:bg-neutral-900/80">
-      <Text className="font-t3-bold text-2xs uppercase tracking-[1.1px] text-sky-700 dark:text-sky-300">
+    <View className="gap-2.5 rounded-[20px] border border-adaptive-neutral-200-white-a6 bg-adaptive-neutral-100-900 p-4">
+      <Text className="font-t3-bold text-2xs uppercase tracking-[1.1px] text-adaptive-sky-700-300">
         Approval needed
       </Text>
-      <Text className="font-t3-bold text-lg text-neutral-950 dark:text-neutral-50">
-        {props.approval.requestKind}
+      <Text className="font-t3-bold text-lg text-adaptive-neutral-950-50">
+        {props.approval.appName ?? props.approval.requestKind}
       </Text>
       {props.approval.detail ? (
-        <Text className="font-sans text-sm leading-normal text-neutral-600 dark:text-neutral-400">
+        <Text className="font-sans text-sm leading-normal text-adaptive-neutral-600-400">
           {props.approval.detail}
         </Text>
       ) : null}
+      {warning ? (
+        <Text className="font-sans text-xs leading-normal text-adaptive-amber-700-300">
+          {warning}
+        </Text>
+      ) : null}
       <View className="flex-row flex-wrap gap-2.5">
-        <Pressable
-          className="items-center justify-center rounded-[14px] bg-blue-500 px-3.5 py-3"
-          disabled={props.respondingApprovalId === props.approval.requestId}
-          onPress={() => void props.onRespond(props.approval.requestId, "accept")}
-        >
-          <Text className="font-t3-extrabold text-sm text-white">Allow once</Text>
-        </Pressable>
-        <Pressable
-          className="items-center justify-center rounded-[14px] bg-neutral-200 px-3.5 py-3 dark:bg-neutral-800"
-          disabled={props.respondingApprovalId === props.approval.requestId}
-          onPress={() => void props.onRespond(props.approval.requestId, "acceptForSession")}
-        >
-          <Text className="font-t3-bold text-sm text-neutral-950 dark:text-neutral-50">
-            Allow session
-          </Text>
-        </Pressable>
-        <Pressable
-          className="items-center justify-center rounded-[14px] bg-rose-100 px-3.5 py-3 dark:bg-rose-500/18"
-          disabled={props.respondingApprovalId === props.approval.requestId}
-          onPress={() => void props.onRespond(props.approval.requestId, "decline")}
-        >
-          <Text className="font-t3-bold text-sm text-rose-700 dark:text-rose-300">Decline</Text>
-        </Pressable>
+        {options.map((option) => (
+          <Pressable
+            key={option.decision}
+            className={`items-center justify-center rounded-[14px] px-3.5 py-3 ${
+              option.decision === "accept"
+                ? "bg-blue-500"
+                : option.decision === "decline"
+                  ? "bg-adaptive-rose-100-500-a18"
+                  : "bg-adaptive-neutral-200-800"
+            }`}
+            disabled={props.respondingApprovalId === props.approval.requestId}
+            onPress={() => void props.onRespond(props.approval.requestId, option.decision)}
+          >
+            <Text
+              className={`text-sm ${
+                option.decision === "accept"
+                  ? "font-t3-extrabold text-white"
+                  : option.decision === "decline"
+                    ? "font-t3-bold text-adaptive-rose-700-300"
+                    : "font-t3-bold text-adaptive-neutral-950-50"
+              }`}
+            >
+              {option.label}
+            </Text>
+          </Pressable>
+        ))}
       </View>
     </View>
   );
