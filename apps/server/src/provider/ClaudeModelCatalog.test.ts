@@ -7,9 +7,11 @@ import {
   formatClaudeVersionUpgradeMessage,
   normalizeClaudeCatalogEffort,
   resolveClaudeCatalogApiModelId,
+  resolveClaudeCatalogEffort,
   resolveClaudeModelCatalog,
   resolveClaudeModelsForVersion,
   resolveClaudeModelSlug,
+  scopeClaudeModelCatalog,
 } from "./ClaudeModelCatalog.ts";
 
 /**
@@ -133,5 +135,59 @@ describe("Claude model catalog", () => {
       },
     };
     assert.isFalse(hasValidClaudeManifestAdapters(malformed));
+  });
+
+  it("appends custom models with their own descriptors and keeps bare slugs opaque", () => {
+    const catalog = scopeClaudeModelCatalog(resolveClaudeModelCatalog(manifest()), [
+      "synthetic",
+      {
+        slug: "claude-custom-tuned",
+        name: "Tuned",
+        capabilities: {
+          optionDescriptors: [
+            {
+              id: "effort",
+              label: "Reasoning",
+              type: "select",
+              options: [
+                { id: "gentle", label: "Gentle", isDefault: true },
+                { id: "brutal", label: "Brutal" },
+              ],
+            },
+          ],
+        },
+      },
+    ]);
+
+    // The bare custom slug shadows the built-in alias, so it no longer resolves to it.
+    assert.strictEqual(resolveClaudeModelSlug(catalog, "synthetic"), "synthetic");
+    assert.strictEqual(resolveClaudeCatalogEffort(catalog, "synthetic", "extreme"), undefined);
+
+    // The entry with descriptors resolves user-defined effort ids and passes
+    // them through untouched (no effortMap, no model suffix).
+    assert.strictEqual(
+      resolveClaudeCatalogEffort(catalog, "claude-custom-tuned", "brutal"),
+      "brutal",
+    );
+    assert.strictEqual(
+      resolveClaudeCatalogEffort(catalog, "claude-custom-tuned", "bogus"),
+      "gentle",
+    );
+    assert.strictEqual(
+      normalizeClaudeCatalogEffort(catalog, "brutal", "claude-custom-tuned"),
+      "brutal",
+    );
+    assert.strictEqual(
+      resolveClaudeCatalogApiModelId(catalog, {
+        instanceId: ProviderInstanceId.make("claudeAgent"),
+        model: "claude-custom-tuned",
+        options: [{ id: "effort", value: "brutal" }],
+      }),
+      "claude-custom-tuned",
+    );
+    assert.deepStrictEqual(
+      resolveClaudeModelsForVersion(catalog, "3.2.0").map((model) => model.slug),
+      ["claude-synthetic-next", "claude-custom-tuned"],
+    );
   });
 });

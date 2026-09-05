@@ -147,16 +147,18 @@ const discoverSkillsInRoot = Effect.fn("discoverCursorSkillsInRoot")(function* (
     if (!resolvedDirectory) {
       return;
     }
-    if (
-      visitedDirectories.has(resolvedDirectory) ||
-      (resolvedDirectory !== rootDirectory &&
-        !resolvedDirectory.startsWith(`${rootDirectory}${path.sep}`))
-    ) {
+    if (visitedDirectories.has(resolvedDirectory)) {
       return;
     }
     visitedDirectories.add(resolvedDirectory);
+    // A symlink whose target lives outside the root is a skill package
+    // boundary: read its own SKILL.md so linked skill libraries show up, but
+    // never walk the target tree.
+    const insideRoot =
+      resolvedDirectory === rootDirectory ||
+      resolvedDirectory.startsWith(`${rootDirectory}${path.sep}`);
 
-    const skillPath = path.join(resolvedDirectory, "SKILL.md");
+    const skillPath = path.join(directory, "SKILL.md");
     const skillInfo = yield* orUndefined(fileSystem.stat(skillPath), input.budget);
     if (skillInfo?.type === "File") {
       let frontmatter: CursorSkillFrontmatter | undefined = { cliVisible: true };
@@ -167,7 +169,7 @@ const discoverSkillsInRoot = Effect.fn("discoverCursorSkillsInRoot")(function* (
           frontmatter = parseSkillFrontmatter(contents);
         }
       }
-      const name = path.basename(resolvedDirectory).trim();
+      const name = path.basename(directory).trim();
       if (frontmatter?.cliVisible && name) {
         skills.push({
           name,
@@ -184,7 +186,10 @@ const discoverSkillsInRoot = Effect.fn("discoverCursorSkillsInRoot")(function* (
       }
     }
 
-    const entries = yield* orUndefined(fileSystem.readDirectory(resolvedDirectory), input.budget);
+    if (!insideRoot) {
+      return;
+    }
+    const entries = yield* orUndefined(fileSystem.readDirectory(directory), input.budget);
     if (!entries) {
       return;
     }
@@ -194,7 +199,7 @@ const discoverSkillsInRoot = Effect.fn("discoverCursorSkillsInRoot")(function* (
         return;
       }
       input.budget.remainingEntries -= 1;
-      const child = path.join(resolvedDirectory, entry);
+      const child = path.join(directory, entry);
       const info = yield* orUndefined(fileSystem.stat(child), input.budget);
       if (info?.type !== "Directory") continue;
       if (depth >= MAX_SKILL_DEPTH) {
