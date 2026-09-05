@@ -22,7 +22,7 @@ import {
   formatSubagentTokenCount,
 } from "@t3tools/client-runtime/state/subagentRuntime";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { Bot, Braces, Check, ChevronDown, ChevronRight, X } from "lucide-react";
+import { Bot, Braces, Check, ChevronDown, ChevronRight, X } from "~/icons";
 import { useEffect, useRef, useState } from "react";
 
 import { cn } from "~/lib/utils";

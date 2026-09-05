@@ -32,6 +32,7 @@ source alone does not explain. Most code changes do not need an internal documen
 
 - [Architecture overview](./internals/overview.md)
 - [Glossary](./internals/glossary.md)
+- [Web icons](./internals/icons.md)
 - [Connection runtime](./internals/connection-runtime.md)
 - [Providers](./internals/providers.md)
 - [Model classification](./internals/model-manifest.md)

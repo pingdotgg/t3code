@@ -1,4 +1,4 @@
-import { SearchIcon } from "lucide-react";
+import { SearchIcon } from "~/icons";
 import { memo, type RefCallback } from "react";
 
 import { cn } from "~/lib/utils";

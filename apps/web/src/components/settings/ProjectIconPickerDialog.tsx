@@ -1,5 +1,5 @@
 import type { ProjectIconColor, ProjectIconOverride } from "@t3tools/contracts";
-import { DynamicIcon, type IconName } from "lucide-react/dynamic";
+import { DynamicIcon, type IconName } from "~/icons/dynamic";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   filterProjectIconNames,

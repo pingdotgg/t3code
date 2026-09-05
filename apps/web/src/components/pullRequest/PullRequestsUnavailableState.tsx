@@ -1,4 +1,4 @@
-import { ExternalLinkIcon, GitPullRequestIcon, RefreshCwIcon } from "lucide-react";
+import { ExternalLinkIcon, GitPullRequestIcon, RefreshCwIcon } from "~/icons";
 
 import { Button } from "../ui/button";
 import {

@@ -5,7 +5,7 @@ import {
   PaintbrushIcon,
   PlusIcon,
   XIcon,
-} from "lucide-react";
+} from "~/icons";
 import {
   useCallback,
   useEffect,

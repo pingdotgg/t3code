@@ -4,7 +4,7 @@ import {
   type ProviderApprovalOption,
 } from "@t3tools/contracts";
 import { memo } from "react";
-import { TriangleAlertIcon } from "lucide-react";
+import { TriangleAlertIcon } from "~/icons";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 

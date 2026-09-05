@@ -5,6 +5,8 @@
   "type": "module",
   "scripts": {
     "build:ghostty-wasm": "bash scripts/build-libghostty-wasm.sh",
+    "icons:check": "node scripts/generate-icon-barrel.ts --check",
+    "icons:generate": "node scripts/generate-icon-barrel.ts",
     "dev": "vp dev",
     "build": "vp build",
     "preview": "vp preview",
@@ -68,6 +70,7 @@
     "compression": "^1.8.1",
     "react-test-renderer": "19.2.6",
     "tailwindcss": "^4.0.0",
+    "typescript": "catalog:",
     "vite": "catalog:",
     "vite-plus": "catalog:"
   }

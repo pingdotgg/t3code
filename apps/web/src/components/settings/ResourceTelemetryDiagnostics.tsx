@@ -11,7 +11,7 @@ import {
   MemoryStickIcon,
   RefreshCwIcon,
   RotateCcwIcon,
-} from "lucide-react";
+} from "~/icons";
 import type {
   BackgroundBooleanState,
   ResourceAttributionEntry,

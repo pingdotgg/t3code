@@ -791,7 +791,7 @@ import {
   RotateCcwIcon,
   SparklesIcon,
   XIcon,
-} from "lucide-react";
+} from "~/icons";
 import { proposedPlanTitle } from "../../proposedPlan";
 import { hasProviderSetup } from "./ProviderStatusBanner";
 import {

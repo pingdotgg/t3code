@@ -5,7 +5,7 @@
  * only contributes its own padding.
  */
 import type { EnvironmentId, PullRequestRef, PullRequestReviewVerdict } from "@t3tools/contracts";
-import { CheckIcon, MessageSquareIcon, XCircleIcon } from "lucide-react";
+import { CheckIcon, MessageSquareIcon, XCircleIcon } from "~/icons";
 import { useState, type ReactNode } from "react";
 
 import { pullRequestEnvironment } from "~/state/pullRequests";

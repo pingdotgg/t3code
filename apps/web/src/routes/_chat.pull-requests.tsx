@@ -31,7 +31,7 @@ import {
   Minimize2Icon,
   RefreshCwIcon,
   SearchIcon,
-} from "lucide-react";
+} from "~/icons";
 import {
   useCallback,
   useEffect,

@@ -19,7 +19,7 @@ import {
   TerminalSquare,
   Volume2,
   VolumeOff,
-} from "lucide-react";
+} from "~/icons";
 import {
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,

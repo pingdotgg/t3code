@@ -1,4 +1,4 @@
-import { InfoIcon, Undo2Icon } from "lucide-react";
+import { InfoIcon, Undo2Icon } from "~/icons";
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import {
   createContext,

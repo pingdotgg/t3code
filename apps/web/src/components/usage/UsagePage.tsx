@@ -10,7 +10,7 @@ import {
   CircleDashedIcon,
   RefreshCwIcon,
   SlidersHorizontalIcon,
-} from "lucide-react";
+} from "~/icons";
 import { useMemo, useState } from "react";
 
 import {

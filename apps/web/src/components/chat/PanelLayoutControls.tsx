@@ -1,4 +1,4 @@
-import { Maximize2Icon, Minimize2Icon, PanelBottomIcon, PanelRightIcon } from "lucide-react";
+import { Maximize2Icon, Minimize2Icon, PanelBottomIcon, PanelRightIcon } from "~/icons";
 import { memo } from "react";
 
 import { Toggle } from "../ui/toggle";

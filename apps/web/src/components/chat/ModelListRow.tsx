@@ -1,6 +1,6 @@
 import { type ProviderDriverKind, type ProviderInstanceId } from "@t3tools/contracts";
 import { memo } from "react";
-import { StarIcon } from "lucide-react";
+import { StarIcon } from "~/icons";
 import {
   getDisplayModelName,
   getTriggerDisplayModelLabel,

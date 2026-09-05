@@ -1,4 +1,4 @@
-import { iconNames, type IconName } from "lucide-react/dynamic";
+import { iconNames, type IconName } from "~/icons/dynamic";
 export { PROJECT_ICON_COLORS, projectIconColorClassName } from "./projectIconColors";
 
 export const POPULAR_PROJECT_ICONS = [

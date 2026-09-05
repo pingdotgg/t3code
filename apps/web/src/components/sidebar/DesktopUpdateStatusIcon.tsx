@@ -1,4 +1,4 @@
-import { CheckIcon, DownloadIcon, RefreshCwIcon, RotateCwIcon } from "lucide-react";
+import { CheckIcon, DownloadIcon, RefreshCwIcon, RotateCwIcon } from "~/icons";
 import type { AnimationEventHandler } from "react";
 
 import { cn } from "../../lib/utils";

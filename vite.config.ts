@@ -116,6 +116,17 @@ export default defineConfig({
               message:
                 "Use StyledDiffCodeView so web diff surfaces share styling and virtualized geometry.",
             },
+            {
+              name: "lucide-react",
+              message:
+                "Import icons from ~/icons so they all flow through one module. Rerun apps/web/scripts/generate-icon-barrel.ts if a name is missing.",
+            },
+          ],
+          patterns: [
+            {
+              group: ["lucide-react/*", "lucide-react/**"],
+              message: "Import icons from ~/icons so they all flow through one module.",
+            },
           ],
         },
       ],

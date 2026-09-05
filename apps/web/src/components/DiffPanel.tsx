@@ -21,7 +21,7 @@ import {
   Rows3Icon,
   SearchIcon,
   TextWrapIcon,
-} from "lucide-react";
+} from "~/icons";
 import * as Schema from "effect/Schema";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useCodeViewFileReveal } from "./diffs/useCodeViewFileReveal";

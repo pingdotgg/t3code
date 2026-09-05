@@ -17,7 +17,7 @@ import {
   GitPullRequestIcon,
   LoaderIcon,
   TriangleAlertIcon,
-} from "lucide-react";
+} from "~/icons";
 import { Children, isValidElement, type ReactNode } from "react";
 
 import { cn } from "~/lib/utils";

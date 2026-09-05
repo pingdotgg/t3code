@@ -1,5 +1,5 @@
 import type { EnvironmentId, UnifiedSettings } from "@t3tools/contracts";
-import { PlusIcon } from "lucide-react";
+import { PlusIcon } from "~/icons";
 import { useState } from "react";
 
 import { useUpdateEnvironmentSettings } from "../../hooks/useSettings";

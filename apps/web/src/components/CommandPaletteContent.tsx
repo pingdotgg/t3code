@@ -1,4 +1,4 @@
-import { ArrowDownIcon, ArrowUpIcon } from "lucide-react";
+import { ArrowDownIcon, ArrowUpIcon } from "~/icons";
 import { type ComponentProps, type ReactNode, useLayoutEffect, useRef } from "react";
 
 import { Command, CommandFooter, CommandInput, CommandPanel } from "./ui/command";

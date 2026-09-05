@@ -6,7 +6,7 @@
  * The same combobox as the project and branch pickers, and dressed the same, rather than a menu:
  * a menu's typeahead claims every keypress to jump between rows, which a search box cannot share.
  */
-import { SearchIcon } from "lucide-react";
+import { SearchIcon } from "~/icons";
 import type { ReactNode } from "react";
 
 import { Button } from "../ui/button";

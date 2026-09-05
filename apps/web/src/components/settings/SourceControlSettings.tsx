@@ -1,4 +1,4 @@
-import { ChevronDownIcon, GitPullRequestIcon, RefreshCwIcon } from "lucide-react";
+import { ChevronDownIcon, GitPullRequestIcon, RefreshCwIcon } from "~/icons";
 import * as Duration from "effect/Duration";
 import * as Option from "effect/Option";
 import { useEffect, useState, type ReactNode } from "react";

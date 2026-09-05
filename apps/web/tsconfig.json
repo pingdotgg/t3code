@@ -31,6 +31,7 @@
     "vite.config.ts",
     "vercel.ts",
     "test",
+    "scripts/generate-icon-barrel.ts",
     "scripts/warm-dep-cache.ts",
     "../../scripts/lib/public-config.ts"
   ]

@@ -26,8 +26,8 @@ import {
   SmartphoneIcon,
   TerminalIcon,
   VideoIcon,
-} from "lucide-react";
-import type { IconName } from "lucide-react/dynamic";
+} from "~/icons";
+import type { IconName } from "~/icons/dynamic";
 import type { ComponentType } from "react";
 import { lazy, Suspense, useState } from "react";
 import { useAssetUrlState } from "../assets/assetUrls";
@@ -37,7 +37,7 @@ import { cn } from "~/lib/utils";
 
 const loadedProjectFaviconSrcs = new Map<string, string>();
 const DynamicIcon = lazy(() =>
-  import("lucide-react/dynamic").then((module) => ({ default: module.DynamicIcon })),
+  import("~/icons/dynamic").then((module) => ({ default: module.DynamicIcon })),
 );
 
 function DynamicProjectIconFallback() {

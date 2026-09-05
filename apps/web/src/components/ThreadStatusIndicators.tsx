@@ -11,7 +11,7 @@ import {
   type VcsStatusResult,
 } from "@t3tools/contracts";
 import { Atom } from "effect/unstable/reactivity";
-import { FolderGit2Icon, TerminalIcon } from "lucide-react";
+import { FolderGit2Icon, TerminalIcon } from "~/icons";
 import { useMemo } from "react";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { useEnvironment, usePrimaryEnvironmentId } from "../state/environments";

@@ -1,4 +1,4 @@
-import { RefreshCwIcon } from "lucide-react";
+import { RefreshCwIcon } from "~/icons";
 
 import { cn } from "~/lib/utils";
 

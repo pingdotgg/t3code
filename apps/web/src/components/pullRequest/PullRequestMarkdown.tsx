@@ -1,4 +1,4 @@
-import { ExternalLinkIcon, PaperclipIcon, PlayIcon } from "lucide-react";
+import { ExternalLinkIcon, PaperclipIcon, PlayIcon } from "~/icons";
 import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import { createContext, useContext, useMemo } from "react";
 import type { Options as ReactMarkdownOptions } from "react-markdown";

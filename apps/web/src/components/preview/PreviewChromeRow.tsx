@@ -6,7 +6,7 @@ import {
   MousePointerClick,
   PictureInPicture2,
   RotateCw,
-} from "lucide-react";
+} from "~/icons";
 import {
   type FormEvent,
   type KeyboardEvent,

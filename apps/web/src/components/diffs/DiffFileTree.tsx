@@ -1,6 +1,6 @@
 import type { GitStatusEntry } from "@pierre/trees";
 import { FileTree, useFileTree, useFileTreeSelector } from "@pierre/trees/react";
-import { ChevronsDownUpIcon, ChevronsUpDownIcon } from "lucide-react";
+import { ChevronsDownUpIcon, ChevronsUpDownIcon } from "~/icons";
 import { useEffect, useMemo, useRef, type ReactNode } from "react";
 
 import { useTheme } from "~/hooks/useTheme";

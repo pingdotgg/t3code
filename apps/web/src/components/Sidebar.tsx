@@ -58,7 +58,7 @@ import {
   TerminalIcon,
   Undo2Icon,
   XIcon,
-} from "lucide-react";
+} from "~/icons";
 import {
   memo,
   useCallback,
