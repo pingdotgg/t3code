@@ -44,8 +44,10 @@ import {
   type ServerSettingsPatch,
 } from "@t3tools/contracts";
 import {
+  filterSharedServerPatch,
   findSharedSettingsMismatches,
   pickSharedServerSettings,
+  supportsSharedSettingsSync,
 } from "@t3tools/client-runtime/state/shared-settings";
 import { useThreadListV2Enabled } from "../threads/use-thread-list-v2-enabled";
 import {
@@ -553,9 +555,9 @@ const AUTO_SETTLE_DEFAULT_DAYS = DEFAULT_SERVER_SETTINGS.sidebarAutoSettleAfterD
 
 /**
  * Auto-settlement is a user preference that every server has to hold. Mobile
- * has no primary environment, so the first connected environment that
- * supports it is the reference value. Edits fan out to every connected
- * environment, and a mismatch row lets the user push the reference out.
+ * has no primary environment, so the first eligible sync target provides the
+ * reference value. Edits fan out to every eligible target, and a mismatch row
+ * lets the user push the reference out.
  */
 function AutoSettleSettingsRows() {
   const { environments } = useEnvironments();
@@ -564,12 +566,8 @@ function AutoSettleSettingsRows() {
     reportFailure: true,
   });
 
-  const connected = environments.filter(
-    (environment) =>
-      environment.connection.phase === "connected" &&
-      environment.serverConfig?.environment.capabilities.threadAutoSettlement === true,
-  );
-  const reference = connected[0] ?? null;
+  const syncTargets = environments.filter(supportsSharedSettingsSync);
+  const reference = syncTargets[0] ?? null;
   const referenceSettings = reference?.serverConfig?.settings ?? null;
 
   const [daysDraft, setDaysDraft] = useState<string | null>(null);
@@ -579,7 +577,7 @@ function AutoSettleSettingsRows() {
   }
 
   const writeToAll = (patch: ServerSettingsPatch) => {
-    for (const environment of connected) {
+    for (const environment of syncTargets) {
       void updateSettings({ environmentId: environment.environmentId, input: { patch } });
     }
   };
@@ -587,11 +585,13 @@ function AutoSettleSettingsRows() {
   const mismatches = findSharedSettingsMismatches({
     primaryEnvironmentId: reference.environmentId,
     primarySettings: referenceSettings,
+    primaryCapabilities: reference.serverConfig?.environment.capabilities,
     environments: environments.map((environment) => ({
       environmentId: environment.environmentId,
       label: environment.label,
-      connected: environment.connection.phase === "connected",
+      syncEligible: supportsSharedSettingsSync(environment),
       settings: environment.serverConfig?.settings ?? null,
+      capabilities: environment.serverConfig?.environment.capabilities,
     })),
   });
 
@@ -600,7 +600,7 @@ function AutoSettleSettingsRows() {
     const draft = (daysDraft ?? "").trim();
     setDaysDraft(null);
     // Whole-string check so "3.5" and "3days" are rejected instead of
-    // silently becoming 3 on every connected environment.
+    // silently becoming 3 on every eligible sync target.
     const parsed = /^\d+$/.test(draft) ? Number(draft) : Number.NaN;
     if (
       Number.isInteger(parsed) &&
@@ -655,11 +655,22 @@ function AutoSettleSettingsRows() {
           <Pressable
             accessibilityRole="button"
             onPress={() => {
-              const patch = pickSharedServerSettings(referenceSettings);
+              const patch = pickSharedServerSettings(
+                referenceSettings,
+                reference.serverConfig?.environment.capabilities,
+              );
               for (const mismatch of mismatches) {
+                const target = environments.find(
+                  (candidate) => candidate.environmentId === mismatch.environmentId,
+                );
                 void updateSettings({
                   environmentId: mismatch.environmentId,
-                  input: { patch },
+                  input: {
+                    patch: filterSharedServerPatch(
+                      patch,
+                      target?.serverConfig?.environment.capabilities,
+                    ),
+                  },
                 });
               }
             }}

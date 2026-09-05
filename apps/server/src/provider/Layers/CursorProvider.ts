@@ -34,6 +34,7 @@ import {
   buildBooleanOptionDescriptor,
   buildSelectOptionDescriptor,
   buildServerProvider,
+  COMPACT_SLASH_COMMAND,
   collectStreamAsString,
   isCommandMissingCause,
   providerModelsFromSettings,
@@ -571,7 +572,7 @@ export const discoverCursorModelsViaAcp = (
   environment?: NodeJS.ProcessEnv,
 ) => discoverCursorModelsViaListAvailableModels(cursorSettings, environment);
 
-export function getCursorFallbackModels(
+function getCursorFallbackModels(
   cursorSettings: Pick<CursorSettings, "customModels">,
 ): ReadonlyArray<ServerProviderModel> {
   return providerModelsFromSettings([], cursorSettings.customModels, EMPTY_CAPABILITIES);
@@ -639,6 +640,7 @@ export function buildCursorProviderSnapshot(input: {
       input.cursorSettings.customModels,
       EMPTY_CAPABILITIES,
     ),
+    slashCommands: [COMPACT_SLASH_COMMAND],
     probe: {
       installed: true,
       version: input.parsed.version,

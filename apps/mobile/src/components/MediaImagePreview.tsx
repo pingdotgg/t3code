@@ -42,7 +42,7 @@ function ImagePreviewHeader() {
   );
 }
 
-/** Chat and workspace media retain source actions on both platforms; other files use native previews. */
+/** Android keeps media actions in its in-app image viewer. iOS uses Quick Look. */
 export function MediaImagePreview(props: MediaImagePreviewProps) {
   return (
     <ImagePreviewContext value={props}>

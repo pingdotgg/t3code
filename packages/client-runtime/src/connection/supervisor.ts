@@ -18,7 +18,6 @@ import type { ConnectionCatalogEntry } from "./catalog.ts";
 import * as Connectivity from "./connectivity.ts";
 import * as ConnectionDriver from "./driver.ts";
 import {
-  DPOP_ACCESS_TOKEN_REFRESH_SKEW_MS,
   type ConnectionAttemptError,
   type ConnectionTarget,
   ConnectionTransientError,
@@ -28,6 +27,7 @@ import {
 } from "./model.ts";
 import * as RpcSession from "../rpc/session.ts";
 import { safeErrorLogAttributes } from "../errors/safeLog.ts";
+import { NETWORK_BLOCKING_HINT } from "../errors/network.ts";
 import * as ConnectionWakeups from "./wakeups.ts";
 
 const RETRY_DELAYS_MS = [3_000, 4_000, 8_000, 16_000] as const;
@@ -221,6 +221,9 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
   | ConnectionWakeups.ConnectionWakeups
 > {
   const target = entry.target;
+  const setupTimeoutDetail = `${target.label} did not respond during connection setup.${
+    target._tag === "RelayConnectionTarget" ? ` ${NETWORK_BLOCKING_HINT}` : ""
+  }`;
   yield* annotateTarget(target);
 
   const connectivity = yield* Connectivity.Connectivity;
@@ -317,12 +320,10 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         }),
       });
       const lease = yield* effect.pipe(
-        Effect.mapError(
-          (error): TracedAttemptFailure => ({
-            error,
-            attemptSpan: Option.some(attemptSpan),
-          }),
-        ),
+        Effect.mapError((error): TracedAttemptFailure => ({
+          error,
+          attemptSpan: Option.some(attemptSpan),
+        })),
       );
       return { attemptSpan: Option.some(attemptSpan), lease };
     }).pipe(Effect.withSpan("relay.connection.attempt", { root: true }));
@@ -358,12 +359,10 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         attemptSpan: Option.none<Tracer.Span>(),
         lease,
       })),
-      Effect.mapError(
-        (error): TracedAttemptFailure => ({
-          error,
-          attemptSpan: Option.none(),
-        }),
-      ),
+      Effect.mapError((error): TracedAttemptFailure => ({
+        error,
+        attemptSpan: Option.none(),
+      })),
     );
   });
 
@@ -488,21 +487,6 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     }
   });
 
-  const waitForAuthorizationRefresh = Effect.fnUntraced(function* (
-    preparedConnection: PreparedConnection,
-  ) {
-    const authorization = preparedConnection.httpAuthorization;
-    if (authorization?._tag !== "Dpop") {
-      return yield* Effect.never;
-    }
-    const now = yield* Clock.currentTimeMillis;
-    yield* Effect.sleep(
-      Math.max(0, authorization.expiresAtEpochMs - now - DPOP_ACCESS_TOKEN_REFRESH_SKEW_MS),
-    );
-    yield* Effect.logDebug("Refreshing the environment connection before its DPoP token expires.");
-    return true;
-  });
-
   const runAttempt = Effect.fnUntraced(function* (
     attempt: number,
     generation: number,
@@ -514,20 +498,16 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       exitUnlessInterrupted(
         establishTracedConnection(attempt, generation, lastFailure, pendingRetry),
       ).pipe(
-        Effect.map(
-          (exit): EstablishmentEvent => ({
-            _tag: "Completed",
-            exit,
-          }),
-        ),
+        Effect.map((exit): EstablishmentEvent => ({
+          _tag: "Completed",
+          exit,
+        })),
       ),
       waitForEstablishmentInterrupt().pipe(
-        Effect.map(
-          (resetRetry): EstablishmentEvent => ({
-            _tag: "Interrupted",
-            resetRetry,
-          }),
-        ),
+        Effect.map((resetRetry): EstablishmentEvent => ({
+          _tag: "Interrupted",
+          resetRetry,
+        })),
       ),
       Effect.sleep(CONNECTION_ESTABLISHMENT_TIMEOUT).pipe(
         Effect.as<EstablishmentEvent>({ _tag: "TimedOut" }),
@@ -550,7 +530,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         failure: {
           error: new ConnectionTransientError({
             reason: "timeout",
-            detail: `${target.label} did not respond during connection setup.`,
+            detail: setupTimeoutDetail,
           }),
           attemptSpan: Option.none(),
         },
@@ -600,25 +580,20 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       retryAt: null,
     });
 
-    const connectedExit = yield* Effect.raceAllFirst([
+    const connectedExit = yield* Effect.raceFirst(
       active.lease.session.closed.pipe(
-        Effect.mapError(
-          (error): TracedAttemptFailure => ({
-            error,
-            attemptSpan: active.attemptSpan,
-          }),
-        ),
+        Effect.mapError((error): TracedAttemptFailure => ({
+          error,
+          attemptSpan: active.attemptSpan,
+        })),
       ),
       monitorConnectedLease(active.lease).pipe(
-        Effect.mapError(
-          (error): TracedAttemptFailure => ({
-            error,
-            attemptSpan: active.attemptSpan,
-          }),
-        ),
+        Effect.mapError((error): TracedAttemptFailure => ({
+          error,
+          attemptSpan: active.attemptSpan,
+        })),
       ),
-      waitForAuthorizationRefresh(active.lease.prepared),
-    ]).pipe(exitUnlessInterrupted);
+    ).pipe(exitUnlessInterrupted);
     const connectedForMs = (yield* Clock.currentTimeMillis) - connectedAt;
     if (Exit.isSuccess(connectedExit)) {
       return {

@@ -20,7 +20,7 @@ import {
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 import { resolvePreviewViewport } from "@t3tools/shared/previewViewport";
-import { useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { Atom } from "effect/unstable/reactivity";
 
 import {
@@ -29,7 +29,7 @@ import {
   reconcilePreviewServerSessions,
   updatePreviewServerSnapshot,
 } from "~/previewStateStore";
-import { usePreviewMiniPlayerStore } from "~/previewMiniPlayerStore";
+import { selectThreadPreviewMiniPlayer, usePreviewMiniPlayerStore } from "~/previewMiniPlayerStore";
 import { resolveBrowserNavigationTarget } from "~/browser/browserTargetResolver";
 import {
   readActiveBrowserRecordingTargets,
@@ -41,7 +41,11 @@ import {
   acquireBrowserSurfaceActivity,
   useBrowserSurfaceStore,
 } from "~/browser/browserSurfaceStore";
-import { browserDefaultOpenViewport, resolveBrowserDefaults } from "~/browser/browserDefaults";
+import {
+  browserDefaultOpenProfileId,
+  browserDefaultOpenViewport,
+  resolveBrowserDefaults,
+} from "~/browser/browserDefaults";
 import { runBrowserViewportMutation } from "~/browser/browserViewportActions";
 import { previewRuntimeTabId } from "~/browser/previewRuntimeTabId";
 import { isElectron } from "~/env";
@@ -59,8 +63,10 @@ import {
   PreviewAutomationViewportTimeoutError,
 } from "./previewAutomationErrors";
 import {
+  explicitlySuppressesPreviewMiniPlayer,
   previewAutomationDefaultViewport,
   previewAutomationOpenNeedsOverlay,
+  shouldAutoShowPreviewForAutomationUse,
   shouldOpenPreviewMiniPlayer,
 } from "./previewAutomationOpenReadiness";
 import {
@@ -74,6 +80,7 @@ import {
   resolvePreviewAutomationOpenTab,
   resolvePreviewAutomationTarget,
 } from "./previewAutomationTarget";
+import { resolveHostWaitBudgetMs, waitForHostReadiness } from "./previewAutomationHostBudget";
 import { isPreviewViewportReady } from "./previewViewportReadiness";
 import { shouldRollbackPreviewViewport } from "./previewViewportRollback";
 
@@ -93,25 +100,26 @@ const waitForDesktopOverlay = async (
   tabId: string,
   runtimeTabId: string,
   operation: PreviewAutomationRequest["operation"],
-  timeoutMs: number,
+  deadlineMs: number,
 ): Promise<void> => {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() <= deadline) {
+  const waitBudgetMs = Math.max(0, deadlineMs - Date.now());
+  const ready = await waitForHostReadiness(deadlineMs, async () => {
     const state = assertPreviewRuntimeCurrent(threadRef, tabId, runtimeTabId, {
       operation,
       requestId,
     });
     if (state.desktopByTabId[tabId] && previewBridge && isPreviewWebviewRendering(runtimeTabId)) {
       const status = await previewBridge.automation.status(runtimeTabId);
-      if (status.available) return;
+      return status.available;
     }
-    await new Promise<void>((resolve) => window.setTimeout(resolve, 50));
-  }
+    return false;
+  });
+  if (ready) return;
   throw new PreviewAutomationOverlayTimeoutError({
     requestId,
     environmentId: threadRef.environmentId,
     threadId: threadRef.threadId,
-    timeoutMs,
+    timeoutMs: waitBudgetMs,
   });
 };
 
@@ -311,9 +319,12 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
   );
   const [automationConnectionAtom] = useState(() => Atom.make<string | null>(null));
   const automationConnectionId = useAtomValue(automationConnectionAtom);
+  const presentationSuppressedRuntimeTabsRef = useRef(new Map<string, Set<string>>());
 
   const handleRequest = useCallback(
     async (request: PreviewAutomationRequest): Promise<unknown> => {
+      // Session sync and tab creation consume the same budget as overlay registration.
+      const hostDeadlineMs = Date.now() + resolveHostWaitBudgetMs(request.timeoutMs);
       const threadRef: ScopedThreadRef = {
         environmentId,
         threadId: request.threadId,
@@ -353,6 +364,21 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
           }
           const readyState = readThreadPreviewState(threadRef);
           const runtimeTabId = previewRuntimeTabId(threadRef, readyState.serverEpoch, readyTabId);
+          if (request.operation !== "open") {
+            const { autoShowFloatingPreview } = await resolveBrowserDefaults();
+            if (
+              shouldAutoShowPreviewForAutomationUse({
+                operation: request.operation,
+                autoShowFloatingPreview,
+                presentationSuppressed:
+                  presentationSuppressedRuntimeTabsRef.current
+                    .get(request.threadId)
+                    ?.has(runtimeTabId) ?? false,
+              })
+            ) {
+              usePreviewMiniPlayerStore.getState().open(threadRef, readyTabId);
+            }
+          }
           browserActivity.release ??= acquireBrowserSurfaceActivity(runtimeTabId);
           await waitForDesktopOverlay(
             threadRef,
@@ -360,7 +386,7 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
             readyTabId,
             runtimeTabId,
             request.operation,
-            request.timeoutMs,
+            hostDeadlineMs,
           );
           return {
             bridge,
@@ -390,6 +416,7 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
             const reusedExistingTab = activeTabId !== null;
             tabId = activeTabId;
             if (!activeTabId) {
+              const defaults = await resolveBrowserDefaults();
               const result = await open({
                 environmentId,
                 input: {
@@ -397,7 +424,8 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
                   ...(resolvedInputUrl ? { url: resolvedInputUrl } : {}),
                   // An agent that didn't state a size gets the user's
                   // configured default, same as a hand-opened tab.
-                  viewport: browserDefaultOpenViewport(await resolveBrowserDefaults()),
+                  viewport: browserDefaultOpenViewport(defaults),
+                  profileId: browserDefaultOpenProfileId(defaults),
                 },
               });
               if (result._tag === "Failure") {
@@ -450,6 +478,32 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
               input,
               (await resolveBrowserDefaults()).autoShowFloatingPreview,
             );
+            const explicitlySuppressed = explicitlySuppressesPreviewMiniPlayer(input);
+            const suppressedTabs = presentationSuppressedRuntimeTabsRef.current.get(
+              request.threadId,
+            );
+            if (explicitlySuppressed) {
+              if (suppressedTabs) {
+                suppressedTabs.add(activeRuntimeTabId);
+              } else {
+                presentationSuppressedRuntimeTabsRef.current.set(
+                  request.threadId,
+                  new Set([activeRuntimeTabId]),
+                );
+              }
+              const miniPlayer = selectThreadPreviewMiniPlayer(
+                usePreviewMiniPlayerStore.getState().byThreadKey,
+                threadRef,
+              );
+              if (miniPlayer?.tabId === activeTabId) {
+                usePreviewMiniPlayerStore.getState().close(threadRef);
+              }
+            } else if (shouldPresentPreview) {
+              suppressedTabs?.delete(activeRuntimeTabId);
+              if (suppressedTabs?.size === 0) {
+                presentationSuppressedRuntimeTabsRef.current.delete(request.threadId);
+              }
+            }
             if (shouldPresentPreview) {
               usePreviewMiniPlayerStore.getState().open(threadRef, activeTabId);
             }

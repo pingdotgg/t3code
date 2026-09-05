@@ -1,12 +1,13 @@
 import { LoaderCircleIcon } from "lucide-react";
+import { observeVisibleAnimation } from "../../lib/visibleAnimation";
 import { threadSyncLabel, type ThreadSyncPhase } from "../../threadSync";
 import { ComposerBanner } from "./ComposerBanner";
 
 export function ComposerActivityRow({ phase }: { readonly phase: ThreadSyncPhase }) {
   return (
     <ComposerBanner.Row>
-      <ComposerBanner.Icon>
-        <LoaderCircleIcon className="motion-safe:animate-spin" />
+      <ComposerBanner.Icon ref={observeVisibleAnimation}>
+        <LoaderCircleIcon className="motion-safe:visible-animate-spin" />
       </ComposerBanner.Icon>
       <ComposerBanner.Content>
         <span

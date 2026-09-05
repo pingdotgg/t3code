@@ -13,6 +13,7 @@ import {
   type UsageSummary,
   type UsageSummaryInput,
 } from "@t3tools/contracts";
+import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
 import { useCallback, useMemo } from "react";
@@ -60,7 +61,8 @@ const usageByWindowAtom = Atom.family((windowKey: string) =>
 export interface UsageView {
   readonly merged: MergedUsage;
   readonly environments: readonly EnvironmentUsageStatus[];
-  /** True until at least one environment has answered. */
+  readonly selectedEnvironments: readonly EnvironmentUsageStatus[];
+  /** True until at least one selected environment has answered. */
   readonly isPending: boolean;
   /**
    * True while environments that have not failed are still answering. Failed
@@ -71,7 +73,10 @@ export interface UsageView {
   readonly refresh: () => void;
 }
 
-export function useUsage(input: UsageSummaryInput): UsageView {
+export function useUsage(
+  input: UsageSummaryInput,
+  selectedEnvironmentIds: ReadonlySet<EnvironmentId> | null = null,
+): UsageView {
   const windowKey = useMemo(
     () =>
       JSON.stringify({
@@ -93,21 +98,39 @@ export function useUsage(input: UsageSummaryInput): UsageView {
   );
   const atom = usageByWindowAtom(windowKey);
   const environments = useAtomValue(atom);
+  const selectedEnvironments = useMemo(
+    () =>
+      selectedEnvironmentIds === null
+        ? environments
+        : environments.filter((environment) =>
+            selectedEnvironmentIds.has(environment.environmentId),
+          ),
+    [environments, selectedEnvironmentIds],
+  );
 
   // Refreshing only the derived atom would re-read the per-environment SWR
   // queries within their stale window and change nothing. Refresh each
   // environment's query so the button always rescans.
+  //
+  // Each environment refetches model pricing first, so a model released since
+  // its last daily fetch gets priced by the rescan. The rescan runs whether or
+  // not the refetch succeeds: an offline environment still recounts tokens.
   const refresh = useCallback(() => {
     const input = JSON.parse(windowKey) as UsageSummaryInput;
-    for (const environment of environments) {
-      appAtomRegistry.refresh(
-        serverEnvironment.usageSummary({ environmentId: environment.environmentId, input }),
-      );
+    for (const environment of selectedEnvironments) {
+      const { environmentId } = environment;
+      const query = serverEnvironment.usageSummary({ environmentId, input });
+      void runAtomCommand(
+        appAtomRegistry,
+        serverEnvironment.refreshUsageRates,
+        { environmentId, input: {} },
+        { reportFailure: false },
+      ).finally(() => appAtomRegistry.refresh(query));
     }
-  }, [environments, windowKey]);
+  }, [selectedEnvironments, windowKey]);
 
   const merged = useMemo(() => {
-    const answered: EnvironmentUsage[] = environments.flatMap((environment) =>
+    const answered: EnvironmentUsage[] = selectedEnvironments.flatMap((environment) =>
       environment.summary === null
         ? []
         : [
@@ -119,16 +142,19 @@ export function useUsage(input: UsageSummaryInput): UsageView {
           ],
     );
     return mergeUsage(answered, USAGE_CONTRACT_VERSION);
-  }, [environments]);
+  }, [selectedEnvironments]);
 
-  const answeredCount = environments.filter((environment) => environment.summary !== null).length;
-  const stillReporting = environments.filter(
+  const answeredCount = selectedEnvironments.filter(
+    (environment) => environment.summary !== null,
+  ).length;
+  const stillReporting = selectedEnvironments.filter(
     (environment) => environment.summary === null && environment.error === null,
   ).length;
 
   return {
     merged,
     environments,
+    selectedEnvironments,
     isPending: answeredCount === 0 && stillReporting > 0,
     isPartial: answeredCount > 0 && stillReporting > 0,
     refresh,
