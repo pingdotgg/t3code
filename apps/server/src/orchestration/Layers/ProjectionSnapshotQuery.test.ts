@@ -1954,6 +1954,16 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             0,
             '2026-05-01T00:00:16.000Z',
             '2026-05-01T00:00:16.000Z'
+          ),
+          (
+            'message-assistant-decoy',
+            'thread-percent-decoy',
+            NULL,
+            'assistant',
+            'Unreferenced assistant needle must not be searchable.',
+            0,
+            '2026-05-01T00:00:17.000Z',
+            '2026-05-01T00:00:17.000Z'
           )
       `;
 
@@ -2007,6 +2017,10 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
       );
       assert.deepStrictEqual(
         (yield* snapshotQuery.searchThreads({ query: "system needle" })).matches,
+        [],
+      );
+      assert.deepStrictEqual(
+        (yield* snapshotQuery.searchThreads({ query: "unreferenced assistant needle" })).matches,
         [],
       );
       assert.deepStrictEqual(
