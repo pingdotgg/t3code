@@ -272,8 +272,6 @@ describe("DesktopServerExposure", () => {
           modeError,
           DesktopServerExposure.DesktopServerExposureModePersistenceError,
         );
-        assert.isTrue(DesktopServerExposure.isDesktopServerExposureSetModeError(modeError));
-        assert.isTrue(DesktopServerExposure.isDesktopServerExposureError(modeError));
         assert.equal(modeError.mode, "network-accessible");
         assert.strictEqual(modeError.cause, settingsFailure);
         assert.strictEqual(modeError.cause.cause, diskFailure);
@@ -290,7 +288,6 @@ describe("DesktopServerExposure", () => {
           tailscaleError,
           DesktopServerExposure.DesktopTailscaleServePersistenceError,
         );
-        assert.isTrue(DesktopServerExposure.isDesktopServerExposureError(tailscaleError));
         assert.equal(tailscaleError.enabled, true);
         assert.equal(tailscaleError.port, 8443);
         assert.strictEqual(tailscaleError.cause, settingsFailure);

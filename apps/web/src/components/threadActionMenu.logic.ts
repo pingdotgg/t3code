@@ -34,6 +34,7 @@ export interface ThreadActionMenuState {
    * list behind the menu (the chat header), where the item must not show.
    */
   readonly projectFilter: {
+    readonly label: string;
     /** True when the list is already scoped to this thread's project. */
     readonly isActive: boolean;
   } | null;
@@ -126,7 +127,7 @@ export function buildThreadActionMenuItems(
               }
             : {
                 id: "filter-by-project" as const,
-                label: "Filter by project",
+                label: `Filter by ${state.projectFilter.label}`,
                 icon: "folder-tree",
               },
         ]

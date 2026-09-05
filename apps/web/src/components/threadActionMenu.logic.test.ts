@@ -51,16 +51,17 @@ describe("buildThreadActionMenuItems", () => {
   it("offers project filtering only for surfaces with a scoped thread list", () => {
     expect(ids(baseState)).not.toContain("filter-by-project");
     expect(
-      buildThreadActionMenuItems({ ...baseState, projectFilter: { isActive: false } }).find(
-        (item) => item.id === "filter-by-project",
-      ),
-    ).toMatchObject({ label: "Filter by project", icon: "folder-tree" });
+      buildThreadActionMenuItems({
+        ...baseState,
+        projectFilter: { label: "Beta Project", isActive: false },
+      }).find((item) => item.id === "filter-by-project"),
+    ).toMatchObject({ label: "Filter by Beta Project", icon: "folder-tree" });
   });
 
   it("offers the way back to all projects once the list is scoped", () => {
     const items = buildThreadActionMenuItems({
       ...baseState,
-      projectFilter: { isActive: true },
+      projectFilter: { label: "Beta Project", isActive: true },
     });
     const item = items.find((candidate) => candidate.id === "filter-by-project");
     expect(item).toMatchObject({ label: "Show all projects" });

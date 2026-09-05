@@ -56,7 +56,7 @@ const CAPABILITIES: PullRequestCapabilities = {
  * they try. That is the safer half of an unknown: hiding a control from someone entitled to it
  * leaves them no way through and no reason given.
  */
-export const AZURE_DEVOPS_VIEWER_PERMISSIONS: PullRequestViewerPermissions = {
+const AZURE_DEVOPS_VIEWER_PERMISSIONS: PullRequestViewerPermissions = {
   actions: CAPABILITIES.actions,
   comment: CAPABILITIES.comment,
   resolve: CAPABILITIES.review.resolve,
