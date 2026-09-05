@@ -1,3 +1,48 @@
+diff --git a/dist/components/VirtualizedFile.d.ts b/dist/components/VirtualizedFile.d.ts
+--- a/dist/components/VirtualizedFile.d.ts
++++ b/dist/components/VirtualizedFile.d.ts
+@@ -42,7 +42,7 @@ declare class VirtualizedFile<LAnnotation = undefined> extends File<LAnnotation> {
+   private computeApproximateSize;
+   setVisibility(visible: boolean): void;
+   rerender(): void;
+-  applyDocumentChange(textDocument: DiffsTextDocument, newLineAnnotations?: LineAnnotation<LAnnotation>[], shouldUpdateBuffer?: boolean): void;
++  applyDocumentChange(textDocument: DiffsTextDocument, newLineAnnotations?: LineAnnotation<LAnnotation>[], shouldUpdateBuffer?: boolean, startLine?: number): void;
+   protected renderPreparedFile({
+     fileContainer,
+     file,
+diff --git a/dist/components/VirtualizedFile.js b/dist/components/VirtualizedFile.js
+--- a/dist/components/VirtualizedFile.js
++++ b/dist/components/VirtualizedFile.js
+@@ -70,10 +70,12 @@ var VirtualizedFile = class extends File {
+ 		if (this.isAdvancedMode()) throw new Error("VirtualizedFile.setThemeType cannot be used inside CodeView. Update CodeView options instead.");
+ 		super.setThemeType(themeType);
+ 	}
+-	resetLayoutCache(recompute = false, resetRenderRange = true) {
++	resetLayoutCache(recompute = false, resetRenderRange = true, startLine = 0) {
+ 		this.layoutDirty = true;
+-		this.cache.fileAnnotationHeight = 0;
+-		if (this.cache.heights.size > 0) this.cache.heights.clear();
++		if (startLine === 0) this.cache.fileAnnotationHeight = 0;
++		// Dropping unchanged wrapped rows moves the viewport before they can be remeasured.
++		if (startLine === 0) this.cache.heights.clear();
++		else for (const lineIndex of this.cache.heights.keys()) if (lineIndex >= startLine) this.cache.heights.delete(lineIndex);
+ 		if (this.cache.checkpoints.length > 0) this.cache.checkpoints.length = 0;
+ 		if (this.renderRange != null && resetRenderRange) this.renderRange = void 0;
+ 		if (recompute && this.isSimpleMode()) this.computeApproximateSize();
+@@ -287,11 +289,11 @@ var VirtualizedFile = class extends File {
+ 		this.forceRenderOverride = true;
+ 		this.virtualizer.instanceChanged(this, false);
+ 	}
+-	applyDocumentChange(textDocument, newLineAnnotations, shouldUpdateBuffer = false) {
++	applyDocumentChange(textDocument, newLineAnnotations, shouldUpdateBuffer = false, startLine = 0) {
+ 		const previousRenderRange = this.renderRange;
+ 		super.applyDocumentChange(textDocument, newLineAnnotations);
+ 		this.getSimpleVirtualizer()?.markDOMDirty();
+-		this.resetLayoutCache(this.isSimpleMode(), false);
++		this.resetLayoutCache(this.isSimpleMode(), false, startLine);
+ 		if (shouldUpdateBuffer && previousRenderRange !== void 0 && this.file !== void 0) {
+ 			const windowSpecs = this.virtualizer.getWindowSpecs();
+ 			const renderRange = this.computeRenderRangeFromWindow(this.file, this.top ?? 0, windowSpecs);
 diff --git a/dist/editor/editor.js b/dist/editor/editor.js
 index ff78e2a..f9df318 100644
 --- a/dist/editor/editor.js
@@ -33,7 +78,8 @@ index ff78e2a..f9df318 100644
  		}
  		fileInstance.updateRenderCache(dirtyLines, tokenizer.themeType, !didLineCountChange, didLineCountChange);
 +		if (fileInstance.file !== void 0) fileInstance.file.contents = textDocument.getText();
- 		if (didLineCountChange) fileInstance.applyDocumentChange(textDocument, newLineAnnotations, shouldUpdateBuffer);
+-		if (didLineCountChange) fileInstance.applyDocumentChange(textDocument, newLineAnnotations, shouldUpdateBuffer);
++		if (didLineCountChange) fileInstance.applyDocumentChange(textDocument, newLineAnnotations, shouldUpdateBuffer, change.startLine);
  		if (this.#isDiff && (this.#diffSyle === "unified" || didLineCountChange)) this.#resetCache();
  		if (newLineAnnotations !== void 0) {
 @@ -1788,6 +1787,7 @@ var Editor = class {
