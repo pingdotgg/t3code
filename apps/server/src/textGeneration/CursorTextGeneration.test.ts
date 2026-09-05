@@ -5,9 +5,11 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { CursorSettings, ProviderInstanceId } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
 import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
 import * as TestClock from "effect/testing/TestClock";
 import { createModelSelection } from "@t3tools/shared/model";
 import { beforeEach, vi } from "vite-plus/test";
@@ -266,6 +268,99 @@ it.layer(NodeServices.layer)("CursorTextGeneration", (it) => {
       yield* Effect.promise(() => cleanupDone);
       expect(order).toEqual(["cancel", "wait-settled", "dispose"]);
       expect(yield* fileSystem.exists(metadataWorkspace!)).toBe(false);
+    }),
+  );
+
+  it.effect("keeps an unsettled workspace when the owning service scope closes", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const ownerScope = yield* Scope.make();
+      let metadataWorkspace: string | undefined;
+      yield* Effect.addFinalizer(() =>
+        metadataWorkspace === undefined
+          ? Effect.void
+          : fileSystem
+              .remove(metadataWorkspace, { recursive: true, force: true })
+              .pipe(Effect.ignore),
+      );
+      yield* Effect.addFinalizer(() => Scope.close(ownerScope, Exit.void));
+      let resolveSend!: (run: unknown) => void;
+      const pendingSend = new Promise((resolve) => {
+        resolveSend = resolve;
+      });
+      let signalSendCalled!: () => void;
+      const sendCalled = new Promise<void>((resolve) => {
+        signalSendCalled = resolve;
+      });
+      let signalCancelCalled!: () => void;
+      const cancelCalled = new Promise<void>((resolve) => {
+        signalCancelCalled = resolve;
+      });
+      let signalDisposeDone!: () => void;
+      const disposeDone = new Promise<void>((resolve) => {
+        signalDisposeDone = resolve;
+      });
+      cursorSdkMock.status = "running";
+      cursorSdkMock.create.mockImplementationOnce(async (options) => {
+        metadataWorkspace = (options as { local: { cwd: string } }).local.cwd;
+        return {
+          agentId: "agent-cursor-scope-close",
+          send: cursorSdkMock.send,
+          close: vi.fn(),
+          reload: vi.fn(),
+          listArtifacts: vi.fn(),
+          downloadArtifact: vi.fn(),
+          [Symbol.asyncDispose]: async () => {
+            signalDisposeDone();
+          },
+        };
+      });
+      cursorSdkMock.send.mockImplementationOnce(() => {
+        signalSendCalled();
+        return pendingSend;
+      });
+      cursorSdkMock.cancel.mockImplementationOnce(async () => {
+        cursorSdkMock.status = "cancelled";
+        signalCancelCalled();
+      });
+      const textGeneration = yield* makeCursorTextGeneration(cursorSettings, {
+        CURSOR_API_KEY: "test-cursor-key",
+      }).pipe(Effect.provideService(Scope.Scope, ownerScope));
+
+      const caller = yield* textGeneration
+        .generateCommitMessage({
+          cwd: process.cwd(),
+          branch: "feature/cursor-scope-close",
+          stagedSummary: "M README.md",
+          stagedPatch: "diff --git a/README.md b/README.md",
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("cursor"),
+            model: "composer-2",
+          },
+        })
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Effect.promise(() => sendCalled);
+
+      yield* Scope.close(ownerScope, Exit.void);
+      const callerExit = yield* Fiber.await(caller);
+      expect(Exit.hasInterrupts(callerExit)).toBe(true);
+      expect(metadataWorkspace).toBeDefined();
+      expect(yield* fileSystem.exists(metadataWorkspace!)).toBe(true);
+
+      resolveSend({
+        id: "run-cursor-scope-close",
+        agentId: "agent-cursor-scope-close",
+        supports: (operation: string) => operation === "cancel" || operation === "wait",
+        unsupportedReason: () => undefined,
+        wait: cursorSdkMock.wait,
+        cancel: cursorSdkMock.cancel,
+        get status() {
+          return cursorSdkMock.status;
+        },
+      });
+      yield* Effect.promise(() => cancelCalled);
+      yield* Effect.promise(() => disposeDone);
+      expect(yield* fileSystem.exists(metadataWorkspace!)).toBe(true);
     }),
   );
 
