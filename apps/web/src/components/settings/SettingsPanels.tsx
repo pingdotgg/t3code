@@ -2363,7 +2363,7 @@ export function GeneralSettingsPanel() {
         <SettingsRow
           serverScoped
           {...searchableSetting("thread-context-token-limit")}
-          description="Stop new turns in a thread after its context reaches this size. T3 will offer a handover to a fresh thread."
+          description="Stop new turns in a thread after its context reaches this size. Start a new thread to continue."
           resetAction={
             settings.threadContextTokenLimit !==
             DEFAULT_UNIFIED_SETTINGS.threadContextTokenLimit ? (
