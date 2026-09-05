@@ -976,6 +976,25 @@ export function updateComposerDraftSettings(
   });
 }
 
+/** Releases a sent model override without discarding a newer pick or draft content. */
+export function clearComposerDraftModelSelection(
+  draftKey: string,
+  expectedSelection: ModelSelection,
+): void {
+  updateComposerDrafts((current) => {
+    const existing = current[draftKey];
+    // Identity matters: reselecting the same model during delivery is a new choice.
+    if (existing?.modelSelection !== expectedSelection) return current;
+    const { modelSelection: _, ...draft } = existing;
+    if (isEmptyDraft(draft)) {
+      const next = { ...current };
+      delete next[draftKey];
+      return next;
+    }
+    return { ...current, [draftKey]: draft };
+  });
+}
+
 export function clearComposerDraftContentState(
   current: Record<string, ComposerDraft>,
   draftKey: string,
