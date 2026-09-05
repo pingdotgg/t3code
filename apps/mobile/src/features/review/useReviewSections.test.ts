@@ -186,6 +186,19 @@ it("reports a failed access check when no checkpoint can replace the local revie
   expect(unavailable.error).toBe(state.sessionError);
 });
 
+it("reports denied file access when no checkpoint can replace the local review", () => {
+  state.checkpoints = [];
+  const input = makeInput();
+  expect(renderSections(input).selectedSection?.diff).toBe(localDiff);
+
+  state.session = { authenticated: true, scopes: [] };
+  const denied = renderSections(input);
+  expect(denied.selectedSection).toBeNull();
+  expect(denied.reviewSections).toEqual([]);
+  expect(denied.loadingGitDiffs).toBe(false);
+  expect(denied.error).toBe("This connection cannot read local diffs.");
+});
+
 it("keeps a cached checkpoint available when the filesystem access check fails", () => {
   state.sessionError = "The session request timed out.";
   const checkpoint = renderSections(makeInput());

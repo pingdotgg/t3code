@@ -196,7 +196,9 @@ export function useReviewSections(input: {
       diffPreview.error ??
       activeTurnDiff.error ??
       reviewCache.asyncState.error ??
-      (selectedSection === null ? fileAccess.error : null),
+      (selectedSection === null && !fileAccess.isPending && !canReadFiles
+        ? (fileAccess.error ?? "This connection cannot read local diffs.")
+        : null),
     loadingGitDiffs: fileAccess.isPending || diffPreview.isPending,
     loadingTurnIds,
     reviewSections,
