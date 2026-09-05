@@ -61,7 +61,7 @@ export type UsageResolution = typeof UsageResolution.Type;
  * Why a bucket's cost is what it is.
  *
  * - `providerReported` - the transcript carried an explicit cost figure.
- * - `modelPriced` - we matched the model against the LiteLLM rate table.
+ * - `modelPriced` - we used a custom price override or the LiteLLM rate table.
  * - `unpriced` - tokens are known, rates are not. Counted in totals, excluded
  *   from cost.
  */
@@ -207,6 +207,12 @@ export const UsageSummaryInput = Schema.Struct({
   sinceTime: Schema.optional(TrimmedNonEmptyString),
   /** Exclusive UTC instant for an hourly rolling window. */
   untilTime: Schema.optional(TrimmedNonEmptyString),
+  /**
+   * Opaque identity of the source snapshots visible when the user explicitly
+   * requested a refresh. A new value bypasses the short-lived source cache
+   * once; repeated reads with the same value may reuse the updated snapshot.
+   */
+  refreshToken: Schema.optional(TrimmedNonEmptyString),
 });
 export type UsageSummaryInput = typeof UsageSummaryInput.Type;
 
@@ -254,12 +260,16 @@ export const UsageAgentRow = Schema.Struct({
 export type UsageAgentRow = typeof UsageAgentRow.Type;
 
 /**
- * One day of a thread's estimated cost. Days the thread was idle are omitted.
- * Unpriced records contribute tokens to the row totals but nothing here.
+ * One day of a thread's model-priced cost split by component. Days the thread
+ * was idle are omitted. Unpriced and provider-reported records contribute to
+ * the row totals but not this split.
  */
 export const UsageThreadDayCost = Schema.Struct({
   day: UsageDay,
-  costUsd: Schema.Number,
+  cacheWriteUsd: Schema.Number,
+  cacheReadUsd: Schema.Number,
+  /** Fresh input plus output. */
+  freshUsd: Schema.Number,
 });
 export type UsageThreadDayCost = typeof UsageThreadDayCost.Type;
 

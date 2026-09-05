@@ -1,3 +1,4 @@
+import { useAtomValue } from "@effect/atom-react";
 import type { UsageProviderKind } from "@t3tools/contracts";
 import { CheckIcon, RefreshCwIcon, XIcon } from "lucide-react";
 import { useMemo, useRef, useState } from "react";
@@ -12,7 +13,10 @@ import {
 import { isElectron } from "../../env";
 import { useCommitOnBlur } from "../../hooks/useCommitOnBlur";
 import { cn } from "../../lib/utils";
+import { environmentPresentations } from "../../state/presentation";
+import { serverEnvironment } from "../../state/server";
 import { useUsage, type EnvironmentUsageStatus } from "../../state/usage";
+import { useAtomCommand } from "../../state/use-atom-command";
 import {
   compareUsageDays,
   enumerateDays,
@@ -30,8 +34,10 @@ import {
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { ScrollArea } from "../ui/scroll-area";
+import { segmentedControlGroupClassName } from "../ui/segmented-control-styles";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { SidebarInset } from "../ui/sidebar";
+import { Skeleton } from "../ui/skeleton";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import {
   WorkspaceBreadcrumb,
@@ -40,9 +46,22 @@ import {
 } from "../WorkspaceBreadcrumb";
 import { WorkspacePageContainer } from "../WorkspacePageContainer";
 import { WorkspacePageHeader } from "../WorkspacePageHeader";
+import { UsageLimitsSection } from "./UsageLimits";
+import { UsagePriceOverrides } from "./UsagePriceOverrides";
 import { UsageProviderChart, type UsageChartMetric } from "./UsageProviderChart";
 import { UsageThreadTable } from "./UsageThreadTable";
 import { PROVIDER_ORDER, PROVIDER_PRESENTATION, providersWithUsage } from "./usageProviders";
+
+type UsageMetric = UsageChartMetric | "limits";
+const METRIC_OPTIONS = [
+  { value: "cost", label: "Cost" },
+  { value: "tokens", label: "Tokens" },
+  { value: "limits", label: "Limits" },
+] as const satisfies readonly { value: UsageMetric; label: string }[];
+
+function isUsageMetric(value: string | null | undefined): value is UsageMetric {
+  return METRIC_OPTIONS.some((option) => option.value === value);
+}
 
 const WINDOW_OPTIONS = [
   { days: 1, label: "Past 24h" },
@@ -59,7 +78,8 @@ export function UsagePage() {
     custom: false,
     window: makeWindow(30),
   }));
-  const [metric, setMetric] = useState<UsageChartMetric>("cost");
+  const [metric, setMetric] = useState<UsageMetric>("cost");
+  const showingLimits = metric === "limits";
   const [breakdown, setBreakdown] = useState<"model" | "project" | "thread" | "time">("model");
   // A namespaced project key, null for work outside every project, undefined for all.
   const [projectFilter, setProjectFilter] = useState<string | null | undefined>(undefined);
@@ -70,6 +90,10 @@ export function UsagePage() {
     projectFilter,
     breakdown === "thread",
   );
+  const presentations = useAtomValue(environmentPresentations.presentationsAtom);
+  const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
+    reportFailure: false,
+  });
 
   // Hold the content until every environment is terminal. Rendering merged
   // totals while devices are still answering makes every number on the page
@@ -134,9 +158,15 @@ export function UsagePage() {
   // Session figures are per transcript directory; a project filter cannot
   // split them, so they only render unfiltered.
   const sessionsKnown = projectFilter === undefined;
-  // Only offer the picker once a second grouping exists; a lone group can
-  // only ever filter to itself.
-  const showProjectPicker = merged.projects.length > 1 || projectFilter !== undefined;
+  const onlyProject = merged.projects.length === 1 ? merged.projects[0] : undefined;
+  // Unknown attribution remains in the overall totals but is absent from the
+  // project list. Keep a lone known project selectable when that distinction
+  // lets the user remove unknown usage from the page.
+  const showProjectPicker =
+    merged.projects.length > 1 ||
+    projectFilter !== undefined ||
+    (onlyProject !== undefined &&
+      (onlyProject.totalTokens !== merged.totalTokens || onlyProject.costUsd !== merged.costUsd));
 
   const selectWindow = (days: number) => {
     setWindowSelection({
@@ -153,6 +183,14 @@ export function UsagePage() {
     });
   };
   const refreshWindow = () => {
+    if (showingLimits) {
+      for (const [environmentId, presentation] of presentations) {
+        if (presentation.connection.phase === "connected" && presentation.serverConfig !== null) {
+          void refreshProviders({ environmentId, input: {} });
+        }
+      }
+      return;
+    }
     // A custom range is a fixed span of past days; rescanning is all a
     // refresh can mean for it.
     if (isCustomWindow) {
@@ -161,15 +199,14 @@ export function UsagePage() {
     }
     const nextWindow = makeWindow(windowDays, undefined, isPast24Hours ? "hour" : "day");
     if (
-      nextWindow.sinceDay === window.sinceDay &&
-      nextWindow.untilDay === window.untilDay &&
-      nextWindow.sinceTime === window.sinceTime &&
-      nextWindow.untilTime === window.untilTime
+      nextWindow.sinceDay !== window.sinceDay ||
+      nextWindow.untilDay !== window.untilDay ||
+      nextWindow.sinceTime !== window.sinceTime ||
+      nextWindow.untilTime !== window.untilTime
     ) {
-      refresh();
-    } else {
       setWindowSelection({ days: windowDays, custom: false, window: nextWindow });
     }
+    refresh();
   };
   const windowLabel =
     isPast24Hours && window.sinceTime !== undefined && window.untilTime !== undefined
@@ -181,10 +218,14 @@ export function UsagePage() {
         <WorkspaceBreadcrumbItem current>
           <h1>Usage</h1>
         </WorkspaceBreadcrumbItem>
-        <WorkspaceBreadcrumbSeparator className="hidden md:flex" />
-        <WorkspaceBreadcrumbItem className="hidden min-w-0 shrink md:flex">
-          <span className="truncate">{windowLabel}</span>
-        </WorkspaceBreadcrumbItem>
+        {showingLimits ? null : (
+          <>
+            <WorkspaceBreadcrumbSeparator className="hidden md:flex" />
+            <WorkspaceBreadcrumbItem className="hidden min-w-0 shrink md:flex">
+              <span className="truncate">{windowLabel}</span>
+            </WorkspaceBreadcrumbItem>
+          </>
+        )}
       </WorkspaceBreadcrumb>
       <div className="ms-auto hidden min-w-0 items-center justify-end gap-2 lg:flex">
         {showProjectPicker ? (
@@ -201,12 +242,12 @@ export function UsagePage() {
           value={[metric]}
           onValueChange={(next) => {
             const value = next[0];
-            if (value === "cost" || value === "tokens") setMetric(value);
+            if (isUsageMetric(value)) setMetric(value);
           }}
         >
-          {(["cost", "tokens"] as const).map((option) => (
-            <Toggle key={option} value={option}>
-              {option === "cost" ? "Cost" : "Tokens"}
+          {METRIC_OPTIONS.map((option) => (
+            <Toggle key={option.value} value={option.value}>
+              {option.label}
             </Toggle>
           ))}
         </ToggleGroup>
@@ -214,11 +255,15 @@ export function UsagePage() {
           sinceDay={window.sinceDay}
           untilDay={window.untilDay}
           onChange={selectCustomWindow}
+          disabled={showingLimits}
         />
+        {/* The period does not apply to Limits, so the controls stay in place
+            but disabled; unmounting them shifts the metric toggle. */}
         <ToggleGroup
           aria-label="Usage period"
           variant="segmented"
           value={isCustomWindow ? [] : [String(windowDays)]}
+          disabled={showingLimits}
           onValueChange={(next) => {
             const value = next[0];
             if (value) selectWindow(Number(value));
@@ -230,7 +275,12 @@ export function UsagePage() {
             </Toggle>
           ))}
         </ToggleGroup>
-        <Button onClick={refreshWindow} aria-label="Refresh usage" size="icon-sm" variant="ghost">
+        <Button
+          onClick={refreshWindow}
+          aria-label={showingLimits ? "Refresh limits" : "Refresh usage"}
+          size="icon-sm"
+          variant="ghost"
+        >
           <RefreshCwIcon className="size-3.5" />
         </Button>
       </div>
@@ -246,7 +296,7 @@ export function UsagePage() {
         <Select
           value={metric}
           onValueChange={(value) => {
-            if (value === "cost" || value === "tokens") setMetric(value);
+            if (isUsageMetric(value)) setMetric(value);
           }}
         >
           <SelectTrigger
@@ -255,15 +305,21 @@ export function UsagePage() {
             variant="ghost"
             className="w-auto min-w-0"
           >
-            <SelectValue>{metric === "cost" ? "Cost" : "Tokens"}</SelectValue>
+            <SelectValue>
+              {METRIC_OPTIONS.find((option) => option.value === metric)?.label}
+            </SelectValue>
           </SelectTrigger>
           <SelectPopup align="end" alignItemWithTrigger={false}>
-            <SelectItem value="cost">Cost</SelectItem>
-            <SelectItem value="tokens">Tokens</SelectItem>
+            {METRIC_OPTIONS.map((option) => (
+              <SelectItem key={option.value} value={option.value}>
+                {option.label}
+              </SelectItem>
+            ))}
           </SelectPopup>
         </Select>
         <Select
           value={isCustomWindow ? "custom" : String(windowDays)}
+          disabled={showingLimits}
           onValueChange={(value) => {
             if (value !== "custom" && value !== null) selectWindow(Number(value));
           }}
@@ -288,7 +344,12 @@ export function UsagePage() {
             ))}
           </SelectPopup>
         </Select>
-        <Button onClick={refreshWindow} aria-label="Refresh usage" size="icon-sm" variant="ghost">
+        <Button
+          onClick={refreshWindow}
+          aria-label={showingLimits ? "Refresh limits" : "Refresh usage"}
+          size="icon-sm"
+          variant="ghost"
+        >
           <RefreshCwIcon className="size-3.5" />
         </Button>
       </div>
@@ -302,13 +363,22 @@ export function UsagePage() {
 
         <ScrollArea className="min-h-0 flex-1">
           <WorkspacePageContainer width="wide">
-            <UsageDateRangeInputs
-              className="mb-4 flex-wrap lg:hidden"
-              sinceDay={window.sinceDay}
-              untilDay={window.untilDay}
-              onChange={selectCustomWindow}
-            />
-            {settling ? (
+            {!showingLimits ? (
+              <>
+                <UsageDateRangeInputs
+                  className="mb-4 flex-wrap lg:hidden"
+                  sinceDay={window.sinceDay}
+                  untilDay={window.untilDay}
+                  onChange={selectCustomWindow}
+                />
+                <div className="flex justify-end">
+                  <UsagePriceOverrides usage={environments} />
+                </div>
+              </>
+            ) : null}
+            {showingLimits ? (
+              <UsageLimitsSection />
+            ) : settling ? (
               <>
                 {environments.length > 1 ? <UsageDeviceStrip environments={environments} /> : null}
                 <UsageSkeleton />
@@ -685,11 +755,13 @@ function UsageDateRangeInputs({
   sinceDay,
   untilDay,
   onChange,
+  disabled = false,
 }: {
   readonly className?: string;
   readonly sinceDay: string;
   readonly untilDay: string;
   readonly onChange: (sinceDay: string, untilDay: string) => void;
+  readonly disabled?: boolean;
 }) {
   // The shared buffered-input hook preserves a focused draft across upstream
   // range changes and commits on both blur and Enter. Keep the hooks separate
@@ -705,35 +777,38 @@ function UsageDateRangeInputs({
   const comparison = compareUsageDays(sinceInput.value, untilInput.value);
   const invalid = comparison === null || comparison > 0;
   const inputClassName =
-    "w-auto rounded-md transition-colors hover:bg-background/55 hover:text-foreground focus-within:bg-background focus-within:text-foreground focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-1 focus-within:ring-offset-background has-aria-invalid:text-destructive focus-within:has-aria-invalid:ring-destructive/50 dark:hover:bg-input/32 dark:focus-within:bg-input/72 [&_[data-slot=input]]:h-6 [&_[data-slot=input]]:px-2.5 [&_[data-slot=input]]:leading-6 [&_[data-slot=input]]:pointer-coarse:h-8.5 [&_[data-slot=input]]:pointer-coarse:leading-8.5 [&_[data-slot=input]::-webkit-calendar-picker-indicator]:opacity-50";
+    "[color-scheme:inherit] [&_[data-slot=input]::-webkit-calendar-picker-indicator]:opacity-50";
 
   return (
     <div
       className={cn(
-        "flex w-fit items-center gap-0.5 rounded-lg bg-input/40 p-0.5 text-xs text-muted-foreground",
+        "flex w-fit items-center text-xs text-muted-foreground",
+        segmentedControlGroupClassName,
         className,
       )}
     >
       <Input
         nativeInput
-        unstyled
         type="date"
-        size="compact"
+        size="segmented"
+        variant="segmented"
         aria-label="From day"
-        className={cn(inputClassName, "[color-scheme:inherit]")}
+        className={inputClassName}
         max={untilInput.value}
+        disabled={disabled}
         aria-invalid={invalid || undefined}
         {...sinceInput}
       />
       <span className="px-0.5">to</span>
       <Input
         nativeInput
-        unstyled
         type="date"
-        size="compact"
+        size="segmented"
+        variant="segmented"
         aria-label="To day"
-        className={cn(inputClassName, "[color-scheme:inherit]")}
+        className={inputClassName}
         min={sinceInput.value}
+        disabled={disabled}
         aria-invalid={invalid || undefined}
         {...untilInput}
       />
@@ -932,8 +1007,9 @@ function UsageDeviceStrip({
 }
 
 /**
- * Static stand-in with the loaded page's shape. No shimmer; blocks fill in
- * exactly once when the last device answers.
+ * Stand-in with the loaded page's shape, using the shared `Skeleton` bars so it
+ * breathes with the same `animate-skeleton` pulse as every other loading state.
+ * Blocks fill in exactly once when the last device answers.
  */
 function UsageSkeleton() {
   return (
@@ -941,29 +1017,29 @@ function UsageSkeleton() {
       <section className="grid gap-6 lg:grid-cols-[minmax(0,18rem)_minmax(0,1fr)]">
         <div className="flex flex-col gap-5">
           <div className="flex flex-col gap-1">
-            <div className="h-10 w-36 rounded-sm bg-muted" />
-            <div className="h-4 w-32 rounded-sm bg-muted" />
+            <Skeleton className="h-10 w-36" />
+            <Skeleton className="h-4 w-32" />
           </div>
           {PROVIDER_ORDER.map((provider) => (
             <div key={provider} className="flex flex-col gap-1">
               <div className="flex min-h-5 items-center justify-between gap-4">
                 <span className="flex items-center gap-2">
-                  <span className="size-2 shrink-0 rounded-full bg-muted" />
-                  <span className="size-4 shrink-0 rounded-full bg-muted" />
-                  <div className="h-3.5 w-20 rounded-sm bg-muted" />
+                  <Skeleton className="size-2 shrink-0 rounded-full" />
+                  <Skeleton className="size-4 shrink-0 rounded-full" />
+                  <Skeleton className="h-3.5 w-20" />
                 </span>
-                <div className="h-3.5 w-14 rounded-sm bg-muted" />
+                <Skeleton className="h-3.5 w-14" />
               </div>
-              <div className="h-4 w-36 rounded-sm bg-muted" />
+              <Skeleton className="h-4 w-36" />
             </div>
           ))}
         </div>
 
         <div className="flex flex-col gap-3">
-          <div className="h-5 w-24 rounded-sm bg-muted" />
+          <Skeleton className="h-5 w-24" />
           <div className="flex flex-col gap-1">
-            <div className="ml-16 h-56 rounded-sm bg-muted/35" />
-            <div className="ml-16 h-4 rounded-sm bg-muted/35" />
+            <Skeleton className="ml-16 h-56 bg-muted-foreground/10" />
+            <Skeleton className="ml-16 h-4 bg-muted-foreground/10" />
           </div>
         </div>
       </section>
@@ -975,7 +1051,7 @@ function UsageSkeleton() {
             (label) => (
               <div key={label} className="flex flex-col gap-0.5">
                 <span className="text-xs text-muted-foreground">{label}</span>
-                <div className="h-6 w-16 rounded-sm bg-muted" />
+                <Skeleton className="h-6 w-16" />
               </div>
             ),
           )}
@@ -985,9 +1061,9 @@ function UsageSkeleton() {
       <section className="flex flex-col gap-3">
         <div className="flex items-center justify-between gap-3">
           <h2 className="text-sm font-medium text-foreground">Breakdown</h2>
-          <div className="h-7 w-28 rounded-lg bg-input/40" />
+          <Skeleton className="h-7 w-28 rounded-lg" />
         </div>
-        <div className="h-44 rounded-sm bg-muted/35" />
+        <Skeleton className="h-44 bg-muted-foreground/10" />
       </section>
     </>
   );

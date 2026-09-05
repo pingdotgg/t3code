@@ -370,6 +370,11 @@ export class SessionStore extends Context.Service<
       readonly scopes?: ReadonlyArray<AuthEnvironmentScope>;
       readonly client?: AuthClientMetadata;
       readonly proofKeyThumbprint?: string;
+      /**
+       * Atomically revoke active sessions with the same subject and method
+       * before storing this session.
+       */
+      readonly replaceActiveForSubjectAndMethod?: boolean;
     }) => Effect.Effect<IssuedSession, SessionCredentialInternalError>;
     readonly verify: (token: string) => Effect.Effect<VerifiedSession, SessionCredentialError>;
     readonly issueWebSocketToken: (
@@ -647,24 +652,40 @@ export const make = Effect.gen(function* () {
       );
       const signature = signPayload(encodedPayload, signingSecret);
       const client = input?.client ?? createDefaultClientMetadata();
-      yield* authSessions
-        .create({
-          sessionId,
-          subject: claims.sub,
-          scopes: claims.scopes,
-          method: claims.method,
-          client: {
-            label: client.label ?? null,
-            ipAddress: client.ipAddress ?? null,
-            userAgent: client.userAgent ?? null,
-            deviceType: client.deviceType,
-            os: client.os ?? null,
-            browser: client.browser ?? null,
-          },
-          issuedAt,
-          expiresAt,
-        })
-        .pipe(Effect.mapError((cause) => new SessionCredentialIssueError({ sessionId, cause })));
+      const sessionRecord = {
+        sessionId,
+        subject: claims.sub,
+        scopes: claims.scopes,
+        method: claims.method,
+        client: {
+          label: client.label ?? null,
+          ipAddress: client.ipAddress ?? null,
+          userAgent: client.userAgent ?? null,
+          deviceType: client.deviceType,
+          os: client.os ?? null,
+          browser: client.browser ?? null,
+        },
+        issuedAt,
+        expiresAt,
+      } satisfies AuthSessions.CreateAuthSessionInput;
+      const replacedSessionIds = yield* (
+        input?.replaceActiveForSubjectAndMethod
+          ? authSessions.createReplacingActive({ session: sessionRecord, revokedAt: issuedAt })
+          : authSessions.create(sessionRecord).pipe(Effect.as([] as ReadonlyArray<AuthSessionId>))
+      ).pipe(Effect.mapError((cause) => new SessionCredentialIssueError({ sessionId, cause })));
+      if (replacedSessionIds.length > 0) {
+        yield* Ref.update(connectedSessionsRef, (current) => {
+          const next = new Map(current);
+          for (const replacedSessionId of replacedSessionIds) {
+            next.delete(replacedSessionId);
+          }
+          return next;
+        });
+        yield* Effect.forEach(replacedSessionIds, emitRemoved, {
+          concurrency: "unbounded",
+          discard: true,
+        });
+      }
       yield* emitUpsert(
         toAuthClientSession({
           sessionId,

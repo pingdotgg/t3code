@@ -92,15 +92,12 @@ export class AgentActivityRows extends Context.Service<
 >()("t3code-relay/agentActivity/AgentActivityRows") {}
 
 const decodeJsonString = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
-const encodeJsonValue = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 const encodeRelayAgentActivityStateJson = Schema.encodeEffect(
   Schema.fromJsonString(RelayAgentActivityStateSchema),
 );
 
-const decodeRelayAgentActivityStateJson = Schema.decodeUnknownOption(
-  Schema.fromJsonString(RelayAgentActivityStateSchema),
-);
+const decodeRelayAgentActivityState = Schema.decodeUnknownOption(RelayAgentActivityStateSchema);
 
 export const make = Effect.gen(function* () {
   const db = yield* RelayDb.RelayDb;
@@ -229,13 +226,8 @@ export const make = Effect.gen(function* () {
         )
         .orderBy(desc(relayAgentActivityRows.updatedAt))
         .pipe(
-          Effect.flatMap((rows) =>
-            Effect.forEach(rows, (row) => encodeJsonValue(row.stateJson), {
-              concurrency: "unbounded",
-            }),
-          ),
           Effect.map((rows) =>
-            rows.flatMap((row) => Option.toArray(decodeRelayAgentActivityStateJson(row))),
+            rows.flatMap((row) => Option.toArray(decodeRelayAgentActivityState(row.stateJson))),
           ),
           Effect.mapError(
             (cause) =>
@@ -271,14 +263,9 @@ export const make = Effect.gen(function* () {
         )
         .orderBy(desc(relayAgentActivityRows.updatedAt))
         .pipe(
-          Effect.flatMap((rows) =>
-            Effect.forEach(rows, (row) => encodeJsonValue(row.stateJson), {
-              concurrency: "unbounded",
-            }),
-          ),
           Effect.map((rows) => {
             for (const row of rows) {
-              const decoded = decodeRelayAgentActivityStateJson(row);
+              const decoded = decodeRelayAgentActivityState(row.stateJson);
               if (Option.isSome(decoded)) {
                 return decoded.value;
               }

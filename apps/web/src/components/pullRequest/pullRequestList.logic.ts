@@ -18,6 +18,9 @@ import type {
   PullRequestListState,
 } from "@t3tools/contracts";
 
+import { toSortableTimestamp } from "../../lib/threadSort";
+import type { PullRequestListSort } from "./pullRequestListPreferences";
+
 /**
  * A listed change request with the environment that read it. Nothing on a row says which machine
  * it came from, and the page unions every connected one — so acting on a row, refreshing it, or
@@ -415,7 +418,7 @@ export function groupPullRequestsByInvolvement<Entry extends ScopedEntry>(
       buckets.others.push(entry);
     }
   }
-  return (["reviewRequested", "authored", "others"] as const)
+  return (["authored", "reviewRequested", "others"] as const)
     .filter((key) => buckets[key].length > 0)
     .map((key) => ({ key, label: GROUP_LABELS[key], entries: buckets[key] }));
 }
@@ -615,8 +618,8 @@ export function partitionPullRequestsWithPriority<Entry extends PullRequestListE
   const byRecency = (left: Entry, right: Entry) => right.updatedAt.localeCompare(left.updatedAt);
   return (
     [
-      { key: "reviewRequested", entries: [...reviewByKey.values()].toSorted(byRecency) },
       { key: "authored", entries: [...authoredByKey.values()].toSorted(byRecency) },
+      { key: "reviewRequested", entries: [...reviewByKey.values()].toSorted(byRecency) },
       { key: "others", entries: others },
     ] as const
   )
@@ -985,7 +988,7 @@ export function scorePullRequestMatch(entry: PullRequestListEntry, query: string
 
 /**
  * Search results in the order they answer the question, most convincing first, and by recency
- * among equals. Only for a search: without one, a listing is a timeline and recency is the order.
+ * among equals. Without a search, preserve the host order for the caller's browse-time ranking.
  */
 export function rankPullRequestMatches<Entry extends PullRequestListEntry>(
   entries: ReadonlyArray<Entry>,
@@ -996,6 +999,74 @@ export function rankPullRequestMatches<Entry extends PullRequestListEntry>(
     const byScore = scorePullRequestMatch(right, query) - scorePullRequestMatch(left, query);
     return byScore !== 0 ? byScore : right.updatedAt.localeCompare(left.updatedAt);
   });
+}
+
+/**
+ * The default review queue: work that is green and approved, then green work still waiting on a
+ * verdict, then everything else still open. Drafts stay in that third tier because their author
+ * has not made them mergeable yet. Finished work follows open work when all states are visible. A
+ * known conflict is never ready, whatever its checks, review or state say, so it stays at the
+ * bottom. Smaller measured changes come first within a tier; recency only breaks a remaining tie.
+ */
+export function rankPullRequestsByMergeReadiness<Entry extends PullRequestListEntry>(
+  entries: ReadonlyArray<Entry>,
+  hasMeasuredSize: (entry: Entry) => boolean = (entry) => entry.additions + entry.deletions > 0,
+): ReadonlyArray<Entry> {
+  const tier = (entry: Entry) => {
+    if (entry.mergeability === "conflicting") return 4;
+    if (entry.state !== "open") return 3;
+    if (entry.isDraft) return 2;
+    if (entry.checksState === "passing" && entry.reviewDecision === "approved") return 0;
+    if (entry.checksState === "passing") return 1;
+    return 2;
+  };
+  return entries.toSorted((left, right) => {
+    const byTier = tier(left) - tier(right);
+    if (byTier !== 0) return byTier;
+    const byMeasurement = Number(hasMeasuredSize(right)) - Number(hasMeasuredSize(left));
+    if (byMeasurement !== 0) return byMeasurement;
+    const bySize = left.additions + left.deletions - (right.additions + right.deletions);
+    return bySize !== 0 ? bySize : right.updatedAt.localeCompare(left.updatedAt);
+  });
+}
+
+/** Keeps authored work first while applying the selected ordering inside every involvement group. */
+export function sortPullRequestGroups<Entry extends PullRequestListEntry>(
+  groups: ReadonlyArray<PullRequestGroup<Entry>>,
+  sort: PullRequestListSort,
+  searchText: string,
+  hasMeasuredSize: (entry: Entry) => boolean = (entry) => entry.additions + entry.deletions > 0,
+): ReadonlyArray<PullRequestGroup<Entry>> {
+  const sortWithinGroups = (rank: (entries: ReadonlyArray<Entry>) => ReadonlyArray<Entry>) =>
+    groups.map((group) => ({ ...group, entries: rank(group.entries) }));
+
+  if (sort === "ready") {
+    return searchText.trim().length === 0
+      ? sortWithinGroups((entries) => rankPullRequestsByMergeReadiness(entries, hasMeasuredSize))
+      : groups;
+  }
+  if (sort === "updated") return groups;
+
+  const timestamp = (entry: Entry) =>
+    toSortableTimestamp(entry.updatedAt) ?? toSortableTimestamp(entry.createdAt) ?? 0;
+  return sortWithinGroups((entries) =>
+    entries.toSorted((left, right) => {
+      if (sort === "newest" || sort === "oldest") {
+        const leftCreated = toSortableTimestamp(left.createdAt);
+        const rightCreated = toSortableTimestamp(right.createdAt);
+        const measured = Number(rightCreated !== null) - Number(leftCreated !== null);
+        const dated = (leftCreated ?? 0) - (rightCreated ?? 0);
+        return (
+          measured || (sort === "newest" ? -dated : dated) || timestamp(right) - timestamp(left)
+        );
+      }
+      const measured = Number(hasMeasuredSize(right)) - Number(hasMeasuredSize(left));
+      const sized = left.additions + left.deletions - (right.additions + right.deletions);
+      return (
+        measured || (sort === "largest" ? -sized : sized) || timestamp(right) - timestamp(left)
+      );
+    }),
+  );
 }
 
 /**

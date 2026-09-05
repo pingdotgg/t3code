@@ -5,6 +5,7 @@ import { RpcClientError } from "effect/unstable/rpc";
 import * as AcpSchema from "../_generated/schema.gen.ts";
 import * as AcpError from "../errors.ts";
 const isError = Schema.is(AcpSchema.Error);
+const isAcpError = Schema.is(AcpError.AcpError);
 
 export const callRpc = <A>(
   method: string,
@@ -17,11 +18,13 @@ export const callRpc = <A>(
     Effect.catchTags({
       RpcClientError: (cause) =>
         Effect.fail(
-          new AcpError.AcpTransportError({
-            operation: "call-rpc",
-            method,
-            cause,
-          }),
+          cause.reason._tag === "RpcClientDefect" && isAcpError(cause.reason.cause)
+            ? cause.reason.cause
+            : new AcpError.AcpTransportError({
+                operation: "call-rpc",
+                method,
+                cause,
+              }),
         ),
     }),
   );
