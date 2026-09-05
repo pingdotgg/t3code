@@ -16,8 +16,10 @@ import * as NodeOS from "node:os";
 
 import {
   USAGE_CONTRACT_VERSION,
+  type ServerSettings as ServerSettingsValue,
   type UsageProviderKind,
   type UsageSource,
+  type UsagePricing,
   type UsageSummary,
   type UsageSummaryInput,
   UsageReadError,
@@ -43,7 +45,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import { resolveClaudeHomePath } from "../provider/Drivers/ClaudeHome.ts";
 import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
 import { UsageAggregator } from "./usageAggregation.ts";
-import { parseRateTable, type RateTable } from "./usagePricing.ts";
+import { createOverrideRateTable, parseRateTable, type RateTable } from "./usagePricing.ts";
 import {
   listTranscriptFiles,
   readDirectoryVolumeId,
@@ -63,6 +65,9 @@ const LITELLM_RATES_URL =
 
 /** Rates move rarely; a day-old table keeps the page working offline. */
 const RATES_TTL_MS = 24 * 60 * 60 * 1000;
+
+/** An explicit refresh ignores the TTL, but not a table fetched this recently. */
+const RATES_REFRESH_FLOOR_MS = 60 * 1000;
 
 /**
  * Files are filtered by mtime before opening. The slack covers a session whose
@@ -93,13 +98,23 @@ const encodeRatesCache = Schema.encodeEffect(
 const ScanCacheJson = Schema.fromJsonString(Schema.Unknown as unknown as Schema.Codec<unknown>);
 const decodeScanCacheFile = Schema.decodeUnknownEffect(ScanCacheJson);
 const encodeScanCacheFile = Schema.encodeEffect(ScanCacheJson);
+const encodeSourceKey = Schema.encodeSync(ScanCacheJson);
 
 export class UsageService extends Context.Service<
   UsageService,
   {
     readonly readSummary: (input: UsageSummaryInput) => Effect.Effect<UsageSummary, UsageReadError>;
+    /** Refetches the rate table ahead of its TTL. See `ensureRates`. */
+    readonly refreshRates: Effect.Effect<UsagePricing>;
   }
 >()("t3/usage/UsageService") {}
+
+const EMPTY_PRICING: UsagePricing = {
+  status: "unavailable",
+  source: LITELLM_RATES_URL,
+  fetchedAt: null,
+  knownModels: 0,
+};
 
 /** Empty summary, for suites that only need the RPC surface to resolve. */
 export const layerTest = Layer.succeed(
@@ -114,14 +129,10 @@ export const layerTest = Layer.succeed(
         untilDay: input.untilDay,
         buckets: [],
         sources: [],
-        pricing: {
-          status: "unavailable",
-          source: LITELLM_RATES_URL,
-          fetchedAt: null,
-          knownModels: 0,
-        },
+        pricing: EMPTY_PRICING,
         scanDurationMs: 0,
       }),
+    refreshRates: Effect.succeed(EMPTY_PRICING),
   }),
 );
 
@@ -140,16 +151,29 @@ export const make = Effect.gen(function* () {
   const scanCachePath = path.join(config.stateDir, "usage-scan-cache.json");
   let rates: RateTable = new Map();
   let ratesFetchedAtMs: number | null = null;
-  let ratesStatus: UsageSummary["pricing"]["status"] = "unavailable";
+  let ratesStatus: UsagePricing["status"] = "unavailable";
+  // One fetch at a time. A burst of refreshes from several clients waits on
+  // the first fetch and then sees a table young enough to skip its own.
+  const ratesLock = yield* Semaphore.make(1);
+
+  const pricing = (): UsagePricing => ({
+    status: ratesStatus,
+    source: LITELLM_RATES_URL,
+    fetchedAt:
+      ratesFetchedAtMs === null ? null : DateTime.formatIso(DateTime.makeUnsafe(ratesFetchedAtMs)),
+    knownModels: rates.size,
+  });
 
   /**
    * Loads the LiteLLM rate table, preferring a fresh copy and falling back to
    * the on-disk snapshot. With neither, every model reports as unpriced rather
-   * than the page failing.
+   * than the page failing. `force` refetches inside the TTL so a model that
+   * LiteLLM added since the last fetch gets priced now.
    */
-  const ensureRates = Effect.fn("UsageService.ensureRates")(function* () {
+  const loadRates = Effect.fn("UsageService.loadRates")(function* (force: boolean) {
     const now = yield* Clock.currentTimeMillis;
-    if (ratesFetchedAtMs !== null && now - ratesFetchedAtMs < RATES_TTL_MS) return;
+    const maxAgeMs = force ? RATES_REFRESH_FLOOR_MS : RATES_TTL_MS;
+    if (ratesFetchedAtMs !== null && now - ratesFetchedAtMs < maxAgeMs) return;
 
     if (ratesFetchedAtMs === null) {
       const fromDisk = yield* fileSystem.readFileString(ratesCachePath).pipe(
@@ -162,7 +186,7 @@ export const make = Effect.gen(function* () {
           rates = parsed;
           ratesFetchedAtMs = fromDisk.fetchedAtMs;
           ratesStatus = "cached";
-          if (now - fromDisk.fetchedAtMs < RATES_TTL_MS) return;
+          if (now - fromDisk.fetchedAtMs < maxAgeMs) return;
         }
       }
     }
@@ -193,6 +217,13 @@ export const make = Effect.gen(function* () {
     );
   });
 
+  const ensureRates = (force: boolean) => ratesLock.withPermit(loadRates(force));
+
+  const refreshRates = ensureRates(true).pipe(
+    Effect.map(pricing),
+    Effect.withSpan("UsageService.refreshRates"),
+  );
+
   /**
    * Claude's config dir is the home itself when overridden, but a default
    * install nests transcripts under `~/.claude/projects`. Probe both.
@@ -206,24 +237,22 @@ export const make = Effect.gen(function* () {
       return nestedExists ? nested : path.join(homePath, "projects");
     });
 
-  /** Resolves the transcript directory for each provider. */
-  const resolveTranscriptDirs = Effect.fn("UsageService.resolveTranscriptDirs")(function* () {
-    // A settings failure must surface as an error: swallowing it here would
-    // present "zero usage from every provider" as a valid answer.
-    const settings = yield* settingsService.getSettings.pipe(
-      Effect.catchCause(
-        (cause) =>
-          new UsageReadError({
-            reason: "scanFailed",
-            // Bounded description; the squashed failure travels as the cause.
-            // Squashed, not the Cause tree: a full tree in a Defect field is
-            // the unbounded wire payload the bounded detail exists to avoid.
-            detail: "Server settings could not be read.",
-            cause: Cause.squash(cause),
-          }),
-      ),
-    );
+  // A settings failure must not silently discard custom rates or transcript homes.
+  const readSettings = settingsService.getSettings.pipe(
+    Effect.catchCause(
+      (cause) =>
+        new UsageReadError({
+          reason: "scanFailed",
+          detail: "Server settings could not be read.",
+          cause: Cause.squash(cause),
+        }),
+    ),
+  );
 
+  /** Resolves the transcript directory for each provider. */
+  const resolveTranscriptDirs = Effect.fn("UsageService.resolveTranscriptDirs")(function* (
+    settings: ServerSettingsValue,
+  ) {
     const claudeHome = yield* resolveClaudeHomePath(settings.providers.claudeAgent);
     const claudeDir = yield* resolveClaudeTranscriptDir(claudeHome);
     const codexLayout = yield* resolveCodexHomeLayout(settings.providers.codex);
@@ -356,6 +385,7 @@ export const make = Effect.gen(function* () {
   interface SourceSnapshot {
     readonly completedAtMs: number;
     readonly windowStartMs: number;
+    readonly sourceKey: string;
     readonly dirs: readonly ScannedDir[];
   }
 
@@ -363,10 +393,15 @@ export const make = Effect.gen(function* () {
   let lastRefreshToken: string | null = null;
   const sourceScanSemaphore = yield* Semaphore.make(1);
 
-  const collectDirs = Effect.fn("UsageService.collectDirs")(function* (windowStartMs: number) {
+  const collectDirs = Effect.fn("UsageService.collectDirs")(function* (
+    windowStartMs: number,
+    settings: ServerSettingsValue,
+  ) {
     // The home resolvers ask for `Path` themselves; satisfy them from the
     // instance we already hold so the scan stays context-free.
-    const dirs = yield* resolveTranscriptDirs().pipe(Effect.provideService(Path.Path, path));
+    const dirs = yield* resolveTranscriptDirs(settings).pipe(
+      Effect.provideService(Path.Path, path),
+    );
     const scanned: ScannedDir[] = [];
     for (const { provider, dir, fileName } of dirs) {
       const volumeId = yield* Effect.promise(() => readDirectoryVolumeId(dir));
@@ -393,6 +428,7 @@ export const make = Effect.gen(function* () {
   const getSourceSnapshot = Effect.fn("UsageService.getSourceSnapshot")(function* (
     windowStartMs: number,
     refreshToken: string | undefined,
+    settings: ServerSettingsValue,
   ) {
     return yield* sourceScanSemaphore.withPermits(1)(
       Effect.gen(function* () {
@@ -404,12 +440,18 @@ export const make = Effect.gen(function* () {
             : startedAtMs - currentSnapshot.completedAtMs;
         const snapshotCoversWindow =
           currentSnapshot !== null && currentSnapshot.windowStartMs <= windowStartMs;
+        const sourceKey = encodeSourceKey([
+          settings.providers.claudeAgent,
+          settings.providers.codex,
+        ]);
+        const snapshotCoversSources = currentSnapshot?.sourceKey === sourceKey;
         const manualRefresh = refreshToken !== undefined && refreshToken !== lastRefreshToken;
 
         if (
           !manualRefresh &&
           currentSnapshot !== null &&
           snapshotCoversWindow &&
+          snapshotCoversSources &&
           snapshotAgeMs < SOURCE_SCAN_TTL_MS
         ) {
           return currentSnapshot;
@@ -426,14 +468,16 @@ export const make = Effect.gen(function* () {
         // Pricing only matters once records are aggregated, so the rate table
         // loads while transcripts stream instead of gating them: a cold rates
         // fetch on a slow network no longer delays the scan by its own timeout.
-        const [, dirs] = yield* Effect.all([ensureRates(), collectDirs(scanWindowStartMs)], {
-          concurrency: 2,
-        });
+        const [, dirs] = yield* Effect.all(
+          [ensureRates(false), collectDirs(scanWindowStartMs, settings)],
+          { concurrency: 2 },
+        );
         const now = yield* Clock.currentTimeMillis;
         const completedAtMs = Math.max(now, (currentSnapshot?.completedAtMs ?? now - 1) + 1);
         const nextSnapshot = {
           completedAtMs,
           windowStartMs: scanWindowStartMs,
+          sourceKey,
           dirs,
         } satisfies SourceSnapshot;
         sourceSnapshot = nextSnapshot;
@@ -443,7 +487,10 @@ export const make = Effect.gen(function* () {
     );
   });
 
-  const scanSummary = Effect.fn("UsageService.scanSummary")(function* (input: UsageSummaryInput) {
+  const scanSummary = Effect.fn("UsageService.scanSummary")(function* (
+    input: UsageSummaryInput,
+    settings: ServerSettingsValue,
+  ) {
     if (input.sinceDay > input.untilDay) {
       return yield* new UsageReadError({
         reason: "invalidWindow",
@@ -488,7 +535,7 @@ export const make = Effect.gen(function* () {
     }
     const windowStartMs =
       (hourlyWindow?.sinceTimeMs ?? DateTime.toEpochMillis(windowStart.value)) - MTIME_SLACK_MS;
-    const currentSnapshot = yield* getSourceSnapshot(windowStartMs, input.refreshToken);
+    const currentSnapshot = yield* getSourceSnapshot(windowStartMs, input.refreshToken, settings);
     const scannedDirs = currentSnapshot.dirs;
     const sourceReadAtMs = currentSnapshot.completedAtMs;
 
@@ -499,6 +546,7 @@ export const make = Effect.gen(function* () {
       resolution: input.resolution ?? "day",
       ...hourlyWindow,
       rates,
+      priceOverrides: createOverrideRateTable(settings.usagePriceOverrides),
     });
 
     const sources: UsageSource[] = [];
@@ -573,27 +621,22 @@ export const make = Effect.gen(function* () {
       untilDay: input.untilDay,
       buckets: aggregated.buckets,
       sources,
-      pricing: {
-        status: ratesStatus,
-        source: LITELLM_RATES_URL,
-        fetchedAt:
-          ratesFetchedAtMs === null
-            ? null
-            : DateTime.formatIso(DateTime.makeUnsafe(ratesFetchedAtMs)),
-        knownModels: rates.size,
-      },
+      pricing: pricing(),
       scanDurationMs: Math.max(0, finishedAtMs - startedAtMs),
     } satisfies UsageSummary;
   });
 
   /**
-   * In-flight scans by window, so concurrent identical requests (the usage
+   * In-flight scans by window and custom prices, so concurrent identical requests (the usage
    * page open on two clients at once) share one scan instead of racing over
    * the same corpus twice.
    */
   const inflightScans = new Map<string, Deferred.Deferred<UsageSummary, UsageReadError>>();
 
-  const scanKey = (input: UsageSummaryInput): string =>
+  const scanKey = (
+    input: UsageSummaryInput,
+    priceOverrides: ServerSettingsValue["usagePriceOverrides"],
+  ): string =>
     JSON.stringify([
       input.timeZone,
       input.sinceDay,
@@ -602,10 +645,12 @@ export const make = Effect.gen(function* () {
       input.sinceTime ?? null,
       input.untilTime ?? null,
       input.refreshToken ?? null,
+      priceOverrides,
     ]);
 
   const readSummary = Effect.fn("UsageService.readSummary")(function* (input: UsageSummaryInput) {
-    const key = scanKey(input);
+    const settings = yield* readSettings;
+    const key = scanKey(input, settings.usagePriceOverrides);
     const deferred = yield* Effect.uninterruptible(
       Effect.gen(function* () {
         const existing = inflightScans.get(key);
@@ -617,7 +662,7 @@ export const make = Effect.gen(function* () {
         inflightScans.set(key, created);
         // Detached so one departing client cannot tear the scan out from under
         // the fibers awaiting it; a finished scan warms the cache either way.
-        yield* scanSummary(input).pipe(
+        yield* scanSummary(input, settings).pipe(
           Effect.onExit((exit) =>
             Effect.sync(() => inflightScans.delete(key)).pipe(
               Effect.andThen(Deferred.done(created, exit)),
@@ -633,7 +678,7 @@ export const make = Effect.gen(function* () {
     return yield* Deferred.await(deferred);
   });
 
-  return { readSummary } as const;
+  return { readSummary, refreshRates } as const;
 });
 
 export const layer = Layer.effect(UsageService, make);

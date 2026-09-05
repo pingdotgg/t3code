@@ -13,6 +13,7 @@ import {
   type UsageSummary,
   type UsageSummaryInput,
 } from "@t3tools/contracts";
+import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
 import { useCallback, useMemo, useRef, useState } from "react";
@@ -143,22 +144,35 @@ export function useUsage(input: UsageSummaryInput): UsageView {
     [environments],
   );
 
+  // Refreshing only the derived atom would re-read the per-environment SWR
+  // queries within their stale window and change nothing. Refresh each
+  // environment's query so the button always rescans.
+  //
+  // Each environment refetches model pricing first, so a model released since
+  // its last daily fetch gets priced by the rescan. The rescan runs whether or
+  // not the refetch succeeds: an offline environment still recounts tokens.
   const refresh = useCallback(() => {
     const nextToken = makeUsageRefreshToken(answered);
-    if (nextToken !== undefined && nextToken !== refreshToken) {
-      setRefreshToken(nextToken);
-      return;
-    }
-
     const currentInput = JSON.parse(windowKey) as UsageSummaryInput;
-    for (const environment of environments) {
-      appAtomRegistry.refresh(
-        serverEnvironment.usageSummary({
-          environmentId: environment.environmentId,
-          input: currentInput,
-        }),
-      );
-    }
+    const rateRefreshes = environments.map(({ environmentId }) =>
+      runAtomCommand(
+        appAtomRegistry,
+        serverEnvironment.refreshUsageRates,
+        { environmentId, input: {} },
+        { reportFailure: false },
+      ),
+    );
+    void Promise.allSettled(rateRefreshes).then(() => {
+      if (nextToken !== undefined && nextToken !== refreshToken) {
+        setRefreshToken(nextToken);
+        return;
+      }
+      for (const { environmentId } of environments) {
+        appAtomRegistry.refresh(
+          serverEnvironment.usageSummary({ environmentId, input: currentInput }),
+        );
+      }
+    });
   }, [answered, environments, refreshToken, windowKey]);
 
   const merged = useMemo(() => mergeUsage(answered, USAGE_CONTRACT_VERSION), [answered]);

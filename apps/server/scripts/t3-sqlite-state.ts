@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 
-// @effect-diagnostics nodeBuiltinImport:off - node:os resolves the shared T3 home guard.
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeOS from "node:os";
@@ -15,7 +14,7 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { Argument, Command, Flag } from "effect/unstable/cli";
 
-import * as NodeSqliteClient from "../src/persistence/NodeSqliteClient.ts";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 
 export const SqliteStateOperation = Schema.Literals(["query", "exec"]);
 export type SqliteStateOperation = typeof SqliteStateOperation.Type;

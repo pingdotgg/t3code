@@ -160,6 +160,32 @@ export function formatDayAwareTimestamp(
 }
 
 /**
+ * The forward-looking counterpart of {@link formatDayAwareTimestamp} for an
+ * instant that has not happened yet (a usage-limit reset): today `12:34 PM`,
+ * tomorrow `tomorrow at 12:34 PM`, later `8/13 12:34 PM`.
+ */
+export function formatUpcomingTimestamp(
+  isoDate: string,
+  timestampFormat: TimestampFormat,
+  nowMs: number = Date.now(),
+): string {
+  const date = parseTimestampDate(isoDate);
+  if (!date) return "";
+  const time = getTimestampFormatter(timestampFormat, false).format(date);
+
+  const now = new Date(nowMs);
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const startOfTargetDay = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+  const dayDiff = Math.round((startOfTargetDay - startOfToday) / 86_400_000);
+
+  if (dayDiff <= 0) return time;
+  if (dayDiff === 1) return `tomorrow at ${time}`;
+  const dateFormatter =
+    date.getFullYear() === now.getFullYear() ? numericDateFormatter : numericDateWithYearFormatter;
+  return `${dateFormatter.format(date)} ${time}`;
+}
+
+/**
  * Format a relative time string from an ISO date.
  * Returns `{ value: "20s", suffix: "ago" }` or `{ value: "just now", suffix: null }`
  * so callers can style the numeric portion independently.

@@ -166,6 +166,7 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
       expect(second.capabilities.attachmentUploads).toBe(true);
       expect(second.capabilities.fileAttachments).toEqual({ maxUploadBytes: 50 * 1024 * 1024 });
       expect(second.capabilities.pullRequests).toBe(true);
+      expect(second.capabilities.usagePriceOverrides).toBe(true);
       expect(second.capabilities.threadTitleRegeneration).toBe(true);
       expect(second.capabilities.threadPullRequestLinking).toBe(true);
       expect(second.capabilities.agentActivityPublishing).toBe(false);
@@ -215,6 +216,45 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
         const disabled = yield* serverEnvironment.getDescriptor;
         expect(disabled.capabilities.agentActivityPublishing).toBe(false);
       }).pipe(Effect.provide(testLayer));
+    }),
+  );
+
+  it.effect("advertises desktopAppUpdate only with desktop mode and the control fd", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-server-environment-desktop-update-test-",
+      });
+      const serverConfig = yield* makeServerConfig(baseDir);
+      yield* fileSystem.makeDirectory(serverConfig.stateDir, { recursive: true });
+
+      const describeWith = (overrides: Partial<ServerConfig.ServerConfig["Service"]>) =>
+        Effect.gen(function* () {
+          const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
+          return yield* serverEnvironment.getDescriptor;
+        }).pipe(
+          Effect.provide(
+            ServerEnvironment.layer.pipe(
+              Layer.provide(ServerSecretStore.layer),
+              Layer.provide(ServerConfig.layer({ ...serverConfig, ...overrides })),
+            ),
+          ),
+        );
+
+      const withFd = yield* describeWith({ mode: "desktop", desktopTelemetryControlFd: 5 });
+      expect(withFd.capabilities.serverSelfUpdate).toBe("desktop-managed");
+      expect(withFd.capabilities.desktopAppUpdate).toBe(true);
+      expect(withFd.capabilities.serverSelfUpdateProgress).toBe(true);
+      expect(withFd.capabilities.serverUpdateThreadContinuation).toBe(true);
+
+      const withoutFd = yield* describeWith({ mode: "desktop" });
+      expect(withoutFd.capabilities.serverSelfUpdate).toBe("desktop-managed");
+      expect(withoutFd.capabilities.desktopAppUpdate).toBeUndefined();
+      expect(withoutFd.capabilities.serverSelfUpdateProgress).toBeUndefined();
+      expect(withoutFd.capabilities.serverUpdateThreadContinuation).toBeUndefined();
+
+      const web = yield* describeWith({ mode: "web", desktopTelemetryControlFd: 5 });
+      expect(web.capabilities.desktopAppUpdate).toBeUndefined();
     }),
   );
 
