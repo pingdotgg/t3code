@@ -1197,10 +1197,6 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
                   row.kind === "thinking"
                 ? "pb-2"
                 : "pb-4",
-        (row.kind === "message" && row.message.role === "assistant") ||
-          row.kind === "assistant-meta"
-          ? "group/assistant"
-          : null,
       )}
       data-timeline-row-id={row.id}
       data-timeline-row-kind={row.kind}
@@ -1610,7 +1606,6 @@ function AssistantMetaTimelineRow({
         message={row.message}
         showCopyButton={row.showAssistantCopyButton}
         copyStreaming={row.assistantCopyStreaming}
-        alwaysVisible
       />
     </div>
   );
@@ -1621,26 +1616,16 @@ function AssistantMessageMeta({
   message,
   showCopyButton,
   copyStreaming,
-  alwaysVisible = false,
 }: {
   className?: string;
   message: ChatMessage;
   showCopyButton: boolean;
   copyStreaming: boolean;
-  alwaysVisible?: boolean;
 }) {
   const ctx = use(TimelineRowCtx);
 
   return (
-    <div
-      className={cn(
-        "flex items-center gap-2 text-xs tabular-nums transition-opacity duration-200",
-        alwaysVisible
-          ? "opacity-100"
-          : "opacity-0 focus-within:opacity-100 group-hover/assistant:opacity-100",
-        className,
-      )}
-    >
+    <div className={cn("flex items-center gap-2 text-xs tabular-nums", className)}>
       <AssistantCopyButton
         message={message}
         showCopyButton={showCopyButton}
