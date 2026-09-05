@@ -426,10 +426,18 @@ function SourceLimits({ source, now }: { readonly source: LimitsSource; readonly
  * Countdowns anchor to render time rather than ticking: a live clock would
  * repaint the page every minute for no decision-changing gain.
  */
-export function UsageLimitsSection() {
+export function UsageLimitsSection({
+  selectedEnvironmentIds,
+}: {
+  readonly selectedEnvironmentIds: ReadonlySet<EnvironmentId> | null;
+}) {
   const presentations = useAtomValue(environmentPresentations.presentationsAtom);
-  const groups = collectLimitsGroups(presentations);
-  const sources = collectLimitSources(presentations);
+  const selected =
+    selectedEnvironmentIds === null
+      ? presentations
+      : new Map([...presentations].filter(([id]) => selectedEnvironmentIds.has(id)));
+  const groups = collectLimitsGroups(selected);
+  const sources = collectLimitSources(selected);
   // Anchored once per mount on purpose: countdowns must not tick (see below).
   const [now] = useState(() => Date.now());
 
@@ -437,7 +445,7 @@ export function UsageLimitsSection() {
     <div className="flex flex-col gap-8">
       {groups.length === 0 && sources.length === 0 ? (
         <p className="text-sm text-muted-foreground">
-          No provider on a connected environment reports subscription limits.
+          No provider on the selected environments reports subscription limits.
         </p>
       ) : null}
       {sources.map((source) => (

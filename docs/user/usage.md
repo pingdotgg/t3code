@@ -9,6 +9,10 @@ cost. These estimates are not your subscription bill.
 Totals depend on the history available on each server. Grok turns without a saved completed-turn
 record are missing from the totals.
 
+On web and desktop, use the environment dropdown to filter costs, tokens, and limits. All
+environments are selected by default. The dropdown shows which environments are still scanning;
+results appear as each one responds.
+
 If recent work is missing or a new model shows no cost, refresh to rescan session history and
 update model pricing.
 
