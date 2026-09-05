@@ -399,7 +399,7 @@ it.effect("invalidates a ref snapshot when a mutation fails after changing Git",
           if (!ChildProcess.isStandardCommand(command)) {
             return yield* Effect.die("expected a standard Git command");
           }
-          if (command.args[0] === "branch" && command.args[1] === "feature/partial-failure") {
+          if (command.args[0] === "branch" && command.args.includes("feature/partial-failure")) {
             const handle = yield* delegate.spawn(command);
             yield* handle.exitCode;
             return makeNonRepositoryHandle();
@@ -1677,7 +1677,6 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
           const cwd = yield* makeTmpDir();
           yield* initRepoWithCommit(cwd);
           const worktreesRoot = yield* makeTmpDir("git-vcs-driver-worktrees-");
-          const fileSystem = yield* FileSystem.FileSystem;
           const pathService = yield* Path.Path;
           const worktreePath = pathService.join(worktreesRoot, "linked\nworktree");
           const driver = yield* GitVcsDriver.GitVcsDriver;
