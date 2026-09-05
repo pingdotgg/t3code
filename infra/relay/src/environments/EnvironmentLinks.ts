@@ -41,13 +41,12 @@ export class EnvironmentLinkUpsertPersistenceError extends Schema.TaggedErrorCla
 export class EnvironmentLinkUserListPersistenceError extends Schema.TaggedErrorClass<EnvironmentLinkUserListPersistenceError>()(
   "EnvironmentLinkUserListPersistenceError",
   {
-    operation: Schema.Literal("list-delivery-users"),
     environmentId: Schema.String,
     cause: Schema.Defect(),
   },
 ) {
   override get message(): string {
-    return `Environment link user query '${this.operation}' failed for environment '${this.environmentId}'`;
+    return `Environment link user query 'list-delivery-users' failed for environment '${this.environmentId}'`;
   }
 }
 
@@ -219,7 +218,6 @@ const make = Effect.gen(function* () {
           Effect.mapError(
             (cause) =>
               new EnvironmentLinkUserListPersistenceError({
-                operation: "list-delivery-users",
                 environmentId: input.environmentId,
                 cause,
               }),
