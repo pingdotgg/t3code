@@ -266,5 +266,6 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
     generatePrContent,
     generateBranchName,
     generateThreadTitle,
+    generateHandover: TextGeneration.unsupportedHandoverGeneration("grok"),
   } satisfies TextGeneration.TextGeneration["Service"];
 });

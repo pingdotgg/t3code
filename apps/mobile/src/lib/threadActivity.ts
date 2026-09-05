@@ -1281,6 +1281,13 @@ const activityOrder = Order.combineAll<OrchestrationThreadActivity>([
   Order.mapInput(Order.String, (activity) => activity.id),
 ]);
 
+export function compareThreadActivityOrder(
+  left: OrchestrationThreadActivity,
+  right: OrchestrationThreadActivity,
+): -1 | 0 | 1 {
+  return activityOrder(left, right);
+}
+
 function isEmptyMessage(entry: RawThreadFeedEntry): boolean {
   if (entry.type !== "message") {
     return false;

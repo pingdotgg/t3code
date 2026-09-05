@@ -6,6 +6,10 @@ export interface ThreadReferenceCopyTarget {
   readonly failureTitle: string;
 }
 
+export function threadHandoverSourceKey(environmentId: string, threadId: string): string {
+  return `handover:${JSON.stringify([environmentId, threadId])}`;
+}
+
 export function resolveThreadReferenceCopyTarget(input: {
   readonly threadId: string;
   /** Undefined means no PR panel; null means its URL is not available yet. */

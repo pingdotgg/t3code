@@ -393,7 +393,14 @@ const ProjectFaviconResolverLayerLive = ProjectFaviconResolver.layer.pipe(
   Layer.provide(T3ProjectFileLoader.layer),
 );
 
-const ServerEnvironmentLayerLive = ServerEnvironment.layer.pipe(
+const ProviderInstanceRegistryLayerLive = ProviderInstanceRegistryHydrationLive.pipe(
+  Layer.provideMerge(Layer.mergeAll(AntigravityInstallation.layer, CodexResetCredit.layer)),
+  Layer.provideMerge(Layer.mergeAll(ProviderEventLoggers.layer, ModelManifest.layer)),
+  Layer.provideMerge(OpenCodeRuntime.OpenCodeRuntimeLive),
+);
+
+const ServerEnvironmentLayerLive = ServerEnvironment.providerRuntimeLayer.pipe(
+  Layer.provide(ProviderInstanceRegistryLayerLive),
   Layer.provide(ServerSecretStore.layer),
 );
 
@@ -471,7 +478,7 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   // through this layer. Built-in drivers come from `BUILT_IN_DRIVERS`;
   // `providerInstances` hydration merges `settings.providers.<kind>`
   // with explicit `providerInstances` entries on boot.
-  Layer.provideMerge(ProviderInstanceRegistryHydrationLive),
+  Layer.provideMerge(ProviderInstanceRegistryLayerLive),
 ).pipe(
   Layer.provideMerge(AntigravityInstallation.layer),
   // Shared native/canonical NDJSON writers used by both the per-instance

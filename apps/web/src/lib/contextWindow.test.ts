@@ -1,9 +1,18 @@
 import { describe, expect, it } from "vite-plus/test";
 import { EventId, type OrchestrationThreadActivity, TurnId } from "@t3tools/contracts";
 
-import { deriveLatestContextWindowSnapshot, formatContextWindowTokens } from "./contextWindow";
+import {
+  contextWindowReachedThreadLimit,
+  deriveLatestContextWindowSnapshot,
+  formatContextWindowTokens,
+} from "./contextWindow";
 
-function makeActivity(id: string, kind: string, payload: unknown): OrchestrationThreadActivity {
+function makeActivity(
+  id: string,
+  kind: string,
+  payload: unknown,
+  options: { readonly sequence?: number; readonly createdAt?: string } = {},
+): OrchestrationThreadActivity {
   return {
     id: EventId.make(id),
     tone: "info",
@@ -11,7 +20,8 @@ function makeActivity(id: string, kind: string, payload: unknown): Orchestration
     summary: kind,
     payload,
     turnId: TurnId.make("turn-1"),
-    createdAt: "2026-03-23T00:00:00.000Z",
+    ...(options.sequence === undefined ? {} : { sequence: options.sequence }),
+    createdAt: options.createdAt ?? "2026-03-23T00:00:00.000Z",
   };
 }
 
@@ -63,6 +73,26 @@ describe("contextWindow", () => {
     });
   });
 
+  it("uses canonical activity order after compaction instead of array order", () => {
+    const snapshot = deriveLatestContextWindowSnapshot([
+      makeActivity(
+        "activity-current",
+        "context-window.updated",
+        { usedTokens: 20_000, maxTokens: 250_000 },
+        { sequence: 12, createdAt: "2026-03-23T00:02:00.000Z" },
+      ),
+      makeActivity(
+        "activity-stale",
+        "context-window.updated",
+        { usedTokens: 250_000, maxTokens: 250_000 },
+        { sequence: 11, createdAt: "2026-03-23T00:01:00.000Z" },
+      ),
+    ]);
+
+    expect(snapshot?.usedTokens).toBe(20_000);
+    expect(contextWindowReachedThreadLimit(snapshot)).toBe(false);
+  });
+
   it("formats compact token counts", () => {
     expect(formatContextWindowTokens(999)).toBe("999");
     expect(formatContextWindowTokens(1400)).toBe("1.4k");
@@ -82,5 +112,17 @@ describe("contextWindow", () => {
 
     expect(snapshot?.usedTokens).toBe(81_659);
     expect(snapshot?.totalProcessedTokens).toBe(748_126);
+  });
+
+  it("recognizes the hard thread limit from the latest snapshot", () => {
+    const snapshot = deriveLatestContextWindowSnapshot([
+      makeActivity("activity-1", "context-window.updated", {
+        usedTokens: 250_000,
+        maxTokens: 400_000,
+      }),
+    ]);
+
+    expect(contextWindowReachedThreadLimit(snapshot)).toBe(true);
+    expect(contextWindowReachedThreadLimit(snapshot, 300_000)).toBe(false);
   });
 });

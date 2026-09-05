@@ -7,7 +7,11 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
+import * as PubSub from "effect/PubSub";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
+
+import { ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import {
@@ -16,6 +20,8 @@ import {
   RELAY_URL_SECRET,
 } from "../cloud/config.ts";
 import * as ServerConfig from "../config.ts";
+import type { ProviderInstance } from "../provider/ProviderDriver.ts";
+import * as ProviderInstanceRegistry from "../provider/Services/ProviderInstanceRegistry.ts";
 import * as ServerEnvironment from "./ServerEnvironment.ts";
 
 const isServerEnvironmentIdPersistenceError = Schema.is(
@@ -169,7 +175,101 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
       expect(second.capabilities.usagePriceOverrides).toBe(true);
       expect(second.capabilities.threadTitleRegeneration).toBe(true);
       expect(second.capabilities.threadPullRequestLinking).toBe(true);
+      expect(second.capabilities.threadRestartContinuation).toBe(true);
       expect(second.capabilities.agentActivityPublishing).toBe(false);
+      expect(second.capabilities.threadHandoverGeneration).toBe(false);
+    }),
+  );
+
+  it.effect("advertises handover generation when the server has an enabled Codex instance", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-server-environment-handover-test-",
+      });
+      const codexDriver = ProviderDriverKind.make("codex");
+      const codexInstance = {
+        instanceId: ProviderInstanceId.make("codex-personal"),
+        driverKind: codexDriver,
+        continuationIdentity: {
+          driverKind: codexDriver,
+          continuationKey: "codex:instance:codex-personal",
+        },
+        displayName: undefined,
+        enabled: true,
+        snapshot: {} as ProviderInstance["snapshot"],
+        adapter: {} as ProviderInstance["adapter"],
+        textGeneration: {} as ProviderInstance["textGeneration"],
+      } satisfies ProviderInstance;
+      const registryLayer = Layer.succeed(ProviderInstanceRegistry.ProviderInstanceRegistry, {
+        getInstance: (instanceId) =>
+          Effect.succeed(instanceId === codexInstance.instanceId ? codexInstance : undefined),
+        listInstances: Effect.succeed([codexInstance]),
+        listUnavailable: Effect.succeed([]),
+        streamChanges: Stream.empty,
+        subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), PubSub.subscribe),
+      });
+
+      const descriptor = yield* Effect.gen(function* () {
+        const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
+        return yield* serverEnvironment.getDescriptor;
+      }).pipe(
+        Effect.provide(
+          ServerEnvironment.providerRuntimeLayer.pipe(
+            Layer.provide(registryLayer),
+            Layer.provide(ServerSecretStore.layer),
+            Layer.provide(ServerConfig.layerTest(process.cwd(), baseDir)),
+          ),
+        ),
+      );
+
+      expect(descriptor.capabilities.threadHandoverGeneration).toBe(true);
+    }),
+  );
+
+  it.effect("does not advertise handover generation for a Claude-only server", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-server-environment-claude-handover-test-",
+      });
+      const claudeDriver = ProviderDriverKind.make("claudeAgent");
+      const claudeInstance = {
+        instanceId: ProviderInstanceId.make("claude-personal"),
+        driverKind: claudeDriver,
+        continuationIdentity: {
+          driverKind: claudeDriver,
+          continuationKey: "claudeAgent:instance:claude-personal",
+        },
+        displayName: undefined,
+        enabled: true,
+        snapshot: {} as ProviderInstance["snapshot"],
+        adapter: {} as ProviderInstance["adapter"],
+        textGeneration: {} as ProviderInstance["textGeneration"],
+      } satisfies ProviderInstance;
+      const registryLayer = Layer.succeed(ProviderInstanceRegistry.ProviderInstanceRegistry, {
+        getInstance: (instanceId) =>
+          Effect.succeed(instanceId === claudeInstance.instanceId ? claudeInstance : undefined),
+        listInstances: Effect.succeed([claudeInstance]),
+        listUnavailable: Effect.succeed([]),
+        streamChanges: Stream.empty,
+        subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), PubSub.subscribe),
+      });
+
+      const descriptor = yield* Effect.gen(function* () {
+        const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
+        return yield* serverEnvironment.getDescriptor;
+      }).pipe(
+        Effect.provide(
+          ServerEnvironment.providerRuntimeLayer.pipe(
+            Layer.provide(registryLayer),
+            Layer.provide(ServerSecretStore.layer),
+            Layer.provide(ServerConfig.layerTest(process.cwd(), baseDir)),
+          ),
+        ),
+      );
+
+      expect(descriptor.capabilities.threadHandoverGeneration).toBe(false);
     }),
   );
 
