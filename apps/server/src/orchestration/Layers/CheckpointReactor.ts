@@ -564,28 +564,15 @@ const make = Effect.gen(function* () {
         return;
       }
 
-      const shell = yield* projectionSnapshotQuery.getShellSnapshot();
-      const checkoutHasActiveSibling = shell.threads.some(
-        (other) =>
-          other.id !== thread.id &&
-          other.worktreePath === thread.worktreePath &&
-          (other.session?.activeTurnId != null ||
-            other.session?.status === "starting" ||
-            other.session?.status === "running"),
-      );
-      if (checkoutHasActiveSibling) {
-        return;
-      }
-
-      // expectedBranch makes this a compare-and-swap in the decider: if the
-      // recorded branch moved between our read and the dispatch (rename,
-      // concurrent drift-follow), the stale update is dropped.
+      // The decider checks the branch, checkout, and sibling activity atomically
+      // so a sibling starting after our read prevents stale drift adoption.
       yield* orchestrationEngine.dispatch({
         type: "thread.meta.update",
         commandId: yield* serverCommandId("worktree-branch-drift"),
         threadId: thread.id,
         branch: checkedOutBranch,
         expectedBranch: thread.branch,
+        requireIdleWorktreePath: input.cwd,
       });
       yield* Effect.logInfo("thread branch followed worktree checkout", {
         threadId: thread.id,
