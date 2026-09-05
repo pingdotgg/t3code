@@ -98,6 +98,14 @@ function readStoredThemeHalvesRaw(): { light?: string; dark?: string } {
 function themeHalvesSignature(halves: ThemeHalves | null): string {
   return `${halves?.light ?? ""}|${halves?.dark ?? ""}`;
 }
+
+function isOnboardingThemeActive(): boolean {
+  return (
+    typeof document !== "undefined" &&
+    document.documentElement.dataset?.onboardingSurface !== undefined
+  );
+}
+
 const THEME_COLOR_META_NAME = "theme-color";
 const DYNAMIC_THEME_COLOR_SELECTOR = `meta[name="${THEME_COLOR_META_NAME}"][data-dynamic-theme-color="true"]`;
 
@@ -292,15 +300,19 @@ function resolveBrowserChromeSurface(): HTMLElement {
 
 export function syncBrowserChromeTheme() {
   if (typeof document === "undefined" || typeof getComputedStyle === "undefined") return;
+  const onboardingActive = isOnboardingThemeActive();
   const rootStyles = getComputedStyle(document.documentElement);
-  const themeChromeColor = document.documentElement.dataset.themeId
-    ? normalizeThemeColor(rootStyles.getPropertyValue("--app-chrome-background"))
-    : null;
+  const themeChromeColor =
+    !onboardingActive && document.documentElement.dataset.themeId
+      ? normalizeThemeColor(rootStyles.getPropertyValue("--app-chrome-background"))
+      : null;
   const surfaceColor = normalizeThemeColor(
     getComputedStyle(resolveBrowserChromeSurface()).backgroundColor,
   );
   const fallbackColor = normalizeThemeColor(getComputedStyle(document.body).backgroundColor);
-  const backgroundColor = themeChromeColor ?? surfaceColor ?? fallbackColor;
+  const backgroundColor = onboardingActive
+    ? "#000"
+    : (themeChromeColor ?? surfaceColor ?? fallbackColor);
   if (!backgroundColor) return;
 
   document.documentElement.style.backgroundColor = backgroundColor;
@@ -321,8 +333,15 @@ export function syncBrowserChromeTheme() {
 
 function applyTheme(theme: Theme, { suppressTransitions = false, preservePreview = true } = {}) {
   if (typeof document === "undefined" || typeof window === "undefined") return;
+  const onboardingActive = isOnboardingThemeActive();
   // Keep the editor's draft visible until an explicit refresh restores the selection.
-  if (preservePreview && document.documentElement.dataset?.themeId === THEME_PREVIEW_ID) return;
+  if (
+    preservePreview &&
+    !onboardingActive &&
+    document.documentElement.dataset?.themeId === THEME_PREVIEW_ID
+  ) {
+    return;
+  }
   const appearanceMode = readAppearanceModePreference(theme);
   const followSystem = appearanceMode === "system";
   const systemDark = followSystem ? getSystemDark() : false;
@@ -334,7 +353,13 @@ function applyTheme(theme: Theme, { suppressTransitions = false, preservePreview
     lastAppliedTheme.appearanceMode === appearanceMode &&
     themeHalvesSignature(lastAppliedTheme.themeHalves) === themeHalvesSignature(themeHalves)
   ) {
-    syncDesktopTheme(theme, followSystem, appearanceMode);
+    if (onboardingActive) {
+      document.documentElement.classList.add("dark");
+      syncBrowserChromeTheme();
+      syncDesktopTheme("dark", false, "dark");
+    } else {
+      syncDesktopTheme(theme, followSystem, appearanceMode);
+    }
     return;
   }
 
@@ -348,12 +373,19 @@ function applyTheme(theme: Theme, { suppressTransitions = false, preservePreview
     appearanceMode,
     themeHalves,
   );
-  applyThemePalette(resolveThemeHalf(theme, themeHalves, resolvedAppearance), resolvedAppearance);
-  const isDark = resolvedAppearance === "dark";
-  document.documentElement.classList.toggle("dark", isDark);
+  if (onboardingActive) {
+    document.documentElement.classList.add("dark");
+  } else {
+    applyThemePalette(resolveThemeHalf(theme, themeHalves, resolvedAppearance), resolvedAppearance);
+    document.documentElement.classList.toggle("dark", resolvedAppearance === "dark");
+  }
   lastAppliedTheme = { theme, systemDark, followSystem, appearanceMode, themeHalves };
   syncBrowserChromeTheme();
-  syncDesktopTheme(theme, followSystem, appearanceMode);
+  if (onboardingActive) {
+    syncDesktopTheme("dark", false, "dark");
+  } else {
+    syncDesktopTheme(theme, followSystem, appearanceMode);
+  }
   if (suppressTransitions) {
     // Force a reflow so the no-transitions class takes effect before removal
     void document.documentElement.offsetHeight;
@@ -361,6 +393,28 @@ function applyTheme(theme: Theme, { suppressTransitions = false, preservePreview
       document.documentElement.classList.remove("no-transitions");
     });
   }
+}
+
+/** Own the document-wide dark palette used by the first-run wizard and its portals. */
+export function mountOnboardingTheme(): () => void {
+  if (typeof document === "undefined" || typeof window === "undefined") return () => {};
+
+  const root = document.documentElement;
+  applyThemePalette("dark", "dark");
+  root.dataset.onboardingSurface = "";
+  root.classList.add("dark");
+  syncBrowserChromeTheme();
+  syncDesktopTheme("dark", false, "dark");
+  emitChange();
+
+  return () => {
+    delete root.dataset.onboardingSurface;
+    root.style.backgroundColor = "";
+    document.body.style.backgroundColor = "";
+    lastAppliedTheme = null;
+    applyTheme(getStored(), { suppressTransitions: true, preservePreview: false });
+    emitChange();
+  };
 }
 
 export async function syncDesktopThemePreference(
@@ -424,13 +478,9 @@ function getSnapshot(): ThemeSnapshot {
   const systemDark = followSystem ? getSystemDark() : false;
   const themeHalves = readStoredThemeHalves();
 
-  const resolvedTheme = resolveThemeAppearance(
-    theme,
-    systemDark,
-    followSystem,
-    appearanceMode,
-    themeHalves,
-  );
+  const resolvedTheme = isOnboardingThemeActive()
+    ? "dark"
+    : resolveThemeAppearance(theme, systemDark, followSystem, appearanceMode, themeHalves);
   if (
     lastSnapshot &&
     lastSnapshot.theme === theme &&

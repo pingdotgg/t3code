@@ -282,6 +282,7 @@ describe("UsageService", () => {
       const runtimeRepository: ProviderSessionRuntime.ProviderSessionRuntimeRepository["Service"] =
         {
           upsert: () => repositoryFailure,
+          recordImportedTranscript: () => repositoryFailure,
           getByThreadId: () => repositoryFailure,
           list: () => repositoryFailure,
           deleteByThreadId: () => repositoryFailure,

@@ -37,7 +37,7 @@ interface ComposerPrimaryActionsProps {
   onImplementPlanInNewThread: () => void;
 }
 
-export const formatPendingPrimaryActionLabel = (input: {
+const formatPendingPrimaryActionLabel = (input: {
   compact: boolean;
   isLastQuestion: boolean;
   isResponding: boolean;
