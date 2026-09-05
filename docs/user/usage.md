@@ -73,3 +73,7 @@ account and choose **Use reset** to redeem one. No hub plugin is required.
 This connection supplies usage information; configure
 the provider separately to send agent requests through the hub. Remove the hub from the same
 settings section when you no longer need it.
+
+## Daily budget alerts
+
+The latest calendar day's usage shows advisory budget levels. Claude warnings use API-rate estimates; API-equivalent warnings include subscription traffic such as Codex. Warning starts at $500 Claude or $1,000 API-equivalent, approval at $1,000 or $1,500, and pause at $2,000 for either measure. These alerts do not automatically block provider work.
