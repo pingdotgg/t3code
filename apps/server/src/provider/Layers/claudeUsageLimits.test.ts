@@ -117,6 +117,99 @@ describe("claudeUsageResponseToLimits", () => {
       },
     ]);
   });
+
+  it("maps an Enterprise spending budget when the rolling windows are null", () => {
+    // Captured from a Claude Enterprise account with a USD 500 monthly budget.
+    expect(
+      claudeUsageResponseToLimits({
+        checkedAt,
+        response: {
+          rate_limits_available: true,
+          rate_limits: {
+            five_hour: null,
+            seven_day: null,
+            extra_usage: {
+              is_enabled: true,
+              monthly_limit: 50000,
+              used_credits: 4631,
+              utilization: 9.261999999999999,
+              currency: "USD",
+              ...({ decimal_places: 2 } as object),
+            },
+            ...({
+              spend: {
+                used: { amount_minor: 4631, currency: "USD", exponent: 2 },
+                limit: { amount_minor: 50000, currency: "USD", exponent: 2 },
+                percent: 9,
+                severity: "normal",
+                enabled: true,
+                disabled_reason: null,
+              },
+            } as object),
+          },
+        },
+      }).limits,
+    ).toEqual({
+      checkedAt,
+      windows: [
+        {
+          id: "monthly_spend",
+          kind: "monthly",
+          label: "Monthly spend",
+          usedPercent: 9.262,
+          spend: { usedMinor: 4631, limitMinor: 50000, currency: "USD", exponent: 2 },
+        },
+      ],
+    });
+  });
+
+  it("falls back to extra_usage and keeps the rolling windows beside the budget", () => {
+    const { limits } = claudeUsageResponseToLimits({
+      checkedAt,
+      response: {
+        rate_limits_available: true,
+        rate_limits: {
+          five_hour: { utilization: 12, resets_at: null },
+          extra_usage: {
+            is_enabled: true,
+            monthly_limit: 2000,
+            used_credits: 1500,
+            utilization: 75,
+            currency: "EUR",
+          },
+          ...({ spend: { enabled: false } } as object),
+        },
+      },
+    });
+    expect(limits.windows.map((window) => window.id)).toEqual(["five_hour", "monthly_spend"]);
+    expect(limits.windows[1]).toEqual({
+      id: "monthly_spend",
+      kind: "monthly",
+      label: "Monthly spend",
+      usedPercent: 75,
+      spend: { usedMinor: 1500, limitMinor: 2000, currency: "EUR", exponent: 2 },
+    });
+  });
+
+  it("ignores a disabled or unlimited budget", () => {
+    expect(
+      claudeUsageResponseToLimits({
+        checkedAt,
+        response: {
+          rate_limits_available: true,
+          rate_limits: {
+            extra_usage: {
+              is_enabled: true,
+              monthly_limit: null,
+              used_credits: 300,
+              utilization: null,
+            },
+            ...({ spend: { enabled: false } } as object),
+          },
+        },
+      }).limits.windows,
+    ).toEqual([]);
+  });
 });
 
 describe("claudeRateLimitEventToUpdate", () => {

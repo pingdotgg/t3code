@@ -100,6 +100,101 @@ function readModelScoped(rateLimits: object): ReadonlyArray<ModelScopedWindow> {
   );
 }
 
+/**
+ * Enterprise and other budgeted accounts report money instead of (or beside)
+ * rolling quotas: `spend` carries minor-unit amounts with an exponent, and the
+ * older `extra_usage` the same budget as credits with `decimal_places`. Both
+ * are read structurally: `spend` is missing from the pinned SDK typings and
+ * `extra_usage` lacks `decimal_places` there.
+ */
+interface SpendBudget {
+  readonly usedMinor: number;
+  readonly limitMinor: number;
+  readonly currency: string;
+  readonly exponent: number;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function isMinorInt(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0;
+}
+
+function readMoney(
+  value: unknown,
+):
+  | { readonly amountMinor: number; readonly currency: string; readonly exponent: number }
+  | undefined {
+  if (
+    !isRecord(value) ||
+    !isMinorInt(value.amount_minor) ||
+    typeof value.currency !== "string" ||
+    !isMinorInt(value.exponent)
+  ) {
+    return undefined;
+  }
+  return { amountMinor: value.amount_minor, currency: value.currency, exponent: value.exponent };
+}
+
+/**
+ * `spend` and `extra_usage` describe the same budget, so only one draws a
+ * row: `spend` when enabled, else `extra_usage`. A budget without a positive
+ * limit has nothing to fill a bar against and is skipped.
+ */
+function readSpendBudget(rateLimits: object): SpendBudget | undefined {
+  const { spend, extra_usage: extraUsage } = rateLimits as {
+    readonly spend?: unknown;
+    readonly extra_usage?: unknown;
+  };
+  if (isRecord(spend) && spend.enabled === true) {
+    const used = readMoney(spend.used);
+    const limit = readMoney(spend.limit);
+    if (
+      used &&
+      limit &&
+      limit.amountMinor > 0 &&
+      used.currency === limit.currency &&
+      used.exponent === limit.exponent
+    ) {
+      return {
+        usedMinor: used.amountMinor,
+        limitMinor: limit.amountMinor,
+        currency: limit.currency,
+        exponent: limit.exponent,
+      };
+    }
+  }
+  if (isRecord(extraUsage) && extraUsage.is_enabled === true) {
+    const limit = extraUsage.monthly_limit;
+    if (isMinorInt(limit) && limit > 0) {
+      return {
+        usedMinor: isMinorInt(extraUsage.used_credits) ? extraUsage.used_credits : 0,
+        limitMinor: limit,
+        currency: typeof extraUsage.currency === "string" ? extraUsage.currency : "USD",
+        exponent: isMinorInt(extraUsage.decimal_places) ? extraUsage.decimal_places : 2,
+      };
+    }
+  }
+  return undefined;
+}
+
+/**
+ * The budget as a monthly bar. The percent comes from the amounts rather than
+ * the provider's rounded `percent`, so 9.262% does not collapse to 9. No
+ * reset is reported for it, so the bar has no pace line.
+ */
+function spendWindow(budget: SpendBudget): ServerProviderUsageWindow {
+  return {
+    id: "monthly_spend",
+    kind: "monthly",
+    label: "Monthly spend",
+    usedPercent: clampPercent((budget.usedMinor * 100) / budget.limitMinor),
+    spend: budget,
+  };
+}
+
 function isoFromEpochSeconds(value: number | undefined): string | undefined {
   if (value === undefined || !Number.isFinite(value) || value <= 0) return undefined;
   const dt = DateTime.make(value * 1000);
@@ -182,6 +277,12 @@ export function claudeUsageResponseToLimits(input: {
     // Only a bucket that drew a row may receive events; naming one that was
     // skipped would let a mid-turn event open a row the probe never showed.
     overageIncluded ??= entry.display_name;
+  }
+  // Budgeted accounts may report null rolling windows and only a spend
+  // limit; without this row they would read as "No limits reported".
+  const budget = readSpendBudget(response.rate_limits);
+  if (budget) {
+    windows.push(spendWindow(budget));
   }
   return {
     limits: makeUsageLimits({ checkedAt, windows }),
