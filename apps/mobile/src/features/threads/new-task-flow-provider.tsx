@@ -1,3 +1,6 @@
+import { resolveFilesystemReadAccess } from "@t3tools/client-runtime/state/filesystem";
+import { useEnvironmentPresentation } from "../../state/presentation";
+import { environmentSession } from "../../state/session";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type {
@@ -378,8 +381,23 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   // Default mode until the user picks one explicitly — same resolution web
   // uses for new draft threads: per-project setting, then the repo's
   // checked-in t3.json, then the server's configured default.
-  const t3ProjectFileQuery = useEnvironmentQuery(
+  const fileAccessSession = useEnvironmentQuery(
     selectedProject !== null && selectedProject.workspaceRoot !== ""
+      ? environmentSession.sessionStateAtom(selectedProject.environmentId)
+      : null,
+  );
+  const fileEnvironment = useEnvironmentPresentation(selectedProject?.environmentId ?? null);
+  const fileAccess = resolveFilesystemReadAccess({
+    isCatalogReady: fileEnvironment.isReady,
+    connection: fileEnvironment.presentation?.connection ?? null,
+    session: fileAccessSession.data,
+    sessionError: fileAccessSession.error,
+  });
+  const { canReadFiles } = fileAccess;
+  const fileAccessPending =
+    selectedProject !== null && selectedProject.workspaceRoot !== "" && fileAccess.isPending;
+  const t3ProjectFileQuery = useEnvironmentQuery(
+    canReadFiles && selectedProject !== null && selectedProject.workspaceRoot !== ""
       ? projectEnvironment.readFile({
           environmentId: selectedProject.environmentId,
           input: { cwd: selectedProject.workspaceRoot, relativePath: T3_PROJECT_FILE_NAME },
@@ -403,6 +421,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     explicitMode: selectedProjectDraft.workspaceSelection?.mode,
     projectSetting: selectedProject?.defaultThreadEnvMode,
     projectFilePending: t3ProjectFileQuery.isPending,
+    projectFilePermissionPending: fileAccessPending,
   });
   const workspaceMode = selectedProjectDraft.workspaceSelection?.mode ?? defaultWorkspaceMode;
   const selectedBranchName = selectedProjectDraft.workspaceSelection?.branch ?? null;

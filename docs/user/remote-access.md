@@ -164,6 +164,10 @@ permissions. Existing clients keep their original grants after an update; to
 receive newly separated permissions, pair the client again with the scopes it
 needs. Reconnecting or refreshing a session does not expand its grant.
 
+`filesystem:read` allows browsing host files, opening workspace files, and viewing
+local changes. Add `filesystem:write` to allow editing files or saving plans to
+the workspace. These scopes control direct file access from the client.
+
 To remove an environment from T3 Connect, open your account menu's **T3 Connect**
 page, or **Settings → T3 Connect** on mobile, and choose **Deregister**. This
 revokes its cloud access and frees its host space even when the environment is

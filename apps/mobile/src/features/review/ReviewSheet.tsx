@@ -840,12 +840,14 @@ export function ReviewSheet(props: ReviewSheetProps) {
           >
             {listHeader}
             {!selectedSection ? (
-              <View className="border-b border-border bg-card px-4 py-5">
-                <Text className="text-sm font-t3-bold text-foreground">No review diffs</Text>
-                <Text className="text-xs leading-normal text-foreground-muted">
-                  This thread has no ready turn diffs and the worktree diff is empty.
-                </Text>
-              </View>
+              error ? null : (
+                <View className="border-b border-border bg-card px-4 py-5">
+                  <Text className="text-sm font-t3-bold text-foreground">No review diffs</Text>
+                  <Text className="text-xs leading-normal text-foreground-muted">
+                    This thread has no ready turn diffs and the worktree diff is empty.
+                  </Text>
+                </View>
+              )
             ) : selectedSection.isLoading && selectedSection.diff === null ? (
               <View className="items-center gap-3 border-b border-border bg-card px-4 py-6">
                 <ActivityIndicator size="small" />

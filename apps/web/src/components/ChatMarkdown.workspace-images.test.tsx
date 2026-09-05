@@ -20,6 +20,15 @@ vi.mock("../assets/assetUrls", () => ({
 vi.mock("../hooks/useTheme", () => ({ useTheme: () => ({ resolvedTheme: "dark" }) }));
 vi.mock("../state/use-atom-query-runner", () => ({ useAtomQueryRunner: () => vi.fn() }));
 vi.mock("../state/use-atom-command", () => ({ useAtomCommand: () => vi.fn() }));
+vi.mock("../state/query", async () => {
+  const { AuthStandardClientScopes } = await import("@t3tools/contracts");
+  return {
+    useEnvironmentQuery: () => ({
+      data: { authenticated: true, scopes: AuthStandardClientScopes },
+      error: null,
+    }),
+  };
+});
 vi.mock("../state/session", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../state/session")>();
   const { AuthStandardClientScopes } = await import("@t3tools/contracts");

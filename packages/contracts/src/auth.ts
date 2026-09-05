@@ -85,6 +85,9 @@ export const AuthProvidersManageScope = "providers:manage" as const;
 export const AuthEnvironmentMaintainScope = "environment:maintain" as const;
 export const AuthTerminalOperateScope = "terminal:operate" as const;
 export const AuthSourceControlWriteScope = "source-control:write" as const;
+export const AuthFilesystemReadScope = "filesystem:read" as const;
+export const AuthFilesystemWriteScope = "filesystem:write" as const;
+/** Retained for decoding existing credentials; grants no current RPC access. */
 export const AuthReviewWriteScope = "review:write" as const;
 export const AuthAccessReadScope = "access:read" as const;
 export const AuthAccessWriteScope = "access:write" as const;
@@ -97,6 +100,8 @@ export const AuthEnvironmentScope = Schema.Literals([
   AuthProvidersManageScope,
   AuthEnvironmentMaintainScope,
   AuthTerminalOperateScope,
+  AuthFilesystemReadScope,
+  AuthFilesystemWriteScope,
   AuthReviewWriteScope,
   AuthSourceControlWriteScope,
   AuthAccessReadScope,
@@ -108,6 +113,13 @@ export type AuthEnvironmentScope = typeof AuthEnvironmentScope.Type;
 export const AuthEnvironmentScopes = Schema.Array(AuthEnvironmentScope);
 export type AuthEnvironmentScopes = typeof AuthEnvironmentScopes.Type;
 
+export const AuthGrantScope = Schema.Literals(
+  AuthEnvironmentScope.literals.filter((scope) => scope !== AuthReviewWriteScope),
+);
+export type AuthGrantScope = typeof AuthGrantScope.Type;
+export const AuthGrantScopes = Schema.Array(AuthGrantScope);
+export type AuthGrantScopes = typeof AuthGrantScopes.Type;
+
 export const AuthStandardClientScopes = [
   AuthOrchestrationReadScope,
   AuthOrchestrationOperateScope,
@@ -115,8 +127,9 @@ export const AuthStandardClientScopes = [
   AuthProvidersManageScope,
   AuthEnvironmentMaintainScope,
   AuthTerminalOperateScope,
-  AuthReviewWriteScope,
   AuthSourceControlWriteScope,
+  AuthFilesystemReadScope,
+  AuthFilesystemWriteScope,
   AuthRelayReadScope,
 ] as const;
 export const AuthAdministrativeScopes = [
@@ -355,7 +368,7 @@ export type AuthRevokeClientSessionInput = typeof AuthRevokeClientSessionInput.T
 
 export const AuthCreatePairingCredentialInput = Schema.Struct({
   label: Schema.optionalKey(TrimmedNonEmptyString),
-  scopes: Schema.optionalKey(AuthEnvironmentScopes),
+  scopes: Schema.optionalKey(AuthGrantScopes),
 });
 export type AuthCreatePairingCredentialInput = typeof AuthCreatePairingCredentialInput.Type;
 

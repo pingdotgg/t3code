@@ -2,16 +2,7 @@ import {
   AuthAccessReadScope,
   AuthAccessWriteScope,
   AuthStandardClientScopes,
-  AuthSettingsWriteScope,
-  AuthProvidersManageScope,
-  AuthEnvironmentMaintainScope,
-  AuthOrchestrationOperateScope,
-  AuthOrchestrationReadScope,
-  AuthRelayReadScope,
-  AuthRelayWriteScope,
-  AuthReviewWriteScope,
-  AuthSourceControlWriteScope,
-  AuthTerminalOperateScope,
+  AuthGrantScope,
   EnvironmentAuthInvalidError,
   type EnvironmentAuthInvalidReason,
   EnvironmentHttpApi,
@@ -316,20 +307,7 @@ export const authHttpApiLayer = HttpApiBuilder.group(
                 ? undefined
                 : parseAllowedOAuthScope({
                     value: args.payload.scope,
-                    allowedScopes: new Set<AuthEnvironmentScope>([
-                      AuthOrchestrationReadScope,
-                      AuthOrchestrationOperateScope,
-                      AuthSettingsWriteScope,
-                      AuthProvidersManageScope,
-                      AuthEnvironmentMaintainScope,
-                      AuthTerminalOperateScope,
-                      AuthReviewWriteScope,
-                      AuthSourceControlWriteScope,
-                      AuthAccessReadScope,
-                      AuthAccessWriteScope,
-                      AuthRelayReadScope,
-                      AuthRelayWriteScope,
-                    ]),
+                    allowedScopes: new Set(AuthGrantScope.literals),
                   });
             if (requestedScopes === null) {
               return yield* failEnvironmentInvalidRequest("invalid_scope");

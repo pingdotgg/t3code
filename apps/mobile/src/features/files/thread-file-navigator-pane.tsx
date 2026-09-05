@@ -1,3 +1,5 @@
+import { resolveFilesystemReadAccess } from "@t3tools/client-runtime/state/filesystem";
+import { environmentSession } from "../../state/session";
 import type { EnvironmentId, ProjectListEntriesResult } from "@t3tools/contracts";
 import { SymbolView } from "../../components/AppSymbol";
 import { useCallback, useMemo, useState, type ComponentProps } from "react";
@@ -15,6 +17,7 @@ import { nativeHeaderScrollEdgeEffects } from "../../native/StackHeader";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { projectEnvironment } from "../../state/projects";
 import { useEnvironmentQuery } from "../../state/query";
+import { useEnvironmentPresentation } from "../../state/presentation";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { FileTreeBrowser } from "./FileTreeBrowser";
 import { preloadWorkspaceFileContents } from "./preload-workspace-file";
@@ -33,11 +36,24 @@ export function ThreadFileNavigatorPane(props: {
   const foregroundColor = theme["--color-foreground"];
   const sheetColor = theme["--color-sheet"];
   const headerScrollEdgeEffects = nativeHeaderScrollEdgeEffects(Platform.OS, Platform.Version);
+  const fileAccessSession = useEnvironmentQuery(
+    environmentSession.sessionStateAtom(props.environmentId),
+  );
+  const fileEnvironment = useEnvironmentPresentation(props.environmentId);
+  const fileAccess = resolveFilesystemReadAccess({
+    isCatalogReady: fileEnvironment.isReady,
+    connection: fileEnvironment.presentation?.connection ?? null,
+    session: fileAccessSession.data,
+    sessionError: fileAccessSession.error,
+  });
+  const { canReadFiles } = fileAccess;
   const entriesQuery = useEnvironmentQuery(
-    projectEnvironment.listEntries({
-      environmentId: props.environmentId,
-      input: { cwd: props.cwd },
-    }),
+    canReadFiles
+      ? projectEnvironment.listEntries({
+          environmentId: props.environmentId,
+          input: { cwd: props.cwd },
+        })
+      : null,
   );
   const entriesData = entriesQuery.data as ProjectListEntriesResult | null;
   const handlePreviewFile = useCallback(
@@ -71,8 +87,14 @@ export function ThreadFileNavigatorPane(props: {
   const fileTree = (
     <FileTreeBrowser
       entries={entriesData?.entries ?? []}
-      error={entriesQuery.error}
-      isPending={entriesQuery.isPending}
+      error={
+        canReadFiles
+          ? entriesQuery.error
+          : fileAccess.isPending
+            ? null
+            : (fileAccess.error ?? "This connection cannot read host files.")
+      }
+      isPending={fileAccess.isPending || entriesQuery.isPending}
       searchQuery={searchQuery}
       selectedPath={props.selectedPath}
       onPreviewFile={handlePreviewFile}

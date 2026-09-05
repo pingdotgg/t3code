@@ -1,3 +1,6 @@
+import { resolveFilesystemReadAccess } from "@t3tools/client-runtime/state/filesystem";
+import { environmentSession } from "./session";
+import { useEnvironmentPresentation } from "./presentation";
 import { useAtomValue } from "@effect/atom-react";
 import {
   type CheckpointDiffTarget,
@@ -270,12 +273,25 @@ export function useProjectPathSearch(
     [target.cwd, target.environmentId, target.imageOnly, target.kind, target.query],
   );
   const debouncedTarget = useDebouncedValue(normalizedTarget, PROJECT_PATH_SEARCH_DEBOUNCE_MS);
-  const result = useEnvironmentQuery(
+  const fileAccessSession = useEnvironmentQuery(
+    debouncedTarget.environmentId === null
+      ? null
+      : environmentSession.sessionStateAtom(debouncedTarget.environmentId),
+  );
+  const fileEnvironment = useEnvironmentPresentation(debouncedTarget.environmentId);
+  const fileAccess = resolveFilesystemReadAccess({
+    isCatalogReady: fileEnvironment.isReady,
+    connection: fileEnvironment.presentation?.connection ?? null,
+    session: fileAccessSession.data,
+    sessionError: fileAccessSession.error,
+  });
+  const { canReadFiles } = fileAccess;
+  const searchTarget =
     debouncedTarget.environmentId !== null &&
-      debouncedTarget.cwd !== null &&
-      debouncedTarget.query !== null &&
-      (allowEmptyQuery || debouncedTarget.query.length > 0)
-      ? projectEnvironment.searchEntries({
+    debouncedTarget.cwd !== null &&
+    debouncedTarget.query !== null &&
+    (allowEmptyQuery || debouncedTarget.query.length > 0)
+      ? {
           environmentId: debouncedTarget.environmentId,
           input: {
             cwd: debouncedTarget.cwd,
@@ -284,15 +300,24 @@ export function useProjectPathSearch(
             ...(debouncedTarget.kind ? { kind: debouncedTarget.kind } : {}),
             ...(debouncedTarget.imageOnly ? { imageOnly: true } : {}),
           },
-        })
-      : null,
+        }
+      : null;
+  const result = useEnvironmentQuery(
+    canReadFiles && searchTarget !== null ? projectEnvironment.searchEntries(searchTarget) : null,
   );
+  const hasTarget = searchTarget !== null;
 
   return {
     entries: result.data?.entries ?? [],
-    error: result.error,
+    error:
+      !hasTarget || fileAccess.isPending
+        ? null
+        : canReadFiles
+          ? result.error
+          : (fileAccess.error ?? "This connection cannot search host files."),
     isPending:
-      !areProjectPathSearchTargetsEqual(normalizedTarget, debouncedTarget) || result.isPending,
+      !areProjectPathSearchTargetsEqual(normalizedTarget, debouncedTarget) ||
+      (hasTarget && (fileAccess.isPending || result.isPending)),
     searchedQuery: debouncedTarget.query ?? "",
     refresh: result.refresh,
   };
@@ -312,13 +337,29 @@ interface ProjectContentSearchTarget {
 }
 
 export function useProjectContentSearch(target: ProjectContentSearchTarget) {
+  const hasTarget = target.environmentId !== null && target.cwd !== null;
+  const fileAccessSession = useEnvironmentQuery(
+    target.environmentId === null
+      ? null
+      : environmentSession.sessionStateAtom(target.environmentId),
+  );
+  const fileEnvironment = useEnvironmentPresentation(target.environmentId);
+  const fileAccess = resolveFilesystemReadAccess({
+    isCatalogReady: fileEnvironment.isReady,
+    connection: fileEnvironment.presentation?.connection ?? null,
+    session: fileAccessSession.data,
+    sessionError: fileAccessSession.error,
+  });
+  const canReadFiles = hasTarget && fileAccess.canReadFiles;
+  const isCheckingAccess = hasTarget && fileAccess.isPending;
   // Whitespace is significant in content queries; trimming is only used to
   // decide whether the input is blank.
   const query = target.query;
   const hasQuery = query.trim().length > 0;
   const debouncedQuery = useDebouncedValue(query, PROJECT_CONTENT_SEARCH_DEBOUNCE_MS);
   const result = useEnvironmentQuery(
-    target.environmentId !== null &&
+    canReadFiles &&
+      target.environmentId !== null &&
       target.cwd !== null &&
       hasQuery &&
       debouncedQuery.trim().length > 0
@@ -337,9 +378,18 @@ export function useProjectContentSearch(target: ProjectContentSearchTarget) {
   );
 
   return {
+    canReadFiles,
+    isCheckingAccess,
     matches: result.data?.matches ?? EMPTY_CONTENT_MATCHES,
-    error: result.error,
-    isPending: hasQuery && (query !== debouncedQuery || result.isPending),
+    error:
+      !hasTarget || isCheckingAccess
+        ? null
+        : canReadFiles
+          ? result.error
+          : (fileAccess.error ?? "This connection cannot search host files."),
+    isPending:
+      isCheckingAccess ||
+      (canReadFiles && hasQuery && (query !== debouncedQuery || result.isPending)),
     hasQuery,
     truncated: result.data?.truncated ?? false,
     invalidRegex: target.useRegex && result.data?.regexFallbackError !== undefined,
