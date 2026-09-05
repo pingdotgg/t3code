@@ -238,6 +238,13 @@ describe("ChatMarkdown workspace images", () => {
     expect(render(markdown)).not.toContain("aspect-video");
   });
 
+  it("keeps an authored id on a remote image so fragment links resolve", () => {
+    const html = render('<img id="diagram" src="https://example.com/diagram.png" alt="diagram">');
+
+    // The sanitizer prefixes authored ids; the loading slot carries it too.
+    expect(html).toContain('<span id="user-content-diagram"');
+  });
+
   it("reserves a slot for an image that is alone in a list item", () => {
     expect(render("- ![shot](.t3/workspace-image.svg)")).toContain("aspect-video");
   });

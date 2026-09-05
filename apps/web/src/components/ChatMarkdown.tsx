@@ -52,6 +52,7 @@ import React, {
   Children,
   Suspense,
   type CSSProperties,
+  type ComponentProps,
   type ClipboardEvent as ReactClipboardEvent,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
@@ -1362,6 +1363,10 @@ function ChatMarkdownImage(props: {
   readonly standalone: boolean;
   readonly className?: string | undefined;
   readonly style?: CSSProperties | undefined;
+  /** Sanitized authored attributes (`id`, `align`, …) that fragment links and layout rely on. */
+  readonly imageProps?:
+    | Omit<ComponentProps<"img">, "src" | "alt" | "className" | "style">
+    | undefined;
   readonly actionsSource: MediaActionSource;
   readonly originalUrl?: string | undefined;
   readonly onImageExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
@@ -1391,6 +1396,7 @@ function ChatMarkdownImage(props: {
     return (
       <MediaActions source={props.actionsSource}>
         <img
+          {...props.imageProps}
           ref={markLoadedIfComplete}
           src={src}
           alt={props.alt}
@@ -1424,6 +1430,7 @@ function ChatMarkdownImage(props: {
       />
     ) : (
       <span
+        id={props.imageProps?.id}
         data-markdown-copy={props.copyMarkdown}
         role="status"
         aria-label="Loading image"
@@ -1434,6 +1441,7 @@ function ChatMarkdownImage(props: {
   return (
     <MediaActions source={props.actionsSource}>
       <span
+        id={props.imageProps?.id}
         data-markdown-copy={props.copyMarkdown}
         className={cn(
           CHAT_MARKDOWN_MEDIA_LAYOUT_CLASS_NAME,
@@ -2940,7 +2948,8 @@ const CHAT_MARKDOWN_COMPONENTS = {
       typeof localSrc === "string" ? srcString.replaceAll("\\", "/") : srcString;
     const altText = alt ?? "";
     const copyMarkdown = markdownImageCopy(altText, srcString, authoredTitle);
-    const authoredSizeStyle = authoredImageSizeStyle(props.width, props.height);
+    const { className, style: _style, width, height, ...imageProps } = props;
+    const authoredSizeStyle = authoredImageSizeStyle(width, height);
     const imageSource = classifyMarkdownImageSource(classifiedSrc, imageBaseDir ?? cwd);
     const kind = mediaKindFromPath(classifiedSrc) ?? "image";
     if (imageSource._tag === "Direct") {
@@ -2973,8 +2982,9 @@ const CHAT_MARKDOWN_COMPONENTS = {
           alt={altText}
           copyMarkdown={copyMarkdown}
           standalone={standalone}
-          className={props.className}
+          className={className}
           style={authoredSizeStyle}
+          imageProps={imageProps}
           actionsSource={actionsSource}
           originalUrl={originalUrl}
           onImageExpand={imageExpand}
