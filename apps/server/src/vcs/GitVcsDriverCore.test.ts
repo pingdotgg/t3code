@@ -851,6 +851,114 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("detects an unstaged rename with edits without mutating a split index", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const pathService = yield* Path.Path;
+        yield* writeTextFile(cwd, "before.ts", "one\ntwo\nthree\nfour\nfive\n");
+        yield* git(cwd, ["add", "before.ts"]);
+        yield* git(cwd, ["commit", "-m", "add source file"]);
+        yield* git(cwd, ["config", "core.splitIndex", "true"]);
+        yield* git(cwd, ["config", "splitIndex.sharedIndexExpire", "now"]);
+        yield* git(cwd, ["update-index", "--split-index"]);
+        const indexPath = yield* git(cwd, ["rev-parse", "--git-path", "index"]);
+        const indexHashBefore = yield* git(cwd, ["hash-object", indexPath]);
+        const gitDirValue = yield* git(cwd, ["rev-parse", "--git-dir"]);
+        const gitDir = pathService.isAbsolute(gitDirValue)
+          ? gitDirValue
+          : pathService.resolve(cwd, gitDirValue);
+        const sharedIndexesBefore = (yield* fileSystem.readDirectory(gitDir))
+          .filter((entry) => entry.startsWith("sharedindex."))
+          .sort();
+        yield* fileSystem.rename(
+          pathService.join(cwd, "before.ts"),
+          pathService.join(cwd, "after.ts"),
+        );
+        yield* writeTextFile(cwd, "after.ts", "one\ntwo\nTHREE\nfour\nfive\n");
+
+        const preview = yield* driver.getReviewDiffPreview({ cwd, ignoreWhitespace: false });
+        const diff = preview.sources.find((source) => source.kind === "working-tree")?.diff ?? "";
+        const indexHashAfter = yield* git(cwd, ["hash-object", indexPath]);
+        const sharedIndexesAfter = (yield* fileSystem.readDirectory(gitDir))
+          .filter((entry) => entry.startsWith("sharedindex."))
+          .sort();
+
+        assert.include(diff, "rename from before.ts");
+        assert.include(diff, "rename to after.ts");
+        assert.include(diff, "-three");
+        assert.include(diff, "+THREE");
+        assert.strictEqual(diff.match(/^diff --git /gm)?.length, 1);
+        assert.strictEqual(indexHashAfter, indexHashBefore);
+        assert.deepStrictEqual(sharedIndexesAfter, sharedIndexesBefore);
+      }),
+    );
+
+    it.effect("keeps tracked changes visible when untracked discovery fails", () =>
+      Effect.gen(function* () {
+        const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const failingLsFilesSpawner = ChildProcessSpawner.make((command) => {
+          if (!ChildProcess.isStandardCommand(command)) {
+            return Effect.die("expected a standard Git command");
+          }
+          return command.args[0] === "ls-files" && command.args[1] === "--others"
+            ? Effect.succeed(makeNonRepositoryHandle())
+            : delegate.spawn(command);
+        });
+        const driver = yield* makeGitVcsDriverCore().pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, failingLsFilesSpawner),
+          Effect.provide(ServerConfigLayer),
+        );
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd).pipe(
+          Effect.provideService(GitVcsDriver.GitVcsDriver, driver),
+        );
+        yield* writeTextFile(cwd, "README.md", "# tracked change\n");
+
+        const preview = yield* driver.getReviewDiffPreview({ cwd, ignoreWhitespace: false });
+        const diff = preview.sources.find((source) => source.kind === "working-tree")?.diff ?? "";
+
+        assert.include(diff, "-# test");
+        assert.include(diff, "+# tracked change");
+      }),
+    );
+
+    it.effect("preserves a staged deletion when the removed path still exists", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* writeTextFile(cwd, "removed.txt", "remove me\n");
+        yield* git(cwd, ["add", "removed.txt"]);
+        yield* git(cwd, ["commit", "-m", "add removable file"]);
+        yield* git(cwd, ["rm", "--cached", "removed.txt"]);
+
+        const preview = yield* driver.getReviewDiffPreview({ cwd, ignoreWhitespace: false });
+        const diff = preview.sources.find((source) => source.kind === "working-tree")?.diff ?? "";
+
+        assert.include(diff, "deleted file mode");
+        assert.include(diff, "-remove me");
+        assert.notInclude(diff, "new file mode");
+      }),
+    );
+
+    it.effect("keeps untracked files visible before the first commit", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* driver.initRepo({ cwd });
+        yield* writeTextFile(cwd, "untracked.txt", "visible before HEAD\n");
+
+        const preview = yield* driver.getReviewDiffPreview({ cwd, ignoreWhitespace: false });
+        const source = preview.sources.find((candidate) => candidate.kind === "working-tree");
+
+        assert.include(source?.diff, "visible before HEAD");
+        assert.equal(source?.truncated, false);
+      }),
+    );
+
     it.effect("loads full file contents for working-tree diff expansion", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
