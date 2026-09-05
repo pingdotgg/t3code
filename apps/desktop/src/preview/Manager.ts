@@ -620,6 +620,42 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       try: evaluate,
       catch: (cause) => new PreviewOperationError({ ...errorContext, cause }),
     });
+  const capturePageWithRetry = Effect.fn("PreviewManager.capturePageWithRetry")(function* (
+    errorContext: PreviewOperationContext,
+    tabId: string,
+    wc: Electron.WebContents,
+  ) {
+    const requireCurrentGuest = Effect.gen(function* () {
+      const tabs = yield* SynchronizedRef.get(tabsRef);
+      if (wc.isDestroyed() || tabs.get(tabId)?.webContentsId !== wc.id) {
+        return yield* new PreviewWebContentsNotFoundError({ tabId, webContentsId: wc.id });
+      }
+    });
+    const capture = Effect.gen(function* () {
+      // Check after the retry delay, and again before accepting its result.
+      yield* requireCurrentGuest;
+      const image = yield* Effect.tryPromise({
+        // An abort-signal parameter makes a stalled promise interruptible.
+        try: (_signal) => wc.capturePage(),
+        catch: (cause) => new PreviewOperationError({ ...errorContext, cause }),
+      }).pipe(
+        Effect.timeout(CAPTURE_PAGE_ATTEMPT_TIMEOUT_MS),
+        Effect.catchTags({
+          TimeoutError: (cause) =>
+            Effect.fail(new PreviewOperationError({ ...errorContext, cause })),
+        }),
+      );
+      yield* requireCurrentGuest;
+      return image;
+    });
+    return yield* capture.pipe(
+      Effect.retry({
+        times: CAPTURE_PAGE_RETRY_ATTEMPTS - 1,
+        schedule: Schedule.spaced(CAPTURE_PAGE_RETRY_DELAY_MS),
+        while: isPreviewOperationError,
+      }),
+    );
+  });
   const captureScreenshotWithRetry = Effect.fn("PreviewManager.captureScreenshotWithRetry")(
     function* (errorContext: PreviewOperationContext, tabId: string, wc: Electron.WebContents) {
       const control = yield* ensureControlSession(wc);
@@ -2521,16 +2557,14 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     const [createdAt, millis, image] = yield* Effect.all([
       currentIso,
       currentMillis,
-      withControlSession(tabId, wc, "screenshot", () =>
-        captureScreenshotWithRetry(
-          {
-            operation: "captureScreenshot.capturePage",
-            tabId,
-            webContentsId: wc.id,
-          },
+      capturePageWithRetry(
+        {
+          operation: "captureScreenshot.capturePage",
           tabId,
-          wc,
-        ),
+          webContentsId: wc.id,
+        },
+        tabId,
+        wc,
       ),
     ]);
     const uuid = yield* crypto.randomUUIDv4.pipe(Effect.orDie);

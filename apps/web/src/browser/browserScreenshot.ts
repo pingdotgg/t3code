@@ -27,6 +27,7 @@ export function captureBrowserScreenshot<T>(tabId: string, capture: () => Promis
       cover.style.cssText = webview.style.cssText;
       cover.style.position = "absolute";
       cover.style.zIndex = "1";
+      cover.style.pointerEvents = "none";
       // An attribute override survives React updating the fitted viewport during capture.
       style.textContent = "webview[data-preview-native-capture] { transform: none !important; }";
       webview.after(cover, style);

@@ -2454,7 +2454,7 @@ describe("PreviewManager", () => {
         fromId.mockReturnValue({
           id: 42,
           isDestroyed: () => false,
-          isDevToolsOpened: () => false,
+          isDevToolsOpened: () => true,
           getType: () => "webview",
           getURL: () => "https://example.com:8443/path?query=value",
           getTitle: () => "Example",
