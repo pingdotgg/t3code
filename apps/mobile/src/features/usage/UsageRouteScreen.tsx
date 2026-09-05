@@ -72,6 +72,7 @@ export function UsageRouteScreen() {
   const refreshWasPending = useRef(false);
   const refreshTargets = useRef<ReadonlySet<EnvironmentUsageStatus["environmentId"]>>(new Set());
   const refreshIndicatorTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const refreshRequest = useRef(0);
   const { days: windowDays, window } = windowSelection;
   const isPast24Hours = windowDays === 1;
   const { merged, environments, isPending, isPartial, refresh } = useUsage(window);
@@ -128,6 +129,7 @@ export function UsageRouteScreen() {
     if (!refreshWasPending.current) return;
 
     setIsPullRefreshing(false);
+    refreshRequest.current += 1;
     refreshWasPending.current = false;
     if (refreshIndicatorTimeout.current !== null) {
       clearTimeout(refreshIndicatorTimeout.current);
@@ -136,6 +138,7 @@ export function UsageRouteScreen() {
   }, [isPullRefreshing, refreshPending]);
   useEffect(
     () => () => {
+      refreshRequest.current += 1;
       if (refreshIndicatorTimeout.current !== null) {
         clearTimeout(refreshIndicatorTimeout.current);
       }
@@ -143,18 +146,28 @@ export function UsageRouteScreen() {
     [],
   );
   const selectWindow = (days: number) => {
+    refreshRequest.current += 1;
+    setIsPullRefreshing(false);
+    refreshWasPending.current = false;
+    refreshTargets.current = new Set();
+    if (refreshIndicatorTimeout.current !== null) {
+      clearTimeout(refreshIndicatorTimeout.current);
+      refreshIndicatorTimeout.current = null;
+    }
     setWindowSelection({
       days,
       window: makeWindow(days, undefined, days === 1 ? "hour" : "day"),
     });
   };
   const refreshWindow = () => {
+    const request = ++refreshRequest.current;
     refreshTargets.current = usagePullRefreshTargets(environments);
     setIsPullRefreshing(true);
     if (refreshIndicatorTimeout.current !== null) {
       clearTimeout(refreshIndicatorTimeout.current);
     }
     refreshIndicatorTimeout.current = setTimeout(() => {
+      refreshRequest.current += 1;
       setIsPullRefreshing(false);
       refreshWasPending.current = false;
       refreshIndicatorTimeout.current = null;
@@ -166,9 +179,14 @@ export function UsageRouteScreen() {
       nextWindow.sinceTime !== window.sinceTime ||
       nextWindow.untilTime !== window.untilTime
     ) {
-      void refreshRebasedUsageWindow(nextWindow, refresh, (refreshedWindow) => {
-        setWindowSelection({ days: windowDays, window: refreshedWindow });
-      });
+      void refreshRebasedUsageWindow(
+        nextWindow,
+        refresh,
+        (refreshedWindow) => {
+          setWindowSelection({ days: windowDays, window: refreshedWindow });
+        },
+        () => request === refreshRequest.current,
+      );
       return;
     }
     void refresh();
