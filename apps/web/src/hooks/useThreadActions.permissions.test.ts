@@ -280,7 +280,7 @@ describe("thread action permissions", () => {
 
     expect(result._tag).toBe("Failure");
     if (result._tag !== "Failure") throw new Error("Expected permission denial");
-    const error = Cause.squash(result.cause);
+    const error = Cause.squash<unknown>(result.cause);
     expect(error).toBeInstanceOf(EnvironmentAuthorizationError);
     expect(error).toMatchObject({ requiredScope: AuthOrchestrationOperateScope });
     expect(state.requests).toEqual([]);
@@ -329,7 +329,7 @@ describe("thread action permissions", () => {
       const result = await useThreadActions().deleteThread(target);
       expect(result._tag).toBe("Failure");
       if (result._tag !== "Failure") throw new Error("Expected permission denial");
-      const error = Cause.squash(result.cause);
+      const error = Cause.squash<unknown>(result.cause);
       expect(error).toBeInstanceOf(EnvironmentAuthorizationError);
       expect(error).toMatchObject({ requiredScope: AuthSourceControlWriteScope });
       expect(state.requests.map((request) => request.action)).toEqual(["delete"]);
