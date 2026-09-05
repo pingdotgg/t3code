@@ -167,7 +167,8 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     available:
       currentStatus?.supported === true &&
       typeof navigator !== "undefined" &&
-      Boolean(navigator.mediaDevices?.getUserMedia),
+      Boolean(navigator.mediaDevices?.getUserMedia) &&
+      typeof MediaRecorder !== "undefined",
     status: currentStatus,
     state,
     progress: null,
