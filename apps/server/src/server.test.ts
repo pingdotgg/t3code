@@ -804,8 +804,11 @@ const buildAppUnderTest = (options?: {
         Layer.mock(ServerSettings.ServerSettingsService)({
           start: Effect.void,
           ready: Effect.void,
-          getSettings: Effect.succeed(DEFAULT_SERVER_SETTINGS),
-          updateSettings: () => Effect.succeed(DEFAULT_SERVER_SETTINGS),
+          getSettings: Effect.succeed(
+            ServerSettings.resolveServerSettings(DEFAULT_SERVER_SETTINGS),
+          ),
+          updateSettings: () =>
+            Effect.succeed(ServerSettings.resolveServerSettings(DEFAULT_SERVER_SETTINGS)),
           streamChanges: Stream.empty,
           ...options?.layers?.serverSettings,
         }),
@@ -5406,6 +5409,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               providerInstances: {
                 [ProviderInstanceId.make("codex")]: {
                   driver: ProviderDriverKind.make("codex"),
+                  enabled: true,
                   config: { homePath: codexHome },
                 },
                 [ProviderInstanceId.make("claudeAgent")]: {
@@ -6096,7 +6100,12 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         assert.equal(first.config.observability.otlpTracesEnabled, true);
         assert.equal(first.config.observability.otlpMetricsUrl, "http://localhost:4318/v1/metrics");
         assert.equal(first.config.observability.otlpMetricsEnabled, true);
-        assert.deepEqual(first.config.settings, DEFAULT_SERVER_SETTINGS);
+        assert.deepEqual(
+          first.config.settings,
+          ServerSettings.redactServerSettingsForClient(
+            ServerSettings.resolveServerSettings(DEFAULT_SERVER_SETTINGS),
+          ),
+        );
       }
       assert.deepEqual(second, {
         version: 1,

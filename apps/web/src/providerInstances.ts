@@ -169,10 +169,9 @@ function resolveInstanceDisplayName(
 
 /**
  * Project the wire `ServerProvider[]` into instance entries, one per
- * configured instance. Preserves the server's ordering (which sources
- * from `deriveProviderInstanceConfigMap` — explicit `providerInstances.*`
- * first, synthesized defaults after) so callers that want "default first"
- * should sort with `sortProviderInstanceEntries` below.
+ * configured instance. Keeps the server's order: explicit instances first,
+ * then legacy defaults. Callers that want default instances first can use
+ * `sortProviderInstanceEntries`.
  */
 export function deriveProviderInstanceEntries(
   providers: ReadonlyArray<ServerProvider>,

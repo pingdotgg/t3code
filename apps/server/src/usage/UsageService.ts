@@ -15,8 +15,10 @@
 import * as NodeOS from "node:os";
 
 import {
+  ClaudeSettings,
+  CodexSettings,
+  ProviderInstanceId,
   USAGE_CONTRACT_VERSION,
-  type ServerSettings as ServerSettingsValue,
   type UsageProviderKind,
   type UsageSource,
   type UsagePricing,
@@ -78,6 +80,16 @@ const MAX_HOURLY_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 /** Longest window the UI offers, plus slack. Older entries are pruned. */
 const CACHE_RETENTION_DAYS = 90;
+
+const decodeClaudeTranscriptSettings = Schema.decodeUnknownEffect(
+  Schema.Struct({ homePath: ClaudeSettings.fields.homePath }),
+);
+const decodeCodexTranscriptSettings = Schema.decodeUnknownEffect(
+  Schema.Struct({
+    homePath: CodexSettings.fields.homePath,
+    shadowHomePath: CodexSettings.fields.shadowHomePath,
+  }),
+);
 
 /** On-disk shape of the rate snapshot. */
 const RatesCacheFile = Schema.Struct({
@@ -247,11 +259,39 @@ export const make = Effect.gen(function* () {
 
   /** Resolves the transcript directory for each provider. */
   const resolveTranscriptDirs = Effect.fn("UsageService.resolveTranscriptDirs")(function* (
-    settings: ServerSettingsValue,
+    settings: ServerSettings.RuntimeServerSettings,
   ) {
-    const claudeHome = yield* resolveClaudeHomePath(settings.providers.claudeAgent);
-    const claudeDir = yield* resolveClaudeTranscriptDir(claudeHome);
-    const codexLayout = yield* resolveCodexHomeLayout(settings.providers.codex);
+    const directories: Array<{ provider: UsageProviderKind; dir: string; fileName?: string }> = [];
+    const claude = settings.providerInstances[ProviderInstanceId.make("claudeAgent")];
+    if (claude?.driver === "claudeAgent") {
+      const config = yield* decodeClaudeTranscriptSettings(claude.config ?? {}).pipe(
+        Effect.mapError(
+          (cause) =>
+            new UsageReadError({
+              reason: "scanFailed",
+              detail: "Claude settings could not be read.",
+              cause,
+            }),
+        ),
+      );
+      const home = yield* resolveClaudeHomePath(config);
+      directories.push({ provider: "claude", dir: yield* resolveClaudeTranscriptDir(home) });
+    }
+    const codex = settings.providerInstances[ProviderInstanceId.make("codex")];
+    if (codex?.driver === "codex") {
+      const config = yield* decodeCodexTranscriptSettings(codex.config ?? {}).pipe(
+        Effect.mapError(
+          (cause) =>
+            new UsageReadError({
+              reason: "scanFailed",
+              detail: "Codex settings could not be read.",
+              cause,
+            }),
+        ),
+      );
+      const layout = yield* resolveCodexHomeLayout(config);
+      directories.push({ provider: "codex", dir: path.join(layout.sharedHomePath, "sessions") });
+    }
     // Grok Settings only expose the binary path; home is `$GROK_HOME` or `~/.grok`.
     // Empty/whitespace GROK_HOME must fall back: coalescing alone would scan cwd.
     const grokHomeEnv = hostEnvironment["GROK_HOME"]?.trim() ?? "";
@@ -261,8 +301,7 @@ export const make = Effect.gen(function* () {
         : path.join(NodeOS.homedir(), ".grok");
 
     return [
-      { provider: "claude" as const, dir: claudeDir },
-      { provider: "codex" as const, dir: path.join(codexLayout.sharedHomePath, "sessions") },
+      ...directories,
       {
         provider: "grok" as const,
         dir: path.join(grokHome, "sessions"),
@@ -380,7 +419,7 @@ export const make = Effect.gen(function* () {
 
   const collectDirs = Effect.fn("UsageService.collectDirs")(function* (
     windowStartMs: number,
-    settings: ServerSettingsValue,
+    settings: ServerSettings.RuntimeServerSettings,
   ) {
     // The home resolvers ask for `Path` themselves; satisfy them from the
     // instance we already hold so the scan stays context-free.
@@ -412,7 +451,7 @@ export const make = Effect.gen(function* () {
 
   const scanSummary = Effect.fn("UsageService.scanSummary")(function* (
     input: UsageSummaryInput,
-    settings: ServerSettingsValue,
+    settings: ServerSettings.RuntimeServerSettings,
   ) {
     if (input.sinceDay > input.untilDay) {
       return yield* new UsageReadError({
@@ -564,7 +603,7 @@ export const make = Effect.gen(function* () {
 
   const scanKey = (
     input: UsageSummaryInput,
-    priceOverrides: ServerSettingsValue["usagePriceOverrides"],
+    priceOverrides: ServerSettings.RuntimeServerSettings["usagePriceOverrides"],
   ): string =>
     JSON.stringify([
       input.timeZone,

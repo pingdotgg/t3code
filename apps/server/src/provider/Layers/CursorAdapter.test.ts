@@ -33,6 +33,7 @@ import { makeCursorAdapter } from "./CursorAdapter.ts";
 import { execScriptSource, writeFakeCli } from "../../testUtils/fakeCli.ts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 const decodeCursorSettings = Schema.decodeSync(CursorSettings);
+const decodeCurrentCursorSettings = Schema.decodeUnknownEffect(CursorSettings);
 
 // Test-local service tag so the rest of the file can keep using `yield* CursorAdapter`.
 class CursorAdapter extends Context.Service<CursorAdapter, CursorAdapterShape>()(
@@ -136,7 +137,11 @@ const makeResolveCursorSettings = Effect.gen(function* () {
   const serverSettings = yield* ServerSettingsService;
   return yield* Effect.succeed(
     serverSettings.getSettings.pipe(
-      Effect.map((snapshot) => snapshot.providers.cursor),
+      Effect.flatMap((snapshot) =>
+        decodeCurrentCursorSettings(
+          snapshot.providerInstances[ProviderInstanceId.make("cursor")]?.config ?? {},
+        ),
+      ),
       Effect.orDie,
     ),
   );

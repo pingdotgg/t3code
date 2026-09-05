@@ -195,7 +195,13 @@ export function normalizeBackgroundActivitySettings(
 }
 
 export function resolveServerBackgroundActivitySettings(
-  settings: ServerSettings,
+  settings: Pick<
+    ServerSettings,
+    | "backgroundActivity"
+    | "backgroundActivityProfile"
+    | "automaticGitFetchInterval"
+    | "providerHealthRefreshInterval"
+  >,
 ): ResolvedBackgroundActivitySettings {
   const defaultBackgroundActivity: BackgroundActivitySettings = {
     schemaVersion: 1,
@@ -248,7 +254,7 @@ export function resolveServerBackgroundActivitySettings(
 }
 
 export function normalizeServerBackgroundActivitySettings(
-  settings: ServerSettings,
+  settings: Parameters<typeof resolveServerBackgroundActivitySettings>[0],
 ): BackgroundActivitySettings {
   const resolved = resolveServerBackgroundActivitySettings(settings);
   return normalizeBackgroundActivitySettings({

@@ -16,7 +16,6 @@ import {
   AntigravityInstallation,
   type AntigravityInstallationError,
 } from "./AntigravityInstallation.ts";
-import { deriveProviderInstanceConfigMap } from "./Layers/ProviderInstanceRegistryHydration.ts";
 import { ProviderInstanceRegistry } from "./Services/ProviderInstanceRegistry.ts";
 import { ProviderRegistry } from "./Services/ProviderRegistry.ts";
 import { mergeProviderInstanceEnvironment } from "./ProviderInstanceEnvironment.ts";
@@ -46,7 +45,7 @@ export const makeProviderInstallation = Effect.fn("makeProviderInstallation")(fu
           }),
       ),
     );
-    return deriveProviderInstanceConfigMap(current);
+    return current.providerInstances;
   });
 
   const requireInstance = Effect.fn("ProviderInstallation.requireInstance")(function* (

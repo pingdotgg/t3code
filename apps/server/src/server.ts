@@ -466,11 +466,8 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
     Layer.mergeAll(Keybindings.layer, EnvironmentTheme.layer, UsageLimitSources.layer),
   ),
   Layer.provideMerge(ProviderRegistryLive),
-  // The instance registry is the new routing keystone — text generation,
-  // adapter lookup, and runtime ingestion all resolve `ProviderInstanceId`
-  // through this layer. Built-in drivers come from `BUILT_IN_DRIVERS`;
-  // `providerInstances` hydration merges `settings.providers.<kind>`
-  // with explicit `providerInstances` entries on boot.
+  // Text generation, adapter lookup, and runtime ingestion route by instance ID.
+  // The settings service converts legacy files before the registry reads them.
   Layer.provideMerge(ProviderInstanceRegistryHydrationLive),
 ).pipe(
   Layer.provideMerge(AntigravityInstallation.layer),

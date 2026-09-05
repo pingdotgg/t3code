@@ -7,7 +7,12 @@ import * as NodePath from "node:path";
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
-import { UsageDay, type UsageSummaryInput } from "@t3tools/contracts";
+import {
+  ProviderDriverKind,
+  ProviderInstanceId,
+  UsageDay,
+  type UsageSummaryInput,
+} from "@t3tools/contracts";
 import * as Duration from "effect/Duration";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -98,6 +103,37 @@ function totalOutputTokens(summary: { buckets: readonly { totals: { outputTokens
 }
 
 describe("UsageService", () => {
+  it.live("reads the normalized default instance home instead of the legacy home", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      const instanceHome = NodePath.join(home, "claude-instance");
+      const instanceTranscripts = NodePath.join(instanceHome, "projects", "proj");
+      yield* Effect.promise(() => NodeFSP.mkdir(instanceTranscripts, { recursive: true }));
+      yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
+      yield* Effect.promise(() =>
+        NodeFSP.writeFile(NodePath.join(instanceTranscripts, "session.jsonl"), claudeLine(2, 11)),
+      );
+      const service = yield* UsageService.make.pipe(
+        Effect.provide(
+          serviceLayers({
+            prefix: "usage-service-instance-home-test",
+            home,
+            settings: {
+              ...settings,
+              providerInstances: {
+                [ProviderInstanceId.make("claudeAgent")]: {
+                  driver: ProviderDriverKind.make("claudeAgent"),
+                  config: { homePath: instanceHome, binaryPath: 42 },
+                },
+              },
+            },
+          }),
+        ),
+      );
+      assert.strictEqual(totalOutputTokens(yield* service.readSummary(WINDOW)), 11);
+    }).pipe(Effect.scoped),
+  );
+
   it.live("reprices unchanged transcripts when custom prices are added, edited, or removed", () =>
     Effect.gen(function* () {
       const { transcript, settings, home } = yield* setup;
