@@ -67,7 +67,8 @@ const handlers = {
         ...(input.clientRequestId === undefined ? {} : { clientRequestId: input.clientRequestId }),
         threads: [
           {
-            prompt: input.prompt,
+            ...(input.prompt === undefined ? {} : { prompt: input.prompt }),
+            ...(input.attachments === undefined ? {} : { attachments: input.attachments }),
             ...(input.title === undefined ? {} : { title: input.title }),
             ...(input.target === undefined ? {} : { target: input.target }),
             ...(input.runtimeMode === undefined ? {} : { runtimeMode: input.runtimeMode }),

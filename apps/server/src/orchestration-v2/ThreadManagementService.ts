@@ -243,10 +243,26 @@ export class ThreadManagementDurableRunProjectionError extends Schema.TaggedErro
   {
     threadId: ThreadId,
     messageId: MessageId,
+    dispatchReplayed: Schema.Boolean,
   },
 ) {
   override get message(): string {
     return `Message ${this.messageId} was accepted on thread ${this.threadId} without a durable run projection.`;
+  }
+}
+
+export class ThreadManagementPostDispatchProjectionError extends Schema.TaggedErrorClass<ThreadManagementPostDispatchProjectionError>()(
+  "ThreadManagementPostDispatchProjectionError",
+  {
+    projectId: ProjectId,
+    threadId: ThreadId,
+    messageId: MessageId,
+    dispatchReplayed: Schema.Boolean,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Message ${this.messageId} was accepted on thread ${this.threadId}, but its durable projection could not be loaded.`;
   }
 }
 
@@ -259,6 +275,7 @@ export const ThreadManagementError = Schema.Union([
   ThreadManagementProjectionLoadError,
   ThreadManagementProjectThreadsListError,
   ThreadManagementDurableRunProjectionError,
+  ThreadManagementPostDispatchProjectionError,
 ]);
 export type ThreadManagementError = typeof ThreadManagementError.Type;
 
@@ -271,6 +288,7 @@ export interface ThreadManagementServiceShape {
   readonly dispatch: (
     command: OrchestrationV2Command,
   ) => Effect.Effect<OrchestratorV2DispatchResult, OrchestratorV2Error>;
+  readonly getCommandReceipt: OrchestratorV2["Service"]["getCommandReceipt"];
   readonly getThreadProjection: (
     threadId: ThreadId,
   ) => Effect.Effect<OrchestrationV2ThreadProjection, OrchestratorV2Error>;
@@ -522,7 +540,18 @@ const make = Effect.gen(function* () {
         createdBy: input.createdBy,
         creationSource: input.creationSource,
       });
-      const projection = yield* getProjectThread(input);
+      const projection = yield* getProjectThread(input).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ThreadManagementPostDispatchProjectionError({
+              projectId: input.projectId,
+              threadId: input.threadId,
+              messageId: input.messageId,
+              dispatchReplayed: dispatch.replayed === true,
+              cause,
+            }),
+        ),
+      );
       const message = projection.messages.find((candidate) => candidate.id === input.messageId);
       const run =
         message?.runId === null || message?.runId === undefined
@@ -547,6 +576,7 @@ const make = Effect.gen(function* () {
         return yield* new ThreadManagementDurableRunProjectionError({
           threadId: input.threadId,
           messageId: input.messageId,
+          dispatchReplayed: dispatch.replayed === true,
         });
       }
       const delivery: ThreadManagementSendResult["delivery"] =
@@ -659,6 +689,7 @@ const make = Effect.gen(function* () {
   return ThreadManagementService.of({
     ensureLegacyTranscript,
     dispatch,
+    getCommandReceipt: orchestrator.getCommandReceipt,
     getThreadProjection,
     getCheckpointContext,
     getThreadSnapshot,

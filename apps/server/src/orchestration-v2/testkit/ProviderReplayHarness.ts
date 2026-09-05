@@ -29,7 +29,7 @@ import {
   layer as effectWorkerLayer,
   runDaemon as runEffectWorkerDaemon,
 } from "../EffectWorker.ts";
-import { layerFromStores as eventSinkLayer } from "../EventSink.ts";
+import { EventSinkV2, layerFromStores as eventSinkLayer } from "../EventSink.ts";
 import { layer as eventStoreLayer } from "../EventStore.ts";
 import { layer as idAllocatorLayer } from "../IdAllocator.ts";
 import { layer as orchestratorLayer } from "../Orchestrator.ts";
@@ -180,6 +180,7 @@ export function runOrchestratorV2ProviderReplayScenario<
     >;
     readonly enableLegacyTokenStreaming?: boolean;
     readonly runEffectWorker?: boolean;
+    readonly transformEventSink?: (eventSink: EventSinkV2["Service"]) => EventSinkV2["Service"];
   } = {},
 ): Effect.Effect<
   OrchestratorV2ScenarioResult,
@@ -220,6 +221,7 @@ export function makeOrchestratorV2ProviderReplayLayer<
     readonly enableLegacyTokenStreaming?: boolean;
     readonly runEffectWorker?: boolean;
     readonly replayGate?: ProviderReplayGate;
+    readonly transformEventSink?: (eventSink: EventSinkV2["Service"]) => EventSinkV2["Service"];
   } = {},
 ): Layer.Layer<OrchestratorV2, Error | MigrationError | PlatformError.PlatformError | SqlError> {
   const registryLayer = harness.makeProviderAdapterRegistryLayer(
@@ -239,6 +241,7 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
     >;
     readonly enableLegacyTokenStreaming?: boolean;
     readonly runEffectWorker?: boolean;
+    readonly transformEventSink?: (eventSink: EventSinkV2["Service"]) => EventSinkV2["Service"];
   } = {},
 ): Layer.Layer<OrchestratorV2, Error | MigrationError | PlatformError.PlatformError | SqlError> {
   const serverConfigLayer = Layer.effect(
@@ -262,9 +265,16 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
     effectOutboxLayer,
     turnItemPositionStoreLayer,
   ).pipe(Layer.provide(databaseLayer));
-  const eventSinkProvided = eventSinkLayer.pipe(
+  const baseEventSinkProvided = eventSinkLayer.pipe(
     Layer.provide(Layer.mergeAll(storesLayer, databaseLayer)),
   );
+  const transformEventSink = options.transformEventSink;
+  const eventSinkProvided =
+    transformEventSink === undefined
+      ? baseEventSinkProvided
+      : Layer.effect(EventSinkV2, Effect.map(EventSinkV2, transformEventSink)).pipe(
+          Layer.provide(baseEventSinkProvided),
+        );
   const commandReceiptStoreProvided = commandReceiptStoreLayer.pipe(Layer.provide(databaseLayer));
   const providerEventIngestorProvided = providerEventIngestorLayer.pipe(
     Layer.provide(Layer.mergeAll(storesLayer, eventSinkProvided, idAllocatorLayer)),

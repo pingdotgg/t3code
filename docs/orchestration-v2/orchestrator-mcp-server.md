@@ -10,7 +10,8 @@ agent can use this endpoint to:
 - cancel an active delegated task; and
 - create one or more ordinary top-level T3 threads;
 - list and incrementally read project threads;
-- send or steer follow-up messages; and
+- send or steer follow-up messages with thread-owned attachments;
+- prepare and discard pending attachment uploads; and
 - wait for or interrupt ordinary thread runs.
 
 These are T3 orchestration operations, not provider-native sub-agent APIs.
@@ -140,7 +141,7 @@ selection model-visible without allowing a request that cannot run.
 
 ## Tool Surface
 
-The server exposes eleven orchestration tools.
+The server exposes a focused set of orchestration and attachment tools.
 
 ### `orchestrator_capabilities`
 
@@ -150,7 +151,9 @@ Returns:
 - the parent runtime and interaction modes;
 - registered provider instances and advertised models;
 - whether each provider can run a child task; and
-- feature flags for polling, cancellation, and batch thread creation.
+- the attachment kinds each provider can accept; and
+- feature flags for polling, cancellation, batch thread creation, attachment
+  references, and upload preparation.
 
 Unavailable providers include model-visible constraints such as missing V2
 adapter support, disabled state, missing executable, or missing authentication.
@@ -236,6 +239,7 @@ Creates between one and twenty ordinary top-level T3 threads:
 type CreateThreadsInput = {
   threads: Array<{
     prompt?: string;
+    attachments?: ChatAttachment[];
     title?: string;
     target?: {
       providerInstanceId?: string;
@@ -251,15 +255,16 @@ type CreateThreadsInput = {
 
 Each entry independently resolves provider, model, and modes. The new threads
 inherit the parent's project, branch, and worktree path, but they have no
-sub-agent lineage. Entries with a prompt immediately dispatch a run; entries
-without a prompt remain idle.
+sub-agent lineage. Entries with a prompt or attachment immediately dispatch a
+run; entries with neither remain idle.
 
 ### `t3_thread_start`
 
 Creates one ordinary top-level thread and immediately dispatches its first
-prompt. It is the single-thread convenience form of `create_threads` and
-returns the created thread and run IDs. Use `clientRequestId` when a caller may
-retry the request.
+message. The message may contain text, attachments, or both. It is the
+single-thread convenience form of `create_threads` and returns the created
+thread and run IDs plus bounded attachment metadata. Use `clientRequestId`
+when a caller may retry the request.
 
 ### `t3_thread_list`
 
@@ -275,7 +280,8 @@ timeline. The default `messages` view returns user messages, assistant
 messages, and proposed plans. The `activity` view also returns summarized tool,
 reasoning, checkpoint, handoff, and runtime-request items. Large item text is
 bounded and reports whether it was truncated. `afterPosition` and
-`nextPosition` support incremental reads.
+`nextPosition` support incremental reads. Message rows include attachment IDs,
+names, MIME types, and sizes, never attachment bytes.
 
 Thread and message results include required `createdBy` and `creationSource`
 provenance. MCP-created threads and user-role messages use `createdBy: "agent"`
@@ -297,6 +303,43 @@ Sends a message to an ordinary or delegated thread in the calling project:
 The target runtime and interaction modes may not be broader than the caller's.
 Stable command and message IDs are derived from `clientRequestId` for
 idempotent retries.
+
+`message` may be omitted when at least one attachment is supplied. Attachment
+references must either be pending uploads or exactly match an attachment
+already owned by the target thread. A claimed attachment from another thread
+is rejected. The server retains a pending source while claiming a
+thread-scoped copy, which makes accepted-command retries safe. Failed commands
+release newly claimed copies; a post-commit projection failure does not delete
+the accepted message's copy.
+
+Provider support is explicit in
+`orchestrator_capabilities.providers[].attachmentKinds`. Codex, Claude,
+Cursor, and Grok accept images. OpenCode accepts supported images, text files,
+and PDFs within its native direct-attachment size limit. Generic ACP providers
+do not advertise attachment kinds because support is negotiated only after a
+provider session starts. Requests with an unsupported kind fail before the
+server creates a new thread or claims a pending upload.
+
+### `t3_attachment_prepare_upload`
+
+Allocates a pending attachment ID and returns a short-lived, signed relative
+URL for an HTTP `POST`. The request supplies the attachment name, MIME type,
+size, and optional `image` or `file` kind. The tool does not read arbitrary
+host files and does not accept base64 payloads. After the caller uploads the
+exact number of bytes, it passes the returned `attachment` object unchanged to
+`create_threads`, `t3_thread_start`, or `t3_thread_send`.
+
+Preparation is intentionally non-idempotent: every call creates a new pending
+ID. This avoids treating an upload that may have partially reached the server
+as complete.
+
+### `t3_attachment_discard_upload`
+
+Discards an unused pending upload. The request must include both the pending ID
+and its signed upload URL. The URL is bearer authorization rather than MCP
+session-bound authorization, and expires at the returned time. Repeating a
+discard is a successful no-op only while that URL remains valid. Claimed,
+thread-owned attachment IDs cannot be discarded through this tool.
 
 ### `t3_thread_wait`
 

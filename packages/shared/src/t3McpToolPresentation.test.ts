@@ -35,6 +35,17 @@ describe("resolveT3McpToolPresentation", () => {
     });
   });
 
+  it("pretty prints attachment T3 MCP tool names", () => {
+    expect(resolveT3McpToolPresentation("mcp__t3-code__t3_attachment_prepare_upload")).toEqual({
+      displayName: "Prepare a T3 attachment upload",
+      logo: "t3-code",
+    });
+    expect(resolveT3McpToolPresentation("t3-code.t3_attachment_discard_upload")).toEqual({
+      displayName: "Discard a pending T3 attachment",
+      logo: "t3-code",
+    });
+  });
+
   it("pretty prints preview T3 MCP tool names", () => {
     expect(resolveT3McpToolPresentation("T3-code.preview_open")).toEqual({
       displayName: "Open a page in the preview browser",

@@ -15,6 +15,8 @@ import * as ProjectSetupScriptRunner from "../../../project/ProjectSetupScriptRu
 import { ProviderRegistry } from "../../../provider/Services/ProviderRegistry.ts";
 import { ScheduledTaskService } from "../../../scheduledTasks/ScheduledTaskService.ts";
 import * as ServerSettings from "../../../serverSettings.ts";
+import * as ServerConfig from "../../../config.ts";
+import * as ServerSecretStore from "../../../auth/ServerSecretStore.ts";
 import { VcsStatusBroadcaster } from "../../../vcs/VcsStatusBroadcaster.ts";
 import * as McpHttpServer from "../../McpHttpServer.ts";
 import * as McpSessionRegistry from "../../McpSessionRegistry.ts";
@@ -24,6 +26,10 @@ const StubServicesLive = Layer.mergeAll(
   Layer.mock(ThreadManagementService)({}),
   Layer.mock(ProviderRegistry)({}),
   Layer.mock(ScheduledTaskService)({}),
+  ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-registration-" }).pipe(
+    Layer.provide(NodeServices.layer),
+  ),
+  Layer.mock(ServerSecretStore.ServerSecretStore)({}),
   Layer.mock(ProjectService.ProjectService)({}),
   ServerSettings.layerTest({}),
   Layer.mock(GitWorkflowService.GitWorkflowService)({}),
@@ -114,6 +120,8 @@ it.effect("production mcp layer lists worktree tools over http", () =>
       // than replacing them.
       expect(toolNames).toContain("preview_status");
       expect(toolNames).toContain("delegate_task");
+      expect(toolNames).toContain("t3_attachment_prepare_upload");
+      expect(toolNames).toContain("t3_attachment_discard_upload");
 
       // The handoff tool mutates thread state, reaches the network (origin
       // fetch), and runs project setup scripts, so its MCP hints must not

@@ -12,6 +12,11 @@ Attach up to eight files per message. Images can be up to 10 MB; other files can
 be up to 50 MB, subject to the environment's upload support and limit. The agent
 receives them on the environment's machine.
 
+Agents using T3 Code's built-in orchestration tools can also pass uploaded attachments into a new
+thread or a follow-up message. T3 Code shares only the attachment reference and metadata between
+threads; it does not place file contents in tool results. An attachment already claimed by a thread
+can be reused only in that same thread. The active provider determines which file types it accepts.
+
 Uploads begin when you add an attachment. All uploads must finish before the
 message can send. Retry or remove a failed upload. On web and desktop, reloading
 before an upload finishes requires you to attach that file again.

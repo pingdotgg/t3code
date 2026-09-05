@@ -7,6 +7,7 @@ import {
   parseModelsCliOutput,
   parseSkillsCliOutput,
   toOpenCodeFileParts,
+  toOpenCodePromptParts,
 } from "./opencodeRuntime.ts";
 
 describe("parseModelsCliOutput", () => {
@@ -317,5 +318,46 @@ describe("toOpenCodeFileParts", () => {
       parts.map((part) => part.mime),
       ["application/pdf", "text/markdown", "image/png"],
     );
+  });
+
+  it("keeps non-native and oversized files available through resolved paths", () => {
+    const paths = new Map([
+      ["oversized.pdf", "/tmp/oversized.pdf"],
+      ["archive.zip", "/tmp/archive.zip"],
+      ["vector.svg", "/tmp/vector.svg"],
+      ["native.png", "/tmp/native.png"],
+      ["native.pdf", "/tmp/native.pdf"],
+    ]);
+    const parts = toOpenCodePromptParts({
+      text: "Inspect every attachment.",
+      attachments: [
+        { ...attachment("application/pdf", 25 * 1024 * 1024), name: "oversized.pdf" },
+        { ...attachment("application/zip"), name: "archive.zip" },
+        { ...attachment("image/svg+xml"), name: "vector.svg" },
+        { ...attachment("image/png"), name: "native.png" },
+        { ...attachment("application/pdf"), name: "native.pdf" },
+      ],
+      resolveAttachmentPath: (candidate) => paths.get(candidate.name) ?? null,
+    });
+
+    NodeAssert.deepEqual(parts.slice(1), [
+      {
+        type: "file",
+        mime: "image/png",
+        filename: "native.png",
+        url: "file:///tmp/native.png",
+      },
+      {
+        type: "file",
+        mime: "application/pdf",
+        filename: "native.pdf",
+        url: "file:///tmp/native.pdf",
+      },
+    ]);
+    const text = parts[0]?.type === "text" ? parts[0].text : "";
+    for (const [name, path] of paths) {
+      const cue = `[Attached file "${name}" is saved at: ${path}]`;
+      NodeAssert.equal(text.split(cue).length - 1, 1);
+    }
   });
 });

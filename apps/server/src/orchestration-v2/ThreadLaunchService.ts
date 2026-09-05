@@ -75,6 +75,9 @@ export interface ThreadLaunchResult {
   readonly threadId: ThreadId;
   readonly projection: OrchestrationV2ThreadProjection;
   readonly resumed: boolean;
+  readonly initialMessageReplayed: boolean;
+  /** The durable run created for `initialMessage`, or null when no initial message was requested. */
+  readonly initialMessageRunId: RunId | null;
 }
 
 export class ThreadLaunchError extends Schema.TaggedErrorClass<ThreadLaunchError>()(
@@ -508,6 +511,7 @@ export const make = Effect.gen(function* () {
 
         let runId: RunId | null = null;
         let messageWasAlreadyAccepted = false;
+        let initialMessageReplayed = false;
         if (input.initialMessage !== undefined) {
           const messageCommandId = CommandId.make(`${input.commandId}:initial-message`);
           const messageReceipt = yield* readReceipt(input, messageCommandId);
@@ -532,6 +536,7 @@ export const make = Effect.gen(function* () {
               creationSource: input.creationSource,
             })
             .pipe(Effect.mapError(mapError(input, "dispatch-message", threadId)));
+          initialMessageReplayed = messageWasAlreadyAccepted || dispatched.replayed === true;
           const runCreated = dispatched.storedEvents.find(
             (stored) => stored.event.type === "run.created",
           );
@@ -578,6 +583,8 @@ export const make = Effect.gen(function* () {
           threadId,
           projection,
           resumed: Option.isSome(launchReceipt) || messageWasAlreadyAccepted,
+          initialMessageReplayed,
+          initialMessageRunId: runId,
         };
       });
     },
