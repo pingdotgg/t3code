@@ -152,11 +152,12 @@ describe("mobile themes", () => {
   });
 
   it("maps semantic palette roles onto every mobile color variable", () => {
-    const variables = createMobileThemeVariables(BUILT_IN_THEMES[0].colors, "light");
-    expect(Object.keys(variables)).toHaveLength(65);
-    expect(variables["--color-sheet-solid"]).toBe(
-      themeColorToNativeColor(BUILT_IN_THEMES[0].colors.chrome),
-    );
+    const colors = BUILT_IN_THEMES[0].colors;
+    const variables = createMobileThemeVariables(colors, "light");
+    expect(Object.keys(variables)).toHaveLength(67);
+    expect(variables["--color-sheet-solid"]).toBe(themeColorToNativeColor(colors.chrome));
+    expect(variables["--color-warning"]).toBe(themeColorToNativeColor(colors.warning));
+    expect(variables["--color-destructive"]).toBe(themeColorToNativeColor(colors.error));
     expect(variables["--color-primary"]).not.toBe(variables["--color-screen"]);
     expect(variables["--color-primary-shadow"]).toBe("#000000");
     expect(variables["--color-backdrop"]).toBe("rgba(0, 0, 0, 0.22)");

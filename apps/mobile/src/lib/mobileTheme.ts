@@ -239,6 +239,8 @@ export function createMobileThemeVariables(
     "--color-switch-active-thumb": c.accentForeground,
     "--color-switch-inactive-track": c.secondary,
     "--color-switch-inactive-thumb": c.mutedForeground,
+    "--color-warning": c.warning,
+    "--color-destructive": c.error,
     "--color-danger": c.errorSurface,
     "--color-danger-border": withAlpha(c.error, 0.32),
     "--color-danger-foreground": c.errorForeground,
