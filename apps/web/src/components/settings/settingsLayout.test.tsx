@@ -1,11 +1,7 @@
+import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
-import {
-  scrollToSettingsTarget,
-  SettingsRow,
-  SettingsSearchTargetProvider,
-  SettingsUnavailableGroup,
-} from "./settingsLayout";
+import { scrollToSettingsTarget, SettingsRow, SettingsUnavailableGroup } from "./settingsLayout";
 
 afterEach(() => {
   vi.unstubAllGlobals();
