@@ -501,6 +501,7 @@ function useUpdateSettingsTarget(environmentId: EnvironmentId | null) {
             targets.add(environmentId);
           }
           let wroteToTarget = false;
+          let permissionDenied = false;
           for (const targetId of targets) {
             const target = environments.find((candidate) => candidate.environmentId === targetId);
             const targetPatch = filterSharedServerPatch(
@@ -514,8 +515,10 @@ function useUpdateSettingsTarget(environmentId: EnvironmentId | null) {
               !requiredScopesForServerSettingsPatch(sharedPatch).every((scope) =>
                 readEnvironmentScope(targetId, scope),
               )
-            )
+            ) {
+              permissionDenied = true;
               continue;
+            }
             wroteToTarget = true;
             void persistServerSettings({
               environmentId: targetId,
@@ -524,7 +527,11 @@ function useUpdateSettingsTarget(environmentId: EnvironmentId | null) {
           }
           if (!wroteToTarget) {
             warnUnsaved(
-              targets.size > 0 ? "Update older servers to save this setting." : undefined,
+              permissionDenied
+                ? "This connection does not have permission to change these settings."
+                : targets.size > 0
+                  ? "Update older servers to save this setting."
+                  : undefined,
             );
           }
         }
