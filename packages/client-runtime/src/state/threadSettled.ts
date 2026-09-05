@@ -260,6 +260,51 @@ export function resolveSnoozePresets(now: Date): ReadonlyArray<SnoozePreset> {
 }
 
 /**
+ * Waking exactly at the provider's reset instant races the limit still being
+ * in force, so the offered snooze clears it by a minute.
+ */
+const USAGE_LIMIT_SNOOZE_GRACE_MS = 60_000;
+
+export interface UsageLimitSnoozeOffer {
+  /** The reset the provider reported, for the "limits reset at" label. */
+  readonly resetsAt: string;
+  /** Wake time to snooze to, a minute past the reset. */
+  readonly snoozedUntil: string;
+  /**
+   * Whether snoozing is available right now. Telling the user about the limit
+   * matters even when it is not — the canonical case is a message the provider
+   * rejected, which leaves a queued turn start that snooze refuses for its
+   * grace window, exactly while the user is staring at the stall.
+   */
+  readonly snoozable: boolean;
+}
+
+/**
+ * The usage-limit offer for a thread, or null when there is nothing to say. A
+ * reset in the past is stale provider state, and a thread the user already
+ * parked has answered the offer.
+ */
+export function usageLimitSnoozeOffer(
+  shell: ThreadSnoozeShell & Pick<OrchestrationThreadShell, "latestUserMessageAt">,
+  options: { readonly resetsAt: string | null; readonly now: string },
+): UsageLimitSnoozeOffer | null {
+  const { resetsAt } = options;
+  if (resetsAt == null) return null;
+  const resetsAtMs = Date.parse(resetsAt);
+  if (Number.isNaN(resetsAtMs) || resetsAtMs <= Date.parse(options.now)) return null;
+  if (effectiveSnoozed(shell, options)) return null;
+  // A reset at the edge of the representable Date range has no valid wake
+  // time once the grace is added; treat it as malformed rather than throw.
+  const snoozedUntil = new Date(resetsAtMs + USAGE_LIMIT_SNOOZE_GRACE_MS);
+  if (Number.isNaN(snoozedUntil.getTime())) return null;
+  return {
+    resetsAt,
+    snoozedUntil: snoozedUntil.toISOString(),
+    snoozable: canSnooze(shell, options),
+  };
+}
+
+/**
  * Compact "wakes in" label for snoozed rows: "2h", "18h", "3d". Minutes
  * round up so a snooze never reads "0m" while still hidden. Shared by web
  * and mobile so the same wake time never reads differently per client.
