@@ -50,8 +50,10 @@ For iOS Simulator, use XcodeBuildMCP recording when available or
 `xcrun simctl io <verified-UDID> recordVideo <output.mp4>`; stop only the recorder
 process you started. For Android, target the verified emulator serial with
 `adb -s <serial> shell screenrecord /sdcard/<unique-name>.mp4`, then pull that
-file. If the active surface has no usable recorder, name that gap and deliver
-available still evidence without claiming motion verification.
+file. For a disabled recorder, recurring dialog, timeout, blank export, or
+image/accessibility mismatch, follow [capture recovery](capture-recovery.md)
+before reporting a blocker. Deliver available still evidence with its limits
+only after supported recovery; required recording and GIF gaps remain open.
 Keep secrets and unrelated personal data outside the frame. Capture the action
 lead-in, complete gesture, and actual settled result. Preserve the raw source.
 

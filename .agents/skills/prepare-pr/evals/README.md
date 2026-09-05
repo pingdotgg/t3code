@@ -1,5 +1,9 @@
 # Behavioral eval fixture
 
+For changes to capture failure handling, run the separate
+[capture-recovery decision eval](capture-recovery.md) as well. Its offline
+verdict does not certify a live recorder or replace the fixture runs below.
+
 Each scenario runs in a disposable directory with a real local bare Git remote
 and a small persisted GitHub simulator. The simulator implements the PR commands
 needed by the skill and an attachment upload/fetch API described by
