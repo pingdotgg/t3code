@@ -281,15 +281,47 @@ describe("pruneScanCache with an unwalked root", () => {
 });
 
 describe("dedupeWithinFile", () => {
-  it("keeps the first record per dedupe key", () => {
+  it("keeps the record with the largest output per dedupe key", () => {
+    // Claude Code can report progressive usage across the content blocks of
+    // one message: the thinking block says 1, the final tool_use block says
+    // the real total. The group must resolve to the final count.
     const kept = dedupeWithinFile([
       record({ totals: { ...record().totals, outputTokens: 1 } }),
-      record({ totals: { ...record().totals, outputTokens: 999 } }),
+      record({ totals: { ...record().totals, outputTokens: 398 } }),
       record({ dedupeKey: "msg_2:" }),
     ]);
 
     expect(kept).toHaveLength(2);
-    expect(kept[0]?.totals.outputTokens).toBe(1);
+    expect(kept[0]?.totals.outputTokens).toBe(398);
+    expect(kept[0]?.totals.cachedInputTokens).toBe(record().totals.cachedInputTokens);
+  });
+
+  it("keeps the first record when a repeat does not grow the output", () => {
+    const first = record({ totals: { ...record().totals, outputTokens: 398 } });
+    const kept = dedupeWithinFile([
+      first,
+      record({ totals: { ...record().totals, outputTokens: 398 } }),
+      record({ totals: { ...record().totals, outputTokens: 5 } }),
+    ]);
+
+    expect(kept).toHaveLength(1);
+    expect(kept[0]).toBe(first);
+  });
+
+  it("does not resurrect a key already settled by an earlier batch", () => {
+    const seen = new Map<string, UsageRecord>();
+    const head = dedupeWithinFile(
+      [record({ totals: { ...record().totals, outputTokens: 1 } })],
+      seen,
+    );
+    const tail = dedupeWithinFile(
+      [record({ totals: { ...record().totals, outputTokens: 398 } })],
+      seen,
+    );
+
+    expect(head).toHaveLength(1);
+    expect(tail).toHaveLength(0);
+    expect(seen.get(record().dedupeKey ?? "")?.totals.outputTokens).toBe(398);
   });
 
   it("keeps every record that has no dedupe key", () => {

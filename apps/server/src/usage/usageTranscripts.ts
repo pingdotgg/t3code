@@ -91,10 +91,13 @@ export function grokCostTicksToUsd(ticks: unknown): number | null {
 /**
  * Parses one line of a Claude Code transcript.
  *
- * T3 Code writes one record per assistant *content block*, and every one of
- * those records repeats the same complete `usage` object for the parent
- * message. Summing them overcounts by roughly 2.4x on a real workload, so the
- * caller must drop repeats by `dedupeKey` and keep the first.
+ * Claude Code writes one record per assistant *content block*, each carrying
+ * a `usage` object for the parent message. Summing them overcounts by roughly
+ * 2.4x on a real workload, so the caller must collapse repeats by `dedupeKey`.
+ * The records are not always identical: some transcripts report progressive
+ * usage, where an early block holds a partial `output_tokens` and the last
+ * block holds the final count, so the caller must keep the record with the
+ * largest output rather than the first.
  */
 export function parseClaudeLine(line: string): UsageRecord | null {
   let parsed: unknown;
