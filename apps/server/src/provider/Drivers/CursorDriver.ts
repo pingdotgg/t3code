@@ -68,7 +68,7 @@ const UPDATE: ProviderMaintenanceCapabilitiesResolver = {
             updateExecutable: context.resolvedCommandPath,
             updateArgs: ["update"],
             updateLockKey: "cursor-agent",
-            updateCommand: "cursor-agent update",
+            platform: context.platform,
           })
         : makeManualOnlyProviderMaintenanceCapabilities({
             provider: DRIVER_KIND,

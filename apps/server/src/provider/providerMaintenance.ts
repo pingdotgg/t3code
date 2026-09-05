@@ -80,6 +80,8 @@ export interface ProviderMaintenanceResolutionContext {
   readonly resolvedCommandPath: string;
   readonly realCommandPath: string;
   readonly env: NodeJS.ProcessEnv;
+  /** Host platform; decides how the copyable command quotes the executable. */
+  readonly platform: NodeJS.Platform;
 }
 
 export type ProviderMaintenanceResolverServices =
@@ -96,8 +98,6 @@ export interface ProviderMaintenanceCapabilitiesResolver {
 export interface PackageManagedProviderMaintenanceDefinition {
   readonly provider: ProviderDriverKind;
   readonly npmPackageName: string;
-  /** Bare executable name used to display native update commands. */
-  readonly executableName: string;
   readonly nativeUpdate: {
     readonly args: ReadonlyArray<string>;
     readonly isCommandPath: (commandPath: string) => boolean;
@@ -123,20 +123,43 @@ function nonEmptyString(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
 }
 
+/**
+ * The copyable command must paste into a shell as-is, so an executable path
+ * with spaces or quotes is quoted for the host's default shell.
+ */
+function quoteUpdateExecutable(executable: string, platform: NodeJS.Platform): string {
+  const safePath = platform === "win32" ? /^[\w./:\\-]+$/ : /^[\w./:-]+$/;
+  if (safePath.test(executable)) return executable;
+  // Windows terminals default to PowerShell, where a quoted executable needs &.
+  return platform === "win32"
+    ? `& '${executable.replace(/['\u2018\u2019]/g, "$&$&")}'`
+    : `'${executable.replaceAll("'", "'\\''")}'`;
+}
+
 export function makeProviderMaintenanceCapabilities(input: {
   readonly provider: ProviderDriverKind;
   readonly packageName: string | null;
   readonly updateExecutable: string | null;
   readonly updateArgs: ReadonlyArray<string>;
   readonly updateLockKey: string | null;
+  /** Shown to the user instead of `<executable> <args>`; use for a bare tool name like `brew`. */
   readonly updateCommand?: string;
+  readonly platform?: NodeJS.Platform;
   readonly latestVersion?: string | null;
 }): ProviderMaintenanceCapabilities {
   const update =
     input.updateExecutable === null || input.updateLockKey === null
       ? null
       : {
-          command: input.updateCommand ?? [input.updateExecutable, ...input.updateArgs].join(" "),
+          command:
+            input.updateCommand ??
+            [
+              quoteUpdateExecutable(
+                input.updateExecutable,
+                input.platform ?? HostProcessPlatform.defaultValue(),
+              ),
+              ...input.updateArgs,
+            ].join(" "),
           executable: input.updateExecutable,
           args: input.updateArgs,
           lockKey: input.updateLockKey,
@@ -329,7 +352,7 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
       updateExecutable: context.resolvedCommandPath,
       updateArgs: nativeUpdate.args,
       updateLockKey: `${definition.provider}-native`,
-      updateCommand: [definition.executableName, ...nativeUpdate.args].join(" "),
+      platform: context.platform,
     });
   }
   if (commandPaths.some(isVitePlusGlobalCommandPath)) {
@@ -357,6 +380,32 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
       updateExecutable: "pnpm",
       updateArgs: ["add", "-g", `${packageName}@latest`],
       updateLockKey: "pnpm-global",
+    });
+  }
+
+  // npm proof names the package, so it outranks a keg the path merely passes
+  // through: a Homebrew-installed Node keeps its globals under
+  // `Cellar/node/<ver>/lib/node_modules/`, and that is npm's install, not brew's.
+  const npmPrefix = yield* resolveNpmGlobalPrefix(context, packageName);
+  if (npmPrefix) {
+    // npm 12 blocks install scripts by default (empty allow-scripts allowlist)
+    // and still exits 0, so a package whose postinstall finishes the install
+    // (claude copies its native binary over a placeholder stub) is left broken
+    // while the update reports success. Allow this one package's scripts.
+    // Older npm warns about the unknown config and continues.
+    return makeProviderMaintenanceCapabilities({
+      provider: definition.provider,
+      packageName,
+      updateExecutable: "npm",
+      updateArgs: [
+        "install",
+        "-g",
+        "--prefix",
+        npmPrefix,
+        `--allow-scripts=${packageName}`,
+        `${packageName}@latest`,
+      ],
+      updateLockKey: `npm-global:${normalizeCommandPath(npmPrefix)}`,
     });
   }
 
@@ -394,29 +443,6 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
       updateLockKey: "homebrew",
       updateCommand: ["brew", ...args].join(" "),
       latestVersion: info ? parseHomebrewLatestVersion(info, homebrew) : null,
-    });
-  }
-
-  const npmPrefix = yield* resolveNpmGlobalPrefix(context, packageName);
-  if (npmPrefix) {
-    // npm 12 blocks install scripts by default (empty allow-scripts allowlist)
-    // and still exits 0, so a package whose postinstall finishes the install
-    // (claude copies its native binary over a placeholder stub) is left broken
-    // while the update reports success. Allow this one package's scripts.
-    // Older npm warns about the unknown config and continues.
-    return makeProviderMaintenanceCapabilities({
-      provider: definition.provider,
-      packageName,
-      updateExecutable: "npm",
-      updateArgs: [
-        "install",
-        "-g",
-        "--prefix",
-        npmPrefix,
-        `--allow-scripts=${packageName}`,
-        `${packageName}@latest`,
-      ],
-      updateLockKey: `npm-global:${normalizeCommandPath(npmPrefix)}`,
     });
   }
 
@@ -516,6 +542,7 @@ export const resolveProviderMaintenanceCapabilitiesEffect = Effect.fn(
     resolvedCommandPath,
     realCommandPath,
     env,
+    platform: yield* HostProcessPlatform,
   });
 });
 

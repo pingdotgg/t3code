@@ -82,7 +82,6 @@ function isCodexStandaloneCommandPath(commandPath: string): boolean {
 const UPDATE = makePackageManagedProviderMaintenanceResolver({
   provider: DRIVER_KIND,
   npmPackageName: "@openai/codex",
-  executableName: "codex",
   nativeUpdate: {
     args: ["update"],
     isCommandPath: isCodexStandaloneCommandPath,

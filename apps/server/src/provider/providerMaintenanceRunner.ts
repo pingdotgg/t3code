@@ -184,8 +184,8 @@ function isOutdatedProvider(provider: ServerProvider | undefined): boolean {
   return provider?.versionAdvisory?.status === "behind_latest";
 }
 
-function hasVerifiedVersion(provider: ServerProvider): boolean {
-  return provider.installed && provider.version !== null;
+function isStillInstalled(provider: ServerProvider): boolean {
+  return provider.installed;
 }
 
 function makeUpdateState(input: {
@@ -392,12 +392,13 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
               verified,
               instanceId,
             );
-            // "Succeeded" needs positive evidence: the provider is still
-            // installed with a readable version. An installer that exits 0
-            // and leaves the binary missing or unreadable is not a success.
+            // "Succeeded" needs the provider to still be installed: an
+            // installer that exits 0 and leaves the binary missing is not a
+            // success. A missing version alone is not held against it, since
+            // Cursor's `about` probe can fail transiently on a healthy binary.
             const couldNotVerify =
               verifiedProviders.length === 0 ||
-              verifiedProviders.some((verifiedProvider) => !hasVerifiedVersion(verifiedProvider));
+              verifiedProviders.some((verifiedProvider) => !isStillInstalled(verifiedProvider));
             const stillOutdated = verifiedProviders.some((verifiedProvider) =>
               isOutdatedProvider(verifiedProvider),
             );

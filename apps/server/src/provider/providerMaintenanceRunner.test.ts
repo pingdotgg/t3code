@@ -278,6 +278,35 @@ describe("providerMaintenanceRunner", () => {
     );
   });
 
+  it.effect(
+    "keeps a successful update when the binary is present but its version is unreadable",
+    () => {
+      return Effect.gen(function* () {
+        const { registry, providersRef } = yield* makeRegistry(baseCursorProvider);
+        // Cursor's `agent about` probe can fail right after an update while the
+        // new binary is perfectly fine.
+        const updater = yield* makeTestRunner({
+          ...registry,
+          refreshInstance: () =>
+            Ref.updateAndGet(providersRef, (providers) =>
+              providers.map((provider) => ({ ...provider, installed: true, version: null })),
+            ),
+        });
+
+        const result = yield* updater.updateProvider(CURSOR_DRIVER);
+        assert.strictEqual(result.providers[0]?.updateState?.status, "succeeded");
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            NonWindowsPlatform,
+            latestVersionHttpClient("0.0.0"),
+            mockSpawnerLayer(() => ({ stdout: "updated" })),
+          ),
+        ),
+      );
+    },
+  );
+
   it.effect("re-resolves ownership before running and executes the fresh command", () => {
     const calls: Array<{ command: string; args: ReadonlyArray<string> }> = [];
     const fresh: Array<boolean> = [];

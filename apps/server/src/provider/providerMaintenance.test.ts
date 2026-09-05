@@ -45,13 +45,11 @@ const isNativeTestCommandPath =
 const packageToolUpdate = makePackageManagedProviderMaintenanceResolver({
   provider: driver("packageTool"),
   npmPackageName: "@example/package-tool",
-  executableName: "package-tool",
   nativeUpdate: null,
 });
 const nativePackageToolUpdate = makePackageManagedProviderMaintenanceResolver({
   provider: driver("nativePackageTool"),
   npmPackageName: "@example/native-package-tool",
-  executableName: "native-package-tool",
   nativeUpdate: {
     args: ["update"],
     isCommandPath: isNativeTestCommandPath("/.local/bin/native-package-tool"),
@@ -431,7 +429,7 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
         provider: driver("nativePackageTool"),
         packageName: "@example/native-package-tool",
         update: {
-          command: "native-package-tool update",
+          command: `${nativePath} update`,
           executable: nativePath,
           args: ["update"],
           lockKey: "nativePackageTool-native",
@@ -470,6 +468,43 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
       expect(result.status).toBe(0);
       expect(result.stdout).toBe("update");
     }),
+  );
+
+  it.effect.skipIf(!symlinksSupported)(
+    "prefers npm ownership over the Node keg the package lives under",
+    () =>
+      Effect.gen(function* () {
+        // `brew install node` keeps npm globals inside the node keg.
+        const tempDir = yield* makeTempDir("t3-homebrew-node-capabilities");
+        const keg = NodePath.join(tempDir, "Cellar", "node", "22.1.0");
+        const target = NodePath.join(
+          keg,
+          "lib",
+          "node_modules",
+          "@example",
+          "package-tool",
+          "bin",
+          "package-tool.js",
+        );
+        writeExecutable(target);
+        const link = NodePath.join(tempDir, "bin", "package-tool");
+        NodeFS.mkdirSync(NodePath.dirname(link), { recursive: true });
+        NodeFS.symlinkSync(target, link);
+
+        const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
+          packageToolUpdate,
+          {
+            binaryPath: link,
+            env: { PATH: "" },
+          },
+        ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn));
+
+        expect(capabilities.update).toMatchObject({
+          executable: "npm",
+          args: expect.arrayContaining(["--prefix", keg]),
+          lockKey: `npm-global:${normalizeCommandPath(keg)}`,
+        });
+      }),
   );
 
   it("recognizes Homebrew kegs and casks from the real executable path", () => {
