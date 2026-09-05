@@ -233,6 +233,7 @@ import {
 } from "../logicalProject";
 import { buildDraftThreadRouteParams, buildThreadRouteParams } from "../threadRoutes";
 import {
+  composerDraftHasEditedPromptOrAttachments,
   composerDraftHasUserContent,
   type ComposerFileAttachment,
   type ComposerImageAttachment,
@@ -3548,9 +3549,10 @@ export default function ChatView(props: ChatViewProps) {
     const store = useComposerDraftStore.getState();
     const editTarget = queuedEditDraftTargetFor(editingQueuedRun.runId);
     const editDraft = store.getComposerDraft(editTarget);
-    const editIsDirty =
-      editDraft !== null &&
-      (editDraft.prompt !== editingQueuedRun.originalText || editDraft.images.length > 0);
+    const editIsDirty = composerDraftHasEditedPromptOrAttachments(
+      editDraft,
+      editingQueuedRun.originalText,
+    );
     if (
       editIsDirty &&
       !composerDraftHasUserContent(store.getComposerDraft(baseComposerDraftTarget))
@@ -6669,30 +6671,86 @@ export default function ChatView(props: ChatViewProps) {
           ]
         : sendContextPreviewAnnotations;
     const promptForSend = promptRef.current;
+    const readLiveAttachmentCapabilities = (files: ReadonlyArray<ComposerFileAttachment>) => {
+      const config = appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId) ?? null;
+      const liveSupportsAttachmentUploads =
+        config?.environment.capabilities.attachmentUploads === true;
+      return {
+        supportsAttachmentUploads: liveSupportsAttachmentUploads,
+        fileBlockReason: fileAttachmentCapabilityBlockReason({
+          files,
+          attachmentUploadsCapabilityKnown: config !== null,
+          supportsAttachmentUploads: liveSupportsAttachmentUploads,
+          maxFileAttachmentBytes:
+            config?.environment.capabilities.fileAttachments?.maxUploadBytes ?? null,
+        }),
+      };
+    };
     if (editingQueuedRun !== null) {
       // Edit mode repurposes the composer: sending saves the queued message
       // in place instead of dispatching a new turn.
       if (queuedEditSaveInFlightRef.current) return;
       const editText = promptForSend.trim();
       const newEditImages = [...composerImages];
+      const newEditAttachments = [...newEditImages, ...composerFiles];
+      if (
+        editingQueuedRun.existingAttachments.length + newEditAttachments.length >
+        PROVIDER_SEND_TURN_MAX_ATTACHMENTS
+      ) {
+        setThreadError(
+          editingQueuedRun.threadId,
+          `A message can have at most ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} attachments.`,
+        );
+        return;
+      }
       if (
         editText.length === 0 &&
         editingQueuedRun.existingAttachments.length === 0 &&
-        newEditImages.length === 0
+        newEditAttachments.length === 0
       ) {
         return;
       }
       queuedEditSaveInFlightRef.current = true;
       try {
-        const uploads = await Promise.all(
-          newEditImages.map(async (image) => ({
-            type: "image" as const,
-            name: image.name,
-            mimeType: image.mimeType,
-            sizeBytes: image.sizeBytes,
-            dataUrl: await readFileAsDataUrl(image.file),
-          })),
-        );
+        const capability = readLiveAttachmentCapabilities(composerFiles);
+        if (capability.fileBlockReason !== null) {
+          setThreadError(editingQueuedRun.threadId, capability.fileBlockReason);
+          return;
+        }
+        let uploads;
+        if (capability.supportsAttachmentUploads) {
+          for (const attachment of newEditAttachments) {
+            startAttachmentUpload({
+              environmentId,
+              image: attachment,
+              draftTarget: queuedEditDraftTargetFor(editingQueuedRun.runId),
+            });
+          }
+          await awaitAttachmentUploads(newEditAttachments.map((attachment) => attachment.id));
+          const liveCapability = readLiveAttachmentCapabilities(composerFiles);
+          if (liveCapability.fileBlockReason !== null) {
+            setThreadError(editingQueuedRun.threadId, liveCapability.fileBlockReason);
+            return;
+          }
+          uploads = getUploadedAttachments({ environmentId, images: newEditAttachments });
+          if (uploads === null) {
+            setThreadError(
+              editingQueuedRun.threadId,
+              "Retry or remove failed uploads before saving.",
+            );
+            return;
+          }
+        } else {
+          uploads = await Promise.all(
+            newEditImages.map(async (image) => ({
+              type: "image" as const,
+              name: image.name,
+              mimeType: image.mimeType,
+              sizeBytes: image.sizeBytes,
+              dataUrl: await readFileAsDataUrl(image.file),
+            })),
+          );
+        }
         const result = await editQueuedRunCommand({
           environmentId: activeThread.environmentId,
           input: {
@@ -6710,6 +6768,7 @@ export default function ChatView(props: ChatViewProps) {
           return;
         }
         setThreadError(editingQueuedRun.threadId, null);
+        releaseDraftAttachments(newEditAttachments);
         promptRef.current = "";
         clearComposerDraftContent(queuedEditDraftTargetFor(editingQueuedRun.runId));
         composerRef.current?.resetCursorState();
@@ -6959,24 +7018,9 @@ export default function ChatView(props: ChatViewProps) {
       return;
     }
 
-    const readLiveAttachmentCapabilities = () => {
-      const config = appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId) ?? null;
-      const liveSupportsAttachmentUploads =
-        config?.environment.capabilities.attachmentUploads === true;
-      return {
-        supportsAttachmentUploads: liveSupportsAttachmentUploads,
-        fileBlockReason: fileAttachmentCapabilityBlockReason({
-          files: composerFilesSnapshot,
-          attachmentUploadsCapabilityKnown: config !== null,
-          supportsAttachmentUploads: liveSupportsAttachmentUploads,
-          maxFileAttachmentBytes:
-            config?.environment.capabilities.fileAttachments?.maxUploadBytes ?? null,
-        }),
-      };
-    };
-
     sendInFlightRef.current = true;
-    const attachmentCapabilitiesBeforeUpload = readLiveAttachmentCapabilities();
+    const attachmentCapabilitiesBeforeUpload =
+      readLiveAttachmentCapabilities(composerFilesSnapshot);
     if (attachmentCapabilitiesBeforeUpload.fileBlockReason !== null) {
       sendInFlightRef.current = false;
       setThreadError(threadIdForSend, attachmentCapabilitiesBeforeUpload.fileBlockReason);
@@ -6995,7 +7039,8 @@ export default function ChatView(props: ChatViewProps) {
         });
       }
       await awaitAttachmentUploads(composerAttachmentsSnapshot.map((attachment) => attachment.id));
-      const attachmentCapabilitiesAfterUpload = readLiveAttachmentCapabilities();
+      const attachmentCapabilitiesAfterUpload =
+        readLiveAttachmentCapabilities(composerFilesSnapshot);
       if (attachmentCapabilitiesAfterUpload.fileBlockReason !== null) {
         sendInFlightRef.current = false;
         setThreadError(threadIdForSend, attachmentCapabilitiesAfterUpload.fileBlockReason);
@@ -7138,7 +7183,8 @@ export default function ChatView(props: ChatViewProps) {
 
     const turnAttachmentsResult = await settlePromise(async () => {
       const turnAttachments = await turnAttachmentsPromise;
-      const liveFileBlockReason = readLiveAttachmentCapabilities().fileBlockReason;
+      const liveFileBlockReason =
+        readLiveAttachmentCapabilities(composerFilesSnapshot).fileBlockReason;
       if (liveFileBlockReason !== null) {
         throw new Error(liveFileBlockReason);
       }

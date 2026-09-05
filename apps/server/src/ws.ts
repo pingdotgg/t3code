@@ -125,6 +125,7 @@ import { userFacingDispatchErrorMessage } from "./orchestration-v2/UserFacingErr
 import {
   attachmentIsPendingUpload,
   claimPendingAttachments,
+  dispatchWithClaimedAttachments,
   releaseClaimedAttachments,
 } from "./orchestration-v2/AttachmentClaims.ts";
 import {
@@ -1333,39 +1334,16 @@ const makeWsRpcLayer = (
         [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command) =>
           observeRpcEffect(
             ORCHESTRATION_V2_WS_METHODS.dispatchCommand,
-            Effect.gen(function* () {
-              // Pending uploads are claimed into the thread's attachment store
-              // at intake; a failed dispatch releases the claimed copies while
-              // the pending upload stays behind as the client's retry source.
-              const claimed =
-                command.type === "message.dispatch" &&
-                command.attachments.some(attachmentIsPendingUpload)
-                  ? yield* claimPendingAttachments({
-                      threadId: command.threadId,
-                      attachments: command.attachments,
-                    })
-                  : null;
-              const effectiveCommand =
-                claimed === null || command.type !== "message.dispatch"
-                  ? command
-                  : { ...command, attachments: claimed.attachments };
-              return yield* startup
-                .enqueueCommand(
-                  threadManagement.dispatch(
-                    ThreadManagementService.withCreationProvenance(effectiveCommand, {
-                      createdBy: "user",
-                      creationSource: "creationSource" in command ? command.creationSource : "web",
-                    }),
-                  ),
-                )
-                .pipe(
-                  Effect.tapError(() =>
-                    claimed === null
-                      ? Effect.void
-                      : releaseClaimedAttachments(claimed.claimedPaths),
-                  ),
-                );
-            }).pipe(
+            dispatchWithClaimedAttachments(command, (effectiveCommand) =>
+              startup.enqueueCommand(
+                threadManagement.dispatch(
+                  ThreadManagementService.withCreationProvenance(effectiveCommand, {
+                    createdBy: "user",
+                    creationSource: "creationSource" in command ? command.creationSource : "web",
+                  }),
+                ),
+              ),
+            ).pipe(
               Effect.tap(() => recordClientCommandAnalytics(command)),
               Effect.map((result) => ({ sequence: result.sequence })),
               Effect.mapError((cause) => {
