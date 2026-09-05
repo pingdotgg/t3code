@@ -33,7 +33,8 @@ export async function refreshRebasedUsageWindow(
   input: UsageSummaryInput,
   refresh: (input: UsageSummaryInput) => Promise<void>,
   commit: (input: UsageSummaryInput) => void,
+  isCurrent: () => boolean,
 ): Promise<void> {
   await refresh(input);
-  commit(input);
+  if (isCurrent()) commit(input);
 }
