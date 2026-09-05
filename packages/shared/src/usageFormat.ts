@@ -107,14 +107,14 @@ export function enumerateDays(sinceDay: string, untilDay: string): readonly stri
 
 const HOUR_MS = 60 * 60 * 1000;
 
-/** Every fixed-duration bucket start in an hourly rolling window. */
+/** Fully covered fixed-duration bucket starts in an hourly rolling window. */
 export function enumerateHourStarts(sinceTime: string, untilTime: string): readonly string[] {
   const starts: string[] = [];
   const start = Date.parse(sinceTime);
   const end = Date.parse(untilTime);
   if (Number.isNaN(start) || Number.isNaN(end) || end <= start) return starts;
 
-  for (let cursor = start; cursor < end; cursor += HOUR_MS) {
+  for (let cursor = start; cursor + HOUR_MS <= end; cursor += HOUR_MS) {
     starts.push(new Date(cursor).toISOString());
   }
   return starts;

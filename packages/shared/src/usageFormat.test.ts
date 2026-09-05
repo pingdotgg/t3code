@@ -124,3 +124,18 @@ describe("makeCustomWindow", () => {
     expect(() => makeCustomWindow("10000-01-01", "9999-12-31")).toThrow(RangeError);
   });
 });
+
+describe("hourly coverage boundaries", () => {
+  it("excludes an incomplete trailing hour while retaining an aligned complete hour", () => {
+    const start = "2026-08-10T12:37:00.000Z";
+    expect(enumerateHourStarts(start, "2026-08-10T14:10:00.000Z")).toEqual([start]);
+    expect(enumerateHourStarts(start, "2026-08-10T14:37:00.000Z")).toEqual([
+      start,
+      "2026-08-10T13:37:00.000Z",
+    ]);
+  });
+
+  it("has no chart buckets before one full hour is covered", () => {
+    expect(enumerateHourStarts("2026-08-10T12:37:00.000Z", "2026-08-10T13:10:00.000Z")).toEqual([]);
+  });
+});

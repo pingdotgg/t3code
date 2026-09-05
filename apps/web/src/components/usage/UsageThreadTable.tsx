@@ -395,10 +395,7 @@ export function UsageThreadDailyChart({
       </div>
       <div className="flex flex-wrap justify-end gap-x-3 gap-y-1 text-[10px] text-muted-foreground">
         {CHART_BANDS.toReversed().map((band) => (
-          <span key={band.key} className="flex items-center gap-1">
-            <span aria-hidden className={`size-1.5 rounded-[2px] bg-current ${band.className}`} />
-            {band.label}
-          </span>
+          <LegendSwatch key={band.key} className={band.className} label={band.label} />
         ))}
       </div>
       <svg
@@ -460,8 +457,8 @@ function LegendSwatch({
   readonly label: string;
 }) {
   return (
-    <span className="flex items-center gap-1.5">
-      <span aria-hidden className={cn("size-2 rounded-[2px] bg-current", className)} />
+    <span className="flex items-center gap-1">
+      <span aria-hidden className={cn("size-1.5 rounded-[2px] bg-current", className)} />
       {label}
     </span>
   );
