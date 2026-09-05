@@ -19,7 +19,7 @@ import type { CodexArtifactTemplate } from "@t3tools/client-runtime/codex-artifa
 import * as DateTime from "effect/DateTime";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-import type { Thread } from "../types";
+import type { Thread, TurnDiffSummary } from "../types";
 import { makeThreadFixture } from "../test-fixtures";
 import {
   agentControlledBrowserCloseConfirmation,
@@ -28,6 +28,7 @@ import {
   resolveBackgroundDraftWorkspaceOptions,
   resolveComposerInteractionMode,
   resolveComposerProviderSelection,
+  resolveProactiveTurnDiffAction,
   resolveDraftHeroState,
   scheduleEnvironmentReconnectWarning,
   codexArtifactTemplatePromptToAppend,
@@ -1555,5 +1556,81 @@ describe("resolveBackgroundDraftWorkspaceOptions", () => {
       worktreePath: null,
       startFromOrigin: true,
     });
+  });
+});
+
+describe("proactive completed diff guard", () => {
+  it("opens a completed turn diff only for changed files", () => {
+    const changedCheckpoint = {
+      status: "ready",
+      files: [{ path: "src/app.ts", kind: "modified", additions: 1, deletions: 0 }],
+    } satisfies Pick<TurnDiffSummary, "status" | "files">;
+    const unchangedCheckpoint = {
+      status: "ready",
+      files: [],
+    } satisfies Pick<TurnDiffSummary, "status" | "files">;
+
+    expect(
+      resolveProactiveTurnDiffAction({
+        checkpoint: changedCheckpoint,
+        isGitRepo: true,
+        activeSurfaceKind: null,
+      }),
+    ).toBe("open");
+    expect(
+      resolveProactiveTurnDiffAction({
+        checkpoint: unchangedCheckpoint,
+        isGitRepo: true,
+        activeSurfaceKind: null,
+      }),
+    ).toBe("ignore");
+  });
+
+  it("waits for definitive checkpoint and repository state", () => {
+    const missingCheckpoint = {
+      status: "missing",
+      files: [],
+    } satisfies Pick<TurnDiffSummary, "status" | "files">;
+    const changedCheckpoint = {
+      status: "ready",
+      files: [{ path: "src/app.ts", kind: "modified", additions: 1, deletions: 0 }],
+    } satisfies Pick<TurnDiffSummary, "status" | "files">;
+
+    expect(
+      resolveProactiveTurnDiffAction({
+        checkpoint: undefined,
+        isGitRepo: true,
+        activeSurfaceKind: null,
+      }),
+    ).toBe("defer");
+    expect(
+      resolveProactiveTurnDiffAction({
+        checkpoint: missingCheckpoint,
+        isGitRepo: true,
+        activeSurfaceKind: null,
+      }),
+    ).toBe("defer");
+    expect(
+      resolveProactiveTurnDiffAction({
+        checkpoint: changedCheckpoint,
+        isGitRepo: undefined,
+        activeSurfaceKind: null,
+      }),
+    ).toBe("defer");
+  });
+
+  it("keeps an active pull request above a completed turn diff", () => {
+    const changedCheckpoint = {
+      status: "ready",
+      files: [{ path: "src/app.ts", kind: "modified", additions: 1, deletions: 0 }],
+    } satisfies Pick<TurnDiffSummary, "status" | "files">;
+
+    expect(
+      resolveProactiveTurnDiffAction({
+        checkpoint: changedCheckpoint,
+        isGitRepo: true,
+        activeSurfaceKind: "pull-request",
+      }),
+    ).toBe("ignore");
   });
 });

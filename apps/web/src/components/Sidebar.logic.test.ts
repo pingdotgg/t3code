@@ -38,6 +38,7 @@ import {
   shouldClearThreadSelectionOnMouseDown,
   shouldNavigateAfterProjectRemoval,
   shouldShowSidebarV2Duration,
+  shouldRecedeSidebarThread,
   sortLogicalProjectsForSidebar,
   sortPinnedThreadsForSidebar,
   sortProjectsForSidebar,
@@ -423,7 +424,7 @@ describe("hasUnseenCompletion", () => {
 });
 
 describe("shouldRecedeSidebarThread", () => {
-  it.each(["working", "monitoring"] as const)(
+  it.each(["working", "waiting"] as const)(
     "recedes an inactive %s thread even when it is unread and woke",
     (status) => {
       expect(

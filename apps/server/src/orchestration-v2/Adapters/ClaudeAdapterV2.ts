@@ -4414,6 +4414,41 @@ export function makeClaudeAdapterV2(
             return;
           }
 
+          if (message.type === "system" && message.subtype === "model_refusal_fallback") {
+            const now = yield* DateTime.now;
+            const nativeItemId = message.uuid;
+            yield* emitProviderEvent({
+              type: "turn_item.updated",
+              driver: CLAUDE_PROVIDER,
+              turnItem: {
+                id: idAllocator.derive.turnItemFromProviderItem({
+                  driver: CLAUDE_PROVIDER,
+                  nativeItemId,
+                }),
+                threadId: context.input.threadId,
+                runId: context.input.runId,
+                nodeId: context.input.rootNodeId,
+                providerThreadId: context.input.providerThread.id,
+                providerTurnId: context.providerTurnId,
+                nativeItemRef: {
+                  driver: CLAUDE_PROVIDER,
+                  nativeId: nativeItemId,
+                  strength: "strong",
+                },
+                parentItemId: null,
+                ordinal: yield* resolveItemOrdinal(context, nativeItemId),
+                type: "system_notice",
+                status: "completed",
+                title: message.content,
+                message: message.content,
+                startedAt: now,
+                completedAt: now,
+                updatedAt: now,
+              },
+            });
+            return;
+          }
+
           if (message.type === "system" && message.subtype === "api_retry") {
             const updatedAt = yield* DateTime.now;
             const previous = (yield* Ref.get(providerRetries)).get(context.providerTurnId);
