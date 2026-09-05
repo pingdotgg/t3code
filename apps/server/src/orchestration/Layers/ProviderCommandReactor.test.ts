@@ -4,6 +4,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import {
+  projectFolderMissingMessage,
   ModelSelection,
   ProviderRuntimeEvent,
   ProviderSession,
@@ -1216,56 +1217,61 @@ describe("ProviderCommandReactor", () => {
     }),
   );
 
-  effectIt.effect("shows the missing workspace message without a provider stack trace", () =>
-    Effect.gen(function* () {
-      const attempted = yield* Deferred.make<void>();
-      const missingCwd = "/missing/project/worktree";
-      const missingWorkspace = new ProviderWorkspaceMissingError({
-        threadId: ThreadId.make("thread-1"),
-        cwd: missingCwd,
-      });
-      const harness = yield* Effect.promise(() =>
-        createHarness({
-          startSessionEffect: () =>
-            Deferred.succeed(attempted, undefined).pipe(
-              Effect.andThen(Effect.fail(missingWorkspace)),
-            ),
-        }),
-      );
+  effectIt.effect.each(["/tmp/provider-project", "/missing/project/worktree"])(
+    "shows the missing workspace message for %s without a provider stack trace",
+    (missingCwd) =>
+      Effect.gen(function* () {
+        const attempted = yield* Deferred.make<void>();
+        const missingWorkspace = new ProviderWorkspaceMissingError({
+          threadId: ThreadId.make("thread-1"),
+          cwd: missingCwd,
+        });
+        const expectedMessage =
+          missingCwd === "/tmp/provider-project"
+            ? projectFolderMissingMessage(missingCwd)
+            : missingWorkspace.message;
+        const harness = yield* Effect.promise(() =>
+          createHarness({
+            startSessionEffect: () =>
+              Deferred.succeed(attempted, undefined).pipe(
+                Effect.andThen(Effect.fail(missingWorkspace)),
+              ),
+          }),
+        );
 
-      yield* harness.engine.dispatch({
-        type: "thread.turn.start",
-        commandId: CommandId.make("cmd-turn-start-missing-workspace"),
-        threadId: ThreadId.make("thread-1"),
-        message: {
-          messageId: asMessageId("user-message-missing-workspace"),
-          role: "user",
-          text: "continue",
-          attachments: [],
-        },
-        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-        runtimeMode: "approval-required",
-        createdAt: "2026-01-01T00:00:00.000Z",
-      });
-      yield* Deferred.await(attempted);
-      yield* Effect.promise(() => harness.drain());
+        yield* harness.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make("cmd-turn-start-missing-workspace"),
+          threadId: ThreadId.make("thread-1"),
+          message: {
+            messageId: asMessageId("user-message-missing-workspace"),
+            role: "user",
+            text: "continue",
+            attachments: [],
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          createdAt: "2026-01-01T00:00:00.000Z",
+        });
+        yield* Deferred.await(attempted);
+        yield* Effect.promise(() => harness.drain());
 
-      const thread = (yield* Effect.promise(() => harness.readModel())).threads.find(
-        (entry) => entry.id === ThreadId.make("thread-1"),
-      );
-      expect(thread?.session).toMatchObject({
-        status: "error",
-        activeTurnId: null,
-        lastError: missingWorkspace.message,
-      });
-      const failure = thread?.activities.find(
-        (activity) => activity.kind === "provider.turn.start.failed",
-      );
-      expect(failure?.payload).toMatchObject({ detail: missingWorkspace.message });
-      expect(harness.runtimeSessions).toEqual([]);
-      expect(harness.sendTurn).not.toHaveBeenCalled();
-      expect(yield* Effect.promise(() => harness.readPendingTurnStarts())).toEqual([]);
-    }),
+        const thread = (yield* Effect.promise(() => harness.readModel())).threads.find(
+          (entry) => entry.id === ThreadId.make("thread-1"),
+        );
+        expect(thread?.session).toMatchObject({
+          status: "error",
+          activeTurnId: null,
+          lastError: expectedMessage,
+        });
+        const failure = thread?.activities.find(
+          (activity) => activity.kind === "provider.turn.start.failed",
+        );
+        expect(failure?.payload).toMatchObject({ detail: expectedMessage });
+        expect(harness.runtimeSessions).toEqual([]);
+        expect(harness.sendTurn).not.toHaveBeenCalled();
+        expect(yield* Effect.promise(() => harness.readPendingTurnStarts())).toEqual([]);
+      }),
   );
 
   effectIt.effect("settles a failed provider startup and allows a clean retry", () =>

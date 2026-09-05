@@ -1,4 +1,7 @@
+import { checkoutKey } from "./settings/ProjectSettingsPanel.logic";
 import {
+  projectFolderMissingMessage,
+  PROJECT_FOLDER_MISSING_MESSAGE,
   type AssistantCitation,
   type ApprovalRequestId,
   type ChatFileAttachment,
@@ -1974,6 +1977,14 @@ export default function ChatView(props: ChatViewProps) {
     [activeThread?.environmentId, activeThread?.projectId],
   );
   const activeProject = useProject(activeProjectRef);
+  // A failed start belongs to the checkout it tried. Relinking must not leave
+  // a missing-folder banner claiming that the new checkout is missing too.
+  const currentCheckoutThreadError =
+    activeProject &&
+    visibleThreadError?.startsWith(`${PROJECT_FOLDER_MISSING_MESSAGE}\n`) &&
+    visibleThreadError !== projectFolderMissingMessage(activeProject.workspaceRoot)
+      ? null
+      : visibleThreadError;
   const handleNewThreadInActiveProject = useCallback(() => {
     startNewThreadForProject(activeProjectRef, handleNewThread);
   }, [activeProjectRef, handleNewThread]);
@@ -3075,7 +3086,8 @@ export default function ChatView(props: ChatViewProps) {
   )
     ? activeProviderStatus
     : null;
-  const hasTimelineTopBanner = Boolean(visibleThreadError) || visibleProviderStatus !== null;
+  const hasTimelineTopBanner =
+    Boolean(currentCheckoutThreadError) || visibleProviderStatus !== null;
   const activeProjectCwd = activeProject?.workspaceRoot ?? null;
   const activeThreadWorktreePath = activeThread?.worktreePath ?? null;
   const activeWorkspaceRoot = activeThreadWorktreePath ?? activeProjectCwd ?? undefined;
@@ -7790,7 +7802,28 @@ export default function ChatView(props: ChatViewProps) {
                 onOpenProviderSetup={openProviderSetup}
               />
               <ThreadErrorBanner
-                error={visibleThreadError}
+                error={currentCheckoutThreadError}
+                {...(activeProject &&
+                !activeThread.worktreePath &&
+                visibleThreadError === projectFolderMissingMessage(activeProject.workspaceRoot)
+                  ? {
+                      onUpdateProjectSettings: () => {
+                        void navigate({
+                          to: "/projects/$projectKey",
+                          params: {
+                            projectKey: deriveLogicalProjectKeyFromSettings(
+                              activeProject,
+                              projectGroupingSettings,
+                            ),
+                          },
+                          search: {
+                            checkout: checkoutKey(activeProject),
+                          },
+                          hash: "checkout",
+                        });
+                      },
+                    }
+                  : {})}
                 onDismiss={() => {
                   setThreadError(activeThread.id, null);
                   dismissThreadErrorBannerForSession(threadErrorBannerKey);

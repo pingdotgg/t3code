@@ -12,6 +12,7 @@ import { sortThreads } from "../lib/threadSort";
 import { normalizeSearchText } from "../lib/utils";
 import { formatRelativeTimeLabel } from "../timestampFormat";
 import { type Project, type SidebarThreadSummary, type Thread } from "../types";
+import type { FolderSelectionRequest } from "../commandPaletteBus";
 
 export { normalizeSearchText } from "../lib/utils";
 
@@ -40,9 +41,9 @@ export function browseInputEndPaddingClass(input: {
  */
 export type SearchOverlayMode = "command" | "files" | "content";
 
-export interface CommandPaletteOpenIntent {
-  readonly kind: "add-project" | "new-thread-in";
-}
+export type CommandPaletteOpenIntent =
+  | { readonly kind: "add-project" | "new-thread-in" }
+  | (FolderSelectionRequest & { readonly kind: "select-folder" });
 
 export interface CommandPaletteUiState {
   readonly open: boolean;
@@ -55,6 +56,12 @@ export type CommandPaletteUiAction =
   | { readonly _tag: "ToggleMode"; readonly mode: SearchOverlayMode }
   | { readonly _tag: "OpenAddProject" }
   | { readonly _tag: "OpenNewThreadIn" }
+  | { readonly _tag: "SelectFolder"; readonly request: FolderSelectionRequest }
+  | {
+      readonly _tag: "CompleteFolderSelection";
+      readonly request: FolderSelectionRequest;
+      readonly selected: boolean;
+    }
   | { readonly _tag: "ClearOpenIntent" };
 
 export function reduceCommandPaletteUiState(
@@ -74,6 +81,16 @@ export function reduceCommandPaletteUiState(
       return { open: true, mode: "command", openIntent: { kind: "add-project" } };
     case "OpenNewThreadIn":
       return { open: true, mode: "command", openIntent: { kind: "new-thread-in" } };
+    case "SelectFolder":
+      return {
+        open: true,
+        mode: "command",
+        openIntent: { ...action.request, kind: "select-folder" },
+      };
+    case "CompleteFolderSelection":
+      return action.selected && state.openIntent === action.request
+        ? { ...state, open: false, openIntent: null }
+        : state;
     case "ClearOpenIntent":
       return state.openIntent ? { ...state, openIntent: null } : state;
   }

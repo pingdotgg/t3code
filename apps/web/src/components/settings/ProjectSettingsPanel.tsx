@@ -24,9 +24,16 @@ import type {
 import { resolveEnvModeLabel } from "../BranchToolbar.logic";
 import { createModelSelection } from "@t3tools/shared/model";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
-import { useCanGoBack, useNavigate } from "@tanstack/react-router";
+import { useCanGoBack, useNavigate, useSearch } from "@tanstack/react-router";
 import * as Cause from "effect/Cause";
-import { ChevronDownIcon, CopyIcon, PlusIcon, SettingsIcon, Trash2Icon } from "lucide-react";
+import {
+  ChevronDownIcon,
+  CopyIcon,
+  PencilIcon,
+  PlusIcon,
+  SettingsIcon,
+  Trash2Icon,
+} from "lucide-react";
 import {
   lazy,
   Suspense,
@@ -41,6 +48,7 @@ import {
 import { useComposerDraftStore } from "../../composerDraftStore";
 import { isElectron } from "../../env";
 import {
+  getClientSettings,
   useClientSettings,
   useEnvironmentSettings,
   useUpdateClientSettings,
@@ -71,7 +79,13 @@ import {
   type SidebarProjectSnapshot,
 } from "../../sidebarProjectGrouping";
 import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
-import { useProjects, useThreadShells } from "../../state/entities";
+import {
+  readProject,
+  readProjects,
+  useProjects,
+  useThreadShells,
+  waitForProject,
+} from "../../state/entities";
 import { projectEnvironment } from "../../state/projects";
 import { EMPTY_SERVER_PROVIDERS, serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -119,7 +133,16 @@ import {
   canPickExternalProjectFavicon,
   ProjectFaviconPickerDialog,
 } from "./ProjectFaviconPickerDialog";
-import { projectGroupTitleNeedsUpdate } from "./ProjectSettingsPanel.logic";
+import {
+  checkoutKey,
+  projectGroupTitleNeedsUpdate,
+  relinkProjectGroupingSettings,
+  relinkProjectUiState,
+  resolveSettingsProjectGroup,
+} from "./ProjectSettingsPanel.logic";
+import { openCommandPalette } from "../../commandPaletteBus";
+import { getBrowseParentPath, normalizeProjectPathForComparison } from "../../lib/projectPaths";
+import { useUiStateStore } from "../../uiStateStore";
 
 const ProjectIconPickerDialog = lazy(() =>
   import("./ProjectIconPickerDialog").then((module) => ({
@@ -256,8 +279,9 @@ function ProjectSettingsBreadcrumb({ projectKey }: { projectKey: string }) {
 export function ProjectSettingsPanel({ projectKey }: { projectKey: string }) {
   const groups = useSettingsProjectGroups();
   const navigate = useNavigate();
+  const { checkout } = useSearch({ from: "/projects/$projectKey" });
 
-  const selected = groups.find((group) => group.projectKey === projectKey) ?? null;
+  const selected = resolveSettingsProjectGroup(groups, projectKey, checkout);
 
   // Remember the members of the last rendered group so a grouping-rule change
   // (which changes the group key) can follow the project to its new group.
@@ -266,24 +290,29 @@ export function ProjectSettingsPanel({ projectKey }: { projectKey: string }) {
     if (!selected) return;
     lastSelectionRef.current = {
       key: selected.projectKey,
-      memberKeys: selected.memberProjects.map((member) => member.physicalProjectKey),
+      memberKeys: selected.memberProjects.map(checkoutKey),
     };
   }, [selected]);
 
   // A grouping-rule change replaces the group key mid-visit; follow the
   // project to its new key instead of parking on the not-found state.
   useEffect(() => {
-    if (selected !== null) return;
+    if (selected?.projectKey === projectKey) return;
     const last = lastSelectionRef.current;
-    if (last?.key !== projectKey) return;
-    const successor = groups.find((group) =>
-      group.memberProjects.some((member) => last.memberKeys.includes(member.physicalProjectKey)),
-    );
+    const successor =
+      selected ??
+      (last?.key === projectKey
+        ? groups.find((group) =>
+            group.memberProjects.some((member) => last.memberKeys.includes(checkoutKey(member))),
+          )
+        : null);
     if (successor) {
       void navigate({
         to: "/projects/$projectKey",
         params: { projectKey: successor.projectKey },
+        search: true,
         replace: true,
+        resetScroll: false,
         hashScrollIntoView: false,
       });
     }
@@ -303,6 +332,7 @@ export function ProjectSettingsPanel({ projectKey }: { projectKey: string }) {
 
 function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
   const navigate = useNavigate();
+  const { checkout: checkoutTarget } = useSearch({ from: "/projects/$projectKey" });
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const representative =
     group.memberProjects.find(
@@ -506,9 +536,9 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
   );
 
   // ----- checkout selection and scripts -----
-  const [selectedCheckoutKey, setSelectedCheckoutKey] = useState(representative.physicalProjectKey);
+  const selectedCheckoutKey = checkoutTarget ?? checkoutKey(representative);
   const selectedCheckout =
-    group.memberProjects.find((member) => member.physicalProjectKey === selectedCheckoutKey) ??
+    group.memberProjects.find((member) => checkoutKey(member) === selectedCheckoutKey) ??
     representative;
   const selectedServerConfig = useAtomValue(
     serverEnvironment.configValueAtom(selectedCheckout.environmentId),
@@ -805,6 +835,48 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
       deriveProjectGroupingOverrideKey(selectedCheckout)
     ] ?? "inherit";
   const selectedCheckoutLabel = selectedCheckout.environmentLabel ?? "This machine";
+  const updateCheckoutFolder = async (workspaceRoot: string) => {
+    const ref = scopeProjectRef(selectedCheckout.environmentId, selectedCheckout.id);
+    const previous = readProject(ref);
+    if (previous === null) return false;
+    const result = await updateProject({
+      environmentId: selectedCheckout.environmentId,
+      input: { projectId: selectedCheckout.id, workspaceRoot },
+    });
+    reportFailure(
+      "Failed to update project folder",
+      mapAtomCommandResult(result, () => undefined),
+    );
+    if (result._tag === "Failure") return false;
+    const selectedPath = normalizeProjectPathForComparison(workspaceRoot);
+    if (normalizeProjectPathForComparison(previous.workspaceRoot) === selectedPath) return true;
+    // The palette submits a resolved server browse path, not the typed query.
+    const updated = await settlePromise(() => waitForProject(ref, { workspaceRoot }));
+    reportFailure(
+      "Folder updated, but project preferences could not follow it",
+      mapAtomCommandResult(updated, () => undefined),
+    );
+    if (updated._tag === "Failure") return true;
+    const projects = readProjects();
+    const project = projects.find(
+      (item) =>
+        item.environmentId === ref.environmentId &&
+        item.id === ref.projectId &&
+        normalizeProjectPathForComparison(item.workspaceRoot) === selectedPath,
+    );
+    if (!project) return true;
+    const settings = selectProjectGroupingSettings(getClientSettings());
+    useUiStateStore.setState((state) =>
+      relinkProjectUiState(state, { previous, project, projects, settings }),
+    );
+    const nextSettings = relinkProjectGroupingSettings(settings, previous, project);
+    if (nextSettings !== settings) {
+      updateClientSettings({
+        sidebarProjectGroupingOverrides: nextSettings.sidebarProjectGroupingOverrides,
+      });
+    }
+    return true;
+  };
 
   return (
     <>
@@ -1006,11 +1078,19 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
         </SettingsSection>
 
         <SettingsSection
+          id="checkout"
           title="Checkout"
           headerAction={
             <Select
-              value={selectedCheckout.physicalProjectKey}
-              onValueChange={(value) => setSelectedCheckoutKey(String(value))}
+              value={checkoutKey(selectedCheckout)}
+              onValueChange={(value) => {
+                void navigate({
+                  to: "/projects/$projectKey",
+                  params: { projectKey: group.projectKey },
+                  search: { checkout: String(value) },
+                  resetScroll: false,
+                });
+              }}
             >
               <SelectTrigger size="sm" className="max-w-64" aria-label="Selected checkout">
                 <SelectValue>{selectedCheckoutLabel}</SelectValue>
@@ -1020,7 +1100,7 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
                   <SelectItem
                     key={member.physicalProjectKey}
                     hideIndicator
-                    value={member.physicalProjectKey}
+                    value={checkoutKey(member)}
                   >
                     {member.environmentLabel ?? "This machine"} · {member.workspaceRoot}
                   </SelectItem>
@@ -1052,6 +1132,36 @@ function ProjectDetail({ group }: { group: SidebarProjectSnapshot }) {
                   }
                 />
                 <TooltipPopup side="top">Copy path</TooltipPopup>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      aria-label="Update project folder"
+                      onClick={() => {
+                        void navigate({
+                          to: "/projects/$projectKey",
+                          params: { projectKey: group.projectKey },
+                          search: { checkout: checkoutKey(selectedCheckout) },
+                          resetScroll: false,
+                        });
+                        openCommandPalette({
+                          open: "select-folder",
+                          environmentId: selectedCheckout.environmentId,
+                          initialPath:
+                            getBrowseParentPath(selectedCheckout.workspaceRoot) ??
+                            selectedCheckout.workspaceRoot,
+                          onSelect: updateCheckoutFolder,
+                        });
+                      }}
+                    >
+                      <PencilIcon className="size-4" />
+                    </Button>
+                  }
+                />
+                <TooltipPopup side="top">Update project folder</TooltipPopup>
               </Tooltip>
               <div className="shrink-0 border-l border-border/60 px-2 tabular-nums">
                 {selectedCheckoutThreadCount === 1

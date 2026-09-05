@@ -1,4 +1,5 @@
 import {
+  projectFolderMissingMessage,
   type ChatAttachment,
   CommandId,
   EventId,
@@ -733,7 +734,21 @@ const make = Effect.gen(function* () {
           ...(input?.resumeCursor !== undefined ? { resumeCursor: input.resumeCursor } : {}),
           runtimeMode: desiredRuntimeMode,
         })
-        .pipe(Effect.tap(() => refreshWorkspaceSnapshot));
+        .pipe(
+          Effect.mapError((error) =>
+            isProviderWorkspaceMissingError(error) &&
+            project &&
+            !thread.worktreePath &&
+            error.cwd === project.workspaceRoot
+              ? new ProviderAdapterRequestError({
+                  provider: preferredProvider,
+                  method: "thread.start",
+                  detail: projectFolderMissingMessage(project.workspaceRoot),
+                })
+              : error,
+          ),
+          Effect.tap(() => refreshWorkspaceSnapshot),
+        );
 
     const bindSessionToThread = (session: ProviderSession) =>
       Effect.gen(function* () {

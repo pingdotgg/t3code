@@ -11,6 +11,13 @@ const PROJECT_SEARCH_CONTENTS_MAX_LIMIT = 500;
 const PROJECT_WRITE_FILE_PATH_MAX_LENGTH = 512;
 const PROJECT_READ_FILE_PATH_MAX_LENGTH = 512;
 
+export const PROJECT_FOLDER_MISSING_MESSAGE =
+  "This project folder no longer exists. It may have been moved or renamed.";
+
+export function projectFolderMissingMessage(workspaceRoot: string): string {
+  return `${PROJECT_FOLDER_MISSING_MESSAGE}\n${workspaceRoot}`;
+}
+
 export const ProjectEntryKind = Schema.Literals(["file", "directory"]);
 export type ProjectEntryKind = typeof ProjectEntryKind.Type;
 

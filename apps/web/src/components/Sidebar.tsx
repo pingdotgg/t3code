@@ -2179,11 +2179,33 @@ export default function Sidebar() {
   // only after every catalog environment has a live project snapshot. Cached
   // or disconnected environments cannot establish that the project is gone.
   const allProjectSnapshotsReady = useAllEnvironmentProjectSnapshotsReady();
+  const previousScopedProjectGroup = useRef(scopedProjectGroup);
   useEffect(() => {
     if (projectScopeKey !== null && allProjectSnapshotsReady && scopedProjectGroup === null) {
-      setProjectScopeKey(null);
+      // Relinking changes the path-derived group key, but keeps the project IDs.
+      const previous = previousScopedProjectGroup.current;
+      const successor =
+        previous?.projectKey === projectScopeKey
+          ? projectGroups.find((group) =>
+              group.memberProjectRefs.some((member) =>
+                previous.memberProjectRefs.some(
+                  (old) =>
+                    old.environmentId === member.environmentId &&
+                    old.projectId === member.projectId,
+                ),
+              ),
+            )
+          : undefined;
+      setProjectScopeKey(successor?.projectKey ?? null);
     }
-  }, [allProjectSnapshotsReady, projectScopeKey, scopedProjectGroup, setProjectScopeKey]);
+    previousScopedProjectGroup.current = scopedProjectGroup;
+  }, [
+    allProjectSnapshotsReady,
+    projectGroups,
+    projectScopeKey,
+    scopedProjectGroup,
+    setProjectScopeKey,
+  ]);
   // Count-only subscription: the parent needs "are there draft rows" for the
   // empty state, while SidebarDraftBlock owns the per-keystroke content
   // subscription. Selecting a number keeps typing in a draft composer from

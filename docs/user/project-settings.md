@@ -2,6 +2,15 @@
 
 Open **Settings → Projects** and select a project to change its preferences.
 
+## Reconnect a moved folder
+
+If a project folder was moved or renamed, open its project settings and update the folder under
+**Checkout**. Select the folder in the checkout's environment. This keeps the project's conversations
+and settings without moving files. A folder already registered as another project cannot be selected.
+
+An active provider session adopts the new folder on its next turn. Worktree conversations keep their
+own paths; updating the project folder does not relocate or repair a worktree.
+
 ## Project icons
 
 Choose an icon, emoji, or image from the project to make it easier to recognize. The choice applies
