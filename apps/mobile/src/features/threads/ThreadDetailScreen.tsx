@@ -1,6 +1,11 @@
 import { type EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
+import {
+  appendCodexArtifactTemplateUsePrompt,
+  type CodexArtifactTemplate,
+} from "@t3tools/client-runtime/codex-artifact-templates";
 import type { EnvironmentThreadStatus } from "@t3tools/client-runtime/state/threads";
 import { useKeyboardChatComposerInset, useKeyboardScrollToEnd } from "@legendapp/list/keyboard";
+import { resolveProviderSkillsForCwd } from "@t3tools/client-runtime/providerSkills";
 import type { LegendListRef } from "@legendapp/list/react-native";
 import { HeaderHeightContext } from "@react-navigation/elements";
 import type {
@@ -69,6 +74,7 @@ import { PendingUserInputCard } from "./PendingUserInputCard";
 import {
   FLOATING_WORKING_CONTROL_COVERAGE,
   FloatingWorkingControl,
+  type FloatingWorkingStatus,
 } from "./floating-working-control";
 import {
   derivePendingUserInputMaxHeight,
@@ -94,6 +100,7 @@ export interface ThreadDetailScreenProps {
   readonly environmentLabel: string | null;
   readonly selectedThreadFeed: ReadonlyArray<ThreadFeedEntry>;
   readonly activeWorkStartedAt: string | null;
+  readonly isCompacting: boolean;
   readonly activePendingApproval: PendingApproval | null;
   readonly respondingApprovalId: ApprovalRequestId | null;
   readonly activePendingUserInput: PendingUserInput | null;
@@ -117,7 +124,7 @@ export interface ThreadDetailScreenProps {
   readonly onHeaderMaterialVisibilityChange?: (visible: boolean) => void;
   readonly onOpenConnectionEditor: () => void;
   readonly onChangeDraftMessage: (value: string) => void;
-  readonly onPickDraftImages: () => Promise<void>;
+  readonly onPickDraftMedia: () => Promise<void>;
   readonly onPickDraftFiles: () => Promise<void>;
   readonly onNativePasteImages: (uris: ReadonlyArray<string>) => Promise<void>;
   readonly onRemoveDraftImage: (imageId: string) => void;
@@ -134,7 +141,7 @@ export interface ThreadDetailScreenProps {
   readonly onSelectUserInputOption: (
     requestId: ApprovalRequestId,
     question: UserInputQuestion,
-    label: string,
+    value: string,
   ) => void;
   readonly onChangeUserInputCustomAnswer: (
     requestId: ApprovalRequestId,
@@ -260,12 +267,22 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   const agentLabel = `${props.selectedThread.modelSelection.instanceId} agent`;
   const selectedThreadKey = scopedThreadKey(props.environmentId, props.selectedThread.id);
   const composerEditorRef = useRef<ComposerEditorHandle>(null);
+  const draftMessageRef = useRef(props.draftMessage);
+  draftMessageRef.current = props.draftMessage;
   const composerOverlayRef = useRef<View>(null);
   const listRef = useRef<LegendListRef>(null);
   const feedTouchStartRef = useRef<{ pageX: number; pageY: number } | null>(null);
   const selectedThreadKeyRef = useRef(selectedThreadKey);
   const lastScrolledSubmittedMessageIdRef = useRef<MessageId | null>(null);
   const [composerExpanded, setComposerExpanded] = useState(false);
+  const [composerFocused, setComposerFocused] = useState(false);
+  const handleComposerFocusChange = useCallback(
+    (focused: boolean) => {
+      setComposerFocused(focused);
+      handleOwnedInputFocusChange(focused);
+    },
+    [handleOwnedInputFocusChange],
+  );
   const [anchorMessageId, setAnchorMessageId] = useState<MessageId | null>(null);
   const [submittedMessageId, setSubmittedMessageId] = useState<MessageId | null>(null);
   const [endFollowEnabled, setEndFollowEnabled] = useState(true);
@@ -276,35 +293,61 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   // animation, so the composer would ride down flush to the screen edge and
   // then snap up into the inset. On iOS blur precedes the hide, so the
   // focus-keyed inset is already in place while the composer rides down.
-  const composerBottomInset = (Platform.OS === "android" ? isKeyboardVisible : composerExpanded)
+  // Dictation keeps that focus while the composer switches to its compact pill.
+  const composerBottomInset = (
+    Platform.OS === "android" ? isKeyboardVisible : composerExpanded || composerFocused
+  )
     ? 0
     : Math.max(insets.bottom, 12);
   const contentPresentationKind = props.contentPresentation.kind;
   // The raw sync status enters "synchronizing" on every full fetch, cached or
   // not. Whether messages are already on screen decides the pill label: no
   // data yet → "Loading messages", cached data reconciling → "Syncing".
-  const threadSyncPhase = (() => {
+  const threadSyncLabel = (() => {
     switch (props.threadSyncStatus) {
       case "empty":
       case "cached":
       case "synchronizing":
         if (contentPresentationKind === "ready") {
-          return "syncing" as const;
+          return "Syncing messages...";
         }
-        return contentPresentationKind === "loading" ? ("loading" as const) : null;
+        return contentPresentationKind === "loading" ? "Loading messages..." : null;
       default:
         return null;
     }
   })();
-  const showWorkingControl =
-    props.activeWorkStartedAt !== null &&
-    contentPresentationKind === "ready" &&
-    threadSyncPhase === null &&
-    props.connectionStateLabel === "connected" &&
-    props.activePendingApproval === null &&
-    props.activePendingUserInput === null;
-  const floatingWorkingStartedAt = showWorkingControl ? props.activeWorkStartedAt : null;
+  // One floating pill above the composer: it reads the sync state while
+  // messages load, then the working timer once the feed is settled.
+  const floatingStatus = ((): FloatingWorkingStatus | null => {
+    if (
+      props.connectionStateLabel !== "connected" ||
+      props.activePendingApproval !== null ||
+      props.activePendingUserInput !== null
+    ) {
+      return null;
+    }
+    if (threadSyncLabel !== null) {
+      return { kind: "syncing", label: threadSyncLabel };
+    }
+    if (props.isCompacting && contentPresentationKind === "ready") {
+      return { kind: "compacting" };
+    }
+    if (props.activeWorkStartedAt !== null && contentPresentationKind === "ready") {
+      return { kind: "working", startedAt: props.activeWorkStartedAt };
+    }
+    return null;
+  })();
+  const showWorkingControl = floatingStatus !== null;
   const selectedThreadFeed = props.selectedThreadFeed;
+  const hasCompactableConversation =
+    selectedThreadFeed.some(
+      (entry) =>
+        entry.type === "message" &&
+        entry.message.role === "user" &&
+        ((entry.message.attachments?.length ?? 0) > 0 ||
+          entry.message.text.trim().toLowerCase() !== "/compact"),
+    ) ||
+    (Boolean(props.loadEarlier) && props.selectedThread.latestUserMessageAt !== null);
   const composerChrome = composerExpanded ? COMPOSER_EXPANDED_CHROME : COMPOSER_COLLAPSED_CHROME;
   const composerOverlapHeight = composerChrome + composerBottomInset;
   // While a user-input request is pending, the questionnaire owns the
@@ -493,16 +536,20 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   const contentMaxWidth = isSplitLayout ? CHAT_CONTENT_MAX_WIDTH : undefined;
   const selectedInstanceId = props.selectedThread.modelSelection.instanceId;
   useStreamingHaptics(props.selectedThread.id, props.selectedThreadFeed);
-  const selectedProviderSkills = useMemo(
-    () =>
-      props.serverConfig?.providers.find((provider) => provider.instanceId === selectedInstanceId)
-        ?.skills ?? [],
-    [props.serverConfig, selectedInstanceId],
-  );
+  const selectedProviderSkills = useMemo(() => {
+    const provider = props.serverConfig?.providers.find(
+      (candidate) => candidate.instanceId === selectedInstanceId,
+    );
+    return provider
+      ? resolveProviderSkillsForCwd(provider, props.threadCwd ?? props.projectWorkspaceRoot)
+      : [];
+  }, [props.projectWorkspaceRoot, props.serverConfig, props.threadCwd, selectedInstanceId]);
 
   useLayoutEffect(() => {
     selectedThreadKeyRef.current = selectedThreadKey;
-  }, [selectedThreadKey]);
+    // A replaced or unmounted native editor may not emit a blur event.
+    setComposerFocused(false);
+  }, [selectedThreadKey, showContent]);
 
   useEffect(() => {
     setAnchorMessageId(null);
@@ -601,6 +648,22 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
     composerEditorRef.current?.blur();
   }, []);
 
+  const handleUseArtifactTemplate = useCallback(
+    (template: CodexArtifactTemplate) => {
+      const currentDraft = draftMessageRef.current;
+      const nextDraft = appendCodexArtifactTemplateUsePrompt(currentDraft, template);
+      if (nextDraft !== currentDraft) {
+        draftMessageRef.current = nextDraft;
+        props.onChangeDraftMessage(nextDraft);
+      }
+      requestAnimationFrame(() => {
+        composerEditorRef.current?.focus();
+        composerEditorRef.current?.setSelection({ start: nextDraft.length, end: nextDraft.length });
+      });
+    },
+    [props.onChangeDraftMessage],
+  );
+
   const handleScrollToEnd = useCallback(() => {
     void Haptics.selectionAsync();
     void scrollMessageToEnd({ animated: true, closeKeyboard: false }).catch(() => {
@@ -653,7 +716,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
           onTouchCancel={handleFeedTouchCancel}
         >
           <ThreadFeed
-            key={props.selectedThread.id}
+            key={selectedThreadKey}
             environmentId={props.environmentId}
             threadId={props.selectedThread.id}
             workspaceRoot={props.threadCwd}
@@ -677,6 +740,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
             onHeaderMaterialVisibilityChange={props.onHeaderMaterialVisibilityChange}
             onEndFollowEnabledChange={setEndFollowEnabled}
             skills={selectedProviderSkills}
+            onUseArtifactTemplate={handleUseArtifactTemplate}
             loadEarlier={props.loadEarlier ?? null}
           />
         </View>
@@ -709,7 +773,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
             <View ref={composerOverlayRef} onLayout={onComposerLayout} className="w-full">
               <FloatingWorkingControl
                 colorScheme={isDarkMode ? "dark" : "light"}
-                startedAt={floatingWorkingStartedAt}
+                status={floatingStatus}
                 showScrollToEnd={showScrollToEndButton}
                 onScrollToEnd={handleScrollToEnd}
               />
@@ -768,15 +832,15 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                   connectionState={props.connectionStateLabel}
                   connectionError={props.connectionError}
                   environmentLabel={props.environmentLabel}
-                  threadSyncPhase={threadSyncPhase}
                   selectedThread={props.selectedThread}
+                  hasCompactableConversation={hasCompactableConversation && !props.isCompacting}
                   serverConfig={props.serverConfig}
                   queueCount={props.selectedThreadQueueCount}
                   environmentId={props.environmentId}
-                  projectCwd={props.projectWorkspaceRoot}
+                  projectCwd={props.threadCwd ?? props.projectWorkspaceRoot}
                   bottomInset={composerBottomInset}
                   onChangeDraftMessage={props.onChangeDraftMessage}
-                  onPickDraftImages={props.onPickDraftImages}
+                  onPickDraftMedia={props.onPickDraftMedia}
                   onPickDraftFiles={props.onPickDraftFiles}
                   onNativePasteImages={props.onNativePasteImages}
                   onRemoveDraftImage={props.onRemoveDraftImage}
@@ -787,7 +851,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                   onUpdateRuntimeMode={props.onUpdateThreadRuntimeMode}
                   onUpdateInteractionMode={props.onUpdateThreadInteractionMode}
                   onExpandedChange={setComposerExpanded}
-                  onEditorFocusChange={handleOwnedInputFocusChange}
+                  onEditorFocusChange={handleComposerFocusChange}
                 />
               </View>
             </View>

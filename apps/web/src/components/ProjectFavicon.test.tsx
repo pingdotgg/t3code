@@ -1,6 +1,7 @@
 import type { ComponentType, Dispatch, ReactElement, SetStateAction } from "react";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import type { EnvironmentId } from "@t3tools/contracts";
+import { PROJECT_FAVICON_FALLBACK_MARKER } from "@t3tools/shared/projectFavicon";
 
 const testState = vi.hoisted(() => ({
   faviconUrl: "https://environment.test/api/assets/token-a/v1-20-favicon.svg",
@@ -52,6 +53,10 @@ vi.mock("react", async (importOriginal) => {
 });
 
 vi.mock("react/compiler-runtime", () => ({ c: hooks.useMemoCache }));
+vi.mock("lucide-react/dynamic", () => ({
+  DynamicIcon: "dynamic-icon",
+  iconNames: ["alarm-clock", "folder-code"],
+}));
 vi.mock("../assets/assetUrls", () => ({
   useAssetUrlState: (_environmentId: unknown, resource: unknown) => {
     testState.lastResource = resource;
@@ -86,6 +91,7 @@ function resolveImageComponent(): {
   const element = ProjectFavicon({
     environmentId: "environment-test" as EnvironmentId,
     cwd: "/workspace-test",
+    projectName: "workspace-test",
   }) as ReactElement<ProjectFaviconImageProps>;
   hooks.reset();
 
@@ -106,6 +112,74 @@ function renderImage(
 describe("ProjectFavicon", () => {
   beforeEach(() => {
     hooks.reset();
+    testState.faviconUrl = "https://environment.test/api/assets/token-a/v1-20-favicon.svg";
+  });
+
+  it("shows a project-name icon when no favicon exists", () => {
+    testState.faviconUrl = `https://environment.test/api/assets/token/${PROJECT_FAVICON_FALLBACK_MARKER}`;
+
+    const element = ProjectFavicon({
+      environmentId: "environment-test" as EnvironmentId,
+      cwd: "/workspace/analytics-db",
+      projectName: "analytics-db",
+    }) as ReactElement<{
+      readonly colorClassName?: string;
+      readonly emoji?: string;
+      readonly icon?: ComponentType<{ className?: string }>;
+    }>;
+
+    expect(element.props.icon).toBeDefined();
+    expect(element.props.emoji).toBeUndefined();
+    expect(element.props.colorClassName).toContain("text-cyan-600");
+  });
+
+  it("chooses a deterministic semantic icon", () => {
+    testState.faviconUrl = `https://environment.test/api/assets/token/${PROJECT_FAVICON_FALLBACK_MARKER}`;
+
+    const element = ProjectFavicon({
+      environmentId: "environment-test" as EnvironmentId,
+      cwd: "/workspace/agent-runtime",
+      projectName: "agent-runtime",
+    }) as ReactElement<{
+      readonly colorClassName?: string;
+      readonly emoji?: string;
+      readonly icon?: ComponentType<{ className?: string }>;
+    }>;
+
+    expect(element.props.icon).toBeDefined();
+    expect(element.props.emoji).toBeUndefined();
+    expect(element.props.colorClassName).toContain("text-violet-600");
+  });
+
+  it("renders a saved Lucide icon and color ahead of an uploaded favicon", () => {
+    const element = ProjectFavicon({
+      environmentId: "environment-test" as EnvironmentId,
+      cwd: "/workspace/test",
+      projectName: "test",
+      faviconPath: "brand/icon.svg",
+      projectIcon: { kind: "lucide", name: "alarm-clock", color: "violet" },
+    }) as ReactElement<{
+      readonly children: ReactElement<{
+        readonly children: ReactElement<{ readonly name: string; readonly className: string }>;
+      }>;
+      readonly className: string;
+    }>;
+
+    expect(element.props.children.props.children.props.name).toBe("alarm-clock");
+    expect(element.props.className).toContain("text-violet-600");
+    expect(element.props.children.props.children.props.className).toContain("text-violet-600");
+  });
+
+  it("renders a saved emoji ahead of an uploaded favicon", () => {
+    const element = ProjectFavicon({
+      environmentId: "environment-test" as EnvironmentId,
+      cwd: "/workspace/test",
+      projectName: "test",
+      faviconPath: "brand/icon.svg",
+      projectIcon: { kind: "emoji", emoji: "🦄" },
+    }) as ReactElement<{ readonly emoji: string }>;
+
+    expect(element.props.emoji).toBe("🦄");
   });
 
   it("falls back when the displayed favicon fails without discarding a valid older image early", () => {
@@ -134,6 +208,7 @@ describe("ProjectFavicon", () => {
     ProjectFavicon({
       environmentId: "environment-test" as EnvironmentId,
       cwd: "/workspace-test",
+      projectName: "workspace-test",
       faviconPath: "brand/icon.svg",
     });
 

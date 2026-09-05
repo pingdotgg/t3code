@@ -5,7 +5,7 @@ import {
   scopedThreadKey,
 } from "@t3tools/client-runtime/environment";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import { canSettle, canSnooze, threadWokeAt } from "@t3tools/client-runtime/state/thread-settled";
+import { canSnooze, threadWokeAt } from "@t3tools/client-runtime/state/thread-settled";
 import { EnvironmentId, type ScopedThreadRef, ThreadId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Schema from "effect/Schema";
@@ -15,6 +15,7 @@ import { useCallback, useMemo, useRef } from "react";
 
 import { getFallbackThreadIdAfterDelete, pinOrderKeyBetween } from "../components/Sidebar.logic";
 import { useComposerDraftStore } from "../composerDraftStore";
+import { useDiffPanelStore } from "../diffPanelStore";
 import { terminalEnvironment } from "../state/terminal";
 import { threadEnvironment } from "../state/threads";
 import { vcsEnvironment } from "../state/vcs";
@@ -61,18 +62,6 @@ export class ThreadSettlementUnsupportedError extends Schema.TaggedErrorClass<Th
 ) {
   override get message(): string {
     return "This environment's server does not support settling yet. Update the server to use Settle.";
-  }
-}
-
-export class ThreadSettleBlockedError extends Schema.TaggedErrorClass<ThreadSettleBlockedError>()(
-  "ThreadSettleBlockedError",
-  {
-    environmentId: EnvironmentId,
-    threadId: ThreadId,
-  },
-) {
-  override get message(): string {
-    return "This thread still needs attention. Resolve or interrupt it first, then try again.";
   }
 }
 
@@ -301,6 +290,7 @@ export function useThreadActions() {
           input: { threadId: target.threadId },
         });
         if (result._tag === "Success") {
+          useDiffPanelStore.getState().removeThread(target);
           refreshArchivedThreadsForEnvironment(target.environmentId);
         }
         return result;
@@ -393,6 +383,7 @@ export function useThreadActions() {
         threadRef,
       );
       clearTerminalUiState(threadRef);
+      useDiffPanelStore.getState().removeThread(threadRef);
 
       if (shouldNavigateToFallback) {
         if (fallbackThreadId) {
@@ -506,19 +497,6 @@ export function useThreadActions() {
         );
       }
       const resolved = resolveThreadTarget(target);
-      // Settle may only target what effectiveSettled could classify as
-      // settled: not starting/running sessions, not threads waiting on
-      // approvals or user input. Anything else would hide live work.
-      if (resolved && !canSettle(resolved.thread, { now: new Date().toISOString() })) {
-        return AsyncResult.failure(
-          Cause.fail(
-            new ThreadSettleBlockedError({
-              environmentId: resolved.threadRef.environmentId,
-              threadId: resolved.threadRef.threadId,
-            }),
-          ),
-        );
-      }
       const wokeAt = resolved
         ? threadWokeAt(resolved.thread, { now: new Date().toISOString() })
         : null;

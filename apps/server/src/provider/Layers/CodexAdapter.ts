@@ -8,6 +8,7 @@
  * @module CodexAdapterLive
  */
 import {
+  EventId,
   type CanonicalItemType,
   type CanonicalRequestType,
   type CodexSettings,
@@ -17,16 +18,21 @@ import {
   type ProviderRuntimeEvent,
   type ProviderRequestKind,
   type ThreadTokenUsageSnapshot,
+  type ToolActivityIcon,
+  type ToolActivityNativeAppReference,
+  type ToolActivitySource,
   type ProviderUserInputAnswers,
   RuntimeItemId,
   RuntimeRequestId,
   RuntimeTaskId,
   type RuntimeTaskUsage,
+  type TurnTokenUsage,
   ProviderApprovalDecision,
   ThreadId,
   ProviderSendTurnInput,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as NodeCrypto from "node:crypto";
 import * as Crypto from "effect/Crypto";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -65,6 +71,7 @@ import {
 } from "./CodexSessionRuntime.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 import { resolveCodexLaunchArgs } from "./codexLaunchArgs.ts";
+import { codexRateLimitsToUpdate } from "./codexUsageLimits.ts";
 const isCodexAppServerProcessExitedError = Schema.is(CodexErrors.CodexAppServerProcessExitedError);
 const isCodexAppServerTransportError = Schema.is(CodexErrors.CodexAppServerTransportError);
 const isCodexSessionRuntimeThreadIdMissingError = Schema.is(
@@ -93,7 +100,32 @@ interface CodexAdapterSessionContext {
   readonly scope: Scope.Closeable;
   readonly runtime: CodexSessionRuntimeShape;
   readonly eventFiber: Fiber.Fiber<void, never>;
+  readonly turnTokenUsage: CodexTurnTokenUsageState;
   stopped: boolean;
+}
+
+type CodexCumulativeTokenUsage = {
+  readonly inputTokens: number;
+  readonly cachedInputTokens: number;
+  readonly cacheCreationTokens?: number;
+  readonly outputTokens: number;
+  readonly reasoningTokens: number;
+};
+
+interface CodexTurnTokenUsageAccumulator {
+  inputTokens: number;
+  cachedInputTokens: number;
+  cacheCreationTokens: number | undefined;
+  outputTokens: number;
+  reasoningTokens: number;
+  observed: boolean;
+  hasSubagents: boolean;
+}
+
+interface CodexTurnTokenUsageState {
+  baseline: CodexCumulativeTokenUsage | undefined;
+  activeTurnId: string | undefined;
+  readonly byTurnId: Map<string, CodexTurnTokenUsageAccumulator>;
 }
 
 function mapCodexRuntimeError(
@@ -150,6 +182,236 @@ function trimText(value: string | undefined | null): string | undefined {
   return trimmed && trimmed.length > 0 ? trimmed : undefined;
 }
 
+function asUnknownRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" ? (value as Record<string, unknown>) : undefined;
+}
+
+function normalizeMcpIntentTitle(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const normalized = value.trim().replace(/\s+/gu, " ");
+  if (!normalized) return undefined;
+  const characters = Array.from(normalized);
+  return characters.length <= 80 ? normalized : `${characters.slice(0, 79).join("")}…`;
+}
+
+function normalizedHttpUrl(value: unknown): string | undefined {
+  if (typeof value !== "string" || value.length > 4096) return undefined;
+  try {
+    const url = new URL(value);
+    const href = url.href;
+    return (url.protocol === "http:" || url.protocol === "https:") && href.length <= 4096
+      ? href
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function normalizedImageUrl(value: unknown): string | undefined {
+  if (typeof value !== "string" || value.length > 4096) return undefined;
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:" || url.protocol === "data:"
+      ? url.href
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function normalizedAppId(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const appId = value.trim();
+  return appId.length > 0 && appId.length <= 512 && /^[A-Za-z0-9._-]+$/u.test(appId)
+    ? appId
+    : undefined;
+}
+
+function normalizedDisplayName(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const displayName = value.trim().replace(/\s+/gu, " ");
+  return displayName && displayName.length <= 160 ? displayName : undefined;
+}
+
+function normalizedSourceKeyPart(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+function nativeAppSourceKey(appId: string): string {
+  const key = `native-app:${appId.toLowerCase()}`;
+  if (key.length <= 512) return key;
+  const digest = NodeCrypto.createHash("sha256").update(key).digest("hex");
+  return `${key.slice(0, 512 - digest.length - 1)}:${digest}`;
+}
+
+function browserDisplayName(value: unknown): string | undefined {
+  const normalized = normalizedDisplayName(value)?.toLowerCase();
+  if (!normalized) return undefined;
+  if (normalized.includes("chrome") || normalized === "chromium") return "Chrome";
+  if (normalized.includes("edge")) return "Microsoft Edge";
+  if (normalized.includes("firefox")) return "Firefox";
+  if (normalized.includes("safari")) return "Safari";
+  if (normalized.includes("arc")) return "Arc";
+  if (normalized === "iab" || normalized.includes("in-app")) return "Browser";
+  return normalizedDisplayName(value);
+}
+
+function browserNativeAppReference(name: string): ToolActivityNativeAppReference | undefined {
+  switch (name) {
+    case "Chrome":
+      return { _tag: "display-name", displayName: "Google Chrome" };
+    case "Microsoft Edge":
+    case "Firefox":
+    case "Safari":
+    case "Arc":
+      return { _tag: "display-name", displayName: name };
+    default:
+      return undefined;
+  }
+}
+
+function appDisplayNameFromId(appId: string): string | undefined {
+  const knownNames: Readonly<Record<string, string>> = {
+    "com.apple.finder": "Finder",
+    "com.apple.safari": "Safari",
+    "com.google.chrome": "Chrome",
+    "com.microsoft.edgemac": "Microsoft Edge",
+    "org.mozilla.firefox": "Firefox",
+    "company.thebrowser.browser": "Arc",
+  };
+  return knownNames[appId.toLowerCase()];
+}
+
+function nativeAppReference(value: unknown): ToolActivityNativeAppReference | undefined {
+  const app = asUnknownRecord(value);
+  if (app?.kind === "appId") {
+    const appId = normalizedAppId(app.appId);
+    return appId ? { _tag: "app-id", appId } : undefined;
+  }
+  if (app?.kind === "displayName") {
+    const displayName = normalizedDisplayName(app.displayName);
+    return displayName ? { _tag: "display-name", displayName } : undefined;
+  }
+  return undefined;
+}
+
+function themedLogoIcon(
+  ...records: ReadonlyArray<Record<string, unknown> | undefined>
+): ToolActivityIcon | undefined {
+  for (const record of records) {
+    const logoUrl = normalizedImageUrl(record?.logoUrl);
+    if (!logoUrl) continue;
+    const logoUrlDark = normalizedImageUrl(record?.logoUrlDark ?? record?.logoDarkUrl);
+    return {
+      _tag: "themed-logo",
+      logoUrl,
+      ...(logoUrlDark ? { logoUrlDark } : {}),
+    };
+  }
+  return undefined;
+}
+
+interface McpToolPresentation {
+  readonly toolSurface?: "browser" | "computer";
+  readonly toolIcon?: ToolActivityIcon;
+  readonly toolSource?: ToolActivitySource;
+}
+
+function mcpToolPresentation(
+  item: Extract<CodexLifecycleItem, { readonly type: "mcpToolCall" }>,
+): McpToolPresentation {
+  const result = asUnknownRecord(item.result);
+  const metadata = asUnknownRecord(result?._meta);
+  const surface = asUnknownRecord(metadata?.["codex/toolSurface"]);
+  const sourceMetadata = asUnknownRecord(metadata?.source);
+  const appContext = asUnknownRecord(item.appContext);
+  const sourceLogo = themedLogoIcon(surface, sourceMetadata, appContext);
+  if (surface?.kind === "browserUse") {
+    const screenshot = asUnknownRecord(surface.screenshot);
+    const browserUse = asUnknownRecord(metadata?.browser_use);
+    const openTabs = Array.isArray(surface.openTabs) ? surface.openTabs : [];
+    const latestOpenTab = openTabs
+      .toReversed()
+      .map(asUnknownRecord)
+      .find((tab) => normalizedHttpUrl(tab?.url) !== undefined);
+    const selectedPage = [
+      { record: screenshot, url: screenshot?.pageUrl },
+      { record: browserUse, url: browserUse?.url },
+      { record: latestOpenTab, url: latestOpenTab?.url },
+    ]
+      .map((candidate) => ({ ...candidate, pageUrl: normalizedHttpUrl(candidate.url) }))
+      .find((candidate) => candidate.pageUrl !== undefined);
+    const pageUrl = selectedPage?.pageUrl;
+    const faviconUrl = normalizedImageUrl(
+      selectedPage?.record?.faviconUrl ?? selectedPage?.record?.favIconUrl,
+    );
+    const faviconUrlDark = normalizedImageUrl(
+      selectedPage?.record?.faviconUrlDark ?? selectedPage?.record?.favIconUrlDark,
+    );
+    const name =
+      browserDisplayName(appContext?.appName) ??
+      browserDisplayName(surface.browserFamily) ??
+      browserDisplayName(surface.backend) ??
+      "Browser";
+    const nativeBrowserIcon = browserNativeAppReference(name);
+    const sourceIcon =
+      sourceLogo ??
+      (nativeBrowserIcon ? ({ _tag: "native-app", app: nativeBrowserIcon } as const) : undefined);
+    const sourceKeyPart = normalizedSourceKeyPart(name) || "browser";
+    return {
+      toolSurface: "browser",
+      ...(pageUrl
+        ? {
+            toolIcon: {
+              _tag: "website",
+              pageUrl,
+              ...(faviconUrl ? { faviconUrl } : {}),
+              ...(faviconUrlDark ? { faviconUrlDark } : {}),
+            } as const,
+          }
+        : {}),
+      toolSource: {
+        key: `browser-use:${sourceKeyPart}`,
+        name,
+        kind: name === "Browser" ? "browser" : "integration",
+        ...(sourceIcon ? { icon: sourceIcon } : {}),
+      },
+    };
+  }
+  if (surface?.kind === "computerUse") {
+    const app = nativeAppReference(surface.app);
+    const args = asUnknownRecord(item.arguments);
+    const argumentAppName =
+      normalizedDisplayName(args?.appName) ??
+      normalizedDisplayName(args?.application) ??
+      normalizedDisplayName(typeof args?.app === "string" ? args.app : undefined);
+    const name =
+      normalizedDisplayName(appContext?.appName) ??
+      argumentAppName ??
+      (app?._tag === "display-name" ? app.displayName : undefined) ??
+      (app?._tag === "app-id" ? appDisplayNameFromId(app.appId) : undefined) ??
+      "Computer Use";
+    const sourceIcon = sourceLogo ?? (app ? ({ _tag: "native-app", app } as const) : undefined);
+    const sourceKey = app
+      ? app._tag === "app-id"
+        ? nativeAppSourceKey(app.appId)
+        : `native-app-name:${normalizedSourceKeyPart(app.displayName)}`
+      : "computer-use";
+    return {
+      toolSurface: "computer",
+      ...(app ? { toolIcon: { _tag: "native-app", app } as const } : {}),
+      toolSource: {
+        key: sourceKey,
+        name,
+        kind: "computer",
+        ...(sourceIcon ? { icon: sourceIcon } : {}),
+      },
+    };
+  }
+
+  return {};
+}
+
 const FATAL_CODEX_STDERR_SNIPPETS = ["failed to connect to websocket"];
 
 function isFatalCodexProcessStderrMessage(message: string): boolean {
@@ -190,6 +452,162 @@ function normalizeCodexTokenUsage(
       ? { lastReasoningOutputTokens: reasoningOutputTokens }
       : {}),
     compactsAutomatically: true,
+  };
+}
+
+function codexTokenUsageBreakdown(
+  usage: EffectCodexSchema.V2ThreadTokenUsageUpdatedNotification__TokenUsageBreakdown,
+): CodexCumulativeTokenUsage {
+  return {
+    inputTokens: usage.inputTokens,
+    cachedInputTokens: usage.cachedInputTokens,
+    ...(usage.cacheWriteInputTokens !== undefined
+      ? { cacheCreationTokens: usage.cacheWriteInputTokens }
+      : {}),
+    outputTokens: usage.outputTokens,
+    reasoningTokens: usage.reasoningOutputTokens,
+  };
+}
+
+function makeCodexTurnTokenUsageState(): CodexTurnTokenUsageState {
+  return {
+    baseline: undefined,
+    activeTurnId: undefined,
+    byTurnId: new Map(),
+  };
+}
+
+function getCodexTurnAccumulator(
+  state: CodexTurnTokenUsageState,
+  turnId: string,
+): CodexTurnTokenUsageAccumulator {
+  const existing = state.byTurnId.get(turnId);
+  if (existing) return existing;
+  const created: CodexTurnTokenUsageAccumulator = {
+    inputTokens: 0,
+    cachedInputTokens: 0,
+    cacheCreationTokens: 0,
+    outputTokens: 0,
+    reasoningTokens: 0,
+    observed: false,
+    hasSubagents: false,
+  };
+  state.byTurnId.set(turnId, created);
+  return created;
+}
+
+/**
+ * Usage added by one `thread/tokenUsage/updated` notification. Codex reports a
+ * running `total` for the thread and `last`, the usage of the newest model
+ * response. Within a turn the growth of `total` equals `last`. Without a prior
+ * total (first update after resume or rollback), or when Codex reset the
+ * running total, `last` is the delta.
+ */
+function codexTurnTokenUsageDelta(
+  previous: CodexCumulativeTokenUsage | undefined,
+  current: CodexCumulativeTokenUsage,
+  last: CodexCumulativeTokenUsage,
+): CodexCumulativeTokenUsage {
+  if (
+    previous === undefined ||
+    current.inputTokens < previous.inputTokens ||
+    current.cachedInputTokens < previous.cachedInputTokens ||
+    current.outputTokens < previous.outputTokens ||
+    current.reasoningTokens < previous.reasoningTokens
+  ) {
+    return last;
+  }
+  return {
+    inputTokens: current.inputTokens - previous.inputTokens,
+    cachedInputTokens: current.cachedInputTokens - previous.cachedInputTokens,
+    ...(current.cacheCreationTokens !== undefined &&
+    previous.cacheCreationTokens !== undefined &&
+    current.cacheCreationTokens >= previous.cacheCreationTokens
+      ? { cacheCreationTokens: current.cacheCreationTokens - previous.cacheCreationTokens }
+      : {}),
+    outputTokens: current.outputTokens - previous.outputTokens,
+    reasoningTokens: current.reasoningTokens - previous.reasoningTokens,
+  };
+}
+
+function accumulateCodexTurnTokenUsage(
+  state: CodexTurnTokenUsageState,
+  turnId: string,
+  usage: EffectCodexSchema.V2ThreadTokenUsageUpdatedNotification["tokenUsage"],
+): void {
+  const current = codexTokenUsageBreakdown(usage.total);
+  if (state.activeTurnId !== turnId) {
+    // The total is thread-wide, so every update moves the baseline. A late
+    // update for a finished turn is not counted toward the live turn.
+    state.baseline = current;
+    return;
+  }
+
+  const accumulator = getCodexTurnAccumulator(state, turnId);
+  const delta = codexTurnTokenUsageDelta(
+    state.baseline,
+    current,
+    codexTokenUsageBreakdown(usage.last),
+  );
+  state.baseline = current;
+
+  if (
+    delta.inputTokens > 0 ||
+    delta.cachedInputTokens > 0 ||
+    delta.outputTokens > 0 ||
+    delta.reasoningTokens > 0
+  ) {
+    accumulator.observed = true;
+  }
+  accumulator.inputTokens += delta.inputTokens;
+  accumulator.cachedInputTokens += delta.cachedInputTokens;
+  accumulator.outputTokens += delta.outputTokens;
+  accumulator.reasoningTokens += delta.reasoningTokens;
+  if (delta.cacheCreationTokens === undefined) {
+    accumulator.cacheCreationTokens = undefined;
+  } else if (accumulator.cacheCreationTokens !== undefined) {
+    accumulator.cacheCreationTokens += delta.cacheCreationTokens;
+  }
+}
+
+function completeCodexTurnTokenUsage(
+  state: CodexTurnTokenUsageState,
+  turnId: string,
+  completed: boolean,
+): TurnTokenUsage {
+  const usage = state.byTurnId.get(turnId);
+  state.byTurnId.delete(turnId);
+  if (state.activeTurnId === turnId) state.activeTurnId = undefined;
+  if (!usage) {
+    return {
+      usageStatus: "unavailable",
+      usageScope: "main_agent",
+      hasSubagents: false,
+    };
+  }
+
+  if (!usage.observed) {
+    return {
+      usageStatus: "unavailable",
+      usageScope: "main_agent",
+      hasSubagents: usage.hasSubagents,
+    };
+  }
+
+  // Codex counts cache reads and writes inside inputTokens. Clamp the
+  // subsets so the record keeps the documented relationships even if a
+  // counter drifts.
+  return {
+    usageStatus: completed ? "complete" : "partial",
+    usageScope: "main_agent",
+    inputTokens: usage.inputTokens,
+    cachedInputTokens: Math.min(usage.inputTokens, usage.cachedInputTokens),
+    ...(usage.cacheCreationTokens !== undefined
+      ? { cacheCreationTokens: Math.min(usage.inputTokens, usage.cacheCreationTokens) }
+      : {}),
+    outputTokens: usage.outputTokens,
+    reasoningTokens: Math.min(usage.outputTokens, usage.reasoningTokens),
+    hasSubagents: usage.hasSubagents,
   };
 }
 
@@ -239,8 +657,82 @@ function toCanonicalItemType(raw: string | undefined | null): CanonicalItemType 
   return "unknown";
 }
 
-function itemTitle(itemType: CanonicalItemType, item?: CodexLifecycleItem): string | undefined {
+function boundedToolArgument(value: unknown): string | undefined {
+  const normalized = typeof value === "string" ? value.trim().replace(/\s+/gu, " ") : "";
+  if (!normalized) return undefined;
+  return normalized.length <= 48 ? normalized : `${normalized.slice(0, 47)}…`;
+}
+
+function normalizedMcpToolName(value: string): string {
+  return (
+    value
+      .split(/__|[./:]/u)
+      .at(-1)
+      ?.trim() ?? value.trim()
+  );
+}
+
+function computerUseToolTitle(
+  item: Extract<CodexLifecycleItem, { readonly type: "mcpToolCall" }>,
+  presentation: McpToolPresentation,
+): string | undefined {
+  if (normalizeItemType(item.server) !== "computer use") return undefined;
+  if (item.status === "failed") return undefined;
+  const tool = normalizeItemType(normalizedMcpToolName(item.tool)).replace(/ /gu, "_");
+  const inProgress = item.status === "inProgress";
+  const args = asUnknownRecord(item.arguments);
+  const appName =
+    (presentation.toolSource?.kind === "computer" && presentation.toolSource.name !== "Computer Use"
+      ? presentation.toolSource.name
+      : undefined) ??
+    normalizedDisplayName(args?.appName) ??
+    normalizedDisplayName(args?.application) ??
+    normalizedDisplayName(typeof args?.app === "string" ? args.app : undefined);
+  const withApp = (label: string) => (appName ? `${label} in ${appName}` : label);
+  switch (tool) {
+    case "list_apps":
+      return inProgress ? "Listing apps" : "Listed apps";
+    case "click":
+      return withApp(inProgress ? "Clicking" : "Clicked");
+    case "drag":
+      return withApp(inProgress ? "Dragging" : "Dragged");
+    case "get_app_state":
+    case "get_state":
+      return appName
+        ? `${inProgress ? "Looking at" : "Looked at"} ${appName}`
+        : inProgress
+          ? "Looking at the screen"
+          : "Looked at the screen";
+    case "perform_accessibility_action":
+    case "perform_secondary_action":
+      return inProgress ? "Performing accessibility action" : "Performed accessibility action";
+    case "press_key":
+      return withApp(inProgress ? "Pressing key" : "Pressed key");
+    case "scroll": {
+      const direction = boundedToolArgument(args?.direction)?.toLowerCase();
+      return withApp(`${inProgress ? "Scrolling" : "Scrolled"}${direction ? ` ${direction}` : ""}`);
+    }
+    case "set_value":
+      return withApp(inProgress ? "Setting value" : "Set value");
+    case "type_text":
+      return withApp(inProgress ? "Typing text" : "Typed text");
+    default:
+      return undefined;
+  }
+}
+
+function itemTitle(
+  itemType: CanonicalItemType,
+  item?: CodexLifecycleItem,
+  presentation: McpToolPresentation = {},
+): string | undefined {
   if (itemType === "mcp_tool_call" && item?.type === "mcpToolCall") {
+    if (normalizedMcpToolName(item.tool) === "js") {
+      const intentTitle = normalizeMcpIntentTitle(asUnknownRecord(item.arguments)?.title);
+      if (intentTitle) return intentTitle;
+    }
+    const computerUseTitle = computerUseToolTitle(item, presentation);
+    if (computerUseTitle) return computerUseTitle;
     return `${item.server} · ${item.tool}`;
   }
   switch (itemType) {
@@ -293,6 +785,36 @@ function itemDetail(itemType: CanonicalItemType, item: CodexLifecycleItem): stri
     return trimmed;
   }
   return undefined;
+}
+
+// Codex sends `reason` only sometimes, and sends it blank rather than absent
+// often enough to matter, so an empty one must not outrank the paths below.
+function nonEmptyDetail(value: string | null | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed === undefined || trimmed.length === 0 ? undefined : trimmed;
+}
+
+// Keeps one oversized patch from pushing a wall of paths through every consumer
+// of the approval, while still saying how much it covers.
+const MAX_DESCRIBED_FILE_CHANGES = 20;
+
+// An apply-patch approval carries the edited paths as the keys of `fileChanges`.
+// Without them the approval card has nothing to show but its own title — the
+// command-execution branch already falls back to the command for the same reason.
+function describeFileChanges(
+  fileChanges: EffectCodexSchema.ServerRequest__ApplyPatchApprovalParams["fileChanges"] | undefined,
+): string | undefined {
+  if (fileChanges === undefined) return undefined;
+  const entries = Object.entries(fileChanges).toSorted(([left], [right]) =>
+    left.localeCompare(right),
+  );
+  if (entries.length === 0) return undefined;
+  const described = entries.slice(0, MAX_DESCRIBED_FILE_CHANGES).map(([path, change]) => {
+    const movePath = change.type === "update" ? change.move_path : undefined;
+    return movePath ? `${change.type} ${path} -> ${movePath}` : `${change.type} ${path}`;
+  });
+  const remaining = entries.length - described.length;
+  return remaining > 0 ? `${described.join("\n")}\n+${remaining} more` : described.join("\n");
 }
 
 function toRequestTypeFromMethod(method: string): CanonicalRequestType {
@@ -481,6 +1003,8 @@ function mapItemLifecycle(
   }
 
   const detail = itemDetail(itemType, item);
+  const toolPresentation = item.type === "mcpToolCall" ? mcpToolPresentation(item) : {};
+  const title = itemTitle(itemType, item, toolPresentation);
   const status =
     lifecycle === "item.started"
       ? "inProgress"
@@ -496,8 +1020,9 @@ function mapItemLifecycle(
     payload: {
       itemType,
       ...(status ? { status } : {}),
-      ...(itemTitle(itemType, item) ? { title: itemTitle(itemType, item) } : {}),
+      ...(title ? { title } : {}),
       ...(detail ? { detail } : {}),
+      ...toolPresentation,
       ...(event.payload !== undefined ? { data: event.payload } : {}),
     },
   };
@@ -830,7 +1355,9 @@ function mapToRuntimeEvents(
             EffectCodexSchema.ServerRequest__FileChangeRequestApprovalParams,
             event.payload,
           );
-          return payload?.reason ?? undefined;
+          // These params carry no path of their own, only the root the agent
+          // wants to write under.
+          return nonEmptyDetail(payload?.reason) ?? nonEmptyDetail(payload?.grantRoot);
         }
         case "mcpServer/elicitation/request":
           return elicitation?.message;
@@ -839,7 +1366,11 @@ function mapToRuntimeEvents(
             EffectCodexSchema.ServerRequest__ApplyPatchApprovalParams,
             event.payload,
           );
-          return payload?.reason ?? undefined;
+          return (
+            nonEmptyDetail(payload?.reason) ??
+            describeFileChanges(payload?.fileChanges) ??
+            nonEmptyDetail(payload?.grantRoot)
+          );
         }
         case "execCommandApproval": {
           const payload = readPayload(
@@ -1134,6 +1665,27 @@ function mapToRuntimeEvents(
     if (!item) {
       return [];
     }
+    if (item.type === "agentMessage" && item.delivery === "async" && item.questions?.length) {
+      return [
+        {
+          ...runtimeEventBase(event, canonicalThreadId),
+          type: "user-input.requested",
+          requestId: RuntimeRequestId.make(`codex-async:${canonicalThreadId}:${item.id}`),
+          eventId: EventId.make(`codex-async:${canonicalThreadId}:${item.id}`),
+          payload: {
+            responseMode: "message",
+            questions: item.questions.map((question, index) => ({
+              id: String(index),
+              header: "Question",
+              question: question.title,
+              options: (question.options ?? []).map((label) => ({ label, description: "" })),
+              allowCustomAnswer: true,
+              multiSelect: false,
+            })),
+          },
+        },
+      ];
+    }
     const itemType = toCanonicalItemType(item.type);
     if (itemType === "plan") {
       const detail = itemDetail(itemType, item);
@@ -1151,7 +1703,18 @@ function mapToRuntimeEvents(
       ];
     }
     const completed = mapItemLifecycle(event, canonicalThreadId, "item.completed");
-    return completed ? [completed] : [];
+    if (!completed || itemType !== "context_compaction") {
+      return completed ? [completed] : [];
+    }
+    return [
+      completed,
+      {
+        ...runtimeEventBase(event, canonicalThreadId),
+        eventId: EventId.make(`${event.id}:thread-compacted`),
+        type: "thread.state.changed",
+        payload: { state: "compacted" },
+      },
+    ];
   }
 
   if (
@@ -1414,16 +1977,19 @@ function mapToRuntimeEvents(
   }
 
   if (event.method === "account/rateLimits/updated") {
-    if (!readPayload(EffectCodexSchema.V2AccountRateLimitsUpdatedNotification, event.payload)) {
+    const payload = readPayload(
+      EffectCodexSchema.V2AccountRateLimitsUpdatedNotification,
+      event.payload,
+    );
+    const limits = payload ? codexRateLimitsToUpdate(payload.rateLimits) : undefined;
+    if (!limits) {
       return [];
     }
     return [
       {
         type: "account.rate-limits.updated",
         ...runtimeEventBase(event, canonicalThreadId),
-        payload: {
-          rateLimits: event.payload ?? {},
-        },
+        payload: { limits },
       },
     ];
   }
@@ -1715,6 +2281,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
               }
             : {}),
         };
+        const turnTokenUsage = makeCodexTurnTokenUsageState();
         const sessionScope = yield* Scope.make("sequential");
         let sessionScopeTransferred = false;
         yield* Effect.addFinalizer(() =>
@@ -1743,7 +2310,64 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
         const eventFiber = yield* Stream.runForEach(runtime.events, (event) =>
           Effect.gen(function* () {
             yield* writeNativeEvent(event);
-            const runtimeEvents = mapToRuntimeEvents(event, event.threadId);
+            if (event.method === "turn/started" && event.turnId) {
+              if (turnTokenUsage.activeTurnId !== event.turnId) {
+                turnTokenUsage.byTurnId.clear();
+                turnTokenUsage.activeTurnId = event.turnId;
+                getCodexTurnAccumulator(turnTokenUsage, event.turnId);
+              }
+            } else if (event.method === "thread/tokenUsage/updated") {
+              const payload = readPayload(
+                EffectCodexSchema.V2ThreadTokenUsageUpdatedNotification,
+                event.payload,
+              );
+              if (payload) {
+                accumulateCodexTurnTokenUsage(turnTokenUsage, payload.turnId, payload.tokenUsage);
+              }
+            } else if (turnTokenUsage.activeTurnId) {
+              const collabPayload =
+                typeof event.payload === "object" && event.payload !== null
+                  ? (event.payload as Record<string, unknown>)
+                  : undefined;
+              const isCollabSpawn =
+                event.method === "collabAgent/started" ||
+                (event.method === "collabAgent/activity" &&
+                  collabPayload?.activityKind === "started");
+              if (isCollabSpawn && event.turnId === turnTokenUsage.activeTurnId) {
+                getCodexTurnAccumulator(turnTokenUsage, turnTokenUsage.activeTurnId).hasSubagents =
+                  true;
+              }
+            }
+
+            const runtimeEvents = mapToRuntimeEvents(event, event.threadId).map((runtimeEvent) => {
+              if (runtimeEvent.type === "turn.completed" && runtimeEvent.turnId) {
+                return {
+                  ...runtimeEvent,
+                  payload: {
+                    ...runtimeEvent.payload,
+                    tokenUsage: completeCodexTurnTokenUsage(
+                      turnTokenUsage,
+                      String(runtimeEvent.turnId),
+                      runtimeEvent.payload.state === "completed",
+                    ),
+                  },
+                } satisfies ProviderRuntimeEvent;
+              }
+              if (runtimeEvent.type === "turn.aborted" && runtimeEvent.turnId) {
+                return {
+                  ...runtimeEvent,
+                  payload: {
+                    ...runtimeEvent.payload,
+                    tokenUsage: completeCodexTurnTokenUsage(
+                      turnTokenUsage,
+                      String(runtimeEvent.turnId),
+                      false,
+                    ),
+                  },
+                } satisfies ProviderRuntimeEvent;
+              }
+              return runtimeEvent;
+            });
             if (runtimeEvents.length === 0) {
               yield* Effect.logDebug("ignoring unhandled Codex provider event", {
                 method: event.method,
@@ -1781,6 +2405,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           scope: sessionScope,
           runtime,
           eventFiber,
+          turnTokenUsage,
           stopped: false,
         });
         sessionScopeTransferred = true;
@@ -1879,6 +2504,15 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
       ),
     );
 
+  const compactThread: NonNullable<CodexAdapterShape["compactThread"]> = Effect.fn("compactThread")(
+    function* (threadId) {
+      const session = yield* requireSession(threadId);
+      yield* session.runtime.compactThread.pipe(
+        Effect.mapError((cause) => mapCodexRuntimeError(threadId, "thread/compact/start", cause)),
+      );
+    },
+  );
+
   const readThread: CodexAdapterShape["readThread"] = (threadId) =>
     requireSession(threadId).pipe(
       Effect.flatMap((session) => session.runtime.readThread),
@@ -1905,7 +2539,17 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     }
 
     return requireSession(threadId).pipe(
-      Effect.flatMap((session) => session.runtime.rollbackThread(numTurns)),
+      Effect.flatMap((session) =>
+        session.runtime.rollbackThread(numTurns).pipe(
+          Effect.tap(() =>
+            Effect.sync(() => {
+              session.turnTokenUsage.baseline = undefined;
+              session.turnTokenUsage.activeTurnId = undefined;
+              session.turnTokenUsage.byTurnId.clear();
+            }),
+          ),
+        ),
+      ),
       Effect.mapError((cause) =>
         cause._tag === "ProviderAdapterSessionNotFoundError"
           ? cause
@@ -2010,9 +2654,11 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     provider: PROVIDER,
     capabilities: {
       sessionModelSwitch: "in-session",
+      promptlessTurnContinuation: true,
     },
     startSession,
     sendTurn,
+    compactThread,
     interruptTurn,
     readThread,
     rollbackThread,

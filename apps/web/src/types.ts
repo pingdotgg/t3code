@@ -17,6 +17,9 @@ import type {
   EnvironmentThread,
   EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
+import { videoMimeType } from "@t3tools/shared/video";
+
+export { videoMimeType } from "@t3tools/shared/video";
 
 export type SessionPhase = "disconnected" | "connecting" | "ready" | "running";
 export const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
@@ -59,29 +62,17 @@ export function isFileAttachment(attachment: ChatAttachment): attachment is Chat
   return attachment.type === "file";
 }
 
-const VIDEO_MIME_TYPE_BY_EXTENSION: Readonly<Record<string, string>> = {
-  avi: "video/x-msvideo",
-  m4v: "video/mp4",
-  mkv: "video/x-matroska",
-  mov: "video/quicktime",
-  mp4: "video/mp4",
-  ogv: "video/ogg",
-  webm: "video/webm",
-};
-
-export function videoMimeType(
-  attachment: Pick<ChatFileAttachment, "name" | "mimeType">,
-): string | null {
-  const mimeType = attachment.mimeType.split(";", 1)[0]?.trim().toLowerCase() ?? "";
-  if (mimeType.startsWith("video/")) return mimeType;
-  const dotIndex = attachment.name.lastIndexOf(".");
-  return dotIndex < 0
-    ? null
-    : (VIDEO_MIME_TYPE_BY_EXTENSION[attachment.name.slice(dotIndex + 1).toLowerCase()] ?? null);
-}
-
 export function isVideoAttachment(attachment: ChatFileAttachment): boolean {
   return videoMimeType(attachment) !== null;
+}
+
+export function isBrowserPreviewAttachment(attachment: ChatFileAttachment): boolean {
+  const mimeType = attachment.mimeType.split(";", 1)[0]?.trim().toLowerCase();
+  return (
+    /\.(?:html?|pdf)$/i.test(attachment.name) ||
+    mimeType === "application/pdf" ||
+    mimeType === "text/html"
+  );
 }
 
 export interface ChatMessage extends Omit<OrchestrationMessage, "attachments"> {

@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import { expect, it } from "@effect/vitest";
 import * as NodeFS from "node:fs";
+import * as NodeChildProcess from "node:child_process";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -8,6 +9,7 @@ import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import { HttpClient } from "effect/unstable/http";
 import {
   createProviderVersionAdvisory,
@@ -20,8 +22,13 @@ import {
   resolveLatestProviderVersion,
   resolveProviderMaintenanceCapabilitiesEffect,
 } from "./providerMaintenance.ts";
+import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 
 const driver = (value: string) => ProviderDriverKind.make(value);
+// These write `#!/bin/sh` stubs and resolve them through a darwin-mocked
+// PATH walk; a Windows temp path cannot be split on `:`.
+const windowsHost = HostProcessPlatform.defaultValue() === "win32";
+
 const makeTempDir = (name: string) =>
   Crypto.Crypto.pipe(
     Effect.flatMap((crypto) => crypto.randomUUIDv4),
@@ -199,7 +206,7 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
     });
   });
 
-  it.effect(
+  it.effect.skipIf(windowsHost)(
     "switches package-managed providers to vite-plus updates when the resolved binary lives in vite-plus global bin",
     () =>
       Effect.gen(function* () {
@@ -272,7 +279,7 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
       }),
   );
 
-  it.effect(
+  it.effect.skipIf(windowsHost)(
     "switches package-managed providers to pnpm updates when the resolved binary lives in pnpm's global bin",
     () =>
       Effect.gen(function* () {
@@ -332,7 +339,7 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
     });
   });
 
-  it.effect(
+  it.effect.skipIf(windowsHost)(
     "switches native-package-tool to native updates when the binary resolves through the native installer",
     () =>
       Effect.gen(function* () {
@@ -357,9 +364,9 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
           provider: driver("nativePackageTool"),
           packageName: "@example/native-package-tool",
           update: {
-            command: "native-package-tool update",
+            command: `${nativePackageToolPath} update`,
 
-            executable: "native-package-tool",
+            executable: nativePackageToolPath,
 
             args: ["update"],
 
@@ -369,7 +376,7 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
       }),
   );
 
-  it.effect(
+  it.effect.skipIf(windowsHost)(
     "switches scoped-package-tool to native upgrades when the binary resolves through the standalone installer",
     () =>
       Effect.gen(function* () {
@@ -394,9 +401,9 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
           provider: driver("scopedPackageTool"),
           packageName: "@example/scoped-package-tool",
           update: {
-            command: "scoped-package-tool upgrade",
+            command: `${scopedPackageToolPath} upgrade`,
 
-            executable: "scoped-package-tool",
+            executable: scopedPackageToolPath,
 
             args: ["upgrade"],
 
@@ -405,6 +412,121 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
         });
       }),
   );
+
+  it.effect.skipIf(windowsHost)("runs an explicit native updater outside PATH", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-native-update-" });
+      const nativeBinDir = NodePath.join(tempDir, "with spaces", ".scoped-package-tool", "bin");
+      yield* fs.makeDirectory(nativeBinDir, { recursive: true });
+      const binaryPath = NodePath.join(nativeBinDir, "scoped-package-tool");
+      yield* fs.writeFileString(binaryPath, "#!/bin/sh\nprintf '%s' \"$1\"\n");
+      yield* fs.chmod(binaryPath, 0o755);
+
+      const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
+        scopedPackageToolUpdate,
+        { binaryPath, env: { PATH: "" } },
+      );
+      const update = capabilities.update;
+      expect(update).not.toBeNull();
+      if (!update) return;
+      const result = NodeChildProcess.spawnSync(update.executable, update.args, {
+        env: { PATH: "" },
+        encoding: "utf8",
+      });
+      expect(result.error).toBeUndefined();
+      expect(result.status).toBe(0);
+      expect(result.stdout).toBe("upgrade");
+    }).pipe(Effect.scoped),
+  );
+
+  it.each([
+    "/Users/example/.local/bin/native-package-tool",
+    "C:\\Users\\Example User\\.local\\bin\\native-package-tool.exe",
+  ])("preserves a configured native executable path: %s", (binaryPath) => {
+    expect(nativePackageToolUpdate.resolve({ binaryPath }).update?.executable).toBe(binaryPath);
+  });
+
+  for (const directoryName of ["plain", "with spaces", "with 'quotes' and $dollars"]) {
+    it.effect.skipIf(windowsHost)(
+      `runs the copied native update command from a ${directoryName} path`,
+      () =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-copy-native-update-" });
+          const binDir = NodePath.join(tempDir, directoryName, ".scoped-package-tool", "bin");
+          yield* fs.makeDirectory(binDir, { recursive: true });
+          const binaryPath = NodePath.join(binDir, "scoped-package-tool");
+          yield* fs.writeFileString(binaryPath, '#!/bin/sh\nprintf "%s" "$1"\n');
+          yield* fs.chmod(binaryPath, 0o755);
+
+          const capabilities = scopedPackageToolUpdate.resolve({ binaryPath });
+          const advisory = createProviderVersionAdvisory({
+            driver: driver("scopedPackageTool"),
+            currentVersion: "1.0.0",
+            latestVersion: "2.0.0",
+            maintenanceCapabilities: capabilities,
+          });
+          expect(advisory.updateCommand).not.toBeNull();
+          if (!advisory.updateCommand) return;
+          const result = NodeChildProcess.spawnSync("/bin/sh", ["-c", advisory.updateCommand], {
+            env: { PATH: "" },
+            encoding: "utf8",
+          });
+          expect(result.error).toBeUndefined();
+          expect(result.status, result.stderr).toBe(0);
+          expect(result.stdout).toBe("upgrade");
+        }).pipe(Effect.scoped),
+    );
+  }
+
+  it.each([
+    {
+      binaryPath: "C:\\Users\\Example\\.local\\bin\\native-package-tool.exe",
+      command: "C:\\Users\\Example\\.local\\bin\\native-package-tool.exe update",
+    },
+    {
+      binaryPath: "C:\\Users\\Example User\\.local\\bin\\native-package-tool.exe",
+      command: "& 'C:\\Users\\Example User\\.local\\bin\\native-package-tool.exe' update",
+    },
+    {
+      binaryPath: "C:\\Users\\O'Connor\\.local\\bin\\native-package-tool.exe",
+      command: "& 'C:\\Users\\O''Connor\\.local\\bin\\native-package-tool.exe' update",
+    },
+    {
+      binaryPath: "C:\\Users\\O\u2019Connor\\.local\\bin\\native-package-tool.exe",
+      command: "& 'C:\\Users\\O\u2019\u2019Connor\\.local\\bin\\native-package-tool.exe' update",
+    },
+  ])("formats a copied PowerShell native update for $binaryPath", ({ binaryPath, command }) => {
+    expect(nativePackageToolUpdate.resolve({ binaryPath, platform: "win32" }).update).toEqual({
+      command,
+      executable: binaryPath,
+      args: ["update"],
+      lockKey: "native-package-tool-native",
+    });
+  });
+
+  it.effect("uses the environment's platform for copied native update commands", () =>
+    Effect.gen(function* () {
+      const binaryPath = "C:\\Users\\Example User\\.local\\bin\\native-package-tool.exe";
+      const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
+        nativePackageToolUpdate,
+        { binaryPath, env: { PATH: "" } },
+      );
+      expect(capabilities.update?.command).toBe(`& '${binaryPath}' update`);
+      expect(capabilities.update?.executable).toBe(binaryPath);
+    }).pipe(Effect.provideService(HostProcessPlatform, "win32")),
+  );
+
+  it("uses the resolved launcher when its symlink target identifies a native install", () => {
+    const launcher = "/custom tools/native-launcher";
+    const capabilities = nativePackageToolUpdate.resolve({
+      binaryPath: launcher,
+      resolvedCommandPath: launcher,
+      realCommandPath: "/Users/example/.local/bin/native-package-tool",
+    });
+    expect(capabilities.update?.executable).toBe(launcher);
+  });
 
   it("switches native-package-tool to Homebrew updates when the binary resolves through Homebrew", () => {
     expect(
@@ -452,100 +574,110 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
     });
   });
 
-  it.effect("keeps npm updates for binaries symlinked into npm's global node_modules tree", () =>
-    Effect.gen(function* () {
-      const tempDir = yield* makeTempDir("t3-npm-capabilities");
-      const binDir = NodePath.join(tempDir, "bin");
-      const packageBinDir = NodePath.join(
-        tempDir,
-        "lib",
-        "node_modules",
-        "@example",
-        "package-tool",
-        "bin",
-      );
-      NodeFS.mkdirSync(binDir, { recursive: true });
-      NodeFS.mkdirSync(packageBinDir, { recursive: true });
-      const packageBinPath = NodePath.join(packageBinDir, "package-tool.js");
-      const symlinkPath = NodePath.join(binDir, "package-tool");
-      NodeFS.writeFileSync(packageBinPath, "#!/usr/bin/env node\n");
-      NodeFS.chmodSync(packageBinPath, 0o755);
-      NodeFS.symlinkSync(packageBinPath, symlinkPath);
+  it.effect.skipIf(!symlinksSupported)(
+    "keeps npm updates for binaries symlinked into npm's global node_modules tree",
+    () =>
+      Effect.gen(function* () {
+        const tempDir = yield* makeTempDir("t3-npm-capabilities");
+        const binDir = NodePath.join(tempDir, "bin");
+        const packageBinDir = NodePath.join(
+          tempDir,
+          "lib",
+          "node_modules",
+          "@example",
+          "package-tool",
+          "bin",
+        );
+        NodeFS.mkdirSync(binDir, { recursive: true });
+        NodeFS.mkdirSync(packageBinDir, { recursive: true });
+        const packageBinPath = NodePath.join(packageBinDir, "package-tool.js");
+        const symlinkPath = NodePath.join(binDir, "package-tool");
+        NodeFS.writeFileSync(packageBinPath, "#!/usr/bin/env node\n");
+        NodeFS.chmodSync(packageBinPath, 0o755);
+        NodeFS.symlinkSync(packageBinPath, symlinkPath);
 
-      const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(packageToolUpdate, {
-        binaryPath: symlinkPath,
-        env: {
-          PATH: "",
-        },
-      });
+        const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
+          packageToolUpdate,
+          {
+            binaryPath: symlinkPath,
+            env: {
+              PATH: "",
+            },
+          },
+        );
 
-      expect(capabilities).toEqual({
-        provider: driver("packageTool"),
-        packageName: "@example/package-tool",
-        update: {
-          command:
-            "npm install -g --allow-scripts=@example/package-tool @example/package-tool@latest",
+        expect(capabilities).toEqual({
+          provider: driver("packageTool"),
+          packageName: "@example/package-tool",
+          update: {
+            command:
+              "npm install -g --allow-scripts=@example/package-tool @example/package-tool@latest",
 
-          executable: "npm",
+            executable: "npm",
 
-          args: [
-            "install",
-            "-g",
-            "--allow-scripts=@example/package-tool",
-            "@example/package-tool@latest",
-          ],
+            args: [
+              "install",
+              "-g",
+              "--allow-scripts=@example/package-tool",
+              "@example/package-tool@latest",
+            ],
 
-          lockKey: "npm-global",
-        },
-      });
-    }),
+            lockKey: "npm-global",
+          },
+        });
+      }),
   );
 
-  it.effect("uses Effect FileSystem realPath when detecting pnpm global symlinks", () =>
-    Effect.gen(function* () {
-      const tempDir = yield* makeTempDir("t3-pnpm-realpath-capabilities");
-      const binDir = NodePath.join(tempDir, "bin");
-      const packageBinDir = NodePath.join(
-        tempDir,
-        ".local",
-        "share",
-        "pnpm",
-        "global",
-        "5",
-        "node_modules",
-        "@example",
-        "package-tool",
-        "bin",
-      );
-      NodeFS.mkdirSync(binDir, { recursive: true });
-      NodeFS.mkdirSync(packageBinDir, { recursive: true });
-      const packageBinPath = NodePath.join(packageBinDir, "package-tool.js");
-      const symlinkPath = NodePath.join(binDir, "package-tool");
-      NodeFS.writeFileSync(packageBinPath, "#!/usr/bin/env node\n");
-      NodeFS.chmodSync(packageBinPath, 0o755);
-      NodeFS.symlinkSync(packageBinPath, symlinkPath);
+  it.effect.skipIf(!symlinksSupported)(
+    "uses Effect FileSystem realPath when detecting pnpm global symlinks",
+    () =>
+      Effect.gen(function* () {
+        const tempDir = yield* makeTempDir("t3-pnpm-realpath-capabilities");
+        const binDir = NodePath.join(tempDir, "bin");
+        const packageBinDir = NodePath.join(
+          tempDir,
+          ".local",
+          "share",
+          "pnpm",
+          "global",
+          "5",
+          "node_modules",
+          "@example",
+          "package-tool",
+          "bin",
+        );
+        NodeFS.mkdirSync(binDir, { recursive: true });
+        NodeFS.mkdirSync(packageBinDir, { recursive: true });
+        const packageBinPath = NodePath.join(packageBinDir, "package-tool.js");
+        const symlinkPath = NodePath.join(binDir, "package-tool");
+        NodeFS.writeFileSync(packageBinPath, "#!/usr/bin/env node\n");
+        NodeFS.chmodSync(packageBinPath, 0o755);
+        NodeFS.symlinkSync(packageBinPath, symlinkPath);
 
-      const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(packageToolUpdate, {
-        binaryPath: symlinkPath,
-        env: {
-          PATH: "",
-        },
-      });
+        const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
+          packageToolUpdate,
+          {
+            binaryPath: symlinkPath,
+            env: {
+              PATH: "",
+            },
+          },
+        );
 
-      expect(capabilities).toEqual({
-        provider: driver("packageTool"),
-        packageName: "@example/package-tool",
-        update: {
-          command: "pnpm add -g @example/package-tool@latest",
+        expect(capabilities).toEqual({
+          provider: driver("packageTool"),
+          packageName: "@example/package-tool",
+          update: {
+            command: "pnpm add -g @example/package-tool@latest",
 
-          executable: "pnpm",
+            executable: "pnpm",
 
-          args: ["add", "-g", "@example/package-tool@latest"],
+            args: ["add", "-g", "@example/package-tool@latest"],
 
-          lockKey: "pnpm-global",
-        },
-      });
-    }),
+            lockKey: "pnpm-global",
+          },
+        });
+      }),
   );
 
   it("allows the package's own install scripts in npm global updates", () => {

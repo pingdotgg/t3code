@@ -77,6 +77,7 @@ interface AnnotatableCodeViewProps {
     fileDiff: FileDiffMetadata;
     filePath: string;
     fileKey: string;
+    fileVersion: number;
     collapsed: boolean;
   }>;
   sectionId: string;
@@ -84,7 +85,9 @@ interface AnnotatableCodeViewProps {
   composerDraftTarget: ScopedThreadRef | DraftId;
   options: StyledDiffCodeViewOptions<DiffCommentAnnotationGroup>;
   viewerRef?: Ref<AnnotatableCodeViewHandle>;
+  onScroll?: (scrollTop: number) => void;
   className?: string;
+  renderHeaderFilenameSuffix: (fileDiff: FileDiffMetadata) => ReactNode;
   renderHeaderPrefix: (
     fileDiff: FileDiffMetadata,
     fileKey: string,
@@ -104,7 +107,9 @@ export function AnnotatableCodeView({
   composerDraftTarget,
   options,
   viewerRef,
+  onScroll,
   className,
+  renderHeaderFilenameSuffix,
   renderHeaderPrefix,
 }: AnnotatableCodeViewProps) {
   const addReviewComment = useComposerDraftStore((store) => store.addReviewComment);
@@ -125,7 +130,7 @@ export function AnnotatableCodeView({
   const filesByKey = useMemo(() => new Map(files.map((file) => [file.fileKey, file])), [files]);
   const items = useMemo<CodeViewDiffItem<DiffCommentAnnotationGroup>[]>(
     () =>
-      files.map(({ fileDiff, filePath, fileKey, collapsed }) => {
+      files.map(({ fileDiff, filePath, fileKey, fileVersion, collapsed }) => {
         const persisted = reviewComments
           .filter(
             (comment) =>
@@ -153,7 +158,7 @@ export function AnnotatableCodeView({
           annotations,
           collapsed,
           version: fnv1a32(
-            `${collapsed ? "1" : "0"}:${annotations
+            `${fileVersion}:${collapsed ? "1" : "0"}:${annotations
               .flatMap((annotation) =>
                 annotation.metadata.entries.map(
                   (entry) => `${entry.id}:${entry.rangeLabel}:${entry.text}`,
@@ -241,6 +246,7 @@ export function AnnotatableCodeView({
     <StyledDiffCodeView<DiffCommentAnnotationGroup>
       key={codeViewKey}
       {...(viewerRef ? { viewerRef } : {})}
+      {...(onScroll ? { onScroll } : {})}
       {...(className ? { className } : {})}
       items={items}
       selectedLines={selectedLines}
@@ -251,6 +257,9 @@ export function AnnotatableCodeView({
         enableLineSelection: !hasOpenComment,
         onGutterUtilityClick: beginComment,
       }}
+      renderHeaderFilenameSuffix={(item) =>
+        item.type === "diff" ? renderHeaderFilenameSuffix(item.fileDiff) : null
+      }
       renderHeaderPrefix={(item) =>
         item.type === "diff"
           ? renderHeaderPrefix(item.fileDiff, item.id, item.collapsed === true)

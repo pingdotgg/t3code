@@ -16,30 +16,10 @@ describe("diffPanelStore", () => {
     useDiffPanelStore.setState({
       byThreadKey: {},
       branchBaseRefByThreadKey: {},
-      diffRenderMode: "stacked",
       collapsedFileKeysByScopeKey: {},
+      viewportByScopeKey: {},
     }),
   );
-
-  it("keeps the selected render mode in panel and persisted state", async () => {
-    useDiffPanelStore.getState().setDiffRenderMode("split");
-
-    expect(useDiffPanelStore.getState().diffRenderMode).toBe("split");
-    expect(
-      useDiffPanelStore.persist.getOptions().partialize?.(useDiffPanelStore.getState()),
-    ).toMatchObject({ diffRenderMode: "split" });
-
-    const { name, storage } = useDiffPanelStore.persist.getOptions();
-    if (!name) throw new Error("Expected diff panel persistence to have a storage name");
-    const persisted = await storage?.getItem(name);
-    expect(persisted?.state).toMatchObject({ diffRenderMode: "split" });
-
-    useDiffPanelStore.setState({ diffRenderMode: "stacked" });
-    if (persisted) await storage?.setItem(name, persisted);
-    await useDiffPanelStore.persist.rehydrate();
-
-    expect(useDiffPanelStore.getState().diffRenderMode).toBe("split");
-  });
 
   it("defaults each thread to branch changes when the working tree is clean", () => {
     expect(
@@ -96,7 +76,7 @@ describe("diffPanelStore", () => {
     ).toEqual({ kind: "branch", baseRef: "origin/main" });
   });
 
-  it("keeps collapsed file keys after the panel unmounts", () => {
+  it("isolates collapsed files by scope without persisting them across reloads", () => {
     const scopeKey = "environment-1:thread-1:turn:turn-1";
     const fileKeys = new Set(["src/components/game-stats.tsx"]);
     useDiffPanelStore.getState().setCollapsedFileKeys(scopeKey, fileKeys);
@@ -132,5 +112,63 @@ describe("diffPanelStore", () => {
       filePath: "src/app.ts",
       revealRequestId: 1,
     });
+  });
+
+  it("keeps viewport captures session-only and isolated from another review scope", () => {
+    const scopeKey = "environment-1:thread-1:unstaged";
+    const viewport = { scrollTop: 1300, revealSelection: null };
+    useDiffPanelStore.getState().setViewport(scopeKey, viewport);
+
+    expect(useDiffPanelStore.getState().viewportByScopeKey[scopeKey]).toEqual(viewport);
+    expect(
+      useDiffPanelStore.getState().viewportByScopeKey["environment-1:thread-1:branch"],
+    ).toBeUndefined();
+    expect(
+      useDiffPanelStore.persist.getOptions().partialize?.(useDiffPanelStore.getState()),
+    ).not.toHaveProperty("viewportByScopeKey");
+  });
+
+  it.each([false, true])("removes all thread scopes with an explicit selection: %s", (selected) => {
+    const store = useDiffPanelStore.getState();
+    if (selected) store.selectBranchBaseRef(THREAD_REF, "origin/main");
+    const removedScopes = ["environment-1:thread-1:unstaged", "environment-1:thread-1:turn:turn-1"];
+    const retainedScopes = ["environment-2:thread-1:unstaged", "environment-1:thread-10:unstaged"];
+    for (const scopeKey of [...removedScopes, ...retainedScopes]) {
+      store.setCollapsedFileKeys(scopeKey, new Set(["old.ts"]));
+      store.setViewport(scopeKey, { scrollTop: 1300, revealSelection: null });
+    }
+    store.removeThread(THREAD_REF);
+
+    const state = useDiffPanelStore.getState();
+    expect(state.byThreadKey).toEqual({});
+    expect(state.branchBaseRefByThreadKey).toEqual({});
+    expect(Object.keys(state.collapsedFileKeysByScopeKey)).toEqual(retainedScopes);
+    expect(Object.keys(state.viewportByScopeKey)).toEqual(retainedScopes);
+  });
+
+  it("removes one environment's selections, collapsed files, and viewport captures", () => {
+    const retained = scopeThreadRef(EnvironmentId.make("environment-10"), THREAD_REF.threadId);
+    const store = useDiffPanelStore.getState();
+    for (const ref of [THREAD_REF, retained]) {
+      store.selectBranchBaseRef(ref, "origin/main");
+      const scopeKey = `${ref.environmentId}:${ref.threadId}:unstaged`;
+      store.setCollapsedFileKeys(scopeKey, new Set(["old.ts"]));
+      store.setViewport(scopeKey, { scrollTop: 1300, revealSelection: null });
+    }
+    store.removeEnvironment(THREAD_REF.environmentId);
+
+    const state = useDiffPanelStore.getState();
+    expect(Object.keys(state.byThreadKey)).toEqual(["environment-10:thread-1"]);
+    expect(Object.keys(state.branchBaseRefByThreadKey)).toEqual(["environment-10:thread-1"]);
+    expect(Object.keys(state.collapsedFileKeysByScopeKey)).toEqual([
+      "environment-10:thread-1:unstaged",
+    ]);
+    expect(Object.keys(state.viewportByScopeKey)).toEqual(["environment-10:thread-1:unstaged"]);
+  });
+
+  it("does not publish a change when removing a thread with no saved state", () => {
+    const before = useDiffPanelStore.getState();
+    before.removeThread(THREAD_REF);
+    expect(useDiffPanelStore.getState()).toBe(before);
   });
 });

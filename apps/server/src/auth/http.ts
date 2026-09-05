@@ -171,6 +171,23 @@ export function failEnvironmentInternal(reason: EnvironmentInternalErrorReason, 
   });
 }
 
+const appendSessionCookie = (cookieName: string, token: string, expiresAt: DateTime.DateTime) =>
+  Effect.fromResult(
+    Cookies.set(Cookies.empty, cookieName, token, {
+      expires: DateTime.toDate(expiresAt),
+      httpOnly: true,
+      path: "/",
+      sameSite: "lax",
+    }),
+  ).pipe(
+    Effect.catch(() => failEnvironmentInternal("browser_session_cookie_failed")),
+    Effect.flatMap((cookies) =>
+      HttpEffect.appendPreResponseHandler((_request, response) =>
+        Effect.succeed(HttpServerResponse.mergeCookies(response, cookies)),
+      ),
+    ),
+  );
+
 export const requireEnvironmentScope = Effect.fn("environment.auth.requireScope")(function* (
   scope: AuthEnvironmentScope,
 ) {
@@ -224,7 +241,22 @@ export const authHttpApiLayer = HttpApiBuilder.group(
           function* (args) {
             yield* annotateEnvironmentRequest(args.endpoint.name);
             const request = yield* HttpServerRequest.HttpServerRequest;
-            return yield* serverAuth.getSessionState(request);
+            const result = yield* serverAuth.getSessionState(request);
+            const credential = EnvironmentAuth.selectRequestCredential(
+              request,
+              sessions.cookieName,
+              sessions.legacyCookieName,
+            );
+            if (
+              credential?.source === "legacy-cookie" &&
+              result.authenticated &&
+              result.sessionMethod === "browser-session-cookie" &&
+              result.expiresAt
+            ) {
+              yield* appendSessionCookie(sessions.cookieName, credential.token, result.expiresAt);
+              yield* appendCredentialResponseHeaders;
+            }
+            return result;
           },
           Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
             failEnvironmentInternal("internal_error", error),
@@ -241,17 +273,10 @@ export const authHttpApiLayer = HttpApiBuilder.group(
               args.payload.credential,
               deriveAuthClientMetadata({ request }),
             );
-            const sessionCookies = yield* Effect.fromResult(
-              Cookies.set(Cookies.empty, sessions.cookieName, result.sessionToken, {
-                expires: DateTime.toDate(result.response.expiresAt),
-                httpOnly: true,
-                path: "/",
-                sameSite: "lax",
-              }),
-            ).pipe(Effect.catch(() => failEnvironmentInternal("browser_session_cookie_failed")));
-
-            yield* HttpEffect.appendPreResponseHandler((_request, response) =>
-              Effect.succeed(HttpServerResponse.mergeCookies(response, sessionCookies)),
+            yield* appendSessionCookie(
+              sessions.cookieName,
+              result.sessionToken,
+              result.response.expiresAt,
             );
             yield* appendCredentialResponseHeaders;
             return result.response;
