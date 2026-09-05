@@ -1,4 +1,11 @@
-import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  type ServerProvider,
+  type UsageLimitSourceAccount,
+  UsageLimitSourceId,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -141,12 +148,130 @@ describe("collectLimitsGroups", () => {
 
 describe("collectLimitSources", () => {
   const source = {
-    id: "cliproxy-hub" as never,
+    id: UsageLimitSourceId.make("cliproxy-hub"),
     kind: "cliproxy" as const,
     label: "hub",
     checkedAt: "2026-09-03T11:00:00.000Z",
     accounts: [],
   };
+  const limits = { checkedAt: source.checkedAt, windows: [window] };
+  const account: UsageLimitSourceAccount = {
+    id: "codex-personal",
+    driver: ProviderDriverKind.make("codex"),
+    email: "person@example.com",
+    plan: "ChatGPT Pro Subscription",
+    usageLimits: limits,
+  };
+  const native = provider({
+    displayName: "Personal",
+    auth: { status: "authenticated", email: account.email },
+    usageLimits: { ...limits, resetCredits: { availableCount: 2 } },
+  });
+
+  function presentations(
+    providers: readonly ServerProvider[],
+    accounts: readonly UsageLimitSourceAccount[] = [account],
+  ) {
+    return new Map([
+      [
+        EnvironmentId.make("env-a"),
+        {
+          entry: { target: { label: "Laptop" } },
+          serverConfig: { providers, usageLimitSources: [{ ...source, accounts }] },
+        },
+      ],
+    ]);
+  }
+
+  it.each(["codex", "claudeAgent"])(
+    "prefers native %s limits by email without changing provider rows or source snapshots",
+    (kind) => {
+      const driver = ProviderDriverKind.make(kind);
+      const first = { ...native, driver };
+      const second = { ...first, instanceId: ProviderInstanceId.make("work") };
+      const accounts = [{ ...account, driver, email: " Person@Example.COM " }];
+      const input = presentations([first, second], accounts);
+
+      expect(collectLimitSources(input)).toMatchObject([{ accounts: [], hiddenAccountCount: 1 }]);
+      expect(collectLimitsGroups(input)[0]?.providers).toEqual([first, second]);
+      expect(accounts).toHaveLength(1);
+      expect(first.usageLimits?.resetCredits?.availableCount).toBe(2);
+    },
+  );
+
+  it("matches across environments even when the hub is visited before the native provider", () => {
+    const input = presentations([]);
+    input.set(EnvironmentId.make("env-b"), {
+      entry: { target: { label: "Desktop" } },
+      serverConfig: { providers: [native], usageLimitSources: [] },
+    });
+
+    expect(collectLimitSources(input)).toMatchObject([
+      { accounts: [], hiddenAccountCount: 1, environmentId: "env-a" },
+    ]);
+  });
+
+  it("keeps other providers, other emails, and unidentified accounts with the same plan", () => {
+    const accounts = [
+      account,
+      { ...account, id: "other-provider", driver: ProviderDriverKind.make("claudeAgent") },
+      { ...account, id: "other-email", email: "other@example.com" },
+      { ...account, id: "unknown-email", email: undefined },
+    ];
+
+    expect(collectLimitSources(presentations([native], accounts))).toMatchObject([
+      { accounts: accounts.slice(1), hiddenAccountCount: 1 },
+    ]);
+    expect(
+      collectLimitSources(
+        presentations([{ ...native, auth: { status: "authenticated" } }], accounts),
+      )[0]?.accounts,
+    ).toEqual(accounts);
+  });
+
+  it.each([
+    { enabled: false },
+    { installed: false },
+    { availability: "unavailable" },
+    { usageLimits: undefined },
+    { usageLimits: { ...limits, windows: [] } },
+    { usageLimits: { ...limits, unavailable: { reason: "probeFailed" } } },
+    { usageLimits: { ...limits, unavailable: { reason: "unsupported" } } },
+  ] satisfies Partial<ServerProvider>[])(
+    "retains hub limits when the native provider cannot show them: %j",
+    (overrides) => {
+      expect(collectLimitSources(presentations([{ ...native, ...overrides }]))).toMatchObject([
+        { accounts: [account], hiddenAccountCount: 0 },
+      ]);
+    },
+  );
+
+  it("restores the hub account when the matching provider disappears", () => {
+    const input = presentations([native]);
+    expect(collectLimitSources(input)[0]?.accounts).toEqual([]);
+    input.delete(EnvironmentId.make("env-a"));
+    for (const [id, entry] of presentations([])) input.set(id, entry);
+
+    expect(collectLimitSources(input)[0]?.accounts).toEqual([account]);
+  });
+
+  it("keeps source errors and genuinely empty sources distinguishable from hidden accounts", () => {
+    const input = new Map([
+      [
+        EnvironmentId.make("env-a"),
+        {
+          entry: { target: { label: "Laptop" } },
+          serverConfig: {
+            providers: [native],
+            usageLimitSources: [{ ...source, error: "Hub unavailable" }],
+          },
+        },
+      ],
+    ]);
+    expect(collectLimitSources(input)).toMatchObject([
+      { accounts: [], hiddenAccountCount: 0, error: "Hub unavailable" },
+    ]);
+  });
 
   it("keys sources per environment and names the environment only when several have some", () => {
     const one = new Map([

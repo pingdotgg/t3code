@@ -70,6 +70,8 @@ export function collectLimitsGroups(
  * Every usage-limit source across connected environments, keyed so two
  * environments pointing at the same hub still get their own rows. The label
  * carries the environment only when more than one environment has sources.
+ * A native provider with usable limits takes precedence over the same account
+ * in a source, even when it belongs to another connected environment.
  */
 export function collectLimitSources(
   presentations: ReadonlyMap<
@@ -77,13 +79,31 @@ export function collectLimitSources(
     {
       readonly entry: { readonly target: { readonly label: string } };
       readonly serverConfig: {
+        readonly providers?: readonly ServerProvider[] | undefined;
         readonly usageLimitSources?: UsageLimitSourceSnapshots | undefined;
       } | null;
     }
   >,
 ): ReadonlyArray<
-  UsageLimitSourceSnapshot & { readonly key: string; readonly environmentId: EnvironmentId }
+  UsageLimitSourceSnapshot & {
+    readonly key: string;
+    readonly environmentId: EnvironmentId;
+    readonly hiddenAccountCount: number;
+  }
 > {
+  const nativeAccounts = new Set<string>();
+  for (const presentation of presentations.values()) {
+    for (const provider of providersWithLimits(presentation.serverConfig?.providers ?? [])) {
+      const key = accountKey(provider.driver, provider.auth.email);
+      if (
+        key !== null &&
+        provider.usageLimits?.windows.length &&
+        !provider.usageLimits.unavailable
+      ) {
+        nativeAccounts.add(key);
+      }
+    }
+  }
   const perEnvironment: Array<{
     readonly environmentId: EnvironmentId;
     readonly environmentLabel: string;
@@ -100,13 +120,26 @@ export function collectLimitSources(
   }
   const labelEnvironment = perEnvironment.length > 1;
   return perEnvironment.flatMap(({ environmentId, environmentLabel, sources }) =>
-    sources.map((source) => ({
-      ...source,
-      environmentId,
-      key: `${environmentId}:${source.id}`,
-      label: labelEnvironment ? `${environmentLabel} · ${source.label}` : source.label,
-    })),
+    sources.map((source) => {
+      const accounts = source.accounts.filter((account) => {
+        const key = accountKey(account.driver, account.email);
+        return key === null || !nativeAccounts.has(key);
+      });
+      return {
+        ...source,
+        accounts,
+        hiddenAccountCount: source.accounts.length - accounts.length,
+        environmentId,
+        key: `${environmentId}:${source.id}`,
+        label: labelEnvironment ? `${environmentLabel} · ${source.label}` : source.label,
+      };
+    }),
   );
+}
+
+function accountKey(driver: ServerProvider["driver"], email: string | undefined): string | null {
+  const normalizedEmail = email?.trim().toLowerCase();
+  return normalizedEmail ? `${driver}:${normalizedEmail}` : null;
 }
 
 /** The instance's configured name, else the driver's, else its raw kind. */

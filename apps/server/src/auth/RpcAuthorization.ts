@@ -82,6 +82,7 @@ export const RPC_REQUIRED_SCOPES = {
   // Read scope like the reads it un-caches: refreshing is part of reading, and a read-only
   // client pressing refresh must not be told it may not look again.
   [WS_METHODS.pullRequestsInvalidate]: AuthOrchestrationReadScope,
+  [WS_METHODS.pullRequestsSubscribeRefreshes]: AuthOrchestrationReadScope,
   // The candidate list is a read like the detail beside it; asking somebody for a review is a
   // write like every other one.
   [WS_METHODS.pullRequestsReviewerCandidates]: AuthOrchestrationReadScope,

@@ -30,6 +30,8 @@ import {
   probeCursorSkills,
   rewriteCursorSkillMentions,
 } from "../Drivers/CursorSkills.ts";
+import { execScriptSource, writeFakeCli } from "../../testUtils/fakeCli.ts";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
 const runNode = <A, E>(
   effect: Effect.Effect<
@@ -38,6 +40,10 @@ const runNode = <A, E>(
     ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto | FileSystem.FileSystem | Path.Path
   >,
 ): Promise<A> => Effect.runPromise(effect.pipe(Effect.provide(NodeServices.layer)));
+
+// Closing the probe kills the agent with SIGTERM; Windows terminates the
+// process instead, so the mock never sees a signal to log.
+const windowsHost = HostProcessPlatform.defaultValue() === "win32";
 
 const resolveMockAgentPath = Effect.fn("resolveMockAgentPath")(function* () {
   const path = yield* Path.Path;
@@ -73,47 +79,38 @@ const makeMockAgentWrapper = Effect.fn("makeMockAgentWrapper")(function* (
   extraEnv?: Record<string, string>,
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
   const mockAgentPath = yield* resolveMockAgentPath();
   const dir = yield* fileSystem.makeTempDirectory({
     directory: NodeOS.tmpdir(),
     prefix: "cursor-provider-mock-",
   });
-  const wrapperPath = path.join(dir, "fake-agent.sh");
-  const mockAgentCommand = ["node", mockAgentPath].map((arg) => JSON.stringify(arg)).join(" ");
-  const envExports = Object.entries(extraEnv ?? {})
-    .map(([key, value]) => `export ${key}=${JSON.stringify(value)}`)
-    .join("\n");
-  const script = `#!/bin/sh
-${envExports}
-exec ${mockAgentCommand} "$@"
-`;
-  yield* fileSystem.writeFileString(wrapperPath, script);
-  yield* fileSystem.chmod(wrapperPath, 0o755);
-  return wrapperPath;
+  return writeFakeCli({
+    directory: dir,
+    name: "fake-agent",
+    env: extraEnv ?? {},
+    source: execScriptSource({ scriptPath: mockAgentPath }),
+  });
 });
 
 const makeMockAgentWithAboutWrapper = Effect.fn("makeMockAgentWithAboutWrapper")(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
   const mockAgentPath = yield* resolveMockAgentPath();
   const dir = yield* fileSystem.makeTempDirectory({
     directory: NodeOS.tmpdir(),
     prefix: "cursor-provider-about-mock-",
   });
-  const wrapperPath = path.join(dir, "fake-agent.sh");
-  const mockAgentCommand = ["node", mockAgentPath].map((arg) => JSON.stringify(arg)).join(" ");
-  const script = `#!/bin/sh
-if [ "$1" = "about" ]; then
-  printf 'CLI Version         2026.04.09-f2b0fcd\\n'
-  printf 'User Email          cursor@example.com\\n'
-  exit 0
-fi
-exec ${mockAgentCommand} "$@"
-`;
-  yield* fileSystem.writeFileString(wrapperPath, script);
-  yield* fileSystem.chmod(wrapperPath, 0o755);
-  return wrapperPath;
+  return writeFakeCli({
+    directory: dir,
+    name: "fake-agent",
+    source: [
+      'if (process.argv[2] === "about") {',
+      '  process.stdout.write("CLI Version         2026.04.09-f2b0fcd\\n");',
+      '  process.stdout.write("User Email          cursor@example.com\\n");',
+      "  process.exit(0);",
+      "}",
+      execScriptSource({ scriptPath: mockAgentPath }),
+    ].join("\n"),
+  });
 });
 
 const waitForFileContent = Effect.fn("waitForFileContent")(function* (
@@ -398,6 +395,56 @@ describe("Cursor skills", () => {
       }),
     ));
 
+  it("treats a symlinked skill outside the root as a package boundary", async () =>
+    await runNode(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const userHome = yield* fileSystem.makeTempDirectory({
+          directory: NodeOS.tmpdir(),
+          prefix: "cursor-skills-home-",
+        });
+        const workspace = yield* fileSystem.makeTempDirectory({
+          directory: NodeOS.tmpdir(),
+          prefix: "cursor-skills-workspace-",
+        });
+        const library = yield* fileSystem.makeTempDirectory({
+          directory: NodeOS.tmpdir(),
+          prefix: "cursor-skills-library-",
+        });
+        const writeSkill = Effect.fn("writeCursorSkill")(function* (
+          directory: string,
+          contents: string,
+        ) {
+          yield* fileSystem.makeDirectory(directory, { recursive: true });
+          yield* fileSystem.writeFileString(path.join(directory, "SKILL.md"), contents);
+        });
+
+        // A skill package managed in a config repo and installed by symlink.
+        // Its own SKILL.md must be discovered under the link name, but nothing
+        // below the target may be walked.
+        yield* writeSkill(path.join(library, "shared-review"), "---\ndescription: shared\n---\n");
+        yield* writeSkill(path.join(library, "shared-review", "hidden"), "---\n---\n");
+        const root = path.join(workspace, ".cursor", "skills");
+        yield* fileSystem.makeDirectory(root, { recursive: true });
+        yield* fileSystem.symlink(path.join(library, "shared-review"), path.join(root, "review"));
+
+        const skills = yield* discoverCursorSkills(workspace, { HOME: userHome });
+        expect(skills).toEqual([
+          {
+            name: "review",
+            description: "shared",
+            path: path.join(root, "review", "SKILL.md"),
+            scope: "project",
+            enabled: true,
+          },
+        ]);
+        expect(
+          (yield* probeCursorSkills(workspace, { HOME: userHome }).pipe(Effect.result))._tag,
+        ).toBe("Success");
+      }),
+    ));
+
   it("rewrites only discovered skill mentions into Cursor slash invocations", () => {
     expect(hasCursorSkillMention("use $Review_Pr:V2 here")).toBe(true);
     expect(hasCursorSkillMention("please $review this")).toBe(true);
@@ -593,7 +640,7 @@ describe("discoverCursorModelsViaAcp", () => {
     ]);
   });
 
-  it("closes the ACP probe runtime after discovery completes", async () => {
+  it.skipIf(windowsHost)("closes the ACP probe runtime after discovery completes", async () => {
     const { exitLogPath, wrapperPath } = await runNode(
       makeExitLogFixture("cursor-provider-exit-log-"),
     );

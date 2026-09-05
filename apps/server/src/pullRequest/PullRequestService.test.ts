@@ -1005,10 +1005,12 @@ it.effect("refuses an action the host never claimed it could run", () =>
   }),
 );
 
-it.effect("publishes a successful merge for immediate settlement", () =>
+it.effect("publishes a merge for immediate settlement only after host confirmation", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const mergedAt = "2026-09-03T02:00:00.000Z";
+      let state: "open" | "merged" = "open";
+      let confirmationFails = false;
       const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
       const service = yield* makeService({
         projects: [
@@ -1016,7 +1018,17 @@ it.effect("publishes a successful merge for immediate settlement", () =>
         ],
         providers: [
           fakeProvider("github", {
-            runAction: () => TestClock.setTime(Date.parse(mergedAt)),
+            getChangeRequestSummary: () =>
+              confirmationFails
+                ? Effect.fail(
+                    new PullRequestProviderError({
+                      provider: "github",
+                      operation: "getChangeRequestSummary",
+                      reason: "failed",
+                      detail: "HTTP 504",
+                    }),
+                  )
+                : Effect.succeed({ ...changeRequest(1, mergedAt), state }),
           }),
         ],
       });
@@ -1025,6 +1037,13 @@ it.effect("publishes a successful merge for immediate settlement", () =>
         Effect.forkChild({ startImmediately: true }),
       );
 
+      // Queueing succeeds while the host still reports an open PR.
+      yield* service.runAction({ ...reference, action: "merge" });
+      confirmationFails = true;
+      yield* service.runAction({ ...reference, action: "merge" });
+      confirmationFails = false;
+      state = "merged";
+      yield* TestClock.setTime(Date.parse(mergedAt));
       yield* service.runAction({
         ...reference,
         repository: " ACME/WEB ",
@@ -1965,6 +1984,7 @@ it.effect("refuses a merge strategy the host does not offer", () =>
             review: FULL_REVIEW,
             reviewers: FULL_REVIEWERS,
           },
+          getChangeRequestSummary: () => Effect.succeed(changeRequest(1, "2026-07-02T00:00:00Z")),
           runAction: (input) => {
             ranWith = input.mergeMethod ?? "merge";
             return Effect.void;
@@ -2646,10 +2666,11 @@ it.effect("a listing narrowed to some projects is its own cache entry", () =>
   }),
 );
 
-it.effect("an explicit invalidation makes the next listing ask the host again", () =>
+it.effect("explicit and turn invalidations make the next listing ask the host again", () =>
   Effect.gen(function* () {
     let hostCalls = 0;
     let viewerCalls = 0;
+    const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
     const service = yield* makeService({
       projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
       providers: [
@@ -2673,11 +2694,14 @@ it.effect("an explicit invalidation makes the next listing ask the host again", 
     assert.strictEqual(viewerCalls, 2);
 
     // Forgetting one change request leaves the listings shared.
-    yield* service.invalidate({
-      reference: { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 },
-    });
+    yield* service.invalidate({ reference });
     yield* service.list({ state: "open" });
     assert.strictEqual(hostCalls, 2);
+    yield* service.refreshAfterTurn;
+    const refresh = Option.getOrThrow(yield* Stream.runHead(service.subscribeRefreshes));
+    yield* service.list({ state: "open" });
+    assert.isAbove(refresh, 0);
+    assert.strictEqual(hostCalls, 3);
   }),
 );
 
@@ -3900,7 +3924,7 @@ it.effect("refuses a remark rewritten into nothing but whitespace", () =>
   }),
 );
 
-it.effect("forgets the cached detail after a rewrite, like the other mutations", () =>
+it.effect("forgets the cached detail after a rewrite or terminal turn", () =>
   Effect.gen(function* () {
     let coreCalls = 0;
     const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
@@ -3935,8 +3959,11 @@ it.effect("forgets the cached detail after a rewrite, like the other mutations",
     yield* service.detail(reference);
     yield* service.update({ ...reference, title: "Renamed" });
     yield* service.detail(reference);
-
     assert.strictEqual(coreCalls, 2);
+
+    yield* service.refreshAfterTurn;
+    yield* service.detail(reference);
+    assert.strictEqual(coreCalls, 3);
   }),
 );
 

@@ -348,7 +348,7 @@ export class LinuxDesktopBuildPrerequisitesMissingError extends Schema.TaggedErr
         ? ["Add the requested Rust target with:", `  rustup target add ${this.rustTarget}`]
         : []),
       "",
-      "For other distributions, see docs/internals/scripts.md#linux-appimage-prerequisites.",
+      "For other distributions, see docs/operations/development.md#linux-appimage-prerequisites.",
       "Then rerun `vp run dist:desktop:linux`.",
     ].join("\n");
   }
@@ -420,7 +420,7 @@ export class WindowsDesktopBuildPrerequisitesMissingError extends Schema.TaggedE
       "Install Rust from https://rustup.rs and add the requested target:",
       `  rustup target add ${this.rustTarget}`,
       "Install Python 3 and the Visual Studio Build Tools components listed in",
-      "docs/internals/scripts.md#windows-installer-prerequisites.",
+      "docs/operations/development.md#windows-installer-prerequisites.",
       "",
       "Then rerun the desktop artifact command.",
     ].join("\n");
@@ -2863,12 +2863,27 @@ export const packWindowsServerAsar = Effect.fn("packWindowsServerAsar")(function
   readonly arch: typeof BuildArch.Type;
 }) {
   const fs = yield* FileSystem.FileSystem;
-  yield* Effect.tryPromise({
+  const archiveStream = yield* Effect.tryPromise({
     try: () =>
       createPackageWithOptions(input.sourceDir, input.asarPath, {
         dot: true,
         unpack: WINDOWS_SERVER_ASAR_UNPACK_GLOB,
         globOptions: { ignore: resolveWindowsServerAsarIgnoreGlobs(input.arch) },
+      }),
+    catch: (cause) => new WindowsServerSidecarPackError({ asarPath: input.asarPath, cause }),
+  });
+  yield* Effect.tryPromise({
+    try: () =>
+      new Promise<void>((resolve, reject) => {
+        const stream = archiveStream as NodeJS.WritableStream & {
+          readonly writableFinished?: boolean;
+        };
+        if (stream.writableFinished === true) {
+          resolve();
+          return;
+        }
+        stream.once("finish", resolve);
+        stream.once("error", reject);
       }),
     catch: (cause) => new WindowsServerSidecarPackError({ asarPath: input.asarPath, cause }),
   });

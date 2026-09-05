@@ -66,6 +66,45 @@ function fold(rows: ReadonlyArray<OrchestrationThreadActivity>) {
 }
 
 describe("foldSubagentActivities", () => {
+  it("shows the batch status limit after its parent turn ends without claiming a result", () => {
+    const running = activity("task.progress", {
+      taskId: "batch-1",
+      taskType: "subagent_batch",
+      title: "Antigravity subagent batch",
+      status: "running",
+      summary: "Launch readers",
+    });
+    const agents = fold([
+      running,
+      activity("task.updated", {
+        taskId: "batch-1",
+        taskType: "subagent_batch",
+        status: "idle",
+        detail: "Turn ended. Individual agent status is unavailable.",
+        timelineBypass: true,
+      }),
+    ]);
+    expect(agents).toHaveLength(1);
+    expect(agents[0]).toMatchObject({
+      title: "Antigravity subagent batch",
+      kind: "subagent_batch",
+      status: "idle",
+      progress: "Turn ended. Individual agent status is unavailable.",
+      result: null,
+      error: null,
+    });
+  });
+
+  it("learns batch identity from a later update and retains it on sparse updates", () => {
+    const agents = fold([
+      activity("task.progress", { taskId: "batch-1", taskType: "subagent", status: "running" }),
+      activity("task.updated", { taskId: "batch-1", taskType: "subagent_batch", status: "idle" }),
+      activity("task.updated", { taskId: "batch-1", status: "idle" }),
+    ]);
+    expect(agents).toHaveLength(1);
+    expect(agents[0]).toMatchObject({ kind: "subagent_batch", status: "idle" });
+  });
+
   it("builds an agent from start → progress → completion", () => {
     const agents = fold([
       activity("task.started", {

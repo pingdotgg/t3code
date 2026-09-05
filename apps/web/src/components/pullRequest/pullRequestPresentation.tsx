@@ -33,9 +33,9 @@ interface StatePresentation {
 }
 
 /**
- * How a pull request's state reads on this page. Open, closed and merged use the same ink as
- * the thread badge in `ThreadStatusIndicators`, so one pull request cannot look like two
- * different things in two places; draft and conflicts are states that badge never shows.
+ * How a pull request's state reads on this page. Open, closed, merged, and draft use the same
+ * ink as the thread badge in `ThreadStatusIndicators`, so one pull request cannot look like two
+ * different things in two places.
  *
  * Draft outranks conflicts: a draft is not heading for a merge yet, so conflicts only surface
  * once it is real work.
@@ -358,11 +358,13 @@ export function PullRequestActorLabel({
   className,
   labelClassName,
   tooltip = true,
+  profileUrl,
 }: {
   actor: PullRequestActor | null;
   className?: string;
   labelClassName?: string;
   tooltip?: boolean;
+  profileUrl?: string | null;
 }) {
   const login = actor?.login ?? "ghost";
   const label = (
@@ -377,11 +379,28 @@ export function PullRequestActorLabel({
   return (
     <Tooltip>
       <TooltipTrigger
-        render={<span className={cn("flex min-w-0 items-center gap-1.5", className)} />}
+        render={
+          profileUrl ? (
+            <a
+              href={profileUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label={`Open ${login}'s profile`}
+            />
+          ) : (
+            <span />
+          )
+        }
+        className={cn(
+          "flex min-w-0 items-center gap-1.5",
+          profileUrl &&
+            "cursor-pointer rounded-sm underline-offset-2 outline-none hover:text-foreground hover:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background",
+          className,
+        )}
       >
         {label}
       </TooltipTrigger>
-      <TooltipPopup side="top">{login}</TooltipPopup>
+      <TooltipPopup side="top">{profileUrl ? `Open ${login}'s profile` : login}</TooltipPopup>
     </Tooltip>
   );
 }

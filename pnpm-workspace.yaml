@@ -90,6 +90,7 @@ minimumReleaseAgeExclude:
   - expo-updates@57.0.19
   - expo@57.0.18
   - expo-widgets@57.0.15
+  - "@anthropic-ai/claude-agent-sdk@0.3.260"
 
 overrides:
   # The SDK always receives the user's Claude executable, so its bundled binaries are unused.

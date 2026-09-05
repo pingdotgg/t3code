@@ -4,7 +4,9 @@
   "private": true,
   "source": "./index.ts",
   "files": [
+    "android",
     "assets",
+    "expo-module.config.json",
     "ios",
     "src",
     "index.ts",
@@ -28,6 +30,7 @@
   "peerDependencies": {
     "@t3tools/client-runtime": "*",
     "@t3tools/shared": "*",
+    "expo": "*",
     "expo-asset": "*",
     "expo-clipboard": "*",
     "expo-haptics": "*",

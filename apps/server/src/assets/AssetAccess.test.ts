@@ -24,6 +24,7 @@ import { assetFileResponse } from "../http.ts";
 import { ASSET_ROUTE_PREFIX, issueAssetUrl, resolveAsset } from "./AssetAccess.ts";
 import * as NativeAppIconResolver from "./NativeAppIconResolver.ts";
 import { openMediaFile } from "./MediaFile.ts";
+import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof NodeFSP>();
@@ -108,216 +109,241 @@ describe("AssetAccess", () => {
     }).pipe(Effect.provide(testLayer)),
   );
 
-  it.effect("rejects non-previewable files, disguised targets, and directories", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-media-validation-" });
-      for (const name of ["report.md", "secret.txt", "secret.%70ng", "secret.png#private.txt"]) {
-        const filePath = path.join(root, name);
-        yield* fs.writeFileString(filePath, "not media");
-        const error = yield* issueAssetUrl({
-          resource: { _tag: "media-file", threadId: ThreadId.make("thread-1"), path: filePath },
-        }).pipe(Effect.flip);
-        expect(error).toBeInstanceOf(AssetPreviewTypeValidationError);
-      }
-      const disguisedPath = path.join(root, "disguised.png");
-      yield* fs.symlink(path.join(root, "secret.txt"), disguisedPath);
-      const disguisedError = yield* issueAssetUrl({
-        resource: { _tag: "media-file", threadId: ThreadId.make("thread-1"), path: disguisedPath },
-      }).pipe(Effect.flip);
-      expect(disguisedError).toBeInstanceOf(AssetPreviewTypeValidationError);
-      const directoryPath = path.join(root, "directory.png");
-      yield* fs.makeDirectory(directoryPath);
-      const directoryError = yield* issueAssetUrl({
-        resource: { _tag: "media-file", threadId: ThreadId.make("thread-1"), path: directoryPath },
-      }).pipe(Effect.flip);
-      expect(directoryError._tag).toBe("AssetWorkspaceAssetNotFoundError");
-    }).pipe(Effect.provide(testLayer)),
-  );
-
-  it.effect("binds media URLs to the canonical target and rejects symlink substitution", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-media-symlink-" });
-      const filePath = path.join(root, "actual.svg");
-      const aliasPath = path.join(root, "alias.png");
-      const replacementPath = path.join(root, "other.svg");
-      yield* fs.writeFileString(filePath, "<svg/>");
-      yield* fs.writeFileString(replacementPath, "<svg>private</svg>");
-      yield* fs.symlink(filePath, aliasPath);
-      const canonicalFile = yield* fs.realPath(filePath);
-      const result = yield* issueAssetUrl({
-        resource: { _tag: "media-file", threadId: ThreadId.make("thread-1"), path: aliasPath },
-      });
-      const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
-      const separator = suffix.indexOf("/");
-      const token = suffix.slice(0, separator);
-      const name = suffix.slice(separator + 1);
-      const expected = { kind: "file", path: canonicalFile, mimeType: "image/svg+xml" };
-      expect(yield* resolveAsset(token, name)).toMatchObject(expected);
-      yield* fs.remove(aliasPath);
-      yield* fs.symlink(replacementPath, aliasPath);
-      expect(yield* resolveAsset(token, name)).toMatchObject(expected);
-      yield* fs.remove(filePath);
-      yield* fs.symlink(replacementPath, filePath);
-      expect(yield* resolveAsset(token, name)).toBeNull();
-    }).pipe(Effect.provide(testLayer)),
-  );
-
-  it.effect("keeps full and partial responses bound to the file opened during resolution", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-media-open-file-" });
-      const filePath = path.join(root, "recording.mp4");
-      const savedPath = path.join(root, "saved.mp4");
-      const secretPath = path.join(root, "secret.txt");
-      yield* fs.writeFileString(filePath, "0123456789");
-      yield* fs.writeFileString(secretPath, "private information");
-      const result = yield* issueAssetUrl({
-        resource: { _tag: "media-file", threadId: ThreadId.make("thread-1"), path: filePath },
-      });
-      const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
-      const separator = suffix.indexOf("/");
-      for (const [range, expected, status] of [
-        [undefined, "0123456789", 200],
-        ["bytes=2-5", "2345", 206],
-      ] as const) {
-        const asset = yield* resolveAsset(suffix.slice(0, separator), suffix.slice(separator + 1));
-        if (!asset) throw new Error("Expected a resolved media file");
-
-        yield* fs.rename(filePath, savedPath);
-        yield* fs.symlink(secretPath, filePath);
-        const response = HttpServerResponse.toWeb(yield* assetFileResponse(asset, range));
-        expect(response.status).toBe(status);
-        expect(response.headers.get("content-length")).toBe(String(expected.length));
-        expect(yield* Effect.promise(() => response.text())).toBe(expected);
-        yield* fs.remove(filePath);
-        yield* fs.rename(savedPath, filePath);
-      }
-    }).pipe(Effect.provide(testLayer)),
-  );
-
-  it.effect("rejects a symlink swapped in after canonical validation but before open", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-media-open-race-" });
-      const filePath = path.join(root, "recording.mp4");
-      const secretPath = path.join(root, "secret.txt");
-      yield* fs.writeFileString(filePath, "video");
-      yield* fs.writeFileString(secretPath, "secret");
-      const canonicalPath = yield* fs.realPath(filePath);
-      const result = yield* issueAssetUrl({
-        resource: { _tag: "media-file", threadId: ThreadId.make("thread-1"), path: filePath },
-      });
-      const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
-      const separator = suffix.indexOf("/");
-      const swappingFileSystem = FileSystem.FileSystem.of({
-        ...fs,
-        stat: Effect.fn(function* (requestedPath) {
-          const info = yield* fs.stat(requestedPath);
-          if (requestedPath === canonicalPath) {
-            yield* fs.remove(filePath);
-            yield* fs.symlink(secretPath, filePath);
-          }
-          return info;
-        }),
-      });
-      expect(
-        yield* resolveAsset(suffix.slice(0, separator), suffix.slice(separator + 1)).pipe(
-          Effect.provideService(FileSystem.FileSystem, swappingFileSystem),
-        ),
-      ).toBeNull();
-    }).pipe(Effect.provide(testLayer)),
-  );
-
-  it.effect("closes a descriptor rejected when its path changes during open", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-media-open-rejected-" });
-      const filePath = path.join(root, "recording.mp4");
-      const secretPath = path.join(root, "secret.txt");
-      yield* fs.writeFileString(filePath, "video");
-      yield* fs.writeFileString(secretPath, "secret");
-      const canonicalPath = yield* fs.realPath(filePath);
-      const originalOpen = (yield* Effect.promise(() =>
-        vi.importActual<typeof NodeFSP>("node:fs/promises"),
-      )).open;
-      let opened: NodeFSP.FileHandle | undefined;
-      const openSpy = vi.mocked(NodeFSP.open).mockImplementation(async (target, flags, mode) => {
-        const handle = await originalOpen(target, flags, mode);
-        if (target === canonicalPath) {
-          opened = handle;
-          await NodeFSP.unlink(filePath);
-          await NodeFSP.symlink(secretPath, filePath);
+  it.effect.skipIf(!symlinksSupported)(
+    "rejects non-previewable files, disguised targets, and directories",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-media-validation-" });
+        for (const name of ["report.md", "secret.txt", "secret.%70ng", "secret.png#private.txt"]) {
+          const filePath = path.join(root, name);
+          yield* fs.writeFileString(filePath, "not media");
+          const error = yield* issueAssetUrl({
+            resource: { _tag: "media-file", threadId: ThreadId.make("thread-1"), path: filePath },
+          }).pipe(Effect.flip);
+          expect(error).toBeInstanceOf(AssetPreviewTypeValidationError);
         }
-        return handle;
-      });
-      yield* Effect.addFinalizer(() => Effect.sync(() => openSpy.mockImplementation(originalOpen)));
-      expect(yield* openMediaFile(canonicalPath)).toBeNull();
-      expect(opened).toBeDefined();
-      expect(opened?.fd).toBe(-1);
-    }).pipe(Effect.provide(testLayer)),
+        const disguisedPath = path.join(root, "disguised.png");
+        yield* fs.symlink(path.join(root, "secret.txt"), disguisedPath);
+        const disguisedError = yield* issueAssetUrl({
+          resource: {
+            _tag: "media-file",
+            threadId: ThreadId.make("thread-1"),
+            path: disguisedPath,
+          },
+        }).pipe(Effect.flip);
+        expect(disguisedError).toBeInstanceOf(AssetPreviewTypeValidationError);
+        const directoryPath = path.join(root, "directory.png");
+        yield* fs.makeDirectory(directoryPath);
+        const directoryError = yield* issueAssetUrl({
+          resource: {
+            _tag: "media-file",
+            threadId: ThreadId.make("thread-1"),
+            path: directoryPath,
+          },
+        }).pipe(Effect.flip);
+        expect(directoryError._tag).toBe("AssetWorkspaceAssetNotFoundError");
+      }).pipe(Effect.provide(testLayer)),
   );
 
-  it.effect("rejects an ancestor symlink race even when canonical path rechecks would pass", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-media-parent-race-" });
-      const publicDirectory = path.join(root, "public");
-      const privateDirectory = path.join(root, "private");
-      yield* fs.makeDirectory(publicDirectory);
-      yield* fs.makeDirectory(privateDirectory);
-      const filePath = path.join(publicDirectory, "recording.mp4");
-      yield* fs.writeFileString(filePath, "public video");
-      yield* fs.writeFileString(path.join(privateDirectory, "recording.mp4"), "private video");
-      const canonicalPath = yield* fs.realPath(filePath);
-      const result = yield* issueAssetUrl({
-        resource: { _tag: "media-file", threadId: ThreadId.make("thread-1"), path: filePath },
-      });
-      const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
-      const separator = suffix.indexOf("/");
-      const native = yield* Effect.promise(() =>
-        vi.importActual<typeof NodeFSP>("node:fs/promises"),
-      );
-      const savedDirectory = path.join(root, "saved");
-      const realpathSpy = vi.mocked(NodeFSP.realpath).mockImplementationOnce(async () => {
-        // A pathname-only guard can see the original parents during realpath,
-        // but the private file during both lstat calls and open.
-        await native.unlink(publicDirectory);
-        await native.rename(savedDirectory, publicDirectory);
-        const canonical = await native.realpath(canonicalPath);
-        await native.rename(publicDirectory, savedDirectory);
-        await native.symlink(privateDirectory, publicDirectory, "junction");
-        return canonical;
-      });
-      yield* Effect.addFinalizer(() =>
-        Effect.sync(() => realpathSpy.mockReset().mockImplementation(native.realpath)),
-      );
-      const swappingFileSystem = FileSystem.FileSystem.of({
-        ...fs,
-        realPath: Effect.fn(function* (requestedPath) {
-          const canonical = yield* fs.realPath(requestedPath);
-          if (requestedPath === canonicalPath) {
-            yield* fs.rename(publicDirectory, savedDirectory);
-            yield* Effect.promise(() =>
-              NodeFSP.symlink(privateDirectory, publicDirectory, "junction"),
-            );
+  it.effect.skipIf(!symlinksSupported)(
+    "binds media URLs to the canonical target and rejects symlink substitution",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-media-symlink-" });
+        const filePath = path.join(root, "actual.svg");
+        const aliasPath = path.join(root, "alias.png");
+        const replacementPath = path.join(root, "other.svg");
+        yield* fs.writeFileString(filePath, "<svg/>");
+        yield* fs.writeFileString(replacementPath, "<svg>private</svg>");
+        yield* fs.symlink(filePath, aliasPath);
+        const canonicalFile = yield* fs.realPath(filePath);
+        const result = yield* issueAssetUrl({
+          resource: { _tag: "media-file", threadId: ThreadId.make("thread-1"), path: aliasPath },
+        });
+        const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+        const separator = suffix.indexOf("/");
+        const token = suffix.slice(0, separator);
+        const name = suffix.slice(separator + 1);
+        const expected = { kind: "file", path: canonicalFile, mimeType: "image/svg+xml" };
+        expect(yield* resolveAsset(token, name)).toMatchObject(expected);
+        yield* fs.remove(aliasPath);
+        yield* fs.symlink(replacementPath, aliasPath);
+        expect(yield* resolveAsset(token, name)).toMatchObject(expected);
+        yield* fs.remove(filePath);
+        yield* fs.symlink(replacementPath, filePath);
+        expect(yield* resolveAsset(token, name)).toBeNull();
+      }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect.skipIf(!symlinksSupported)(
+    "keeps full and partial responses bound to the file opened during resolution",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-media-open-file-" });
+        const filePath = path.join(root, "recording.mp4");
+        const savedPath = path.join(root, "saved.mp4");
+        const secretPath = path.join(root, "secret.txt");
+        yield* fs.writeFileString(filePath, "0123456789");
+        yield* fs.writeFileString(secretPath, "private information");
+        const result = yield* issueAssetUrl({
+          resource: { _tag: "media-file", threadId: ThreadId.make("thread-1"), path: filePath },
+        });
+        const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+        const separator = suffix.indexOf("/");
+        for (const [range, expected, status] of [
+          [undefined, "0123456789", 200],
+          ["bytes=2-5", "2345", 206],
+        ] as const) {
+          const asset = yield* resolveAsset(
+            suffix.slice(0, separator),
+            suffix.slice(separator + 1),
+          );
+          if (!asset) throw new Error("Expected a resolved media file");
+
+          yield* fs.rename(filePath, savedPath);
+          yield* fs.symlink(secretPath, filePath);
+          const response = HttpServerResponse.toWeb(yield* assetFileResponse(asset, range));
+          expect(response.status).toBe(status);
+          expect(response.headers.get("content-length")).toBe(String(expected.length));
+          expect(yield* Effect.promise(() => response.text())).toBe(expected);
+          yield* fs.remove(filePath);
+          yield* fs.rename(savedPath, filePath);
+        }
+      }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect.skipIf(!symlinksSupported)(
+    "rejects a symlink swapped in after canonical validation but before open",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-media-open-race-" });
+        const filePath = path.join(root, "recording.mp4");
+        const secretPath = path.join(root, "secret.txt");
+        yield* fs.writeFileString(filePath, "video");
+        yield* fs.writeFileString(secretPath, "secret");
+        const canonicalPath = yield* fs.realPath(filePath);
+        const result = yield* issueAssetUrl({
+          resource: { _tag: "media-file", threadId: ThreadId.make("thread-1"), path: filePath },
+        });
+        const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+        const separator = suffix.indexOf("/");
+        const swappingFileSystem = FileSystem.FileSystem.of({
+          ...fs,
+          stat: Effect.fn(function* (requestedPath) {
+            const info = yield* fs.stat(requestedPath);
+            if (requestedPath === canonicalPath) {
+              yield* fs.remove(filePath);
+              yield* fs.symlink(secretPath, filePath);
+            }
+            return info;
+          }),
+        });
+        expect(
+          yield* resolveAsset(suffix.slice(0, separator), suffix.slice(separator + 1)).pipe(
+            Effect.provideService(FileSystem.FileSystem, swappingFileSystem),
+          ),
+        ).toBeNull();
+      }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect.skipIf(!symlinksSupported)(
+    "closes a descriptor rejected when its path changes during open",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-media-open-rejected-" });
+        const filePath = path.join(root, "recording.mp4");
+        const secretPath = path.join(root, "secret.txt");
+        yield* fs.writeFileString(filePath, "video");
+        yield* fs.writeFileString(secretPath, "secret");
+        const canonicalPath = yield* fs.realPath(filePath);
+        const originalOpen = (yield* Effect.promise(() =>
+          vi.importActual<typeof NodeFSP>("node:fs/promises"),
+        )).open;
+        let opened: NodeFSP.FileHandle | undefined;
+        const openSpy = vi.mocked(NodeFSP.open).mockImplementation(async (target, flags, mode) => {
+          const handle = await originalOpen(target, flags, mode);
+          if (target === canonicalPath) {
+            opened = handle;
+            await NodeFSP.unlink(filePath);
+            await NodeFSP.symlink(secretPath, filePath);
           }
+          return handle;
+        });
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => openSpy.mockImplementation(originalOpen)),
+        );
+        expect(yield* openMediaFile(canonicalPath)).toBeNull();
+        expect(opened).toBeDefined();
+        expect(opened?.fd).toBe(-1);
+      }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect.skipIf(!symlinksSupported)(
+    "rejects an ancestor symlink race even when canonical path rechecks would pass",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-media-parent-race-" });
+        const publicDirectory = path.join(root, "public");
+        const privateDirectory = path.join(root, "private");
+        yield* fs.makeDirectory(publicDirectory);
+        yield* fs.makeDirectory(privateDirectory);
+        const filePath = path.join(publicDirectory, "recording.mp4");
+        yield* fs.writeFileString(filePath, "public video");
+        yield* fs.writeFileString(path.join(privateDirectory, "recording.mp4"), "private video");
+        const canonicalPath = yield* fs.realPath(filePath);
+        const result = yield* issueAssetUrl({
+          resource: { _tag: "media-file", threadId: ThreadId.make("thread-1"), path: filePath },
+        });
+        const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+        const separator = suffix.indexOf("/");
+        const native = yield* Effect.promise(() =>
+          vi.importActual<typeof NodeFSP>("node:fs/promises"),
+        );
+        const savedDirectory = path.join(root, "saved");
+        const realpathSpy = vi.mocked(NodeFSP.realpath).mockImplementationOnce(async () => {
+          // A pathname-only guard can see the original parents during realpath,
+          // but the private file during both lstat calls and open.
+          await native.unlink(publicDirectory);
+          await native.rename(savedDirectory, publicDirectory);
+          const canonical = await native.realpath(canonicalPath);
+          await native.rename(publicDirectory, savedDirectory);
+          await native.symlink(privateDirectory, publicDirectory, "junction");
           return canonical;
-        }),
-      });
-      expect(
-        yield* resolveAsset(suffix.slice(0, separator), suffix.slice(separator + 1)).pipe(
-          Effect.provideService(FileSystem.FileSystem, swappingFileSystem),
-        ),
-      ).toBeNull();
-    }).pipe(Effect.provide(testLayer)),
+        });
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => realpathSpy.mockReset().mockImplementation(native.realpath)),
+        );
+        const swappingFileSystem = FileSystem.FileSystem.of({
+          ...fs,
+          realPath: Effect.fn(function* (requestedPath) {
+            const canonical = yield* fs.realPath(requestedPath);
+            if (requestedPath === canonicalPath) {
+              yield* fs.rename(publicDirectory, savedDirectory);
+              yield* Effect.promise(() =>
+                NodeFSP.symlink(privateDirectory, publicDirectory, "junction"),
+              );
+            }
+            return canonical;
+          }),
+        });
+        expect(
+          yield* resolveAsset(suffix.slice(0, separator), suffix.slice(separator + 1)).pipe(
+            Effect.provideService(FileSystem.FileSystem, swappingFileSystem),
+          ),
+        ).toBeNull();
+      }).pipe(Effect.provide(testLayer)),
   );
 
   it.effect("keeps in-place edits readable but requires a new URL after atomic replacement", () =>
@@ -728,7 +754,7 @@ describe("AssetAccess", () => {
         projectFaviconPath: "brand/custom.svg",
       });
 
-      expect(result.sourcePath).toBe("brand/custom.svg");
+      expect(result.sourcePath).toBe(path.join("brand", "custom.svg"));
       expect(result.relativeUrl).toMatch(/\/v[0-9a-f]{64}-custom\.svg$/);
     }).pipe(Effect.provide(testLayer)),
   );
@@ -787,7 +813,7 @@ describe("AssetAccess", () => {
         projectFaviconPath: "brand/saved.svg",
       });
 
-      expect(result.sourcePath).toBe("brand/saved.svg");
+      expect(result.sourcePath).toBe(path.join("brand", "saved.svg"));
       expect(result.relativeUrl).toMatch(/\/v[0-9a-f]{64}-saved\.svg$/);
     }).pipe(Effect.provide(testLayer)),
   );

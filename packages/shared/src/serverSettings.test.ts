@@ -322,6 +322,28 @@ describe("serverSettings helpers", () => {
     expect(Object.keys(removed.usageLimitSources)).toEqual([hubB]);
   });
 
+  it("replaces and removes individual usage prices without clobbering other models", () => {
+    const prices = { inputCostPerMillionTokens: 2, outputCostPerMillionTokens: 8 };
+    const current = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      usagePriceOverrides: { "example-model": { ...prices, cacheReadCostPerMillionTokens: 0.5 } },
+    });
+    const added = applyServerSettingsPatch(current, {
+      usagePriceOverrides: { "other-model": prices },
+    });
+    const replaced = applyServerSettingsPatch(added, {
+      usagePriceOverrides: { "example-model": prices },
+    });
+    expect(replaced.usagePriceOverrides).toEqual({
+      "example-model": prices,
+      "other-model": prices,
+    });
+    const removed = applyServerSettingsPatch(replaced, {
+      usagePriceOverrides: { "example-model": null },
+    });
+    expect(removed.usagePriceOverrides).toEqual({ "other-model": prices });
+    expect(current.usagePriceOverrides["example-model"]?.cacheReadCostPerMillionTokens).toBe(0.5);
+  });
+
   it("stores background activity profiles as a versioned object and syncs legacy aliases", () => {
     const next = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
       backgroundActivity: {

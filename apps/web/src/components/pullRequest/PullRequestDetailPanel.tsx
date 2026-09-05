@@ -64,7 +64,11 @@ import { useProjects } from "~/state/entities";
 import { useEnvironments } from "~/state/environments";
 import { useEnvironmentQuery } from "~/state/query";
 import { useLiveRefresh } from "~/hooks/useLiveRefresh";
-import { pullRequestEnvironment, useSharedPullRequestSummary } from "~/state/pullRequests";
+import {
+  pullRequestEnvironment,
+  usePullRequestTurnRefresh,
+  useSharedPullRequestSummary,
+} from "~/state/pullRequests";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { vcsEnvironment } from "~/state/vcs";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
@@ -137,7 +141,6 @@ import {
 } from "./pullRequestProjectAssignment.logic";
 import { PullRequestChecksPopover } from "./PullRequestChecksPopover";
 import {
-  PullRequestActorAvatar,
   PullRequestActorLabel,
   PullRequestDiffStat,
   PullRequestMetaLine,
@@ -577,6 +580,7 @@ export function PullRequestDetailPanel({
   const activityQuery = useEnvironmentQuery(
     pullRequestEnvironment.activity({ environmentId, input: reference }),
   );
+  const turnRefresh = usePullRequestTurnRefresh(environmentId);
   const [cachedDetail, setCachedDetail] = useState(() =>
     readPullRequestDetailSnapshot(
       typeof window === "undefined" ? undefined : window.localStorage,
@@ -620,7 +624,13 @@ export function PullRequestDetailPanel({
     () =>
       resolvedCoreDetail === null || sharedSummary === null || sharedSummary === resolvedCoreDetail
         ? resolvedCoreDetail
-        : { ...resolvedCoreDetail, ...sharedSummary },
+        : {
+            ...resolvedCoreDetail,
+            ...sharedSummary,
+            // A summary may come from an older server that does not report draft state. Keep the
+            // detail's required value instead of making the complete detail shape partial.
+            isDraft: sharedSummary.isDraft ?? resolvedCoreDetail.isDraft,
+          },
     [resolvedCoreDetail, sharedSummary],
   );
   const activity = activityQuery.data;
@@ -645,6 +655,13 @@ export function PullRequestDetailPanel({
     if (detail?.autoMergeMethod !== undefined) setMergeMethod(detail.autoMergeMethod);
   }, [detail?.autoMergeMethod, pullRequestKey]);
   const repositoryUrl = detail === null ? null : changeRequestRepositoryUrl(detail.url);
+  const authorProfileUrl =
+    detail?.provider === "github" &&
+    detail.author !== null &&
+    !detail.author.login.endsWith("[bot]") &&
+    repositoryUrl !== null
+      ? new URL(`/${encodeURIComponent(detail.author.login)}`, repositoryUrl).toString()
+      : null;
   const checkoutCommand = detail
     ? pullRequestCheckoutCommand(
         detail.provider,
@@ -675,6 +692,8 @@ export function PullRequestDetailPanel({
     detailQuery.refresh();
     activityQuery.refresh();
   }, [activityQuery.refresh, detailQuery.refresh]);
+  const [refreshToken, setRefreshToken] = useState(0);
+  const codeRefreshToken = refreshToken + (turnRefresh ?? 0);
   const activityRevision = useRef<{ readonly key: string; readonly updatedAt: string } | null>(
     null,
   );
@@ -698,15 +717,18 @@ export function PullRequestDetailPanel({
   // revision effect above reads it only after this same pull request reports a change. Keyed by
   // the pull request rather than by the panel, because this one panel shows a different pull
   // request every time it is opened.
-  useLiveRefresh(detailQuery.refresh, {
-    key: `pull-request:${reference.projectId}:${reference.repository}#${reference.number}`,
-  });
+  useLiveRefresh(
+    () => {
+      detailQuery.refresh();
+      setRefreshToken((token) => token + 1);
+    },
+    { key: `pull-request:${reference.projectId}:${reference.repository}#${reference.number}` },
+  );
   // The button, on the other hand, goes around the server's cache rather than through it: it is
   // the answer for a reader who can see that what they are looking at is behind. The
   // invalidation goes first so the re-reads miss that cache; if it fails, the reads still run
   // and at worst answer from it.
   const invalidate = useAtomCommand(pullRequestEnvironment.invalidate, { reportFailure: false });
-  const [refreshToken, setRefreshToken] = useState(0);
   const refreshFromHost = useCallback(async () => {
     await invalidate({ environmentId, input: { reference } });
     refreshDetail();
@@ -1287,7 +1309,7 @@ export function PullRequestDetailPanel({
     !conflicting &&
     allowedMergeMethods.length > 1;
   // The pull request number carries this state in the overview and the right-panel tab mirrors
-  // it. The conflict action is separate from this state: an open pull request remains green.
+  // it. Conflicts take the action slot while they need a person, but do not change the PR state.
   const statePresentation = detail
     ? resolvePullRequestState({ state: detail.state, isDraft: detail.isDraft })
     : null;
@@ -1854,19 +1876,12 @@ export function PullRequestDetailPanel({
               <div className="col-span-2 min-w-0 px-4 pb-2 pt-1">
                 <div className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
                   <span className="flex min-w-0 shrink items-center gap-1.5 overflow-hidden text-xs text-muted-foreground">
-                    <Tooltip>
-                      <TooltipTrigger
-                        render={
-                          <span
-                            className="shrink-0 rounded-full"
-                            aria-label={detail.author?.login ?? "ghost"}
-                          />
-                        }
-                      >
-                        <PullRequestActorAvatar actor={detail.author} />
-                      </TooltipTrigger>
-                      <TooltipPopup side="top">{detail.author?.login ?? "ghost"}</TooltipPopup>
-                    </Tooltip>
+                    <PullRequestActorLabel
+                      actor={detail.author}
+                      profileUrl={authorProfileUrl}
+                      className="shrink-0 rounded-full"
+                      labelClassName="sr-only"
+                    />
                     <span className="shrink-0">{formatRelativeTimeLabel(detail.updatedAt)}</span>
                   </span>
                   <span aria-hidden className="h-3 w-px shrink-0 bg-border/70" />
@@ -2026,7 +2041,11 @@ export function PullRequestDetailPanel({
                 )}
                 <div className="mt-2 flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
                   <PullRequestMetaLine className="min-w-0 whitespace-nowrap">
-                    <PullRequestActorLabel actor={detail.author} className="font-medium" />
+                    <PullRequestActorLabel
+                      actor={detail.author}
+                      profileUrl={authorProfileUrl}
+                      className="font-medium"
+                    />
                     <span>updated {formatRelativeTimeLabel(detail.updatedAt)}</span>
                   </PullRequestMetaLine>
                   {checkoutCommand ? (
@@ -2352,7 +2371,7 @@ export function PullRequestDetailPanel({
                     fixFindingLabel={handoffLabels.fixFinding}
                     onFixFinding={startFixFinding}
                     onRefresh={refreshDetail}
-                    refreshToken={refreshToken}
+                    refreshToken={codeRefreshToken}
                   />
                 </Suspense>
               </div>
