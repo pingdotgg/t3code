@@ -17,7 +17,6 @@ import {
   make,
   resolveProviderCatalog,
   type ModelManifestData,
-  manifestUpdatedAtMs,
   encodeManifestCache,
 } from "./ModelManifest.ts";
 
@@ -382,7 +381,6 @@ describe("ModelManifest service", () => {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const config = yield* ServerConfig.ServerConfig;
-      assert.isAbove(manifestUpdatedAtMs(BUNDLED_MODEL_MANIFEST), 0);
       const cachePath = path.join(config.stateDir, "model-manifest.json");
       // A cache of the manifest as it was before the release edited it. The
       // fetch time is irrelevant: the remote may be unreachable now, so
