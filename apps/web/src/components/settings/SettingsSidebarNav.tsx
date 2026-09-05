@@ -8,6 +8,7 @@ import {
   useState,
   type ComponentType,
   type KeyboardEvent,
+  type ReactNode,
 } from "react";
 import {
   ArchiveIcon,
@@ -21,11 +22,13 @@ import {
   Settings2Icon,
   XIcon,
 } from "lucide-react";
-import { useLocation, useNavigate } from "@tanstack/react-router";
+import { useLocation, useNavigate, useRouterState } from "@tanstack/react-router";
 
 import { Button } from "../ui/button";
+import { Collapsible, CollapsiblePanel } from "../ui/collapsible";
 import { Input } from "../ui/input";
 import { Kbd } from "../ui/kbd";
+import { cn } from "../../lib/utils";
 import {
   SidebarContent,
   SidebarFooter,
@@ -40,6 +43,11 @@ import {
 } from "../ui/sidebar";
 import { SidebarUtilityMenu } from "../sidebar/SidebarChrome";
 import { scrollToSettingsTarget } from "./settingsLayout";
+import {
+  getVisibleSettingsSectionIds,
+  observeSettingsSectionVisibility,
+  type SettingsSectionVisibilityState,
+} from "./settingsSectionVisibility";
 import {
   searchSettings,
   SETTINGS_SECTION_LABELS,
@@ -97,6 +105,7 @@ const SETTINGS_PAGE_SECTIONS: Partial<
   "/settings/appearance": [
     { label: "Colors & themes", targetId: "appearance" },
     { label: "Interface", targetId: "appearance-interface" },
+    { label: "Motion", targetId: "motion" },
     { label: "Typography", targetId: "typography" },
   ],
   "/settings/source-control": [
@@ -114,17 +123,69 @@ function SettingsSectionIcon({ to }: { to: SettingsPath }) {
   return <Icon className="mt-0.5 size-3.5 shrink-0 text-sidebar-muted-foreground/60" />;
 }
 
+function SettingsSubmenuCollapse({
+  open,
+  children,
+}: {
+  readonly open: boolean;
+  readonly children: ReactNode;
+}) {
+  return (
+    <Collapsible open={open}>
+      <CollapsiblePanel className="duration-150 ease-out motion-reduce:transition-none">
+        {children}
+      </CollapsiblePanel>
+    </Collapsible>
+  );
+}
+
 export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   const navigate = useNavigate();
   const currentHash = useLocation({ select: (location) => location.hash });
+  const resolvedPathname = useRouterState({
+    select: (state) => state.resolvedLocation?.pathname,
+  });
   const { isMobile, setOpenMobile, open, setOpen } = useSidebar();
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
   const [activeResultIndex, setActiveResultIndex] = useState(0);
+  const [sectionVisibility, setSectionVisibility] = useState<SettingsSectionVisibilityState | null>(
+    null,
+  );
   const searchableItems = useAvailableSettingsSearchItems();
   const results = useMemo(() => searchSettings(query, searchableItems), [query, searchableItems]);
   const isSearching = query.trim().length > 0;
   const hasResults = results.length > 0;
+  const activeSettingsPath = SETTINGS_NAV_ITEMS.find(
+    (item) => pathname === item.to || pathname.startsWith(`${item.to}/`),
+  )?.to;
+  const observedVisibilityScope = useMemo(() => {
+    const path = SETTINGS_NAV_ITEMS.find(
+      (item) =>
+        resolvedPathname === item.to || resolvedPathname?.startsWith(`${item.to}/`) === true,
+    )?.to;
+    const pageSections = path ? SETTINGS_PAGE_SECTIONS[path] : undefined;
+    return path && pageSections ? { path, pageSections } : null;
+  }, [resolvedPathname]);
+  const visiblePageSectionIds = getVisibleSettingsSectionIds({
+    activePath: activeSettingsPath,
+    scope: observedVisibilityScope,
+    visibility: sectionVisibility,
+  });
+
+  useEffect(() => {
+    if (!observedVisibilityScope) return;
+    const container = document.querySelector<HTMLElement>("[data-settings-page-layout]");
+    if (!container) return;
+
+    return observeSettingsSectionVisibility({
+      container,
+      targetIds: observedVisibilityScope.pageSections.map((section) => section.targetId),
+      onChange(targetIds) {
+        setSectionVisibility({ scope: observedVisibilityScope, targetIds: new Set(targetIds) });
+      },
+    });
+  }, [observedVisibilityScope]);
 
   useEffect(() => {
     setActiveResultIndex((index) => Math.min(index, Math.max(results.length - 1, 0)));
@@ -347,8 +408,8 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
             <SidebarMenu className="ps-px">
               {SETTINGS_NAV_ITEMS.map((item) => {
                 const Icon = item.icon;
-                const isActive = pathname === item.to || pathname.startsWith(`${item.to}/`);
                 const pageSections = SETTINGS_PAGE_SECTIONS[item.to];
+                const isActive = activeSettingsPath === item.to;
                 return (
                   <SidebarMenuItem key={item.to}>
                     <SidebarMenuButton
@@ -358,21 +419,28 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                       <Icon />
                       <span className="truncate">{item.label}</span>
                     </SidebarMenuButton>
-                    {isActive && pageSections ? (
-                      <SidebarMenuSub className="border-l-0">
-                        {pageSections.map((section) => (
-                          <SidebarMenuSubItem key={section.targetId}>
-                            <SidebarMenuSubButton
-                              render={<button type="button" />}
-                              size="sm"
-                              className="w-full text-sidebar-muted-foreground/65"
-                              onClick={() => handlePageSectionClick(item.to, section.targetId)}
-                            >
-                              <span className="ms-0.5">{section.label}</span>
-                            </SidebarMenuSubButton>
-                          </SidebarMenuSubItem>
-                        ))}
-                      </SidebarMenuSub>
+                    {pageSections ? (
+                      <SettingsSubmenuCollapse open={isActive}>
+                        <SidebarMenuSub className="border-l-0">
+                          {pageSections.map((section) => (
+                            <SidebarMenuSubItem key={section.targetId}>
+                              <SidebarMenuSubButton
+                                render={<button type="button" />}
+                                size="sm"
+                                data-visible={visiblePageSectionIds.has(section.targetId)}
+                                className={cn(
+                                  "w-full text-sidebar-muted-foreground/65",
+                                  visiblePageSectionIds.has(section.targetId) &&
+                                    "font-medium text-sidebar-foreground",
+                                )}
+                                onClick={() => handlePageSectionClick(item.to, section.targetId)}
+                              >
+                                <span className="ms-0.5">{section.label}</span>
+                              </SidebarMenuSubButton>
+                            </SidebarMenuSubItem>
+                          ))}
+                        </SidebarMenuSub>
+                      </SettingsSubmenuCollapse>
                     ) : null}
                   </SidebarMenuItem>
                 );
