@@ -772,6 +772,98 @@ describe("ProviderCommandReactor", () => {
     }),
   );
 
+  effectIt.effect.each(["ready", "running"] as const)(
+    "checks the active model's quota and preserves an unrelated %s session",
+    (sessionStatus) =>
+      Effect.gen(function* () {
+        const threadId = ThreadId.make("thread-1");
+        const instanceId = ProviderInstanceId.make("claude");
+        const createdAt = "2026-01-01T00:00:00.000Z";
+        const harness = yield* Effect.promise(() =>
+          createHarness({
+            threadModelSelection: { instanceId, model: "claude-sonnet-4" },
+            providerRegistry: makeProviderRegistryMock([
+              {
+                instanceId,
+                driver: ProviderDriverKind.make("claude"),
+                enabled: true,
+                installed: true,
+                status: "ready",
+                version: null,
+                auth: { status: "authenticated" },
+                checkedAt: createdAt,
+                models: [],
+                slashCommands: [],
+                skills: [],
+                usageLimits: {
+                  checkedAt: createdAt,
+                  windows: [
+                    { id: "seven_day_sonnet", kind: "weekly", label: "Sonnet", usedPercent: 0 },
+                    { id: "seven_day_opus", kind: "weekly", label: "Opus", usedPercent: 100 },
+                  ],
+                },
+              },
+            ]),
+          }),
+        );
+        harness.runtimeSessions.push({
+          threadId,
+          provider: ProviderDriverKind.make("claude"),
+          providerInstanceId: instanceId,
+          model: "claude-opus-4",
+          status: sessionStatus,
+          runtimeMode: "approval-required",
+          createdAt,
+          updatedAt: createdAt,
+        });
+        const activeTurnId = sessionStatus === "running" ? asTurnId("already-running") : null;
+        yield* harness.engine.dispatch({
+          type: "thread.session.set",
+          commandId: CommandId.make("bind-existing-session"),
+          threadId,
+          session: {
+            threadId,
+            providerName: "claude",
+            providerInstanceId: instanceId,
+            status: sessionStatus,
+            runtimeMode: "approval-required",
+            activeTurnId,
+            lastError: null,
+            updatedAt: createdAt,
+          },
+          createdAt,
+        });
+        yield* harness.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make("omitted-selection-exhausted-send"),
+          threadId,
+          message: {
+            messageId: asMessageId("blocked"),
+            role: "user",
+            text: "Do not send",
+            attachments: [],
+          },
+          runtimeMode: "approval-required",
+          interactionMode: "default",
+          createdAt,
+        });
+        yield* Effect.promise(() => harness.drain());
+        expect(harness.sendTurn).not.toHaveBeenCalled();
+        expect(harness.startSession).not.toHaveBeenCalled();
+        const thread = (yield* Effect.promise(() => harness.readModel())).threads[0];
+        expect(thread?.activities).toContainEqual(
+          expect.objectContaining({ summary: "Usage limit reached" }),
+        );
+        if (sessionStatus === "running") {
+          expect(thread?.session).toMatchObject({
+            status: "running",
+            activeTurnId,
+            lastError: null,
+          });
+        }
+      }),
+  );
+
   effectIt.effect.each(["new", "ready", "stopped"] as const)(
     "handles sign-out for an exhausted %s thread before worktree repair, text helpers, or startup",
     (sessionStatus) =>

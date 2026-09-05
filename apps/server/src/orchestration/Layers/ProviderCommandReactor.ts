@@ -1304,7 +1304,15 @@ const make = Effect.gen(function* () {
       return;
     }
 
-    const selection = event.payload.modelSelection ?? thread.modelSelection;
+    const activeSession =
+      event.payload.modelSelection === undefined && thread.session?.status !== "stopped"
+        ? (yield* providerService.listSessions()).find((session) => session.threadId === thread.id)
+        : undefined;
+    const selection = event.payload.modelSelection ?? {
+      ...(threadModelSelections.get(thread.id) ?? thread.modelSelection),
+      instanceId: activeSession?.providerInstanceId ?? thread.modelSelection.instanceId,
+      model: activeSession?.model ?? thread.modelSelection.model,
+    };
     const providerSnapshot = (yield* providerRegistry.getProviders).find(
       (entry) => entry.instanceId === selection.instanceId,
     );
@@ -1318,11 +1326,14 @@ const make = Effect.gen(function* () {
     if (availability.status === "exhausted") {
       const detail =
         "Usage limit reached. Queue a message with Start when available or choose another provider.";
-      yield* setThreadSessionErrorOnTurnStartFailure({
-        threadId: thread.id,
-        detail,
-        createdAt: event.payload.createdAt,
-      });
+      const latestSession = (yield* resolveThreadShell(thread.id))?.session;
+      if (latestSession?.status !== "running" && latestSession?.status !== "starting") {
+        yield* setThreadSessionErrorOnTurnStartFailure({
+          threadId: thread.id,
+          detail,
+          createdAt: event.payload.createdAt,
+        });
+      }
       yield* appendTurnStartFailure("Usage limit reached", detail);
       return;
     }
@@ -1424,20 +1435,15 @@ const make = Effect.gen(function* () {
       }
       compactingThreadIds.add(event.payload.threadId);
       yield* Effect.gen(function* () {
-        yield* ensureSessionForThread(
-          event.payload.threadId,
-          event.payload.createdAt,
-          event.payload.modelSelection !== undefined
-            ? { modelSelection: event.payload.modelSelection, pendingTurnStart: true }
-            : { pendingTurnStart: true },
-        );
+        yield* ensureSessionForThread(event.payload.threadId, event.payload.createdAt, {
+          modelSelection: selection,
+          pendingTurnStart: true,
+        });
         compactionSessionEnsured = true;
-        if (event.payload.modelSelection !== undefined) {
-          threadModelSelections.set(event.payload.threadId, event.payload.modelSelection);
-        }
+        threadModelSelections.set(event.payload.threadId, selection);
         yield* providerService.compactThread(
           event.payload.threadId,
-          event.payload.modelSelection,
+          selection,
           event.payload.messageId,
         );
       }).pipe(
@@ -1458,9 +1464,7 @@ const make = Effect.gen(function* () {
       threadId: event.payload.threadId,
       messageText: message.text,
       ...(message.attachments !== undefined ? { attachments: message.attachments } : {}),
-      ...(event.payload.modelSelection !== undefined
-        ? { modelSelection: event.payload.modelSelection }
-        : {}),
+      modelSelection: selection,
       interactionMode: event.payload.interactionMode,
       runtimeMode: event.payload.runtimeMode,
       createdAt: event.payload.createdAt,
