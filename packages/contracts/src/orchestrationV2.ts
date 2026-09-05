@@ -797,6 +797,24 @@ export const OrchestrationV2Checkpoint = Schema.Struct({
 });
 export type OrchestrationV2Checkpoint = typeof OrchestrationV2Checkpoint.Type;
 
+/**
+ * Resolve the provider-history target only when checkpoint metadata proves it.
+ * A null app ordinal is thread start solely for the ordinal-zero root scope;
+ * materialized later baselines and nested/manual scopes are ambiguous.
+ */
+export function checkpointRollbackAppRunOrdinal(
+  checkpoint: OrchestrationV2Checkpoint,
+  scope: OrchestrationV2CheckpointScope,
+): number | null {
+  if (checkpoint.appRunOrdinal !== null) return checkpoint.appRunOrdinal;
+  return checkpoint.ordinalWithinScope === 0 &&
+    scope.kind === "root_run" &&
+    scope.parentScopeId === null &&
+    scope.advancesAppRunCount
+    ? 0
+    : null;
+}
+
 export const OrchestrationV2CheckpointRollbackRequest = Schema.Struct({
   scopeId: CheckpointScopeId,
   checkpointId: CheckpointId,

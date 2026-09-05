@@ -22,6 +22,7 @@ import {
 import {
   OrchestrationV2Checkpoint,
   OrchestrationV2CheckpointScope,
+  checkpointRollbackAppRunOrdinal,
   OrchestrationV2Command,
   OrchestrationV2DomainEvent,
   OrchestrationV2ProviderThread,
@@ -61,6 +62,49 @@ const decodeOrchestrationV2ProviderThread = Schema.decodeUnknownSync(Orchestrati
 const decodeOrchestrationV2ThreadShell = Schema.decodeUnknownSync(OrchestrationV2ThreadShell);
 
 describe("orchestration V2 contracts", () => {
+  it("only resolves null checkpoint targets for the ordinal-zero root scope", () => {
+    const rootScope = decodeOrchestrationV2CheckpointScope({
+      id: "scope:checkpoint-target",
+      threadId: "thread:checkpoint-target",
+      runId: null,
+      nodeId: "node:checkpoint-target",
+      parentScopeId: null,
+      providerThreadId: "provider-thread:checkpoint-target",
+      kind: "root_run",
+      ordinalWithinParent: 0,
+      advancesAppRunCount: true,
+      cwd: "/repo",
+      createdAt: now,
+    });
+    const checkpoint = decodeOrchestrationV2Checkpoint({
+      id: "checkpoint:checkpoint-target",
+      threadId: rootScope.threadId,
+      scopeId: rootScope.id,
+      runId: null,
+      nodeId: rootScope.nodeId,
+      parentCheckpointId: null,
+      ordinalWithinScope: 0,
+      appRunOrdinal: null,
+      ref: "refs/t3/checkpoint-target",
+      status: "ready",
+      files: [],
+      capturedAt: now,
+    });
+
+    expect(checkpointRollbackAppRunOrdinal(checkpoint, rootScope)).toBe(0);
+    expect(
+      checkpointRollbackAppRunOrdinal({ ...checkpoint, ordinalWithinScope: 2 }, rootScope),
+    ).toBeNull();
+    expect(
+      checkpointRollbackAppRunOrdinal(checkpoint, {
+        ...rootScope,
+        kind: "manual",
+        advancesAppRunCount: false,
+      }),
+    ).toBeNull();
+    expect(checkpointRollbackAppRunOrdinal({ ...checkpoint, appRunOrdinal: 3 }, rootScope)).toBe(3);
+  });
+
   it("lets legacy snapshot decoders ignore enrichment metadata", () => {
     const decoded = decodeLegacyShellStreamItem({
       kind: "snapshot",

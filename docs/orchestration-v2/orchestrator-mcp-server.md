@@ -11,7 +11,8 @@ agent can use this endpoint to:
 - create one or more ordinary top-level T3 threads;
 - list and incrementally read project threads;
 - send or steer follow-up messages; and
-- wait for or interrupt ordinary thread runs.
+- wait for or interrupt ordinary thread runs; and
+- inspect durable thread checkpoints and bounded checkpoint diffs.
 
 These are T3 orchestration operations, not provider-native sub-agent APIs.
 Delegated tasks always create a T3 child thread and run. The child receives
@@ -140,7 +141,7 @@ selection model-visible without allowing a request that cannot run.
 
 ## Tool Surface
 
-The server exposes eleven orchestration tools.
+The server exposes the following orchestration and checkpoint tools.
 
 ### `orchestrator_capabilities`
 
@@ -312,6 +313,34 @@ Without `runId`, it selects the newest interruptible run. A terminal run is
 returned unchanged, and a thread with no active provider turn returns
 `no_active_run`.
 
+### `t3_checkpoint_list`
+
+Lists durable checkpoint metadata for the calling thread or another thread in
+the same project. Results are newest first and offset-paginated. File summaries
+are independently bounded per checkpoint, and filesystem-ref availability is
+checked only for the returned page. Each entry includes the checkpoint and
+scope IDs required by the diff and restore paths, its run/node/ordinal source,
+its parent checkpoint, and current provider rollback blockers.
+
+The tool reads the thread's complete durable V2 projection, bounds the returned
+checkpoint slice, then checks refs through `CheckpointStore` only for that
+page. It does not enumerate unrelated Git refs. A missing or unreadable ref is
+reported on that checkpoint entry without hiding the rest of the page.
+
+### `t3_checkpoint_diff`
+
+Returns a bounded patch between two ready checkpoints in the same durable
+scope. The target and optional baseline are selected only by the stable IDs
+returned from `t3_checkpoint_list`; callers cannot supply filesystem paths or
+Git refs. When the baseline is omitted, the target's parent is used, or the
+target itself when no parent exists.
+
+Thread, scope, checkpoint metadata, and both filesystem refs are validated
+before an empty diff can be returned. Large patches use explicit UTF-16
+code-unit cursors and report total length, truncation, and the next cursor. A
+page can exceed its requested limit by one code unit to avoid splitting a
+surrogate pair. This makes pagination match MCP JSON string indexing.
+
 ## Delegated Task Lifecycle
 
 The MCP server is a command ingress into V2. It does not call provider adapters
@@ -355,6 +384,9 @@ falls back to a terminal-status message when no assistant text exists.
 - General thread management is limited to the calling thread's project. Send
   additionally enforces the same runtime and interaction privilege ceiling as
   child creation.
+- Checkpoint list and diff use the same current-project boundary. They never
+  accept an environment, workspace path, or raw checkpoint ref from the
+  caller.
 - Provider instances must be enabled, installed, available, authenticated, and
   backed by a V2 adapter.
 - A requested model must be advertised by the selected provider when the
@@ -387,8 +419,11 @@ orchestration_error
 
 - Shared schemas: `packages/contracts/src/orchestratorMcp.ts`
 - MCP service: `apps/server/src/mcp/OrchestratorMcpService.ts`
+- Checkpoint MCP service: `apps/server/src/mcp/CheckpointMcpService.ts`
 - Tool definitions and handlers:
   `apps/server/src/mcp/toolkits/orchestrator/`
+- Checkpoint tool definitions and handlers:
+  `apps/server/src/mcp/toolkits/checkpoint/`
 - HTTP registration and authentication:
   `apps/server/src/mcp/McpHttpServer.ts`
 - Credential lifecycle: `apps/server/src/mcp/McpSessionRegistry.ts`

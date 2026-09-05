@@ -8,6 +8,7 @@ import * as Schema from "effect/Schema";
 import { HttpBody, HttpClient, HttpRouter } from "effect/unstable/http";
 
 import * as ServerEnvironment from "../../../environment/ServerEnvironment.ts";
+import * as CheckpointStore from "../../../checkpointing/CheckpointStore.ts";
 import * as GitWorkflowService from "../../../git/GitWorkflowService.ts";
 import { ThreadManagementService } from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
@@ -21,6 +22,7 @@ import * as McpSessionRegistry from "../../McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
 
 const StubServicesLive = Layer.mergeAll(
+  Layer.mock(CheckpointStore.CheckpointStore)({}),
   Layer.mock(ThreadManagementService)({}),
   Layer.mock(ProviderRegistry)({}),
   Layer.mock(ScheduledTaskService)({}),
@@ -110,6 +112,8 @@ it.effect("production mcp layer lists worktree tools over http", () =>
       const toolNames = tools.map((tool) => tool.name);
       expect(toolNames).toContain("t3_worktree_handoff");
       expect(toolNames).toContain("t3_worktree_status");
+      expect(toolNames).toContain("t3_checkpoint_list");
+      expect(toolNames).toContain("t3_checkpoint_diff");
       // The worktree registration merges alongside the other toolkits rather
       // than replacing them.
       expect(toolNames).toContain("preview_status");
@@ -125,6 +129,12 @@ it.effect("production mcp layer lists worktree tools over http", () =>
       const status = tools.find((tool) => tool.name === "t3_worktree_status");
       expect(status?.annotations?.readOnlyHint).toBe(true);
       expect(status?.annotations?.destructiveHint).toBe(false);
+      const checkpointList = tools.find((tool) => tool.name === "t3_checkpoint_list");
+      const checkpointDiff = tools.find((tool) => tool.name === "t3_checkpoint_diff");
+      expect(checkpointList?.annotations?.readOnlyHint).toBe(true);
+      expect(checkpointList?.annotations?.destructiveHint).toBe(false);
+      expect(checkpointDiff?.annotations?.readOnlyHint).toBe(true);
+      expect(checkpointDiff?.annotations?.destructiveHint).toBe(false);
 
       // MCP requires every tool input schema to be a top-level object schema.
       // A non-object schema (e.g. the anyOf produced by an empty

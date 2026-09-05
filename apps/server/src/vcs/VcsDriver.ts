@@ -32,6 +32,8 @@ export interface VcsDiffCheckpointsInput {
   readonly fallbackFromToHead?: boolean;
   readonly ignoreWhitespace: boolean;
   readonly format?: "patch" | "numstat";
+  /** Fail when the bounded process output cannot contain the entire diff. */
+  readonly requireCompleteOutput?: boolean;
 }
 
 export interface VcsDeleteCheckpointRefsInput {
