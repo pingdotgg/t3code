@@ -104,6 +104,7 @@ describe("shouldUseRestingComposerLayout", () => {
     isScrollCollapsed: false,
     hasExpandedChrome: false,
     collapseOnBlur: true,
+    timelineOverflows: true,
   };
 
   it("uses the resting layout for an unfocused desktop composer", () => {
@@ -129,6 +130,17 @@ describe("shouldUseRestingComposerLayout", () => {
         collapseOnBlur: false,
       }),
     ).toBe(true);
+  });
+
+  it("keeps the composer expanded while the timeline fits above it", () => {
+    expect(shouldUseRestingComposerLayout({ ...resting, timelineOverflows: false })).toBe(false);
+    expect(
+      shouldUseRestingComposerLayout({
+        ...resting,
+        isScrollCollapsed: true,
+        timelineOverflows: false,
+      }),
+    ).toBe(false);
   });
 
   it("keeps new-thread composers expanded", () => {

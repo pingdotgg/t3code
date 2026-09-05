@@ -30,6 +30,8 @@ export function shouldUseRestingComposerLayout(input: {
   isScrollCollapsed: boolean;
   hasExpandedChrome: boolean;
   collapseOnBlur: boolean;
+  /** Whether the timeline has more content than fits above the composer. */
+  timelineOverflows: boolean;
 }): boolean {
   // Passive draft content is deliberately absent here. Resting only clamps
   // the prompt row and overlays its actions; non-image attachment and context
@@ -44,8 +46,18 @@ export function shouldUseRestingComposerLayout(input: {
   // the user asked for it with the gesture, and it lifts on the next
   // composer interaction. With blur collapse off, losing focus alone never
   // rests the composer.
+  //
+  // Resting exists to give reading space back to the timeline. A thread that
+  // fits above the composer has nothing to reclaim, so it stays expanded and
+  // never shows the collapsed row that a fresh thread would otherwise open on.
   const collapsed = input.isScrollCollapsed || (input.collapseOnBlur && !input.isFocused);
-  return input.isExistingThread && !input.isMobileViewport && collapsed && !input.hasExpandedChrome;
+  return (
+    input.isExistingThread &&
+    !input.isMobileViewport &&
+    input.timelineOverflows &&
+    collapsed &&
+    !input.hasExpandedChrome
+  );
 }
 
 /**

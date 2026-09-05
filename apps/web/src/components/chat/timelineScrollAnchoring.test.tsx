@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
-import { getAnchoredTurnMetrics, getRowBottom } from "./timelineScrollAnchoring";
+import {
+  getAnchoredTurnMetrics,
+  getRowBottom,
+  timelineContentOverflowsViewport,
+} from "./timelineScrollAnchoring";
 
 function buildState({
   positions,
@@ -20,6 +24,37 @@ function buildState({
     sizeAtIndex: (index: number) => sizes[index],
   };
 }
+
+describe("timelineContentOverflowsViewport", () => {
+  const inset = { composerInset: 100, anchorOffset: 24 };
+
+  it("reports overflow from the last row, not the inset spacer", () => {
+    const fits = buildState({ positions: [0, 200], sizes: [200, 300], scrollLength: 700 });
+    expect(timelineContentOverflowsViewport(fits, inset)).toBe(false);
+
+    const overflows = buildState({ positions: [0, 200], sizes: [200, 400], scrollLength: 700 });
+    expect(timelineContentOverflowsViewport(overflows, inset)).toBe(true);
+  });
+
+  it("treats an empty or unmeasured list as fitting", () => {
+    expect(timelineContentOverflowsViewport(undefined, inset)).toBe(false);
+    expect(
+      timelineContentOverflowsViewport(
+        buildState({ positions: [0, 200], sizes: [200, 400], scrollLength: 0 }),
+        inset,
+      ),
+    ).toBe(false);
+    expect(timelineContentOverflowsViewport(buildState({ positions: [], sizes: [] }), inset)).toBe(
+      false,
+    );
+    expect(
+      timelineContentOverflowsViewport(
+        buildState({ positions: [0, 200], sizes: [200, Number.NaN] }),
+        inset,
+      ),
+    ).toBe(false);
+  });
+});
 
 describe("timeline scroll anchoring", () => {
   it("measures row bottoms from LegendList row position and size", () => {
