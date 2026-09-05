@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { isPrivateHost } from "./privateHost.ts";
+import { isPublicFaviconHost } from "./hostClassification.ts";
 
-describe("isPrivateHost", () => {
+describe("isPublicFaviconHost", () => {
   it("treats public hosts as public", () => {
     for (const host of [
       "github.com",
@@ -16,7 +16,7 @@ describe("isPrivateHost", () => {
       "192.167.1.1",
       "11.0.0.1",
     ]) {
-      expect(isPrivateHost(host), host).toBe(false);
+      expect(isPublicFaviconHost(host), host).toBe(true);
     }
   });
 
@@ -31,16 +31,16 @@ describe("isPrivateHost", () => {
       "172.31.255.255",
       "169.254.1.1",
     ]) {
-      expect(isPrivateHost(host), host).toBe(true);
+      expect(isPublicFaviconHost(host), host).toBe(false);
     }
   });
 
   it("detects the Tailscale 100.64.0.0/10 range", () => {
     for (const host of ["100.64.0.1", "100.100.100.100", "100.126.17.15", "100.127.255.255"]) {
-      expect(isPrivateHost(host), host).toBe(true);
+      expect(isPublicFaviconHost(host), host).toBe(false);
     }
-    expect(isPrivateHost("100.63.255.255")).toBe(false);
-    expect(isPrivateHost("100.128.0.1")).toBe(false);
+    expect(isPublicFaviconHost("100.63.255.255")).toBe(true);
+    expect(isPublicFaviconHost("100.128.0.1")).toBe(true);
   });
 
   it("detects private host names and suffixes", () => {
@@ -50,18 +50,19 @@ describe("isPrivateHost", () => {
       "printer.local",
       "api.internal",
       "router.home.arpa",
+      "home.arpa",
       "box.tailnet.ts.net",
       "AIR.TAILE8BEA7.TS.NET",
     ]) {
-      expect(isPrivateHost(host), host).toBe(true);
+      expect(isPublicFaviconHost(host), host).toBe(false);
     }
   });
 
   it("detects private IPv6 addresses", () => {
     for (const host of ["::1", "[::1]", "fd00::1", "fc00::1", "fe80::1", "FD12:3456::1"]) {
-      expect(isPrivateHost(host), host).toBe(true);
+      expect(isPublicFaviconHost(host), host).toBe(false);
     }
-    expect(isPrivateHost("2606:4700:4700::1111")).toBe(false);
+    expect(isPublicFaviconHost("2606:4700:4700::1111")).toBe(true);
   });
 
   it("detects IPv4-mapped IPv6 addresses in both spellings", () => {
@@ -74,10 +75,10 @@ describe("isPrivateHost", () => {
       "::ffff:c0a8:010a",
       "::ffff:a00:1",
     ]) {
-      expect(isPrivateHost(host), host).toBe(true);
+      expect(isPublicFaviconHost(host), host).toBe(false);
     }
-    expect(isPrivateHost("::ffff:8.8.8.8")).toBe(false);
-    expect(isPrivateHost("::ffff:808:808")).toBe(false);
+    expect(isPublicFaviconHost("::ffff:8.8.8.8")).toBe(true);
+    expect(isPublicFaviconHost("::ffff:808:808")).toBe(true);
   });
 
   it("ignores a trailing DNS root label", () => {
@@ -88,24 +89,24 @@ describe("isPrivateHost", () => {
       "box.tailnet.ts.net.",
       "air.",
     ]) {
-      expect(isPrivateHost(host), host).toBe(true);
+      expect(isPublicFaviconHost(host), host).toBe(false);
     }
-    expect(isPrivateHost("github.com.")).toBe(false);
+    expect(isPublicFaviconHost("github.com.")).toBe(true);
   });
 
   it("detects names under .localhost", () => {
     for (const host of ["app.localhost", "api.app.localhost", "APP.LOCALHOST"]) {
-      expect(isPrivateHost(host), host).toBe(true);
+      expect(isPublicFaviconHost(host), host).toBe(false);
     }
   });
 
   it("treats an empty host as private", () => {
-    expect(isPrivateHost("")).toBe(true);
-    expect(isPrivateHost("   ")).toBe(true);
+    expect(isPublicFaviconHost("")).toBe(false);
+    expect(isPublicFaviconHost("   ")).toBe(false);
   });
 
   it("rejects malformed IPv4 text as a public host", () => {
-    expect(isPrivateHost("10.0.0.999")).toBe(false);
-    expect(isPrivateHost("10.0.0")).toBe(false);
+    expect(isPublicFaviconHost("10.0.0.999")).toBe(true);
+    expect(isPublicFaviconHost("10.0.0")).toBe(true);
   });
 });

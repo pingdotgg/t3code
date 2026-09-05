@@ -267,9 +267,9 @@
       "types": "./src/nodeSqliteClient.ts",
       "import": "./src/nodeSqliteClient.ts"
     },
-    "./privateHost": {
-      "types": "./src/privateHost.ts",
-      "import": "./src/privateHost.ts"
+    "./hostClassification": {
+      "types": "./src/hostClassification.ts",
+      "import": "./src/hostClassification.ts"
     }
   },
   "scripts": {
