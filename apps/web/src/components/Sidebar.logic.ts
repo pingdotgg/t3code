@@ -623,7 +623,7 @@ export function searchSidebarThreadsByTitle<T extends { readonly title: string }
 
 export function filterSidebarProjectScopeItems<TItem extends { readonly value: string }>(input: {
   items: readonly TItem[];
-  activeScopeKey: string | null;
+  hasActiveScope: boolean;
   query: string;
   matches: (item: TItem, query: string) => boolean;
 }): readonly TItem[] {
@@ -632,7 +632,47 @@ export function filterSidebarProjectScopeItems<TItem extends { readonly value: s
   if (query.length > 0) {
     return projectItems.filter((item) => input.matches(item, query));
   }
-  return input.activeScopeKey === null ? projectItems : input.items;
+  return input.hasActiveScope ? input.items : projectItems;
+}
+
+/**
+ * True when a scope item was pressed with CTRL/CMD held. Base UI hands the
+ * selection callback the original press event -- the pointer event for clicks
+ * and the search input's keydown for Enter -- so the modifier state is read
+ * straight off it. Events that carry no modifier state read as a plain press.
+ */
+export function isSidebarProjectScopeTogglePress(event: unknown): boolean {
+  if (typeof event !== "object" || event === null) return false;
+  const { ctrlKey, metaKey } = event as { ctrlKey?: unknown; metaKey?: unknown };
+  return ctrlKey === true || metaKey === true;
+}
+
+export type SidebarProjectScopePress =
+  | { readonly type: "reset" }
+  | { readonly type: "solo"; readonly key: string }
+  | { readonly type: "toggle"; readonly key: string };
+
+/**
+ * Resolves an item press in the project scope combobox. The combobox runs in
+ * multiple mode, so Base UI hands us the whole toggled value array and the
+ * pressed project is whichever key the toggle added or removed. Plain presses
+ * scope to a single project, modifier presses toggle into a multi-scope, and
+ * "all" always resets the scope. Returns null when no project changed.
+ */
+export function resolveSidebarProjectScopePress(input: {
+  previousKeys: readonly string[];
+  nextKeys: readonly string[];
+  toggleMode: boolean;
+}): SidebarProjectScopePress | null {
+  const previousKeySet = new Set(input.previousKeys);
+  const nextKeySet = new Set(input.nextKeys);
+  const pressedKey =
+    input.nextKeys.find((key) => !previousKeySet.has(key)) ??
+    input.previousKeys.find((key) => !nextKeySet.has(key));
+  if (pressedKey === undefined) return null;
+  if (pressedKey === "all") return { type: "reset" };
+  if (input.toggleMode) return { type: "toggle", key: pressedKey };
+  return { type: "solo", key: pressedKey };
 }
 
 export interface SidebarProjectScopeMenuState {

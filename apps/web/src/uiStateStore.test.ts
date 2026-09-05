@@ -13,7 +13,7 @@ import {
   resolveProjectExpanded,
   setDefaultAdvertisedEndpointKey,
   setProjectExpanded,
-  setSidebarProjectScopeKey,
+  setSidebarProjectScopeKeys,
   setThreadChangedFilesExpanded,
   type UiState,
 } from "./uiStateStore";
@@ -22,7 +22,7 @@ function makeUiState(overrides: Partial<UiState> = {}): UiState {
   return {
     projectExpandedById: {},
     projectOrder: [],
-    sidebarProjectScopeKey: null,
+    sidebarProjectScopeKeys: [],
     threadLastVisitedAtById: {},
     threadChangedFilesExpandedById: {},
     defaultAdvertisedEndpointKey: null,
@@ -148,12 +148,25 @@ describe("uiStateStore pure functions", () => {
   });
 
   it("stores the sidebar project scope and resets it to all projects", () => {
-    const scoped = setSidebarProjectScopeKey(makeUiState(), "github.com/pingdotgg/t3code");
+    const scoped = setSidebarProjectScopeKeys(makeUiState(), ["github.com/pingdotgg/t3code"]);
 
-    expect(scoped.sidebarProjectScopeKey).toBe("github.com/pingdotgg/t3code");
-    expect(setSidebarProjectScopeKey(scoped, "github.com/pingdotgg/t3code")).toBe(scoped);
-    expect(setSidebarProjectScopeKey(scoped, null).sidebarProjectScopeKey).toBeNull();
-    expect(setSidebarProjectScopeKey(scoped, "").sidebarProjectScopeKey).toBeNull();
+    expect(scoped.sidebarProjectScopeKeys).toEqual(["github.com/pingdotgg/t3code"]);
+    expect(setSidebarProjectScopeKeys(scoped, ["github.com/pingdotgg/t3code"])).toBe(scoped);
+    expect(setSidebarProjectScopeKeys(scoped, []).sidebarProjectScopeKeys).toEqual([]);
+    expect(setSidebarProjectScopeKeys(scoped, [""]).sidebarProjectScopeKeys).toEqual([]);
+  });
+
+  it("keeps every scoped project and drops duplicates", () => {
+    const scoped = setSidebarProjectScopeKeys(makeUiState(), [
+      "github.com/pingdotgg/t3code",
+      "github.com/pingdotgg/t3code",
+      "github.com/t3dotgg/uploadthing",
+    ]);
+
+    expect(scoped.sidebarProjectScopeKeys).toEqual([
+      "github.com/pingdotgg/t3code",
+      "github.com/t3dotgg/uploadthing",
+    ]);
   });
 });
 
@@ -188,7 +201,7 @@ describe("parsePersistedState", () => {
         "environment:thread-1": "2026-02-25T12:35:00.000Z",
       },
       defaultAdvertisedEndpointKey: "desktop-core:lan:http",
-      sidebarProjectScopeKey: null,
+      sidebarProjectScopeKeys: [],
       threadChangedFilesExpandedById: {
         "environment:thread-1": {
           "turn-1": false,
@@ -309,7 +322,7 @@ describe("uiStateStore persistence", () => {
         "environment:thread-1": "2026-02-25T12:35:00.000Z",
       },
       defaultAdvertisedEndpointKey: "desktop-core:lan:http",
-      sidebarProjectScopeKey: null,
+      sidebarProjectScopeKeys: [],
       threadChangedFilesExpansionVersion: 2,
       threadChangedFilesExpandedById: {
         "environment:thread-1": {
@@ -324,15 +337,33 @@ describe("uiStateStore persistence", () => {
   });
 
   it("restores the sidebar project scope across reloads", () => {
-    persistState(makeUiState({ sidebarProjectScopeKey: "github.com/pingdotgg/t3code" }));
+    persistState(
+      makeUiState({
+        sidebarProjectScopeKeys: ["github.com/pingdotgg/t3code", "github.com/t3dotgg/uploadthing"],
+      }),
+    );
 
     const persisted = JSON.parse(
       localStorageStub.getItem(PERSISTED_STATE_KEY) ?? "{}",
     ) as PersistedUiState;
 
-    expect(parsePersistedState(persisted).sidebarProjectScopeKey).toBe(
+    expect(parsePersistedState(persisted).sidebarProjectScopeKeys).toEqual([
       "github.com/pingdotgg/t3code",
-    );
+      "github.com/t3dotgg/uploadthing",
+    ]);
+  });
+
+  it("migrates a single persisted sidebar project scope key", () => {
+    expect(
+      parsePersistedState({ sidebarProjectScopeKey: "github.com/pingdotgg/t3code" })
+        .sidebarProjectScopeKeys,
+    ).toEqual(["github.com/pingdotgg/t3code"]);
+    expect(
+      parsePersistedState({
+        sidebarProjectScopeKey: "github.com/pingdotgg/t3code",
+        sidebarProjectScopeKeys: [],
+      }).sidebarProjectScopeKeys,
+    ).toEqual([]);
   });
 
   it("drops the temporary expanded-only migration fallback when rewriting state", () => {

@@ -53,6 +53,23 @@ On web and desktop, right-click a pull request link in a thread and choose
 **Link to thread**. Use **Unlink from thread** on the same link to remove it.
 The linked pull request participates in automatic settlement.
 
+## Filter threads by project
+
+On web and desktop, use the project picker above the thread list to narrow the
+list to one project. Click a project to show only its threads, and choose **All
+projects** to clear the filter. Type in the picker to search when you have many
+projects.
+
+To follow several related projects at once, hold `Cmd` on macOS or `Ctrl` on
+Windows and Linux while clicking a project, or while pressing `Enter`. The picker
+stays open and keeps your search text, so you can mark several in a row. Selected
+projects stay highlighted, and the picker shows their names joined together;
+hover it to see the full list once the names no longer fit.
+
+Your selection is kept as you move around the app and when you restart, so the
+list comes back scoped the way you left it. A project that is no longer available
+drops out of the filter on its own.
+
 ## Find and reference work
 
 On web and desktop, open the command palette with `Cmd/Ctrl+K` to search threads
