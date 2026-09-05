@@ -1,10 +1,11 @@
 /**
  * Importable browser sources.
  *
- * Two engines are modelled. Chromium-family browsers keep cookies in an
+ * Chromium-family browsers keep cookies in an
  * encrypted SQLite database whose key lives in an OS credential store; Firefox
  * keeps them in plain SQLite with no key at all, so it needs no keychain and
- * works the same on every platform.
+ * works the same on every platform. Safari uses binary cookie files, with
+ * separate WebKit data stores for named profiles.
  *
  * Each entry pins its own paths and credential-store coordinates rather than
  * deriving them, because the forks do not agree. macOS uses service/account
@@ -178,8 +179,8 @@ export const BROWSER_IMPORT_SOURCES: ReadonlyArray<BrowserImportSourceDefinition
     linuxSecretApplication: "chromium",
   }),
   {
-    // Safari keeps one cookie jar for the whole app rather than per-profile,
-    // and it sits inside the app container that Full Disk Access gates.
+    // The default jar lives here; named profiles use WebKit data stores
+    // alongside this directory inside the same app container.
     id: "safari",
     name: "Safari",
     engine: "safari",
@@ -409,6 +410,64 @@ const withCookieCounts = (
     ),
   );
 
+const SafariProfileRows = Schema.Array(
+  Schema.Struct({ title: Schema.NullOr(Schema.String), external_uuid: Schema.String }),
+);
+const decodeSafariProfiles = Schema.decodeUnknownEffect(SafariProfileRows);
+const isSafariProfileUuid = (value: string) =>
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
+
+const listSafariProfiles = Effect.fnUntraced(function* (
+  context: BrowserImportPathContext,
+  root: string,
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const library = context.path.dirname(root);
+  const metadata = context.path.join(library, "Safari", "SafariTabs.db");
+  const declared = yield* Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    return yield* decodeSafariProfiles(
+      yield* sql`
+      select title, external_uuid from bookmarks
+      where parent = 0 and type = 1 and subtype = 2 and deleted = 0
+      order by order_index
+    `,
+    );
+  }).pipe(
+    Effect.provide(NodeSqliteClient.layer({ filename: metadata, readonly: true })),
+    Effect.orElseSucceed(() => []),
+  );
+  const defaultProfile = declared.find((profile) => profile.external_uuid === "DefaultProfile");
+  const profiles: Array<BrowserImportSourceProfile> = [
+    {
+      directory: ".",
+      name: defaultProfile ? defaultProfile.title?.trim() || "Personal" : "Safari",
+    },
+  ];
+  const stores = context.path.join(library, "WebKit", "WebsiteDataStore");
+  const profileDirectory = (uuid: string) =>
+    context.path.join(stores, uuid.toLowerCase(), "Cookies");
+  for (const profile of declared) {
+    if (!isSafariProfileUuid(profile.external_uuid)) continue;
+    profiles.push({
+      directory: profileDirectory(profile.external_uuid),
+      name: profile.title?.trim() || profile.external_uuid,
+    });
+  }
+  // If Safari's metadata is unavailable, recover stores that have cookies.
+  // With readable metadata, avoid resurrecting deleted profiles left on disk.
+  if (declared.length === 0) {
+    const entries = yield* fileSystem.readDirectory(stores).pipe(Effect.orElseSucceed(() => []));
+    for (const entry of entries.filter(isSafariProfileUuid).sort()) {
+      const directory = context.path.join(stores, entry, "Cookies");
+      if (yield* databaseFileExists(context.path.join(directory, "Cookies.binarycookies"))) {
+        profiles.push({ directory, name: entry });
+      }
+    }
+  }
+  return profiles;
+});
+
 /**
  * Profiles the source browser knows about.
  *
@@ -427,8 +486,7 @@ const listSourceProfilesInDirectory = Effect.fnUntraced(function* (
   if (root === undefined) return [];
 
   if (definition.engine === "safari") {
-    // One jar, no profiles: the directory is the profile.
-    return [{ directory: ".", name: "Safari" }];
+    return yield* listSafariProfiles(context, root);
   }
 
   if (definition.engine === "firefox") {
