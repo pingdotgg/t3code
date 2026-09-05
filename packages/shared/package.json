@@ -274,6 +274,10 @@
     "./hostClassification": {
       "types": "./src/hostClassification.ts",
       "import": "./src/hostClassification.ts"
+    },
+    "./dateTime": {
+      "types": "./src/dateTime.ts",
+      "import": "./src/dateTime.ts"
     }
   },
   "scripts": {

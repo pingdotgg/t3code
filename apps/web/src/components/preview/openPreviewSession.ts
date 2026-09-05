@@ -6,12 +6,15 @@ import type {
   ScopedThreadRef,
 } from "@t3tools/contracts";
 import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
+import * as Cause from "effect/Cause";
+import { AsyncResult } from "effect/unstable/reactivity";
 
 import {
   browserDefaultOpenProfileId,
   browserDefaultOpenViewport,
   resolveBrowserDefaults,
 } from "~/browser/browserDefaults";
+import { BrowserSettingsReadError } from "~/browser/openFileInPreview";
 import { applyPreviewServerSnapshot, rememberPreviewUrl } from "~/previewStateStore";
 
 interface OpenPreviewSessionInput<E> {
@@ -29,10 +32,15 @@ interface OpenPreviewSessionInput<E> {
 
 export async function openPreviewSession<E>(
   input: OpenPreviewSessionInput<E>,
-): Promise<AtomCommandResult<PreviewSessionSnapshot, E>> {
+): Promise<AtomCommandResult<PreviewSessionSnapshot, E | BrowserSettingsReadError>> {
   // Resolved once: a tab opened before client settings hydrate would otherwise
   // be born at the schema defaults and never corrected.
-  const defaults = await resolveBrowserDefaults();
+  const defaults = await resolveBrowserDefaults().catch(
+    (cause: unknown) => new BrowserSettingsReadError({ cause }),
+  );
+  if (defaults instanceof BrowserSettingsReadError) {
+    return AsyncResult.failure(Cause.fail(defaults));
+  }
   const result = await input.openPreview({
     environmentId: input.threadRef.environmentId,
     input: {
