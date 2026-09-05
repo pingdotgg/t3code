@@ -11,6 +11,7 @@ import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import {
@@ -34,7 +35,7 @@ import {
 } from "../providerSnapshot.ts";
 import { resolveClaudeSdkExecutablePath } from "../Drivers/ClaudeExecutable.ts";
 import { makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
-import { discoverClaudeSkills } from "../Drivers/ClaudeSkills.ts";
+import { claudeManagedMcpConfigPath, discoverClaudeSkills } from "../Drivers/ClaudeSkills.ts";
 import { makeUnavailableUsageLimits } from "../providerUsageLimits.ts";
 import {
   type ClaudeScopedLimitNames,
@@ -186,6 +187,8 @@ export function buildClaudeCapabilitiesProbeQueryOptions(input: {
   readonly abortController: AbortController;
   readonly environment: NodeJS.ProcessEnv;
   readonly cwd: string | undefined;
+  /** An enterprise managed-mcp.json is installed on this machine. */
+  readonly enterpriseMcpConfigPresent: boolean;
 }): ClaudeQueryOptions {
   return {
     persistSession: false,
@@ -198,9 +201,12 @@ export function buildClaudeCapabilitiesProbeQueryOptions(input: {
     settings: { disableAllHooks: true },
     allowedTools: [],
     // Ignore MCP definitions from every filesystem setting source above. The
-    // SDK combines this empty explicit map with --strict-mcp-config.
+    // SDK combines this empty explicit map with --strict-mcp-config. Claude
+    // exits before initializing when that flag meets an enterprise
+    // managed-mcp.json, so the probe leaves it off there; the enterprise
+    // config already ignores user and project MCP servers on its own.
     mcpServers: {},
-    strictMcpConfig: true,
+    ...(input.enterpriseMcpConfigPresent ? {} : { strictMcpConfig: true }),
     env: {
       ...input.environment,
       // Connected claude.ai MCP servers are discovered outside filesystem
@@ -334,11 +340,23 @@ const probeClaudeCapabilities = (
 ) => {
   const abort = new AbortController();
   return Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
     const claudeEnvironment = yield* makeClaudeEnvironment(claudeSettings, environment);
     const executablePath = yield* resolveClaudeSdkExecutablePath(
       claudeSettings.binaryPath,
       claudeEnvironment,
     );
+    const managedMcpConfigPath = claudeManagedMcpConfigPath(
+      path,
+      yield* HostProcessPlatform,
+      claudeEnvironment,
+    );
+    const enterpriseMcpConfigPresent =
+      managedMcpConfigPath !== undefined &&
+      (yield* fileSystem
+        .exists(managedMcpConfigPath)
+        .pipe(Effect.orElseSucceed((): boolean => false)));
     return yield* Effect.tryPromise(async () => {
       const q = claudeQuery({
         // Never yield — we only need initialization data, not a conversation.
@@ -352,6 +370,7 @@ const probeClaudeCapabilities = (
           abortController: abort,
           environment: claudeEnvironment,
           cwd,
+          enterpriseMcpConfigPresent,
         }),
       });
       const init = await q.initializationResult();
