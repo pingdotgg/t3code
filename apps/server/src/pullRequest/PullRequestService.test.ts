@@ -1053,6 +1053,76 @@ it.effect("publishes a merge for immediate settlement only after host confirmati
 
       assert.deepStrictEqual(Option.getOrThrow(yield* Fiber.join(observedMerge)), {
         ...reference,
+        provider: "github",
+        url: "https://host/pull/1",
+        repositoryKey: "github.com/acme/web",
+        mergedAt,
+      });
+    }),
+  ),
+);
+
+it.effect("confirms a merge on the action's host when the project is retargeted", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const mergedAt = "2026-09-03T02:00:00.000Z";
+      yield* TestClock.setTime(Date.parse(mergedAt));
+      const actionStarted = yield* Deferred.make<void>();
+      const releaseAction = yield* Deferred.make<void>();
+      const projects = [
+        project({
+          id: "p1",
+          title: "web",
+          workspaceRoot: "/a",
+          repository: "acme/web",
+          host: "code.example.test",
+        }),
+      ];
+      const summaryHosts: string[] = [];
+      const service = yield* makeService({
+        projects,
+        providers: [
+          fakeProvider("github", {
+            runAction: () =>
+              Deferred.succeed(actionStarted, undefined).pipe(
+                Effect.andThen(Deferred.await(releaseAction)),
+              ),
+            getChangeRequestSummary: ({ host }) =>
+              Effect.sync(() => {
+                summaryHosts.push(host);
+                return {
+                  ...changeRequest(1, mergedAt),
+                  url: `https://${host}/acme/web/pull/1`,
+                  state: "merged" as const,
+                };
+              }),
+          }),
+        ],
+      });
+      const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+      const observedMerge = yield* Stream.runHead(yield* service.subscribeMerges).pipe(
+        Effect.forkChild({ startImmediately: true }),
+      );
+      const action = yield* service
+        .runAction({ ...reference, action: "merge" })
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(actionStarted);
+      projects[0] = project({
+        id: "p1",
+        title: "web",
+        workspaceRoot: "/a",
+        repository: "acme/web",
+        host: "other.example.test",
+      });
+      yield* Deferred.succeed(releaseAction, undefined);
+      yield* Fiber.join(action);
+
+      assert.deepStrictEqual(summaryHosts, ["code.example.test"]);
+      assert.deepStrictEqual(Option.getOrThrow(yield* Fiber.join(observedMerge)), {
+        ...reference,
+        provider: "github",
+        url: "https://code.example.test/acme/web/pull/1",
+        repositoryKey: "code.example.test/acme/web",
         mergedAt,
       });
     }),

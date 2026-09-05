@@ -69,6 +69,9 @@ import {
 import { PullRequestProviderRegistry } from "./PullRequestProviderRegistry.ts";
 
 export interface PullRequestMergeEvent extends PullRequestRef {
+  readonly provider: SourceControlProviderKind;
+  readonly url: string;
+  readonly repositoryKey: string | null;
   readonly mergedAt: string;
 }
 
@@ -1231,37 +1234,36 @@ export const make = Effect.gen(function* () {
   const viewerOf = (project: SupportedProject): Effect.Effect<string | null> =>
     resolveViewers([project], new Map()).pipe(Effect.map(([resolved]) => resolved?.viewer ?? null));
 
-  const summaryUncached: PullRequestService["Service"]["summary"] = (input) =>
-    requireProject(input).pipe(
-      Effect.flatMap((project) => {
-        const providerInput = {
-          cwd: project.project.workspaceRoot,
-          repository: project.repository,
-          host: project.host,
-          number: input.number,
-        };
-        const read =
-          project.api.getChangeRequestSummary === undefined
-            ? project.api.getChangeRequest(providerInput)
-            : project.api.getChangeRequestSummary(providerInput);
-        return read.pipe(
-          Effect.mapError(toPullRequestError("summary")),
-          Effect.map((changeRequest): PullRequestSummary => ({
-            provider: project.api.kind,
-            projectId: project.project.id,
-            repository: project.repository,
-            number: changeRequest.number,
-            title: changeRequest.title,
-            url: changeRequest.url,
-            state: changeRequest.state,
-            ...(changeRequest.isDraft === true ? { isDraft: true } : {}),
-            headBranch: changeRequest.headBranch,
-            baseBranch: changeRequest.baseBranch,
-            updatedAt: changeRequest.updatedAt,
-          })),
-        );
-      }),
+  const readSummary = (project: SupportedProject, number: number) => {
+    const providerInput = {
+      cwd: project.project.workspaceRoot,
+      repository: project.repository,
+      host: project.host,
+      number,
+    };
+    const read =
+      project.api.getChangeRequestSummary === undefined
+        ? project.api.getChangeRequest(providerInput)
+        : project.api.getChangeRequestSummary(providerInput);
+    return read.pipe(
+      Effect.mapError(toPullRequestError("summary")),
+      Effect.map((changeRequest): PullRequestSummary => ({
+        provider: project.api.kind,
+        projectId: project.project.id,
+        repository: project.repository,
+        number: changeRequest.number,
+        title: changeRequest.title,
+        url: changeRequest.url,
+        state: changeRequest.state,
+        ...(changeRequest.isDraft === true ? { isDraft: true } : {}),
+        headBranch: changeRequest.headBranch,
+        baseBranch: changeRequest.baseBranch,
+        updatedAt: changeRequest.updatedAt,
+      })),
     );
+  };
+  const summaryUncached: PullRequestService["Service"]["summary"] = (input) =>
+    requireProject(input).pipe(Effect.flatMap((project) => readSummary(project, input.number)));
 
   const detailUncached: PullRequestService["Service"]["detail"] = (input) =>
     requireProject(input).pipe(
@@ -1429,9 +1431,11 @@ export const make = Effect.gen(function* () {
       }),
     );
 
-  const runAction = (input: PullRequestActionInput): Effect.Effect<string, PullRequestError> =>
+  const runAction = (
+    input: PullRequestActionInput,
+  ): Effect.Effect<SupportedProject, PullRequestError> =>
     requireProject(input).pipe(
-      Effect.flatMap((project): Effect.Effect<string, PullRequestError> => {
+      Effect.flatMap((project): Effect.Effect<SupportedProject, PullRequestError> => {
         // The surface hides what a host cannot do, and this refuses it as well: a request that
         // reached here anyway must not be handed to a provider that never claimed the action.
         if (!project.api.capabilities.actions.includes(input.action)) {
@@ -1473,7 +1477,7 @@ export const make = Effect.gen(function* () {
         // have to say yes. The second is asked last, because it costs a request and the checks
         // above do not.
         return viewerPermissionsOf(project, input, "runAction").pipe(
-          Effect.flatMap((viewer): Effect.Effect<string, PullRequestError> => {
+          Effect.flatMap((viewer): Effect.Effect<SupportedProject, PullRequestError> => {
             if (!viewer.actions.includes(input.action)) {
               return Effect.fail(
                 new PullRequestOperationError({
@@ -1503,10 +1507,7 @@ export const make = Effect.gen(function* () {
                 ...(input.mergeMethod === undefined ? {} : { mergeMethod: input.mergeMethod }),
                 ...(input.updateMethod === undefined ? {} : { updateMethod: input.updateMethod }),
               })
-              .pipe(
-                Effect.mapError(toPullRequestError("runAction")),
-                Effect.as(project.repository),
-              );
+              .pipe(Effect.mapError(toPullRequestError("runAction")), Effect.as(project));
           }),
         );
       }),
@@ -2493,12 +2494,13 @@ export const make = Effect.gen(function* () {
   const runActionAndInvalidate: PullRequestService["Service"]["runAction"] = Effect.fn(
     "PullRequestService.runActionAndInvalidate",
   )(function* (input) {
-    const repository = yield* runAction(input);
+    const project = yield* runAction(input);
+    const repository = project.repository;
     bumpRefEpoch({ ...input, repository });
     listingsEpoch = ++epochCounter;
     if (input.action === "merge") {
       // A successful merge action can merely enqueue the PR or enable auto-merge.
-      const confirmed = yield* summaryUncached({ ...input, repository }).pipe(
+      const confirmed = yield* readSummary(project, input.number).pipe(
         Effect.catch((error) =>
           Effect.logWarning("failed to confirm pull request merge", { error }).pipe(
             Effect.as(null),
@@ -2510,6 +2512,9 @@ export const make = Effect.gen(function* () {
         projectId: input.projectId,
         repository,
         number: input.number,
+        provider: confirmed.provider,
+        url: confirmed.url,
+        repositoryKey: project.project.repositoryIdentity?.canonicalKey ?? null,
         mergedAt: DateTime.formatIso(yield* DateTime.now),
       });
     }

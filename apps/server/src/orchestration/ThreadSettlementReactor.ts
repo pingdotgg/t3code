@@ -43,14 +43,45 @@ export const make = Effect.gen(function* () {
   const sweep = Effect.fn("ThreadSettlementReactor.sweep")(function* (
     mergedPullRequest: PullRequestService.PullRequestMergeEvent | null,
   ) {
+    const mergedBranches =
+      mergedPullRequest === null ? null : yield* git.observePullRequestMerge(mergedPullRequest);
+    const mergedBranchNames = new Set(mergedBranches?.map(({ branch }) => branch));
+    const mergedBranchKeys = new Set(
+      mergedBranches?.map(({ cwd, branch }) => `${cwd}\u0000${branch}`),
+    );
     const snapshot = yield* snapshots.getShellSnapshot();
     const now = DateTime.formatIso(yield* DateTime.now);
     const projects = new Map(snapshot.projects.map((project) => [project.id, project]));
-    // A merge event re-sweeps every candidate, not just the threads linked to
-    // the merged pull request: most threads carry no link and settle from
-    // their branch lookup, which would otherwise wait for the next minute's
-    // sweep on a possibly stale cached answer.
-    const candidates = snapshot.threads.filter((thread) => isAutoSettlementCandidate(thread, now));
+    const linkedToMerge = (thread: (typeof snapshot.threads)[number]) => {
+      const linked = thread.linkedPullRequest;
+      if (mergedPullRequest === null || linked == null) return false;
+      const project = projects.get(linked.projectId);
+      if (project === undefined) return false;
+      const identity = project.repositoryIdentity;
+      const sameRepository =
+        mergedPullRequest.repositoryKey === null
+          ? linked.projectId === mergedPullRequest.projectId && identity == null
+          : identity?.canonicalKey.toLowerCase() === mergedPullRequest.repositoryKey.toLowerCase();
+      return (
+        sameRepository &&
+        (identity?.provider == null ||
+          identity.provider === "unknown" ||
+          identity.provider === mergedPullRequest.provider) &&
+        linked.url === mergedPullRequest.url &&
+        linked.repository.toLowerCase() === mergedPullRequest.repository.toLowerCase() &&
+        linked.number === mergedPullRequest.number
+      );
+    };
+    // Merge events use known associations only. A cold branch still resolves
+    // during the next periodic sweep, without refreshing unrelated checkouts.
+    const candidates = snapshot.threads.filter(
+      (thread) =>
+        isAutoSettlementCandidate(thread, now) &&
+        (mergedPullRequest === null ||
+          (thread.linkedPullRequest != null
+            ? linkedToMerge(thread)
+            : thread.branch !== null && mergedBranchNames.has(thread.branch))),
+    );
 
     // Return the thread when it still needs a pull request decision. A rejected
     // dispatch skips it for this snapshot instead of retrying through a lookup.
@@ -112,28 +143,18 @@ export const make = Effect.gen(function* () {
           const worktreeExists =
             thread.worktreePath !== null &&
             (yield* fileSystem.exists(thread.worktreePath).pipe(Effect.orElseSucceed(() => false)));
-          lookupCwdByThreadId.set(
-            thread.id,
+          const cwd =
             worktreeExists && thread.worktreePath !== null
               ? thread.worktreePath
-              : project.workspaceRoot,
-          );
+              : project.workspaceRoot;
+          if (mergedPullRequest !== null) {
+            const cacheCwd = yield* fileSystem.realPath(cwd).pipe(Effect.orElseSucceed(() => cwd));
+            if (!mergedBranchKeys.has(`${cacheCwd}\u0000${thread.branch}`)) return;
+          }
+          lookupCwdByThreadId.set(thread.id, cwd);
         }),
       { concurrency: 8, discard: true },
     );
-    if (mergedPullRequest !== null) {
-      // The merge just confirmed a terminal state the lookup caches can still
-      // call open (branch answers live two minutes, the sweep runs every
-      // minute). Drop the swept checkouts' cached answers so the merge settles
-      // its branch threads now instead of on a later sweep. Threads linked to
-      // the merged pull request settle from the event itself below and need no
-      // lookup, so they are absent from this map by construction.
-      const cwds = [...new Set(lookupCwdByThreadId.values())];
-      yield* Effect.forEach(cwds, (cwd) => git.invalidateStatus(cwd), {
-        concurrency: 8,
-        discard: true,
-      });
-    }
     const lookupKey = (thread: (typeof candidates)[number]) => {
       if (thread.linkedPullRequest != null) {
         return JSON.stringify([
@@ -149,24 +170,21 @@ export const make = Effect.gen(function* () {
         cwd === undefined ? ["missing-project", thread.id] : ["branch", cwd, thread.branch],
       );
     };
-    const groups = Map.groupBy(lookupCandidates, lookupKey);
+    const groups = Map.groupBy(
+      lookupCandidates.filter(
+        (thread) =>
+          mergedPullRequest === null ||
+          thread.linkedPullRequest != null ||
+          lookupCwdByThreadId.has(thread.id),
+      ),
+      lookupKey,
+    );
 
     const pullRequestFor = Effect.fn("ThreadSettlementReactor.pullRequestFor")(function* (
       thread: (typeof candidates)[number],
     ) {
       if (thread.linkedPullRequest != null) {
-        // The event carries the merged state, so only the threads linked to
-        // that exact pull request settle from it. Every other linked thread
-        // falls through to a fresh summary lookup below: the merge sweep
-        // covers all candidates, and an unrelated merge must never settle
-        // them.
-        if (
-          mergedPullRequest !== null &&
-          thread.linkedPullRequest.projectId === mergedPullRequest.projectId &&
-          thread.linkedPullRequest.repository.toLowerCase() ===
-            mergedPullRequest.repository.toLowerCase() &&
-          thread.linkedPullRequest.number === mergedPullRequest.number
-        ) {
+        if (mergedPullRequest !== null && linkedToMerge(thread)) {
           return {
             state: "merged",
             updatedAt: mergedPullRequest.mergedAt,
