@@ -1,7 +1,7 @@
+import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { useAtomValue } from "@effect/atom-react";
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import { Atom } from "effect/unstable/reactivity";
-import { RotateCcwIcon } from "lucide-react";
 import { useEffect, useLayoutEffect, useState } from "react";
 
 import {
@@ -235,7 +235,7 @@ function FirstRunRecovery({
             }
           }}
         >
-          <RotateCcwIcon />
+          <RefreshIcon refreshing={retrying} />
           {settingsReadFailed ? "Retry" : "Reload"}
         </Button>
       </div>

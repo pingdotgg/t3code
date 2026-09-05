@@ -1,3 +1,4 @@
+import { RefreshIcon } from "~/components/ui/refresh-icon";
 import {
   ArrowLeft,
   ArrowRight,
@@ -5,7 +6,6 @@ import {
   ExternalLink,
   MousePointerClick,
   PictureInPicture2,
-  RotateCw,
 } from "lucide-react";
 import {
   type FormEvent,
@@ -166,7 +166,7 @@ export function PreviewChromeRow({
                 />
               }
             >
-              <RotateCw className={cn(loading && "animate-spin")} />
+              <RefreshIcon refreshing={loading} />
             </TooltipTrigger>
             <TooltipPopup>{loading ? "Loading…" : "Refresh"}</TooltipPopup>
           </Tooltip>

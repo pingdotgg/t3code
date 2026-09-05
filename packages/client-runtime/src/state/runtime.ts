@@ -336,6 +336,8 @@ export interface AtomQueryOptions extends AtomCommandOptions {
    * verification flows where a cached failure must not satisfy a retry.
    */
   readonly refresh?: boolean;
+  /** Interrupt the query wait when its caller no longer wants the result. */
+  readonly signal?: AbortSignal;
 }
 
 export async function executeAtomQuery<A, E>(
@@ -362,7 +364,11 @@ export async function executeAtomQuery<A, E>(
       });
     }),
   );
-  return executeAtomCommand(() => Effect.runPromiseExit(query), options, reporter);
+  return executeAtomCommand(
+    () => Effect.runPromiseExit(query, { signal: options.signal }),
+    options,
+    reporter,
+  );
 }
 
 export function createRuntimeCommand<R, ER, W, A, E>(

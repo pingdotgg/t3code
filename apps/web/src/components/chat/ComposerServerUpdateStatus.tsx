@@ -1,8 +1,8 @@
+import { Spinner } from "~/components/ui/spinner";
 import type { ServerUpdateState } from "@t3tools/client-runtime/state/server";
-import { CircleAlertIcon, DownloadIcon, LoaderCircleIcon } from "lucide-react";
+import { CircleAlertIcon, DownloadIcon } from "lucide-react";
 import { useId, useState } from "react";
 
-import { observeVisibleAnimation } from "../../lib/visibleAnimation";
 import { serverUpdateStageLabel } from "../ServerUpdateAction";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ComposerBanner } from "./ComposerBanner";
@@ -13,13 +13,7 @@ export function ComposerServerUpdateIcon({
   readonly status: ServerUpdateState["status"];
 }) {
   if (status === "running") {
-    return (
-      <LoaderCircleIcon
-        aria-hidden
-        ref={observeVisibleAnimation}
-        className="motion-safe:visible-animate-spin"
-      />
-    );
+    return <Spinner aria-hidden />;
   }
   if (status === "failed") {
     return <CircleAlertIcon aria-hidden className="text-error" />;
