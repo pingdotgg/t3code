@@ -122,7 +122,10 @@ vi.mock("../lib/composerImages", async (importOriginal) => ({
   removePersistedComposerAttachmentFile: composerAttachmentCleanupMocks.remove,
 }));
 
-vi.mock("../lib/uuid", () => ({ uuidv4: () => "uuid", randomHex: () => "0000" }));
+vi.mock("../lib/uuid", () => {
+  let hexSequence = 0;
+  return { uuidv4: () => "uuid", randomHex: () => (hexSequence++).toString(16).padStart(4, "0") };
+});
 vi.mock("./assets", () => ({ assetEnvironment: {} }));
 vi.mock("./attachments", () => ({ attachmentEnvironment: {} }));
 vi.mock("./session", () => ({ environmentSession: {} }));
@@ -152,6 +155,7 @@ import {
   archiveCloudComposerDrafts,
   clearComposerDraftContent,
   clearComposerDraftContentState,
+  clearComposerDraftModelSelection,
   clearComposerDraftsEnvironment,
   ComposerDraftPersistenceError,
   composerDraftsAtom,
@@ -177,6 +181,7 @@ import {
   stickyComposerModelSelectionAtom,
   undoComposerDraftMerge,
   undoComposerDraftMergeState,
+  updateComposerDraftSettings,
 } from "./use-composer-drafts";
 
 const DRAFT: ComposerDraft = {
@@ -1328,6 +1333,7 @@ describe("mobile composer drafts", () => {
         model: "gpt-5.4",
         options: [{ id: "reasoningEffort", value: "xhigh" }],
       },
+      modelSelectionId: "choice-1",
       workspaceSelection: {
         mode: "worktree",
         branch: "main",
@@ -1338,10 +1344,39 @@ describe("mobile composer drafts", () => {
     expect(clearComposerDraftContentState({ [draftKey]: draft }, draftKey)).toEqual({
       [draftKey]: {
         modelSelection: draft.modelSelection,
+        modelSelectionId: "choice-1",
         workspaceSelection: draft.workspaceSelection,
         text: "",
         attachments: [],
       },
+    });
+  });
+
+  it("gives every model pick its own id and releases only the pick a message sent", () => {
+    const draftKey = "environment-1:thread-1";
+    const model = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" };
+    updateComposerDraftSettings(draftKey, { modelSelection: model });
+    const sentId = getComposerDraftSnapshot(draftKey).modelSelectionId;
+    expect(sentId).toEqual(expect.any(String));
+
+    // Re-picking the same value is a new choice.
+    updateComposerDraftSettings(draftKey, { modelSelection: { ...model } });
+    const rePickedId = getComposerDraftSnapshot(draftKey).modelSelectionId;
+    expect(rePickedId).not.toBe(sentId);
+    updateComposerDraftSettings(draftKey, { runtimeMode: "approval-required" });
+    expect(getComposerDraftSnapshot(draftKey).modelSelectionId).toBe(rePickedId);
+
+    clearComposerDraftModelSelection(draftKey, sentId ?? "");
+    expect(getComposerDraftSnapshot(draftKey)).toMatchObject({
+      modelSelection: model,
+      modelSelectionId: rePickedId,
+    });
+
+    clearComposerDraftModelSelection(draftKey, rePickedId ?? "");
+    expect(getComposerDraftSnapshot(draftKey)).toEqual({
+      text: "",
+      attachments: [],
+      runtimeMode: "approval-required",
     });
   });
 

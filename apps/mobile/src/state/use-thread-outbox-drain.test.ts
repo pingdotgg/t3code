@@ -69,10 +69,14 @@ vi.mock("../lib/composerImages", () => ({
   toUploadChatImageAttachments: () => [],
 }));
 
-vi.mock("../lib/uuid", () => ({
-  uuidv4: () => "00000000-0000-4000-8000-000000000000",
-  randomHex: () => "abcd",
-}));
+vi.mock("../lib/uuid", () => {
+  // Each call is unique: model choice ids must tell a re-pick from the choice a message sent.
+  let hexSequence = 0;
+  return {
+    uuidv4: () => "00000000-0000-4000-8000-000000000000",
+    randomHex: () => (hexSequence++).toString(16).padStart(4, "0"),
+  };
+});
 
 vi.mock("../lib/attachmentUpload", () => ({
   prepareTurnAttachments: harness.prepareTurnAttachments,
@@ -333,41 +337,54 @@ describe("thread outbox model handoff", () => {
     model: "gpt-6-astra",
     options: [{ id: "reasoningEffort", value: "medium" }],
   };
+  const desktopThread = {
+    modelSelection: desktopModel,
+    runtimeMode: DEFAULT_RUNTIME_MODE,
+    interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+  };
+
+  /** Mirrors the composer: the queued message carries the id of the draft choice it sends. */
+  function draftModelSelectionId(draftKey: string): string {
+    const id = composerDrafts.getComposerDraftSnapshot(draftKey).modelSelectionId;
+    if (id === undefined) throw new Error(`draft ${draftKey} has no model choice`);
+    return id;
+  }
+
+  async function reloadComposerDrafts(): Promise<void> {
+    appAtomRegistry.set(composerDrafts.composerDraftsAtom, {});
+    composerDrafts.resetComposerDraftsLoadState();
+    await composerDrafts.waitForComposerDraftsLoaded();
+  }
 
   it.each(["", "next message typed during delivery"])(
     "releases the confirmed choice and persists the remaining draft: %j",
     async (nextText) => {
       await composerDrafts.waitForComposerDraftsLoaded();
-      const message = {
-        ...queuedMessage({ messageId: "model-handoff", text: "send using mobile model" }),
-        modelSelection: mobileModel,
-      };
-      const draftKey = `${message.environmentId}:${message.threadId}`;
-      composerDrafts.setComposerDraftText(draftKey, message.text);
+      const base = queuedMessage({ messageId: "model-handoff", text: "send using mobile model" });
+      const draftKey = `${base.environmentId}:${base.threadId}`;
+      composerDrafts.setComposerDraftText(draftKey, base.text);
       composerDrafts.updateComposerDraftSettings(draftKey, { modelSelection: mobileModel });
+      const message = {
+        ...base,
+        modelSelection: mobileModel,
+        modelSelectionId: draftModelSelectionId(draftKey),
+      };
       await harness.manager.enqueue(message);
       composerDrafts.clearComposerDraftContent(draftKey);
-      const sendingSelection = composerDrafts.getComposerDraftSnapshot(draftKey).modelSelection;
       composerDrafts.setComposerDraftText(draftKey, nextText);
       await composerDrafts.flushComposerDrafts();
 
       // Offline/pending sends must retain the local choice until acknowledged.
       expect(composerDrafts.getComposerDraftSnapshot(draftKey).modelSelection).toEqual(mobileModel);
       await expect(
-        completeQueuedMessageDelivery(
-          message,
-          harness.manager.revisionOf(message.messageId),
-          sendingSelection,
-        ),
+        completeQueuedMessageDelivery(message, harness.manager.revisionOf(message.messageId)),
       ).resolves.toBe("removed");
       expect(composerDrafts.getComposerDraftSnapshot(draftKey)).toEqual({
         text: nextText,
         attachments: [],
       });
       // Simulate a restart immediately after removal, before any debounced write.
-      appAtomRegistry.set(composerDrafts.composerDraftsAtom, {});
-      composerDrafts.resetComposerDraftsLoadState();
-      await composerDrafts.waitForComposerDraftsLoaded();
+      await reloadComposerDrafts();
       const draft = composerDrafts.getComposerDraftSnapshot(draftKey);
       expect(draft.modelSelection).toBeUndefined();
       expect(draft.text).toBe(nextText);
@@ -376,13 +393,9 @@ describe("thread outbox model handoff", () => {
         ...queuedMessage({ messageId: "after-handoff", text: "continue" }),
         ...(draft.modelSelection ? { modelSelection: draft.modelSelection } : {}),
       };
-      expect(
-        resolveQueuedThreadSettings(nextMessage, {
-          modelSelection: desktopModel,
-          runtimeMode: DEFAULT_RUNTIME_MODE,
-          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-        }).modelSelection,
-      ).toEqual(desktopModel);
+      expect(resolveQueuedThreadSettings(nextMessage, desktopThread).modelSelection).toEqual(
+        desktopModel,
+      );
       expect(remainingMessages()).toEqual([]);
     },
   );
@@ -395,43 +408,74 @@ describe("thread outbox model handoff", () => {
       newerModel: { ...mobileModel, options: [{ id: "reasoningEffort", value: "high" }] },
     },
   ])("preserves a newer unsent choice during delivery: $change", async ({ newerModel }) => {
-    const message = {
-      ...queuedMessage({ messageId: "newer-model", text: "already sent" }),
-      modelSelection: mobileModel,
-    };
-    const draftKey = `${message.environmentId}:${message.threadId}`;
+    const base = queuedMessage({ messageId: "newer-model", text: "already sent" });
+    const draftKey = `${base.environmentId}:${base.threadId}`;
     composerDrafts.updateComposerDraftSettings(draftKey, { modelSelection: mobileModel });
-    const sendingSelection = composerDrafts.getComposerDraftSnapshot(draftKey).modelSelection;
+    const message = {
+      ...base,
+      modelSelection: mobileModel,
+      modelSelectionId: draftModelSelectionId(draftKey),
+    };
     await harness.manager.enqueue(message);
     composerDrafts.updateComposerDraftSettings(draftKey, { modelSelection: newerModel });
-    await completeQueuedMessageDelivery(
-      message,
-      harness.manager.revisionOf(message.messageId),
-      sendingSelection,
-    );
+    await completeQueuedMessageDelivery(message, harness.manager.revisionOf(message.messageId));
     expect(composerDrafts.getComposerDraftSnapshot(draftKey).modelSelection).toBe(newerModel);
   });
 
-  it("preserves a different unsent choice already present when an offline message starts delivery", async () => {
+  it("preserves a same-value choice re-picked before an offline message starts delivery", async () => {
+    await composerDrafts.waitForComposerDraftsLoaded();
+    const base = queuedMessage({ messageId: "offline-model", text: "queued offline" });
+    const draftKey = `${base.environmentId}:${base.threadId}`;
+    composerDrafts.updateComposerDraftSettings(draftKey, { modelSelection: mobileModel });
     const message = {
-      ...queuedMessage({ messageId: "offline-model", text: "queued earlier" }),
+      ...base,
       modelSelection: mobileModel,
+      modelSelectionId: draftModelSelectionId(draftKey),
     };
-    const draftKey = `${message.environmentId}:${message.threadId}`;
-    composerDrafts.updateComposerDraftSettings(draftKey, { modelSelection: desktopModel });
     await harness.manager.enqueue(message);
-    await completeQueuedMessageDelivery(
-      message,
-      harness.manager.revisionOf(message.messageId),
-      composerDrafts.getComposerDraftSnapshot(draftKey).modelSelection,
+    // Still offline: reasoning goes low -> high -> low again, then more text.
+    composerDrafts.updateComposerDraftSettings(draftKey, {
+      modelSelection: { ...mobileModel, options: [{ id: "reasoningEffort", value: "high" }] },
+    });
+    const rePicked = { ...mobileModel };
+    composerDrafts.updateComposerDraftSettings(draftKey, { modelSelection: rePicked });
+    composerDrafts.setComposerDraftText(draftKey, "next message");
+    await composerDrafts.flushComposerDrafts();
+    const rePickedId = draftModelSelectionId(draftKey);
+    expect(rePickedId).not.toBe(message.modelSelectionId);
+
+    // Reconnect and deliver the older message.
+    await expect(
+      completeQueuedMessageDelivery(message, harness.manager.revisionOf(message.messageId)),
+    ).resolves.toBe("removed");
+    expect(composerDrafts.getComposerDraftSnapshot(draftKey)).toMatchObject({
+      text: "next message",
+      modelSelection: rePicked,
+      modelSelectionId: rePickedId,
+    });
+
+    // The deliberate unsent choice survives reload and still wins over a later desktop change.
+    await reloadComposerDrafts();
+    const draft = composerDrafts.getComposerDraftSnapshot(draftKey);
+    expect(draft).toMatchObject({
+      text: "next message",
+      modelSelection: mobileModel,
+      modelSelectionId: rePickedId,
+    });
+    const nextMessage = {
+      ...queuedMessage({ messageId: "after-repick", text: draft.text }),
+      ...(draft.modelSelection ? { modelSelection: draft.modelSelection } : {}),
+    };
+    expect(resolveQueuedThreadSettings(nextMessage, desktopThread).modelSelection).toEqual(
+      mobileModel,
     );
-    expect(composerDrafts.getComposerDraftSnapshot(draftKey).modelSelection).toBe(desktopModel);
   });
 
   it("preserves attachments and other settings when releasing the model", async () => {
     const message = {
       ...queuedMessage({ messageId: "keep-draft-settings", text: "sent" }),
       modelSelection: mobileModel,
+      modelSelectionId: "choice-1",
     };
     const draftKey = `${message.environmentId}:${message.threadId}`;
     const remainingDraft = {
@@ -441,16 +485,13 @@ describe("thread outbox model handoff", () => {
       runtimeMode: DEFAULT_RUNTIME_MODE,
       interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
     };
+    const sentChoice = { modelSelection: mobileModel, modelSelectionId: "choice-1" };
     appAtomRegistry.set(composerDrafts.composerDraftsAtom, {
-      [draftKey]: { ...remainingDraft, modelSelection: mobileModel },
-      "other-environment:thread-1": { text: "", attachments: [], modelSelection: mobileModel },
+      [draftKey]: { ...remainingDraft, ...sentChoice },
+      "other-environment:thread-1": { text: "", attachments: [], ...sentChoice },
     });
     await harness.manager.enqueue(message);
-    await completeQueuedMessageDelivery(
-      message,
-      harness.manager.revisionOf(message.messageId),
-      mobileModel,
-    );
+    await completeQueuedMessageDelivery(message, harness.manager.revisionOf(message.messageId));
     expect(composerDrafts.getComposerDraftSnapshot(draftKey)).toEqual(remainingDraft);
     expect(
       composerDrafts.getComposerDraftSnapshot("other-environment:thread-1").modelSelection,
@@ -458,20 +499,18 @@ describe("thread outbox model handoff", () => {
   });
 
   it("releases an accepted model even if outbox cleanup must retry", async () => {
-    const message = {
-      ...queuedMessage({ messageId: "model-cleanup-retry", text: "accepted" }),
-      modelSelection: mobileModel,
-    };
-    const draftKey = `${message.environmentId}:${message.threadId}`;
+    const base = queuedMessage({ messageId: "model-cleanup-retry", text: "accepted" });
+    const draftKey = `${base.environmentId}:${base.threadId}`;
     composerDrafts.updateComposerDraftSettings(draftKey, { modelSelection: mobileModel });
+    const message = {
+      ...base,
+      modelSelection: mobileModel,
+      modelSelectionId: draftModelSelectionId(draftKey),
+    };
     await harness.manager.enqueue(message);
     harness.removeOutboxMessage.mockRejectedValueOnce(new Error("storage unavailable"));
     await expect(
-      completeQueuedMessageDelivery(
-        message,
-        harness.manager.revisionOf(message.messageId),
-        mobileModel,
-      ),
+      completeQueuedMessageDelivery(message, harness.manager.revisionOf(message.messageId)),
     ).resolves.toBe("failed");
     expect(composerDrafts.getComposerDraftSnapshot(draftKey).modelSelection).toBeUndefined();
     composerDrafts.updateComposerDraftSettings(draftKey, { modelSelection: desktopModel });
@@ -483,21 +522,19 @@ describe("thread outbox model handoff", () => {
 
   it("keeps acknowledged cleanup recoverable until the draft write succeeds", async () => {
     await composerDrafts.waitForComposerDraftsLoaded();
-    const message = {
-      ...queuedMessage({ messageId: "model-write-failure", text: "accepted" }),
-      modelSelection: mobileModel,
-    };
-    const draftKey = `${message.environmentId}:${message.threadId}`;
+    const base = queuedMessage({ messageId: "model-write-failure", text: "accepted" });
+    const draftKey = `${base.environmentId}:${base.threadId}`;
     composerDrafts.updateComposerDraftSettings(draftKey, { modelSelection: mobileModel });
     await composerDrafts.flushComposerDrafts();
+    const message = {
+      ...base,
+      modelSelection: mobileModel,
+      modelSelectionId: draftModelSelectionId(draftKey),
+    };
     await harness.manager.enqueue(message);
     harness.draftFile.setWriteError(new Error("disk full"));
     await expect(
-      completeQueuedMessageDelivery(
-        message,
-        harness.manager.revisionOf(message.messageId),
-        mobileModel,
-      ),
+      completeQueuedMessageDelivery(message, harness.manager.revisionOf(message.messageId)),
     ).resolves.toBe("failed");
     expect(remainingMessages()).toEqual([message]);
     const acknowledged = new Set([message.messageId]);
@@ -514,9 +551,7 @@ describe("thread outbox model handoff", () => {
     );
     expect(acknowledged.size).toBe(0);
     expect(remainingMessages()).toEqual([]);
-    appAtomRegistry.set(composerDrafts.composerDraftsAtom, {});
-    composerDrafts.resetComposerDraftsLoadState();
-    await composerDrafts.waitForComposerDraftsLoaded();
+    await reloadComposerDrafts();
     expect(composerDrafts.getComposerDraftSnapshot(draftKey).modelSelection).toEqual(desktopModel);
   });
 

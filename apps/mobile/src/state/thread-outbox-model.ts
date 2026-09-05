@@ -52,6 +52,7 @@ export const QueuedThreadMessageSchema = Schema.Struct({
   text: Schema.String,
   attachments: Schema.Array(DraftComposerAttachmentSchema),
   modelSelection: Schema.optional(ModelSelection),
+  modelSelectionId: Schema.optional(Schema.String),
   runtimeMode: Schema.optional(RuntimeMode),
   interactionMode: Schema.optional(ProviderInteractionMode),
   // Present when the queued item creates a brand-new thread (pending task)
@@ -81,6 +82,8 @@ export interface QueuedThreadMessage {
   readonly text: string;
   readonly attachments: ReadonlyArray<DraftComposerAttachment>;
   readonly modelSelection?: ModelSelectionType;
+  /** Id of the composer draft choice this message sent; delivery releases only that choice. */
+  readonly modelSelectionId?: string;
   readonly runtimeMode?: RuntimeModeType;
   readonly interactionMode?: ProviderInteractionModeType;
   readonly creation?: QueuedThreadCreation;

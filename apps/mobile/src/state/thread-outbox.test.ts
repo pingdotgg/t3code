@@ -359,6 +359,7 @@ describe("thread outbox", () => {
         model: "gpt-5.4",
         options: [{ id: "reasoningEffort", value: "xhigh" }],
       },
+      modelSelectionId: "choice-1",
       runtimeMode: "approval-required",
       interactionMode: "plan",
     } satisfies QueuedThreadMessage;

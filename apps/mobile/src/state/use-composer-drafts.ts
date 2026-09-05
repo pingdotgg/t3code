@@ -22,6 +22,7 @@ import {
 } from "../lib/composerAttachmentFiles";
 import type { DraftComposerAttachment, FileBackedComposerAttachment } from "../lib/composerImages";
 import { SerializedAsyncQueue } from "../lib/serialized-async-queue";
+import { randomHex } from "../lib/uuid";
 import { appAtomRegistry } from "./atom-registry";
 import {
   decodeQueuedThreadMessage,
@@ -56,6 +57,11 @@ export interface ComposerDraft {
   readonly attachments: ReadonlyArray<DraftComposerAttachment>;
   readonly importedShareIds?: ReadonlyArray<string>;
   readonly modelSelection?: ModelSelection;
+  /**
+   * New on every explicit model pick, even one that repeats the value. A
+   * queued message carries it so delivery releases only the choice it sent.
+   */
+  readonly modelSelectionId?: string;
   readonly runtimeMode?: RuntimeMode;
   readonly interactionMode?: ProviderInteractionMode;
   readonly workspaceSelection?: ComposerDraftWorkspaceSelection;
@@ -91,6 +97,7 @@ const ComposerDraftSchema = Schema.Struct({
   attachments: Schema.Array(DraftComposerAttachmentSchema),
   importedShareIds: Schema.optional(Schema.Array(Schema.String)),
   modelSelection: Schema.optional(ModelSelectionSchema),
+  modelSelectionId: Schema.optional(Schema.String),
   runtimeMode: Schema.optional(RuntimeModeSchema),
   interactionMode: Schema.optional(ProviderInteractionModeSchema),
   workspaceSelection: Schema.optional(ComposerDraftWorkspaceSelectionSchema),
@@ -963,6 +970,7 @@ export function updateComposerDraftSettings(
     const draft = {
       ...normalizeDraft(current[draftKey]),
       ...settings,
+      ...(settings.modelSelection ? { modelSelectionId: randomHex(8) } : {}),
     };
     if (isEmptyDraft(draft)) {
       const next = { ...current };
@@ -976,16 +984,12 @@ export function updateComposerDraftSettings(
   });
 }
 
-/** Releases a sent model override without discarding a newer pick or draft content. */
-export function clearComposerDraftModelSelection(
-  draftKey: string,
-  expectedSelection: ModelSelection,
-): void {
+/** Releases the model choice a delivered message sent, leaving a newer pick and draft content alone. */
+export function clearComposerDraftModelSelection(draftKey: string, modelSelectionId: string): void {
   updateComposerDrafts((current) => {
     const existing = current[draftKey];
-    // Identity matters: reselecting the same model during delivery is a new choice.
-    if (existing?.modelSelection !== expectedSelection) return current;
-    const { modelSelection: _, ...draft } = existing;
+    if (existing?.modelSelectionId !== modelSelectionId) return current;
+    const { modelSelection: _selection, modelSelectionId: _id, ...draft } = existing;
     if (isEmptyDraft(draft)) {
       const next = { ...current };
       delete next[draftKey];
@@ -1010,12 +1014,15 @@ export function clearComposerDraftContentState(
   const {
     importedShareIds: _importedShareIds,
     modelSelection,
+    modelSelectionId,
     workspaceSelection,
     ...retained
   } = existing;
   const draft = {
     ...retained,
-    ...(options?.clearModelSelection || modelSelection === undefined ? {} : { modelSelection }),
+    ...(options?.clearModelSelection || modelSelection === undefined
+      ? {}
+      : { modelSelection, ...(modelSelectionId === undefined ? {} : { modelSelectionId }) }),
     ...(options?.clearWorkspaceSelection || workspaceSelection === undefined
       ? {}
       : { workspaceSelection }),
@@ -1255,7 +1262,12 @@ export function undoComposerDraftMergeState(
   // A setting still holding the merge's value is the merge's doing: restore
   // the snapshot's. One the user changed since the merge stays theirs.
   const undoSetting = <
-    K extends "modelSelection" | "runtimeMode" | "interactionMode" | "workspaceSelection",
+    K extends
+      | "modelSelection"
+      | "modelSelectionId"
+      | "runtimeMode"
+      | "interactionMode"
+      | "workspaceSelection",
   >(
     key: K,
   ): ComposerDraft[K] => (existing[key] === merged[key] ? snapshot[key] : existing[key]);
@@ -1272,6 +1284,7 @@ export function undoComposerDraftMergeState(
       (attachment) => !insertedAttachmentIds.has(attachment.id),
     ),
     modelSelection: undoSetting("modelSelection"),
+    modelSelectionId: undoSetting("modelSelectionId"),
     runtimeMode: undoSetting("runtimeMode"),
     interactionMode: undoSetting("interactionMode"),
     workspaceSelection: undoSetting("workspaceSelection"),

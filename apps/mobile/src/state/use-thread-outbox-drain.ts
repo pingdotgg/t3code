@@ -10,7 +10,6 @@ import {
   DEFAULT_RUNTIME_MODE,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   type MessageId,
-  type ModelSelection,
 } from "@t3tools/contracts";
 import { buildTemporaryWorktreeBranchName } from "@t3tools/shared/git";
 import * as Cause from "effect/Cause";
@@ -183,19 +182,15 @@ function isQueuedMessagePayloadCurrent(
 export async function completeQueuedMessageDelivery(
   queuedMessage: QueuedThreadMessage,
   deliveryRevision: number,
-  draftModelSelection?: ModelSelection,
 ): Promise<"removed" | "edited" | "failed"> {
   try {
-    // The server now owns this selection. Only release the matching override
-    // captured before delivery, so later desktop changes can reach the composer.
-    if (
-      draftModelSelection !== undefined &&
-      queuedMessage.modelSelection !== undefined &&
-      modelSelectionsEqual(draftModelSelection, queuedMessage.modelSelection)
-    ) {
+    // The server now owns the choice this message sent. Release only that
+    // choice, so later desktop changes can reach the composer while a pick
+    // made before or during delivery survives, even one with the same value.
+    if (queuedMessage.modelSelectionId !== undefined) {
       clearComposerDraftModelSelection(
         scopedThreadKey(queuedMessage.environmentId, queuedMessage.threadId),
-        draftModelSelection,
+        queuedMessage.modelSelectionId,
       );
       // Persist before removing the outbox entry. A crash between the two
       // writes can then retry cleanup instead of resurrecting the old model.
@@ -661,9 +656,6 @@ export function useThreadOutboxDrain(): void {
 
   const sendQueuedMessage = useCallback(
     async (queuedMessage: QueuedThreadMessage, thread: EnvironmentThreadShell) => {
-      const draftModelSelection = getComposerDraftSnapshot(
-        scopedThreadKey(queuedMessage.environmentId, queuedMessage.threadId),
-      ).modelSelection;
       const serverConfig = appAtomRegistry.get(
         serverEnvironment.configValueAtom(queuedMessage.environmentId),
       );
@@ -799,11 +791,7 @@ export function useThreadOutboxDrain(): void {
       }
       acknowledgedExistingThreadMessageIdsRef.current.add(persistedMessage.messageId);
       const delivered =
-        (await completeQueuedMessageDelivery(
-          persistedMessage,
-          deliveryRevision,
-          draftModelSelection,
-        )) === "removed";
+        (await completeQueuedMessageDelivery(persistedMessage, deliveryRevision)) === "removed";
       if (delivered) {
         acknowledgedExistingThreadMessageIdsRef.current.delete(persistedMessage.messageId);
       }
