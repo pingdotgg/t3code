@@ -12,18 +12,61 @@ import {
   buildProjectCreateCommand,
   canCreateProjectInEnvironment,
   findExistingAddProject,
+  filterGitHubRepositorySuggestions,
   getAddProjectInitialQuery,
   getCloneDestinationBrowsePath,
   getCloneDestinationPath,
   getCloneDirectoryName,
   getDefaultCloneUrl,
+  isCompleteAddProjectRepositoryInput,
   normalizePastedCloneUrl,
+  parseGitHubRepositorySuggestionInput,
   resolveAddProjectPath,
   sortAddProjectProviderSources,
 } from "./projects.ts";
 import type { EnvironmentProject } from "../state/models.ts";
 
 describe("add project shared logic", () => {
+  it("recognizes GitHub owner inputs and filters repository suggestions", () => {
+    expect(parseGitHubRepositorySuggestionInput("naveed949/")).toEqual({
+      owner: "naveed949",
+      repositoryQuery: "",
+    });
+    expect(parseGitHubRepositorySuggestionInput("naveed949/t3")).toEqual({
+      owner: "naveed949",
+      repositoryQuery: "t3",
+    });
+    expect(parseGitHubRepositorySuggestionInput("naveed949")).toBeNull();
+
+    const repositories = [
+      {
+        provider: "github" as const,
+        nameWithOwner: "naveed949/zebra",
+        url: "https://github.com/naveed949/zebra",
+        sshUrl: "git@github.com:naveed949/zebra.git",
+      },
+      {
+        provider: "github" as const,
+        nameWithOwner: "naveed949/t3code",
+        url: "https://github.com/naveed949/t3code",
+        sshUrl: "git@github.com:naveed949/t3code.git",
+      },
+    ];
+    expect(filterGitHubRepositorySuggestions(repositories, "naveed949/")).toEqual([
+      repositories[1],
+      repositories[0],
+    ]);
+    expect(filterGitHubRepositorySuggestions(repositories, "naveed949/t3")).toEqual([
+      repositories[1],
+    ]);
+    expect(isCompleteAddProjectRepositoryInput("github", "naveed949/")).toBe(false);
+    expect(isCompleteAddProjectRepositoryInput("github", "naveed949")).toBe(false);
+    expect(isCompleteAddProjectRepositoryInput("github", "naveed949/t3code")).toBe(true);
+    expect(
+      isCompleteAddProjectRepositoryInput("github", "https://github.com/naveed949/t3code"),
+    ).toBe(true);
+  });
+
   it("only allows project creation in connected environments", () => {
     expect(canCreateProjectInEnvironment("connected")).toBe(true);
     expect(canCreateProjectInEnvironment("available")).toBe(false);

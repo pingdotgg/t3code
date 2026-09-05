@@ -15,6 +15,8 @@ import {
   type SourceControlPublishRepositoryResult,
   type SourceControlRepositoryCloneUrls,
   type SourceControlRepositoryInfo,
+  type SourceControlRepositoryListInput,
+  type SourceControlRepositoryListResult,
   type SourceControlRepositoryLookupInput,
 } from "@t3tools/contracts";
 
@@ -30,6 +32,9 @@ export class SourceControlRepositoryService extends Context.Service<
     readonly lookupRepository: (
       input: SourceControlRepositoryLookupInput,
     ) => Effect.Effect<SourceControlRepositoryInfo, SourceControlRepositoryError>;
+    readonly listRepositories: (
+      input: SourceControlRepositoryListInput,
+    ) => Effect.Effect<SourceControlRepositoryListResult, SourceControlRepositoryError>;
     readonly cloneRepository: (
       input: SourceControlCloneRepositoryInput,
     ) => Effect.Effect<SourceControlCloneRepositoryResult, SourceControlRepositoryError>;
@@ -114,6 +119,33 @@ export const make = Effect.gen(function* () {
       repository: input.repository.trim(),
     });
     return toRepositoryInfo(providerKind, urls);
+  });
+
+  const listRepositories = Effect.fn("SourceControlRepositoryService.listRepositories")(function* (
+    input: SourceControlRepositoryListInput,
+  ) {
+    const providerKind = yield* ensureConcreteProvider({
+      operation: "listRepositories",
+      provider: input.provider,
+    });
+    const provider = yield* providers.get(providerKind);
+    if (!provider.listRepositories) {
+      return yield* new SourceControlRepositoryError({
+        operation: "listRepositories",
+        provider: providerKind,
+        detail: "This source control provider cannot list repositories.",
+      });
+    }
+    const result = yield* provider.listRepositories({
+      cwd: input.cwd ?? config.cwd,
+      owner: input.owner.trim(),
+    });
+    return {
+      repositories: result.repositories.map((repository) =>
+        toRepositoryInfo(providerKind, repository),
+      ),
+      isTruncated: result.isTruncated,
+    };
   });
 
   const normalizeDestinationPath = Effect.fn("SourceControlRepositoryService.normalizeDestination")(
@@ -266,6 +298,8 @@ export const make = Effect.gen(function* () {
   );
 
   return SourceControlRepositoryService.of({
+    listRepositories: (input) =>
+      listRepositories(input).pipe(mapRepositoryError("listRepositories", input.provider)),
     lookupRepository: (input) =>
       lookupRepository(input).pipe(mapRepositoryError("lookupRepository", input.provider)),
     cloneRepository: (input) =>

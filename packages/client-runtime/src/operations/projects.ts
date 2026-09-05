@@ -106,6 +106,50 @@ export function addProjectRemoteSourceProvider(
   return source === "url" ? null : source;
 }
 
+export interface GitHubRepositorySuggestionInput {
+  readonly owner: string;
+  readonly repositoryQuery: string;
+}
+
+/** Returns the owner and optional repository prefix once a GitHub owner slash is present. */
+export function parseGitHubRepositorySuggestionInput(
+  input: string,
+): GitHubRepositorySuggestionInput | null {
+  const match = /^([A-Za-z0-9](?:[A-Za-z0-9-]{0,38}))\/([^/]*)$/u.exec(input.trim());
+  if (!match?.[1]) return null;
+  return { owner: match[1], repositoryQuery: match[2] ?? "" };
+}
+
+export function filterGitHubRepositorySuggestions(
+  repositories: ReadonlyArray<SourceControlRepositoryInfo>,
+  input: string,
+): ReadonlyArray<SourceControlRepositoryInfo> {
+  const parsed = parseGitHubRepositorySuggestionInput(input);
+  if (!parsed) return [];
+  const owner = parsed.owner.toLowerCase();
+  const query = parsed.repositoryQuery.toLowerCase();
+  return repositories
+    .filter((repository) => {
+      const [repositoryOwner, repositoryName] = repository.nameWithOwner.split("/");
+      return (
+        repository.provider === "github" &&
+        repositoryOwner?.toLowerCase() === owner &&
+        (repositoryName?.toLowerCase().includes(query) ?? false)
+      );
+    })
+    .toSorted((left, right) => left.nameWithOwner.localeCompare(right.nameWithOwner));
+}
+
+export function isCompleteAddProjectRepositoryInput(
+  source: AddProjectRemoteSource,
+  input: string,
+): boolean {
+  const trimmed = input.trim();
+  if (trimmed.length === 0) return false;
+  if (source !== "github") return true;
+  return trimmed.includes("/") && !trimmed.endsWith("/");
+}
+
 const GITHUB_REPOSITORY_SHORTHAND =
   /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\/[A-Za-z0-9._-]+(?:\.git)?$/;
 

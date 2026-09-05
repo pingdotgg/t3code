@@ -66,6 +66,19 @@ export const SourceControlRepositoryLookupInput = Schema.Struct({
 });
 export type SourceControlRepositoryLookupInput = typeof SourceControlRepositoryLookupInput.Type;
 
+export const SourceControlRepositoryListInput = Schema.Struct({
+  provider: SourceControlProviderKind,
+  owner: TrimmedNonEmptyString,
+  cwd: Schema.optional(TrimmedNonEmptyString),
+});
+export type SourceControlRepositoryListInput = typeof SourceControlRepositoryListInput.Type;
+
+export const SourceControlRepositoryListResult = Schema.Struct({
+  repositories: Schema.Array(SourceControlRepositoryInfo),
+  isTruncated: Schema.Boolean,
+});
+export type SourceControlRepositoryListResult = typeof SourceControlRepositoryListResult.Type;
+
 export const SourceControlCloneRepositoryInput = Schema.Struct({
   provider: Schema.optional(SourceControlProviderKind),
   repository: Schema.optional(TrimmedNonEmptyString),

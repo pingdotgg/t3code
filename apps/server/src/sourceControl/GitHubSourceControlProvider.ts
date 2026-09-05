@@ -270,6 +270,21 @@ export const make = Effect.gen(function* () {
             }),
         ),
       ),
+    listRepositories: (input) =>
+      github.listRepositories(input).pipe(
+        Effect.mapError(
+          (error) =>
+            new SourceControlProviderError({
+              provider: "github",
+              operation: "listRepositories",
+              command: error.command,
+              cwd: input.cwd,
+              repository: SourceControlProvider.transportSafeSourceControlErrorValue(input.owner),
+              detail: error.detail,
+              cause: error,
+            }),
+        ),
+      ),
     createRepository: (input) =>
       github.createRepository(input).pipe(
         Effect.mapError(
