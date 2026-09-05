@@ -17,6 +17,8 @@ import type * as EffectAcpErrors from "effect-acp/errors";
 import { ServerConfig } from "../../config.ts";
 import { makeAcpNativeLoggerFactory } from "../../provider/acp/AcpNativeLogging.ts";
 import {
+  applyGrokAcpModelSelection,
+  currentGrokModelIdFromSessionSetup,
   makeGrokAcpRuntime,
   resolveGrokAcpBaseModelId,
 } from "../../provider/acp/GrokAcpSupport.ts";
@@ -225,6 +227,13 @@ export function makeGrokAcpAdapterFlavor(options: GrokAdapterV2Options): AcpAdap
     supportsImagePrompts: true,
     supportsCompaction: true,
     resolveModelId: (selection) => resolveGrokAcpBaseModelId(selection.model),
+    applyModelSelection: ({ runtime, startResult, modelSelection }) =>
+      applyGrokAcpModelSelection({
+        runtime,
+        currentModelId: currentGrokModelIdFromSessionSetup(startResult.sessionSetupResult),
+        requestedModelId: resolveGrokAcpBaseModelId(modelSelection.model),
+        mapError: (cause) => cause,
+      }),
     makeRuntime:
       options.makeRuntime ??
       ((input) =>
