@@ -2603,7 +2603,7 @@ export function GeneralSettingsPanel() {
 
         <SettingsRow
           serverScoped
-          className="bg-muted/20 sm:pl-9"
+          className="bg-muted/20"
           title={searchableSetting("start-from-origin").title}
           description="Creates the worktree from the latest matching branch on origin instead of your local branch."
           resetAction={
