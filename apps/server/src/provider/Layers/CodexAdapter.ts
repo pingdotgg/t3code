@@ -787,6 +787,36 @@ function itemDetail(itemType: CanonicalItemType, item: CodexLifecycleItem): stri
   return undefined;
 }
 
+// Codex sends `reason` only sometimes, and sends it blank rather than absent
+// often enough to matter, so an empty one must not outrank the paths below.
+function nonEmptyDetail(value: string | null | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed === undefined || trimmed.length === 0 ? undefined : trimmed;
+}
+
+// Keeps one oversized patch from pushing a wall of paths through every consumer
+// of the approval, while still saying how much it covers.
+const MAX_DESCRIBED_FILE_CHANGES = 20;
+
+// An apply-patch approval carries the edited paths as the keys of `fileChanges`.
+// Without them the approval card has nothing to show but its own title — the
+// command-execution branch already falls back to the command for the same reason.
+function describeFileChanges(
+  fileChanges: EffectCodexSchema.ServerRequest__ApplyPatchApprovalParams["fileChanges"] | undefined,
+): string | undefined {
+  if (fileChanges === undefined) return undefined;
+  const entries = Object.entries(fileChanges).toSorted(([left], [right]) =>
+    left.localeCompare(right),
+  );
+  if (entries.length === 0) return undefined;
+  const described = entries.slice(0, MAX_DESCRIBED_FILE_CHANGES).map(([path, change]) => {
+    const movePath = change.type === "update" ? change.move_path : undefined;
+    return movePath ? `${change.type} ${path} -> ${movePath}` : `${change.type} ${path}`;
+  });
+  const remaining = entries.length - described.length;
+  return remaining > 0 ? `${described.join("\n")}\n+${remaining} more` : described.join("\n");
+}
+
 function toRequestTypeFromMethod(method: string): CanonicalRequestType {
   switch (method) {
     case "item/commandExecution/requestApproval":
@@ -1325,7 +1355,9 @@ function mapToRuntimeEvents(
             EffectCodexSchema.ServerRequest__FileChangeRequestApprovalParams,
             event.payload,
           );
-          return payload?.reason ?? undefined;
+          // These params carry no path of their own, only the root the agent
+          // wants to write under.
+          return nonEmptyDetail(payload?.reason) ?? nonEmptyDetail(payload?.grantRoot);
         }
         case "mcpServer/elicitation/request":
           return elicitation?.message;
@@ -1334,7 +1366,11 @@ function mapToRuntimeEvents(
             EffectCodexSchema.ServerRequest__ApplyPatchApprovalParams,
             event.payload,
           );
-          return payload?.reason ?? undefined;
+          return (
+            nonEmptyDetail(payload?.reason) ??
+            describeFileChanges(payload?.fileChanges) ??
+            nonEmptyDetail(payload?.grantRoot)
+          );
         }
         case "execCommandApproval": {
           const payload = readPayload(
