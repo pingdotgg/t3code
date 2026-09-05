@@ -1,5 +1,6 @@
 import {
   ApprovalRequestId,
+  UserInputAttachmentAnswerPayload,
   type ChatAttachment,
   type OrchestrationEvent,
   type OrchestrationSessionStatus,
@@ -10,6 +11,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
@@ -345,6 +347,8 @@ function retainProjectionProposedPlansAfterRevert(
     (proposedPlan) => proposedPlan.turnId === null || retainedTurnIds.has(proposedPlan.turnId),
   );
 }
+
+const decodeQuestionAttachmentAnswer = Schema.decodeUnknownOption(UserInputAttachmentAnswerPayload);
 
 function collectThreadAttachmentRelativePaths(
   threadId: string,
@@ -1166,7 +1170,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
 
     const applyThreadActivitiesProjection: ProjectorDefinition["apply"] = Effect.fn(
       "applyThreadActivitiesProjection",
-    )(function* (event, _attachmentSideEffects) {
+    )(function* (event, attachmentSideEffects) {
       switch (event.type) {
         case "thread.created":
           yield* projectionThreadActivityRepository.deleteByThreadId({
@@ -1214,6 +1218,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           yield* Effect.forEach(keptRows, projectionThreadActivityRepository.upsert, {
             concurrency: 1,
           }).pipe(Effect.asVoid);
+          attachmentSideEffects.prunedThreadRelativePaths.set(event.payload.threadId, new Set());
           return;
         }
 
@@ -1873,10 +1878,20 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           const messages = yield* projectionThreadMessageRepository.listByThreadId({
             threadId: ThreadId.make(threadId),
           });
-          prunedThreadRelativePaths.set(
-            threadId,
-            collectThreadAttachmentRelativePaths(threadId, messages),
-          );
+          const retainedPaths = collectThreadAttachmentRelativePaths(threadId, messages);
+          const activities = yield* projectionThreadActivityRepository.listByThreadId({
+            threadId: ThreadId.make(threadId),
+          });
+          for (const activity of activities) {
+            if (activity.kind !== "user-input.answer-submitted") continue;
+            const payload = decodeQuestionAttachmentAnswer(activity.payload);
+            if (Option.isNone(payload)) continue;
+            for (const attachment of Object.values(payload.value.attachmentsByQuestionId).flat()) {
+              const relativePath = attachmentRelativePath(attachment);
+              if (relativePath) retainedPaths.add(relativePath);
+            }
+          }
+          prunedThreadRelativePaths.set(threadId, retainedPaths);
         }
 
         yield* runAttachmentSideEffects({ deletedThreadIds, prunedThreadRelativePaths });
@@ -1896,33 +1911,30 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
         ),
     );
 
-    const applyProjectorForEvent = Effect.fn("applyProjectorForEvent")(function* (
-      projector: ProjectorDefinition,
-      event: OrchestrationEvent,
-      attachmentSideEffects: AttachmentSideEffects,
-    ) {
-      yield* projector.apply(event, attachmentSideEffects);
-      yield* projectionStateRepository.upsert({
-        projector: projector.name,
-        lastAppliedSequence: event.sequence,
-        updatedAt: event.occurredAt,
-      });
-    });
-
     const runProjectorForEvent = Effect.fn("runProjectorForEvent")(function* (
       projector: ProjectorDefinition,
       event: OrchestrationEvent,
+      pendingPrunes: Map<string, OrchestrationEvent>,
+      pendingCursors: Map<string, OrchestrationEvent>,
     ) {
       const attachmentSideEffects: AttachmentSideEffects = {
         deletedThreadIds: new Set<string>(),
         prunedThreadRelativePaths: new Map<string, Set<string>>(),
       };
 
-      yield* sql.withTransaction(applyProjectorForEvent(projector, event, attachmentSideEffects));
+      yield* sql.withTransaction(projector.apply(event, attachmentSideEffects));
+      pendingCursors.set(projector.name, event);
+      // A retry can replay an already-applied revert whose rows no longer change.
+      if (event.type === "thread.reverted") pendingPrunes.set(event.payload.threadId, event);
+      attachmentSideEffects.prunedThreadRelativePaths.clear();
       yield* applyAttachmentSideEffects(event, attachmentSideEffects);
     });
 
-    const bootstrapProjector = (projector: ProjectorDefinition) =>
+    const bootstrapProjector = (
+      projector: ProjectorDefinition,
+      pendingPrunes: Map<string, OrchestrationEvent>,
+      pendingCursors: Map<string, OrchestrationEvent>,
+    ) =>
       projectionStateRepository
         .getByProjector({
           projector: projector.name,
@@ -1934,7 +1946,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
                 Option.isSome(stateRow) ? stateRow.value.lastAppliedSequence : 0,
                 Number.MAX_SAFE_INTEGER,
               ),
-              (event) => runProjectorForEvent(projector, event),
+              (event) => runProjectorForEvent(projector, event, pendingPrunes, pendingCursors),
             ),
           ),
         );
@@ -1982,11 +1994,30 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
       yield* cleanup;
     });
 
-    const bootstrap: OrchestrationProjectionPipelineShape["bootstrap"] = Effect.forEach(
-      projectors,
-      bootstrapProjector,
-      { concurrency: 1 },
-    ).pipe(
+    const bootstrap: OrchestrationProjectionPipelineShape["bootstrap"] = Effect.gen(function* () {
+      const pendingPrunes = new Map<string, OrchestrationEvent>();
+      const pendingCursors = new Map<string, OrchestrationEvent>();
+      yield* Effect.forEach(
+        projectors,
+        (projector) => bootstrapProjector(projector, pendingPrunes, pendingCursors),
+        { concurrency: 1, discard: true },
+      );
+      // Both message and activity references must finish replaying before files are pruned.
+      for (const [threadId, event] of pendingPrunes) {
+        yield* applyAttachmentSideEffects(event, {
+          deletedThreadIds: new Set(),
+          prunedThreadRelativePaths: new Map([[threadId, new Set()]]),
+        });
+      }
+      // Failed replay or process exit must leave the revert events eligible for replay.
+      yield* projectionStateRepository.upsertMany(
+        Array.from(pendingCursors, ([projector, event]) => ({
+          projector,
+          lastAppliedSequence: event.sequence,
+          updatedAt: event.occurredAt,
+        })),
+      );
+    }).pipe(
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, path),
       Effect.provideService(ServerConfig, serverConfig),
