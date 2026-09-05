@@ -178,19 +178,14 @@ export const make = Effect.gen(function* () {
     yield* requireScope(scope);
     const summaryInput = yield* validateInput(input);
     const summary = yield* usage.readSummary(summaryInput).pipe(
-      Effect.catchCause((cause) =>
-        Effect.gen(function* () {
-          if (Cause.hasInterrupts(cause)) {
-            return yield* Effect.failCause(cause).pipe(Effect.orDie);
-          }
-          const usageError = Option.getOrUndefined(Cause.findErrorOption(cause));
-          if (usageError?.reason === "invalidWindow") {
-            return yield* failure("invalid_request");
-          }
-          yield* Effect.logWarning("environment usage service failed", { cause });
-          return yield* failure("usage_unavailable");
-        }),
-      ),
+      Effect.catchTags({
+        UsageReadError: (error) =>
+          error.reason === "invalidWindow"
+            ? Effect.fail(failure("invalid_request"))
+            : Effect.logWarning("environment usage service failed", { cause: error }).pipe(
+                Effect.andThen(Effect.fail(failure("usage_unavailable"))),
+              ),
+      }),
     );
 
     const cursor = input.bucketCursor ?? 0;
