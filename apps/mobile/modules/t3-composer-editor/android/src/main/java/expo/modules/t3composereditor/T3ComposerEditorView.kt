@@ -13,6 +13,7 @@ import android.text.Spanned
 import android.text.TextWatcher
 import android.text.style.ReplacementSpan
 import android.view.Gravity
+import android.view.KeyEvent
 import android.view.ViewGroup
 import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
@@ -31,6 +32,7 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
   private val onComposerSelectionChange by EventDispatcher()
   private val onComposerFocus by EventDispatcher()
   private val onComposerBlur by EventDispatcher()
+  private val onComposerSubmit by EventDispatcher()
   private val onComposerPasteImages by EventDispatcher()
   private val onComposerContentSizeChange by EventDispatcher()
   private var applyingNativeValue = false
@@ -64,6 +66,11 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
     }
     editor.pasteImagesListener = { uris ->
       onComposerPasteImages(mapOf("uris" to uris))
+    }
+    // A hardware keyboard has no on-screen Send button to reach for, so
+    // Ctrl/Meta+Enter is the way to send. Plain Enter still inserts a newline.
+    editor.submitListener = {
+      onComposerSubmit(emptyMap<String, Any>())
     }
     editor.setOnFocusChangeListener { _, hasFocus ->
       if (hasFocus) {
@@ -457,10 +464,28 @@ private fun parseTokens(value: String): List<ComposerToken> = try {
 private class SelectionAwareEditText(context: Context) : EditText(context) {
   var selectionListener: ((Int, Int) -> Unit)? = null
   var pasteImagesListener: ((List<String>) -> Unit)? = null
+  var submitListener: (() -> Unit)? = null
 
   override fun onSelectionChanged(selStart: Int, selEnd: Int) {
     super.onSelectionChanged(selStart, selEnd)
     selectionListener?.invoke(selStart, selEnd)
+  }
+
+  override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
+    // Ctrl/Meta+Enter from a hardware keyboard sends; plain Enter falls
+    // through to the default multiline newline insertion.
+    val listener = submitListener
+    if (event != null && listener != null && isSubmitShortcut(keyCode, event)) {
+      listener.invoke()
+      return true
+    }
+    return super.onKeyDown(keyCode, event)
+  }
+
+  private fun isSubmitShortcut(keyCode: Int, event: KeyEvent): Boolean {
+    val isEnter = keyCode == KeyEvent.KEYCODE_ENTER || keyCode == KeyEvent.KEYCODE_NUMPAD_ENTER
+    val hasSubmitModifier = event.isCtrlPressed || event.isMetaPressed
+    return isEnter && hasSubmitModifier
   }
 
   override fun onTextContextMenuItem(id: Int): Boolean {
