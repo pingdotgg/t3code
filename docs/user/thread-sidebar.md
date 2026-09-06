@@ -49,8 +49,9 @@ in the warning. Changing a rule does not reopen already settled threads.
 
 ## Link a pull request
 
-The server finds the PR for each thread's saved branch. Links update even when
-your apps are closed. Update the server if automatic branch links do not appear.
+The server finds the PR for each unsettled thread's saved branch, even when your
+apps are closed. Settled threads keep their saved links. Update the server if
+automatic branch links do not appear.
 
 On web and desktop, right-click a pull request link in a thread and choose
 **Link to thread** to select a different PR. Use **Unlink from thread** on the
