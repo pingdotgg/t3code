@@ -866,7 +866,22 @@ describe("buildThreadListV2Items settled paging", () => {
 });
 
 function makePendingTask(id: string): PendingNewTask {
+  const creation = {
+    projectId: ProjectId.make("project-1"),
+    workspaceMode: "worktree" as const,
+    branch: null,
+    worktreePath: null,
+  };
   return {
+    kind: "pending",
+    key: `pending-task:${id}`,
+    environmentId,
+    projectId: creation.projectId,
+    projectTitle: undefined,
+    projectCwd: undefined,
+    branch: null,
+    title: id,
+    createdAt: NOW,
     message: {
       environmentId,
       threadId: ThreadId.make(`thread-${id}`),
@@ -875,20 +890,9 @@ function makePendingTask(id: string): PendingNewTask {
       text: id,
       attachments: [],
       createdAt: NOW,
-      creation: {
-        projectId: ProjectId.make("project-1"),
-        workspaceMode: "worktree",
-        branch: null,
-        worktreePath: null,
-      },
+      creation,
     },
-    creation: {
-      projectId: ProjectId.make("project-1"),
-      workspaceMode: "worktree",
-      branch: null,
-      worktreePath: null,
-    },
-    title: id,
+    creation,
   };
 }
 

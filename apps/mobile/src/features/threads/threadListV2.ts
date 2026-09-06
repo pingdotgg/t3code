@@ -298,7 +298,7 @@ export function buildThreadListV2ListItems(input: {
   }));
   const pendingItems = input.pendingTasks.map((pendingTask, index): ThreadListV2ListItem => ({
     type: "v2-pending",
-    key: `v2-pending:${pendingTask.message.messageId}`,
+    key: `v2-${pendingTask.key}`,
     pendingTask,
     showPendingDivider: index === 0,
   }));
