@@ -307,10 +307,8 @@ describe("createEnvironmentThreadStateAtoms", () => {
       });
       const unmount = h.registry.mount(h.stateAtom);
       yield* Deferred.await(completed);
-      const failed = yield* observeState(
-        h.registry,
-        h.stateAtom,
-        (state) => Option.isSome(state.error),
+      const failed = yield* observeState(h.registry, h.stateAtom, (state) =>
+        Option.isSome(state.error),
       );
       expect(failed.status).toBe("empty");
       expect(failed.error).toEqual(Option.some("Could not synchronize the thread."));
