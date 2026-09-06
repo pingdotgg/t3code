@@ -62,7 +62,7 @@ interface ThreadSwipeAction {
 }
 
 interface ThreadSwipeSecondaryAction extends ThreadSwipeAction {
-  readonly backgroundColor: string;
+  readonly tone: "primary" | "secondary" | "danger";
 }
 
 function swipeActionsWidth(hasSecondaryAction: boolean) {
@@ -80,7 +80,7 @@ function resolveSecondaryAction(input: {
   if (input.secondaryAction === undefined) {
     return {
       accessibilityLabel: `Delete ${input.threadTitle}`,
-      backgroundColor: "#ff2d55",
+      tone: "danger",
       icon: "trash",
       label: "Delete",
       onPress: () => {
@@ -92,7 +92,7 @@ function resolveSecondaryAction(input: {
   const action = input.secondaryAction;
   return {
     ...action,
-    backgroundColor: "#5856d6",
+    tone: "secondary",
     menu:
       action.menu === undefined
         ? undefined
@@ -359,7 +359,7 @@ export function ThreadSwipeable(props: {
 function SwipeActionButton(props: {
   readonly accessibilityLabel: string;
   readonly actionsWidth: number;
-  readonly backgroundColor: string;
+  readonly tone: "primary" | "secondary" | "danger";
   readonly compact: boolean;
   readonly entryRange: readonly [number, number];
   readonly fullSwipeThreshold: number;
@@ -462,9 +462,15 @@ function SwipeActionButton(props: {
     >
       <View style={{ height: circleSize, width: circleSize }}>
         <Animated.View
+          className={
+            props.tone === "danger"
+              ? "bg-danger"
+              : props.tone === "secondary"
+                ? "bg-secondary"
+                : "bg-primary"
+          }
           style={[
             {
-              backgroundColor: props.backgroundColor,
               borderRadius: 999,
               height: circleSize,
               left: 0,
@@ -488,7 +494,18 @@ function SwipeActionButton(props: {
             iconStyle,
           ]}
         >
-          <SymbolView name={props.icon} size={iconSize} tintColor="#ffffff" type="monochrome" />
+          <SymbolView
+            name={props.icon}
+            size={iconSize}
+            tintColorClassName={
+              props.tone === "danger"
+                ? "accent-danger-foreground"
+                : props.tone === "secondary"
+                  ? "accent-secondary-foreground"
+                  : "accent-primary-foreground"
+            }
+            type="monochrome"
+          />
         </Animated.View>
       </View>
       <Animated.View
@@ -568,7 +585,7 @@ export function ThreadSwipeActions(props: {
       <SwipeActionButton
         accessibilityLabel={props.primaryAction.accessibilityLabel}
         actionsWidth={actionsWidth}
-        backgroundColor="#007aff"
+        tone="primary"
         compact={props.compact}
         entryRange={
           secondaryAction === null
@@ -586,7 +603,7 @@ export function ThreadSwipeActions(props: {
         <SwipeActionButton
           accessibilityLabel={secondaryAction.accessibilityLabel}
           actionsWidth={actionsWidth}
-          backgroundColor={secondaryAction.backgroundColor}
+          tone={secondaryAction.tone}
           compact={props.compact}
           entryRange={[8, ACTION_ITEM_WIDTH * 0.72]}
           fullSwipeThreshold={props.fullSwipeThreshold}
