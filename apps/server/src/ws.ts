@@ -22,7 +22,6 @@ import {
   ClientOs,
   ClientSurface,
   ClientWebDeployment,
-  CommandId,
   type DiscoveredLocalServerList,
   type EditorId,
   type FileManagerRevealKind,
@@ -1301,29 +1300,10 @@ const makeWsRpcLayer = (
               ...(mutation.scripts === undefined ? {} : { scripts: mutation.scripts }),
             });
           case "project.delete": {
-            const snapshot = yield* threadManagement.getShellSnapshot();
-            const projectThreads = [...snapshot.threads, ...snapshot.archivedThreads].filter(
-              (thread) => thread.projectId === mutation.projectId,
-            );
-            if (projectThreads.length > 0 && mutation.force !== true) {
-              return yield* new ProjectMutationError({
-                commandId: mutation.commandId,
-                message: `Project ${mutation.projectId} is not empty.`,
-              });
-            }
-            yield* Effect.forEach(
-              projectThreads,
-              (thread) =>
-                threadManagement.dispatch({
-                  type: "thread.delete",
-                  commandId: CommandId.make(`${mutation.commandId}:delete-thread:${thread.id}`),
-                  threadId: thread.id,
-                }),
-              { concurrency: 1, discard: true },
-            );
             return yield* projectService.delete({
               commandId: mutation.commandId,
               projectId: mutation.projectId,
+              ...(mutation.force === undefined ? {} : { force: mutation.force }),
             });
           }
         }
@@ -2197,14 +2177,16 @@ const makeWsRpcLayer = (
           observeRpcEffect(
             WS_METHODS.projectsMutate,
             startup.enqueueCommand(mutateProject(mutation)).pipe(
-              Effect.mapError((cause) =>
-                cause._tag === "ProjectMutationError"
-                  ? cause
-                  : new ProjectMutationError({
-                      commandId: mutation.commandId,
-                      message: "Failed to mutate project.",
-                      cause,
-                    }),
+              Effect.mapError(
+                (cause) =>
+                  new ProjectMutationError({
+                    commandId: mutation.commandId,
+                    message:
+                      cause._tag === "ProjectNotEmptyError"
+                        ? cause.message
+                        : "Failed to mutate project.",
+                    cause,
+                  }),
               ),
             ),
             { "rpc.aggregate": "orchestration" },
