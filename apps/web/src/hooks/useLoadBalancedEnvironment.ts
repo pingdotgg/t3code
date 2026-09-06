@@ -30,21 +30,25 @@ export function useLoadBalancedEnvironment(
             resources: result._tag === "Success" ? result.value : null,
             receivedAt: result._tag === "Success" ? result.timestamp : 0,
             pending: result._tag === "Initial" || result.waiting,
+            failed: result._tag === "Failure",
           };
         }),
       ),
     [environmentIds],
   );
   const resources = useAtomValue(resourcesAtom);
+  const pending = resources.some((resource) => resource.pending);
+  const environmentId = chooseLoadBalancedEnvironment(
+    resources.map((resource) => ({
+      ...resource,
+      weight: weights[resource.environmentId] ?? 50,
+    })),
+    Date.now(),
+  ) as EnvironmentId | null;
   return {
     refresh,
-    pending: resources.some((resource) => resource.pending),
-    environmentId: chooseLoadBalancedEnvironment(
-      resources.map((resource) => ({
-        ...resource,
-        weight: weights[resource.environmentId] ?? 50,
-      })),
-      Date.now(),
-    ) as EnvironmentId | null,
+    pending,
+    environmentId,
+    failed: !pending && environmentId === null && resources.some((resource) => resource.failed),
   };
 }
