@@ -440,6 +440,8 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
   readonly thread: EnvironmentThreadShell;
   readonly environmentLabel: string | null;
   readonly environmentMachine?: EnvironmentMachineKind;
+  /** A message for this thread is waiting in the outbox. */
+  readonly hasQueuedMessages?: boolean;
   readonly searchMatch?: EnvironmentThreadSearchMatch;
   readonly searchQuery?: string;
   readonly isLast: boolean;
@@ -475,15 +477,19 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
 
   const { thread, onSelectThread, onArchiveThread, onDeleteThread, onRegenerateThreadTitle } =
     props;
-  const status = resolveThreadStatus(thread);
+  const status = resolveThreadStatus(thread, { hasQueuedMessages: props.hasQueuedMessages });
   const pr = useThreadPr(thread);
   const timestamp = relativeTime(
     thread.latestUserMessageAt ?? thread.updatedAt ?? thread.createdAt,
   );
   const threadAccessibilityLabel = pr ? `${thread.title}, ${pr.accessibilityLabel}` : thread.title;
-  const subtitleParts = [props.environmentLabel, thread.branch].filter((part): part is string =>
-    Boolean(part),
-  );
+  // The pill has room for one word, so what happens next goes in the
+  // subtitle, matching the pending-task row above it.
+  const subtitleParts = [
+    status?.kind === "queued" ? "Sends on reconnect" : null,
+    props.environmentLabel,
+    thread.branch,
+  ].filter((part): part is string => Boolean(part));
 
   const backgroundColor = compact ? screenColor : drawerColor;
   const effectivePressedBackground = selected

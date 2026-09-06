@@ -56,6 +56,9 @@ const STATUS_LABEL_BY_STATUS: Partial<
   input: { label: "Input", className: "text-foreground-secondary" },
   working: { label: "Working", className: "text-foreground-secondary" },
   failed: { label: "Failed", className: "text-danger-foreground" },
+  // Same wording as a queued pending task and uncolored for the same reason:
+  // nothing is asked of the user; the message leaves once the server is back.
+  queued: { label: "Sends on reconnect", className: "text-foreground-tertiary" },
 };
 
 function threadTimeLabel(thread: EnvironmentThreadShell): string {
@@ -334,6 +337,8 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
 export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   readonly thread: EnvironmentThreadShell;
   readonly variant: "card" | "slim";
+  /** A message for this thread is waiting in the outbox. */
+  readonly hasQueuedMessages?: boolean;
   /** Snoozed-shelf row: shows its wake time and offers Wake. */
   readonly snoozed?: boolean;
   /** Pinned-block row: shows the pin glyph and offers Unpin. */
@@ -431,7 +436,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const sidebarPane = props.pane === "sidebar";
   const selected = props.selected === true;
 
-  const status = resolveThreadListV2Status(thread);
+  const status = resolveThreadListV2Status(thread, {
+    hasQueuedMessages: props.hasQueuedMessages,
+  });
   const statusLabel = STATUS_LABEL_BY_STATUS[status];
   // Settled rows label by the same stamp they sort by, so order and label
   // can't disagree. updatedAt is always present, so the resolver never

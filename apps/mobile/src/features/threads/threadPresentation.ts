@@ -8,7 +8,8 @@ export type ThreadStatusKind =
   | "working"
   | "connecting"
   | "error"
-  | "plan-ready";
+  | "plan-ready"
+  | "queued";
 
 export interface ThreadStatusPresentation extends StatusTone {
   readonly kind: ThreadStatusKind;
@@ -35,8 +36,15 @@ function isLatestTurnSettled(
  * `null` for quiescent threads so rows stay free of "Idle"-style noise.
  * Mirrors `resolveThreadStatusPill` in apps/web/src/components/Sidebar.logic.ts.
  */
+/**
+ * `hasQueuedMessages` is the thread's outbox: a turn written on this device
+ * that has not reached the server yet. It ranks below anything the agent is
+ * asking for or doing, but above a bare idle row, so the pill says the
+ * thread is not finished even though the server sees no activity.
+ */
 export function resolveThreadStatus(
   thread: EnvironmentThreadShell,
+  options?: { readonly hasQueuedMessages?: boolean },
 ): ThreadStatusPresentation | null {
   if (thread.hasPendingApprovals) {
     return {
@@ -110,6 +118,20 @@ export function resolveThreadStatus(
       textClassName: "text-foreground-secondary",
       iconColor: "#bf5af2",
       iconBackground: "rgba(191,90,242,0.22)",
+      pulse: false,
+    };
+  }
+
+  if (options?.hasQueuedMessages) {
+    // Same neutral tone as a pending task's pill: nothing is asked of the
+    // user; the message leaves once the server is back.
+    return {
+      kind: "queued",
+      label: "Pending",
+      pillClassName: "bg-subtle",
+      textClassName: "text-foreground-muted",
+      iconColor: "#8e8e93",
+      iconBackground: "rgba(142,142,147,0.22)",
       pulse: false,
     };
   }

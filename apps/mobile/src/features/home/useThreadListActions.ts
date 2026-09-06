@@ -12,6 +12,7 @@ import { pinOrderKeyBetween } from "@t3tools/client-runtime/state/thread-sort";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { environmentServerConfigsAtom } from "../../state/server";
 import { environmentThreadShells, threadEnvironment } from "../../state/threads";
+import { queuedThreadKeysAtom } from "../../state/use-thread-outbox";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { beginPendingThreadOrder, getPendingThreadOrder } from "../../state/thread-order";
 import { createPendingThreadOrder, createThreadMovePlanner } from "../threads/threadOrder";
@@ -480,6 +481,7 @@ export function useThreadListActions(): {
         threads: shells,
         section,
         now: new Date().toISOString(),
+        queuedThreadKeys: appAtomRegistry.get(queuedThreadKeysAtom),
         settlementEnvironmentIds: new Set(
           [...configs].flatMap(([id, config]) =>
             config.environment.capabilities.threadSettlement === true ? [id] : [],

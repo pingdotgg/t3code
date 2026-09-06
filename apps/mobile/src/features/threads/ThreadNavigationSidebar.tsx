@@ -33,6 +33,7 @@ import { useThreadListV2ShelfPreferences } from "./use-thread-list-v2-shelf-pref
 import { usePendingThreadOrder } from "../../state/thread-order";
 import { environmentServerConfigsAtom } from "../../state/server";
 import { usePendingNewTasks } from "../../state/use-pending-new-tasks";
+import { useQueuedThreadKeys } from "../../state/use-thread-outbox";
 import { useWorkspaceState } from "../../state/workspace";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
 import { useHardwareKeyboardCommand } from "../keyboard/hardwareKeyboardCommands";
@@ -165,6 +166,7 @@ function ThreadNavigationSidebarPane(
   } = useThreadListActions();
   const threadListV2Enabled = useThreadListV2Enabled();
   const pendingTasks = usePendingNewTasks();
+  const queuedThreadKeys = useQueuedThreadKeys();
   const { openPendingTask, confirmDeletePendingTask } = usePendingTaskListActions();
   const environments = useMemo(
     () =>
@@ -313,6 +315,7 @@ function ThreadNavigationSidebarPane(
             projects: scopedProjects,
             threads: scopedThreads,
             pendingTasks: scopedPendingTasks,
+            queuedThreadKeys,
             environmentId: options.selectedEnvironmentId,
             searchQuery: props.searchQuery,
             matchedThreadKeys,
@@ -322,6 +325,7 @@ function ThreadNavigationSidebarPane(
           }),
     [
       threadListV2Enabled,
+      queuedThreadKeys,
       matchedThreadKeys,
       options,
       props.searchQuery,
@@ -489,6 +493,7 @@ function ThreadNavigationSidebarPane(
           now: new Date().toISOString(),
           settlementEnvironmentIds,
           snoozeEnvironmentIds,
+          queuedThreadKeys,
         }),
       });
     return { pinned: sectionPlanner("pinned"), active: sectionPlanner("active") };
@@ -496,6 +501,7 @@ function ThreadNavigationSidebarPane(
     serverConfigs,
     threads,
     pendingOrder,
+    queuedThreadKeys,
     settlementEnvironmentIds,
     snoozeEnvironmentIds,
     nowMinute,
@@ -521,6 +527,7 @@ function ThreadNavigationSidebarPane(
       matchedThreadKeys,
       settlementEnvironmentIds,
       snoozeEnvironmentIds,
+      queuedThreadKeys,
       settledLimit: settledVisibleCount,
       now: new Date().toISOString(),
       snoozedShelfExpanded,
@@ -529,6 +536,7 @@ function ThreadNavigationSidebarPane(
     });
   }, [
     pendingOrder,
+    queuedThreadKeys,
     nowMinute,
     snoozeWakeTick,
     snoozedShelfExpanded,
@@ -884,6 +892,7 @@ function ThreadNavigationSidebarPane(
             <ThreadListV2Row
               thread={thread}
               variant={item.item.variant}
+              hasQueuedMessages={queuedThreadKeys.has(`${thread.environmentId}:${thread.id}`)}
               snoozed={item.item.snoozed}
               pinned={item.item.pinned}
               snoozePresetMinute={nowMinute}
@@ -1017,6 +1026,7 @@ function ThreadNavigationSidebarPane(
             <ThreadListRow
               variant="sidebar"
               thread={thread}
+              hasQueuedMessages={queuedThreadKeys.has(`${thread.environmentId}:${thread.id}`)}
               environmentLabel={
                 savedConnectionsById[thread.environmentId]?.environmentLabel ?? null
               }
@@ -1061,6 +1071,7 @@ function ThreadNavigationSidebarPane(
       activeReorderEnvironmentIds,
       threadMovePlanners,
       pendingOrder,
+      queuedThreadKeys,
       confirmDeletePendingTask,
       confirmDeleteThread,
       handleSelectThread,
