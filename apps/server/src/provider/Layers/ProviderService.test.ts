@@ -4941,21 +4941,29 @@ describe("agent browser access", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("withholds and revokes MCP credentials when the project disables browser access", () =>
-    Effect.gen(function* () {
-      const threadId = asThreadId("thread-project-browser-off");
-      revokedThreads.length = 0;
-      const issued = yield* startSessionWith(true, threadId, false);
-      assert.deepEqual(issued, []);
-      assert.deepEqual(revokedThreads, [threadId]);
-    }).pipe(Effect.provide(NodeServices.layer)),
+  it.effect(
+    "retains only monitoring and revokes old credentials when the project disables browser access",
+    () =>
+      Effect.gen(function* () {
+        const threadId = asThreadId("thread-project-browser-off");
+        revokedThreads.length = 0;
+        const issued = yield* startSessionWith(true, threadId, false);
+        assert.deepEqual(
+          issued.map(({ capabilities }) => capabilities),
+          [["monitor"]],
+        );
+        assert.deepEqual(revokedThreads, [threadId]);
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("requests an MCP credential when the project overrides browser access to on", () =>
     Effect.gen(function* () {
       const threadId = asThreadId("thread-project-browser-on");
       const issued = yield* startSessionWith(false, threadId, true);
-      assert.deepEqual(issued, [threadId]);
+      assert.deepEqual(
+        issued.map(({ capabilities }) => capabilities),
+        [["preview", "monitor"]],
+      );
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 });
