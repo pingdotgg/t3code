@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useId, useState } from "react";
 
 import { cn } from "../../lib/utils";
 
@@ -17,12 +17,14 @@ export function ExpandableText({
   collapsedClassName?: string;
   expandLabel?: string;
 }) {
+  const textId = useId();
   const [expanded, setExpanded] = useState(false);
   const canExpand = text.length > 180 || text.includes("\n");
 
   return (
     <div className={cn("min-w-0", className)}>
       <div
+        id={textId}
         className={cn(
           "whitespace-pre-wrap break-words",
           !expanded && canExpand ? collapsedClassName : null,
@@ -33,6 +35,8 @@ export function ExpandableText({
       {canExpand ? (
         <button
           type="button"
+          aria-expanded={expanded}
+          aria-controls={textId}
           className="cursor-pointer mt-1 text-[11px] font-medium text-foreground/70 underline-offset-2 hover:text-foreground hover:underline"
           onClick={() => setExpanded((value) => !value)}
         >
