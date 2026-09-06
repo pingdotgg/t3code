@@ -23,9 +23,7 @@ import {
   isLatestTurnSettled,
   selectHandoffImageResources,
   selectMessageImageResources,
-  workEntryIndicatesToolFailure,
   workEntryIndicatesToolNeutralStatus,
-  workEntryIndicatesToolSuccess,
 } from "./session-logic";
 
 let nextActivityId = 0;
@@ -809,121 +807,43 @@ describe("hasActionableProposedPlan", () => {
   });
 });
 
-describe("workEntryIndicatesToolFailure", () => {
-  const base = {
-    id: "w1",
-    createdAt: "2026-01-01T00:00:00.000Z",
-    label: "Read",
-  };
-
-  it("is true for error tone", () => {
-    expect(
-      workEntryIndicatesToolFailure({
-        ...base,
-        tone: "error",
-        detail: "nothing special",
-      }),
-    ).toBe(true);
-  });
-
-  it("is true when lifecycle says failed even if detail is empty", () => {
-    expect(
-      workEntryIndicatesToolFailure({
-        ...base,
-        tone: "tool",
-        toolLifecycleStatus: "failed",
-      }),
-    ).toBe(true);
-  });
-
-  it("detects file-not-found style tool output with completed lifecycle", () => {
-    expect(
-      workEntryIndicatesToolFailure({
-        ...base,
-        tone: "tool",
-        toolLifecycleStatus: "completed",
-        detail: "File not found: C:\\foo\\nonexistent.ts",
-      }),
-    ).toBe(true);
-  });
-
-  it("detects glob no files and PowerShell command errors", () => {
-    expect(
-      workEntryIndicatesToolFailure({
-        ...base,
-        label: "Glob",
-        tone: "tool",
-        detail: "No files found",
-      }),
-    ).toBe(true);
-    expect(
-      workEntryIndicatesToolFailure({
-        ...base,
-        label: "Bash",
-        tone: "tool",
-        detail:
-          "The term 'this_is_not_a_command' is not recognized as the name of a cmdlet, function, script file, or operable program.",
-      }),
-    ).toBe(true);
-  });
-
-  it("is false for successful completed tools", () => {
-    expect(
-      workEntryIndicatesToolFailure({
-        ...base,
-        tone: "tool",
-        toolLifecycleStatus: "completed",
-        detail: "Found 3 matching files",
-      }),
-    ).toBe(false);
-  });
-
-  it("treats successful tool rows as success candidates", () => {
-    expect(
-      workEntryIndicatesToolSuccess({
-        ...base,
-        tone: "tool",
-        toolLifecycleStatus: "completed",
-        detail: "ok",
-      }),
-    ).toBe(true);
-    expect(
-      workEntryIndicatesToolSuccess({
-        ...base,
-        tone: "tool",
-        toolLifecycleStatus: "inProgress",
-        detail: "…",
-      }),
-    ).toBe(false);
-    expect(workEntryIndicatesToolSuccess({ ...base, tone: "thinking", detail: "…" })).toBe(false);
+describe("workEntryIndicatesToolNeutralStatus", () => {
+  it("keeps active tools neutral and agent spawns visible", () => {
+    const entry = {
+      id: "work-1",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      label: "Read",
+      tone: "tool" as const,
+      toolLifecycleStatus: "inProgress" as const,
+    };
+    expect(workEntryIndicatesToolNeutralStatus(entry)).toBe(true);
     expect(
       workEntryIndicatesToolNeutralStatus({
-        ...base,
-        tone: "tool",
-        toolLifecycleStatus: "inProgress",
-        detail: "…",
+        ...entry,
+        agentSpawn: { workflowId: null, agentTaskIds: ["agent-1"] },
       }),
-    ).toBe(true);
+    ).toBe(false);
     expect(
-      workEntryIndicatesToolNeutralStatus({
-        ...base,
-        tone: "tool",
-        toolLifecycleStatus: "completed",
-        detail: "ok",
-      }),
+      workEntryIndicatesToolNeutralStatus({ ...entry, toolLifecycleStatus: "completed" }),
     ).toBe(false);
   });
 
-  it("does not run heuristics on non-tool info rows", () => {
-    expect(
-      workEntryIndicatesToolFailure({
-        ...base,
-        label: "Context compacted",
-        tone: "info",
-        detail: "File not found in conversation",
-      }),
-    ).toBe(false);
-  });
+  it.each(["waiting", "cancelled", "interrupted"])(
+    "keeps the status of a %s background task",
+    (status) => {
+      const entries = deriveWorkLogEntries([
+        makeActivity({
+          kind: "task.progress",
+          payload: { taskId: "background-1", agentKind: "background", status },
+        }),
+      ]);
+      expect(entries).toHaveLength(1);
+      expect(entries[0]).toMatchObject({
+        toolLifecycleStatus: status === "waiting" ? "inProgress" : "stopped",
+      });
+      expect(workEntryIndicatesToolNeutralStatus(entries[0]!)).toBe(true);
+    },
+  );
 });
 
 describe("deriveWorkLogEntries", () => {
