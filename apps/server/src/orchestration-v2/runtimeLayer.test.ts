@@ -1076,6 +1076,67 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
+  it.effect("persists linked pull requests through projection rebuilds and unlinking", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* OrchestratorV2;
+      const maintenance = yield* ProjectionMaintenanceV2;
+      const threadId = ThreadId.make("runtime-layer-linked-pull-request-thread");
+      const linkedPullRequest = {
+        projectId: ProjectId.make("runtime-layer-linked-pull-request-project"),
+        repository: "pingdotgg/t3code",
+        number: 8160,
+        url: "https://github.com/pingdotgg/t3code/pull/8160",
+      } as const;
+
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("runtime-layer-linked-pull-request-create"),
+        threadId,
+        projectId: linkedPullRequest.projectId,
+        title: "Linked pull request thread",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.metadata.update",
+        commandId: CommandId.make("runtime-layer-linked-pull-request-link"),
+        threadId,
+        linkedPullRequest,
+      });
+
+      assert.deepEqual(
+        (yield* orchestrator.getThreadProjection(threadId)).thread.linkedPullRequest,
+        linkedPullRequest,
+      );
+      const linkedShell = yield* orchestrator.getThreadShell(threadId);
+      assert.isNotNull(linkedShell);
+      assert.deepEqual(linkedShell.linkedPullRequest, linkedPullRequest);
+
+      const rebuilt = yield* maintenance.rebuild;
+      assert.isTrue(rebuilt.valid);
+      assert.deepEqual(
+        (yield* orchestrator.getThreadProjection(threadId)).thread.linkedPullRequest,
+        linkedPullRequest,
+      );
+
+      yield* orchestrator.dispatch({
+        type: "thread.metadata.update",
+        commandId: CommandId.make("runtime-layer-linked-pull-request-unlink"),
+        threadId,
+        linkedPullRequest: null,
+      });
+      assert.isNull((yield* orchestrator.getThreadProjection(threadId)).thread.linkedPullRequest);
+      const unlinkedShell = yield* orchestrator.getThreadShell(threadId);
+      assert.isNotNull(unlinkedShell);
+      assert.isNull(unlinkedShell.linkedPullRequest);
+    }),
+  );
+
   it.effect("persists rejected command receipts across retries", () =>
     Effect.gen(function* () {
       const orchestrator = yield* OrchestratorV2;
