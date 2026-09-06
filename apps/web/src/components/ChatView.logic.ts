@@ -23,6 +23,7 @@ import {
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
 import { videoMimeType } from "@t3tools/shared/video";
+import { nextLocalMessageSequence } from "@t3tools/shared/chronology";
 import {
   appendCodexArtifactTemplateUsePrompt,
   codexArtifactTemplateUsePrompt,
@@ -861,6 +862,17 @@ export function getStartedThreadModelChangeBlockReason(input: {
     title: "Start a new chat to change models",
     description: "This provider does not allow switching models after a conversation has started.",
   };
+}
+
+/** Read after send preparation, which may await uploads while the thread keeps streaming. */
+export function readLocalMessageSequenceForSend(thread: Thread): number | undefined {
+  const currentThread = appAtomRegistry.get(
+    environmentThreadDetails.detailAtom({
+      environmentId: thread.environmentId,
+      threadId: thread.id,
+    }),
+  );
+  return nextLocalMessageSequence(currentThread ?? thread);
 }
 
 export async function waitForStartedServerThread(

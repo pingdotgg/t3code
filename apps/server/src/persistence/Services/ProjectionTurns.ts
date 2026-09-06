@@ -42,6 +42,7 @@ export const ProjectionTurn = Schema.Struct({
   assistantMessageId: Schema.NullOr(MessageId),
   state: ProjectionTurnState,
   requestedAt: IsoDateTime,
+  createdSequence: Schema.optional(NonNegativeInt),
   startedAt: Schema.NullOr(IsoDateTime),
   completedAt: Schema.NullOr(IsoDateTime),
   checkpointTurnCount: Schema.NullOr(NonNegativeInt),
@@ -60,6 +61,7 @@ export const ProjectionTurnById = Schema.Struct({
   assistantMessageId: Schema.NullOr(MessageId),
   state: ProjectionTurnState,
   requestedAt: IsoDateTime,
+  createdSequence: Schema.optional(NonNegativeInt),
   startedAt: Schema.NullOr(IsoDateTime),
   completedAt: Schema.NullOr(IsoDateTime),
   checkpointTurnCount: Schema.NullOr(NonNegativeInt),
@@ -75,6 +77,7 @@ export const ProjectionPendingTurnStart = Schema.Struct({
   sourceProposedPlanThreadId: Schema.NullOr(ThreadId),
   sourceProposedPlanId: Schema.NullOr(OrchestrationProposedPlanId),
   requestedAt: IsoDateTime,
+  createdSequence: Schema.optional(NonNegativeInt),
 });
 export type ProjectionPendingTurnStart = typeof ProjectionPendingTurnStart.Type;
 

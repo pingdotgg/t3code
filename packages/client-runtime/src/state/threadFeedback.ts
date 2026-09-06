@@ -14,6 +14,7 @@ type CodexFeedbackSubmissionDetails = {
   readonly id: MessageId;
   readonly command: string;
   readonly createdAt: string;
+  readonly createdSequence?: number | undefined;
 };
 
 export type CodexFeedbackSubmission = CodexFeedbackSubmissionDetails &
@@ -52,6 +53,9 @@ export function codexFeedbackMessage(
     turnId: null,
     streaming: false,
     createdAt: submission.createdAt,
+    ...(submission.createdSequence !== undefined
+      ? { createdSequence: submission.createdSequence }
+      : {}),
     updatedAt: submission.createdAt,
   };
 }

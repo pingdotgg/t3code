@@ -157,6 +157,7 @@ function derivePendingUserInputCountFromActivities(
   const openRequestIds = new Set<string>();
   const ordered = [...activities].toSorted(
     (left, right) =>
+      (left.createdSequence ?? 0) - (right.createdSequence ?? 0) ||
       left.createdAt.localeCompare(right.createdAt) ||
       left.activityId.localeCompare(right.activityId),
   );
@@ -203,7 +204,9 @@ function deriveHasActionableProposedPlan(input: {
 }): boolean {
   const sorted = [...input.proposedPlans].toSorted(
     (left, right) =>
-      left.updatedAt.localeCompare(right.updatedAt) || left.planId.localeCompare(right.planId),
+      (left.createdSequence ?? 0) - (right.createdSequence ?? 0) ||
+      left.updatedAt.localeCompare(right.updatedAt) ||
+      left.planId.localeCompare(right.planId),
   );
 
   let latestForTurn: ProjectionThreadProposedPlan | null = null;
@@ -276,6 +279,7 @@ function retainProjectionMessagesAfterRevert(
       )
       .toSorted(
         (left, right) =>
+          (left.createdSequence ?? 0) - (right.createdSequence ?? 0) ||
           compareDateTimeStrings(left.createdAt, right.createdAt) ||
           left.messageId.localeCompare(right.messageId),
       )
@@ -302,6 +306,7 @@ function retainProjectionMessagesAfterRevert(
       )
       .toSorted(
         (left, right) =>
+          (left.createdSequence ?? 0) - (right.createdSequence ?? 0) ||
           compareDateTimeStrings(left.createdAt, right.createdAt) ||
           left.messageId.localeCompare(right.messageId),
       )
@@ -895,9 +900,8 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           return;
         }
 
-        // A message cannot change any summary field except latestUserMessageAt,
-        // which is a monotonic maximum that folds in directly. The full refresh
-        // would re-read every message body in the thread per user message.
+        // Read only the indexed latest user timestamp, not every message body.
+        // Event order stays authoritative when the host clock moves backward.
         case "thread.message-sent": {
           const existingRow = yield* projectionThreadRepository.getById({
             threadId: event.payload.threadId,
@@ -905,16 +909,17 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           if (Option.isNone(existingRow)) {
             return;
           }
-          const previousLatest = existingRow.value.latestUserMessageAt;
+          const latestUserMessageAt =
+            event.payload.role === "user" &&
+            !isImportedAgentSessionMessageId(event.payload.messageId)
+              ? yield* projectionThreadMessageRepository.getLatestUserMessageAt({
+                  threadId: event.payload.threadId,
+                })
+              : existingRow.value.latestUserMessageAt;
           yield* projectionThreadRepository.upsert({
             ...existingRow.value,
             updatedAt: event.occurredAt,
-            latestUserMessageAt:
-              event.payload.role === "user" &&
-              !isImportedAgentSessionMessageId(event.payload.messageId) &&
-              (previousLatest === null || event.payload.createdAt > previousLatest)
-                ? event.payload.createdAt
-                : previousLatest,
+            latestUserMessageAt,
           });
           return;
         }
@@ -1044,6 +1049,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
               text: event.payload.text,
               ...(attachments !== undefined ? { attachments: [...attachments] } : {}),
               createdAt: event.payload.createdAt,
+              createdSequence: event.sequence,
               updatedAt: event.payload.updatedAt,
             });
             return;
@@ -1073,6 +1079,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             ...(nextAttachments !== undefined ? { attachments: [...nextAttachments] } : {}),
             isStreaming: false,
             createdAt: previousMessage?.createdAt ?? event.payload.createdAt,
+            createdSequence: previousMessage?.createdSequence ?? event.sequence,
             updatedAt: event.payload.updatedAt,
           });
           return;
@@ -1135,6 +1142,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             implementedAt: event.payload.proposedPlan.implementedAt,
             implementationThreadId: event.payload.proposedPlan.implementationThreadId,
             createdAt: event.payload.proposedPlan.createdAt,
+            createdSequence: event.sequence,
             updatedAt: event.payload.proposedPlan.updatedAt,
           });
           return;
@@ -1196,6 +1204,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
               ? { sequence: event.payload.activity.sequence }
               : {}),
             createdAt: event.payload.activity.createdAt,
+            createdSequence: event.sequence,
           });
           return;
 
@@ -1282,12 +1291,16 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
               return;
             }
           }
+          const message = yield* projectionThreadMessageRepository.getByMessageId({
+            messageId: event.payload.messageId,
+          });
           yield* projectionTurnRepository.replacePendingTurnStart({
             threadId: event.payload.threadId,
             messageId: event.payload.messageId,
             sourceProposedPlanThreadId: event.payload.sourceProposedPlan?.threadId ?? null,
             sourceProposedPlanId: event.payload.sourceProposedPlan?.planId ?? null,
             requestedAt: event.payload.createdAt,
+            createdSequence: Option.getOrUndefined(message)?.createdSequence ?? event.sequence,
           });
           return;
         }
@@ -1399,9 +1412,14 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
               existingTurn.value.state === "completed" || existingTurn.value.state === "error"
                 ? existingTurn.value.state
                 : "running";
+            const pendingCreatedSequence = Option.getOrUndefined(pendingTurnStart)?.createdSequence;
             yield* projectionTurnRepository.upsertByTurnId({
               ...existingTurn.value,
               state: nextState,
+              ...(existingTurn.value.pendingMessageId === null &&
+              pendingCreatedSequence !== undefined
+                ? { createdSequence: pendingCreatedSequence }
+                : {}),
               pendingMessageId:
                 existingTurn.value.pendingMessageId ??
                 (Option.isSome(pendingTurnStart) ? pendingTurnStart.value.messageId : null),
@@ -1441,6 +1459,8 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
                 : null,
               assistantMessageId: null,
               state: "running",
+              createdSequence:
+                Option.getOrUndefined(pendingTurnStart)?.createdSequence ?? event.sequence,
               requestedAt: Option.isSome(pendingTurnStart)
                 ? pendingTurnStart.value.requestedAt
                 : event.occurredAt,
@@ -1509,6 +1529,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             sourceProposedPlanId: null,
             assistantMessageId: event.payload.messageId,
             state: settlesTurn ? "completed" : "running",
+            createdSequence: event.sequence,
             requestedAt: event.payload.createdAt,
             startedAt: event.payload.createdAt,
             completedAt: settlesTurn ? event.payload.updatedAt : null,
@@ -1546,6 +1567,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             sourceProposedPlanId: null,
             assistantMessageId: null,
             state: "interrupted",
+            createdSequence: event.sequence,
             requestedAt: event.payload.createdAt,
             startedAt: event.payload.createdAt,
             completedAt: event.payload.createdAt,
@@ -1604,6 +1626,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             sourceProposedPlanId: null,
             assistantMessageId: event.payload.assistantMessageId,
             state: turnStillRunning ? "running" : nextState,
+            createdSequence: event.sequence,
             requestedAt: event.payload.completedAt,
             startedAt: event.payload.completedAt,
             completedAt: event.payload.completedAt,

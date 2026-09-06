@@ -1,4 +1,4 @@
-import { OrchestrationCheckpointFile } from "@t3tools/contracts";
+import { NonNegativeInt, OrchestrationCheckpointFile } from "@t3tools/contracts";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 import * as Effect from "effect/Effect";
@@ -24,6 +24,7 @@ import {
 const ProjectionTurnDbRowSchema = ProjectionTurn.mapFields(
   Struct.assign({
     checkpointFiles: Schema.fromJsonString(Schema.Array(OrchestrationCheckpointFile)),
+    createdSequence: Schema.NullOr(NonNegativeInt),
   }),
 );
 
@@ -32,6 +33,11 @@ const ProjectionTurnByIdDbRowSchema = ProjectionTurnById.mapFields(
     checkpointFiles: Schema.fromJsonString(Schema.Array(OrchestrationCheckpointFile)),
   }),
 );
+
+const omitNullCreatedSequence = <T extends { readonly createdSequence: number | null }>(row: T) => {
+  const { createdSequence, ...rest } = row;
+  return { ...rest, ...(createdSequence !== null ? { createdSequence } : {}) };
+};
 
 function toPersistenceSqlOrDecodeError(sqlOperation: string, decodeOperation: string) {
   return (cause: unknown) =>
@@ -56,6 +62,7 @@ const makeProjectionTurnRepository = Effect.gen(function* () {
           assistant_message_id,
           state,
           requested_at,
+          created_sequence,
           started_at,
           completed_at,
           checkpoint_turn_count,
@@ -72,6 +79,7 @@ const makeProjectionTurnRepository = Effect.gen(function* () {
           ${row.assistantMessageId},
           ${row.state},
           ${row.requestedAt},
+          ${row.createdSequence ?? null},
           ${row.startedAt},
           ${row.completedAt},
           ${row.checkpointTurnCount},
@@ -87,6 +95,11 @@ const makeProjectionTurnRepository = Effect.gen(function* () {
           assistant_message_id = excluded.assistant_message_id,
           state = excluded.state,
           requested_at = excluded.requested_at,
+          created_sequence = CASE
+            WHEN projection_turns.pending_message_id IS NULL AND excluded.pending_message_id IS NOT NULL
+              THEN COALESCE(excluded.created_sequence, projection_turns.created_sequence)
+            ELSE COALESCE(projection_turns.created_sequence, excluded.created_sequence)
+          END,
           started_at = excluded.started_at,
           completed_at = excluded.completed_at,
           checkpoint_turn_count = excluded.checkpoint_turn_count,
@@ -121,6 +134,7 @@ const makeProjectionTurnRepository = Effect.gen(function* () {
           assistant_message_id,
           state,
           requested_at,
+          created_sequence,
           started_at,
           completed_at,
           checkpoint_turn_count,
@@ -137,6 +151,7 @@ const makeProjectionTurnRepository = Effect.gen(function* () {
           NULL,
           'pending',
           ${row.requestedAt},
+          ${row.createdSequence ?? null},
           NULL,
           NULL,
           NULL,
@@ -149,7 +164,9 @@ const makeProjectionTurnRepository = Effect.gen(function* () {
 
   const getPendingProjectionTurn = SqlSchema.findOneOption({
     Request: GetProjectionPendingTurnStartInput,
-    Result: ProjectionPendingTurnStart,
+    Result: ProjectionPendingTurnStart.mapFields(
+      Struct.assign({ createdSequence: Schema.NullOr(NonNegativeInt) }),
+    ),
     execute: ({ threadId }) =>
       sql`
         SELECT
@@ -157,14 +174,15 @@ const makeProjectionTurnRepository = Effect.gen(function* () {
           pending_message_id AS "messageId",
           source_proposed_plan_thread_id AS "sourceProposedPlanThreadId",
           source_proposed_plan_id AS "sourceProposedPlanId",
-          requested_at AS "requestedAt"
+          requested_at AS "requestedAt",
+          created_sequence AS "createdSequence"
         FROM projection_turns
         WHERE thread_id = ${threadId}
           AND turn_id IS NULL
           AND state = 'pending'
           AND pending_message_id IS NOT NULL
           AND checkpoint_turn_count IS NULL
-        ORDER BY requested_at DESC
+        ORDER BY COALESCE(created_sequence, 0) DESC, requested_at DESC
         LIMIT 1
       `,
   });
@@ -183,6 +201,7 @@ const makeProjectionTurnRepository = Effect.gen(function* () {
           assistant_message_id AS "assistantMessageId",
           state,
           requested_at AS "requestedAt",
+          created_sequence AS "createdSequence",
           started_at AS "startedAt",
           completed_at AS "completedAt",
           checkpoint_turn_count AS "checkpointTurnCount",
@@ -197,6 +216,7 @@ const makeProjectionTurnRepository = Effect.gen(function* () {
             ELSE 0
           END ASC,
           checkpoint_turn_count ASC,
+          COALESCE(created_sequence, 0) ASC,
           requested_at ASC,
           turn_id ASC
       `,
@@ -204,7 +224,9 @@ const makeProjectionTurnRepository = Effect.gen(function* () {
 
   const getProjectionTurnByTurnId = SqlSchema.findOneOption({
     Request: GetProjectionTurnByTurnIdInput,
-    Result: ProjectionTurnByIdDbRowSchema,
+    Result: ProjectionTurnByIdDbRowSchema.mapFields(
+      Struct.assign({ createdSequence: Schema.NullOr(NonNegativeInt) }),
+    ),
     execute: ({ threadId, turnId }) =>
       sql`
         SELECT
@@ -216,6 +238,7 @@ const makeProjectionTurnRepository = Effect.gen(function* () {
           assistant_message_id AS "assistantMessageId",
           state,
           requested_at AS "requestedAt",
+          created_sequence AS "createdSequence",
           started_at AS "startedAt",
           completed_at AS "completedAt",
           checkpoint_turn_count AS "checkpointTurnCount",
@@ -283,6 +306,7 @@ const makeProjectionTurnRepository = Effect.gen(function* () {
   const getPendingTurnStartByThreadId: ProjectionTurnRepositoryShape["getPendingTurnStartByThreadId"] =
     (input) =>
       getPendingProjectionTurn(input).pipe(
+        Effect.map(Option.map(omitNullCreatedSequence)),
         Effect.mapError(
           toPersistenceSqlError("ProjectionTurnRepository.getPendingTurnStartByThreadId:query"),
         ),
@@ -304,7 +328,7 @@ const makeProjectionTurnRepository = Effect.gen(function* () {
           "ProjectionTurnRepository.listByThreadId:decodeRows",
         ),
       ),
-      Effect.map((rows) => rows as ReadonlyArray<Schema.Schema.Type<typeof ProjectionTurn>>),
+      Effect.map((rows) => rows.map(omitNullCreatedSequence)),
     );
 
   const getByTurnId: ProjectionTurnRepositoryShape["getByTurnId"] = (input) =>
@@ -318,8 +342,7 @@ const makeProjectionTurnRepository = Effect.gen(function* () {
       Effect.flatMap((rowOption) =>
         Option.match(rowOption, {
           onNone: () => Effect.succeed(Option.none()),
-          onSome: (row) =>
-            Effect.succeed(Option.some(row as Schema.Schema.Type<typeof ProjectionTurnById>)),
+          onSome: (row) => Effect.succeed(Option.some(omitNullCreatedSequence(row))),
         }),
       ),
     );

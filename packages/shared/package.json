@@ -275,6 +275,10 @@
       "types": "./src/hostClassification.ts",
       "import": "./src/hostClassification.ts"
     },
+    "./chronology": {
+      "types": "./src/chronology.ts",
+      "import": "./src/chronology.ts"
+    },
     "./dateTime": {
       "types": "./src/dateTime.ts",
       "import": "./src/dateTime.ts"

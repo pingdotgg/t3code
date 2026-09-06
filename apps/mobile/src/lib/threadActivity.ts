@@ -13,6 +13,7 @@ import type {
   UserInputQuestion,
 } from "@t3tools/contracts";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
+import { compareCreatedOrder } from "@t3tools/shared/chronology";
 import {
   commandDetailRepeatsCommand,
   extractCommandOutputText,
@@ -93,6 +94,7 @@ type WorkLogToolLifecycleStatus = "inProgress" | "completed" | "failed" | "decli
 export interface WorkLogEntry {
   id: string;
   createdAt: string;
+  createdSequence?: number;
   turnId: TurnId | null;
   label: string;
   detail?: string;
@@ -144,14 +146,17 @@ interface DerivedWorkLogEntry extends WorkLogEntry {
 type RawThreadFeedEntry =
   | {
       readonly type: "message";
+      readonly local?: boolean;
       readonly id: string;
       readonly createdAt: string;
+      readonly createdSequence?: number;
       readonly message: OrchestrationThread["messages"][number];
     }
   | {
       readonly type: "activity";
       readonly id: string;
       readonly createdAt: string;
+      readonly createdSequence?: number;
       readonly turnId: TurnId | null;
       readonly activity: ThreadFeedActivity;
     };
@@ -573,6 +578,9 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   const entry: DerivedWorkLogEntry = {
     id: activity.id,
     createdAt: activity.createdAt,
+    ...(activity.createdSequence !== undefined
+      ? { createdSequence: activity.createdSequence }
+      : {}),
     turnId: activity.turnId,
     ...(taskId ? { taskId } : {}),
     label: taskLabel || activity.summary,
@@ -941,6 +949,9 @@ function mergeDerivedWorkLogEntries(
     ...next,
     id: previous.id,
     createdAt: previous.createdAt,
+    ...(previous.createdSequence !== undefined
+      ? { createdSequence: previous.createdSequence }
+      : {}),
     ...(detail ? { detail } : {}),
     ...(viewedImagePath ? { viewedImagePath } : {}),
     ...(command ? { command } : {}),
@@ -1663,6 +1674,7 @@ function compareActivityLifecycleRank(kind: string): number {
 }
 
 const activityOrder = Order.combineAll<OrchestrationThreadActivity>([
+  Order.mapInput(Order.Number, (activity) => activity.createdSequence ?? 0),
   Order.mapInput(Order.Number, (activity) => activity.sequence ?? Number.MAX_SAFE_INTEGER),
   Order.mapInput(Order.String, (activity) => activity.createdAt),
   Order.mapInput(Order.Number, (activity) => compareActivityLifecycleRank(activity.kind)),
@@ -1738,7 +1750,7 @@ function computeElapsedMs(startIso: string, endIso: string): number | null {
   if (!Number.isFinite(start) || !Number.isFinite(end)) {
     return null;
   }
-  return Math.max(0, end - start);
+  return end < start ? null : end - start;
 }
 
 function maxIsoTimestamp(a: string | null, b: string | null): string | null {
@@ -2453,30 +2465,55 @@ export function buildThreadFeed(
   },
 ): ThreadFeedEntry[] {
   const loadedMessages = options?.loadedMessages ?? thread.messages;
-  const messages = options?.localMessages
-    ? [...loadedMessages, ...options.localMessages]
-    : loadedMessages;
-  const oldestLoadedMessageCreatedAt =
-    options?.loadedMessages !== undefined ? (loadedMessages[0]?.createdAt ?? null) : null;
+  const oldestLoadedMessage = options?.loadedMessages !== undefined ? loadedMessages[0] : undefined;
   const activityEntries = getThreadFeedActivityEntries(thread.activities);
-  const entries = Arr.sortWith(
-    [
-      ...messages.map((message) => {
-        let entry = messageEntriesCache.get(message);
-        if (!entry) {
-          entry = { type: "message", id: message.id, createdAt: message.createdAt, message };
-          messageEntriesCache.set(message, entry);
-        }
-        return entry;
-      }),
-      ...activityEntries.filter(
-        (entry) =>
-          oldestLoadedMessageCreatedAt === null || entry.createdAt >= oldestLoadedMessageCreatedAt,
-      ),
-    ],
-    (s) => new Date(s.createdAt),
-    Order.Date,
-  );
+  const toMessageEntry = (message: OrchestrationThread["messages"][number]) => {
+    let entry = messageEntriesCache.get(message);
+    if (!entry) {
+      entry = {
+        type: "message",
+        id: message.id,
+        createdAt: message.createdAt,
+        ...(message.createdSequence !== undefined
+          ? { createdSequence: message.createdSequence }
+          : {}),
+        message,
+      };
+      messageEntriesCache.set(message, entry);
+    }
+    return entry;
+  };
+  const hasCreatedSequences =
+    loadedMessages.some((message) => message.createdSequence !== undefined) ||
+    activityEntries.some((entry) => entry.createdSequence !== undefined);
+  const localEntries = (options?.localMessages ?? []).map((message) => ({
+    ...toMessageEntry(message),
+    local: true,
+  }));
+  const entries = [
+    ...loadedMessages.map(toMessageEntry),
+    ...localEntries.filter((entry) => !hasCreatedSequences || entry.createdSequence !== undefined),
+    ...activityEntries.filter(
+      (entry) =>
+        oldestLoadedMessage === undefined ||
+        (entry.createdSequence !== undefined || oldestLoadedMessage.createdSequence !== undefined
+          ? compareCreatedOrder(entry, oldestLoadedMessage) >= 0
+          : entry.createdAt >= oldestLoadedMessage.createdAt),
+    ),
+  ].sort((left, right) => {
+    if (left.createdSequence !== undefined || right.createdSequence !== undefined) {
+      if (left.createdSequence === right.createdSequence) {
+        const leftLocal = left.type === "message" && left.local === true;
+        const rightLocal = right.type === "message" && right.local === true;
+        if (leftLocal !== rightLocal) return leftLocal ? -1 : 1;
+        if (leftLocal && rightLocal) return 0;
+      }
+      return compareCreatedOrder(left, right);
+    }
+    return left.createdAt.localeCompare(right.createdAt);
+  });
+  if (hasCreatedSequences)
+    entries.push(...localEntries.filter((entry) => entry.createdSequence === undefined));
 
   return groupAdjacentActivities(entries);
 }
@@ -2515,6 +2552,7 @@ function toThreadFeedActivityEntry(
     type: "activity",
     id: entry.id,
     createdAt: entry.createdAt,
+    ...(entry.createdSequence !== undefined ? { createdSequence: entry.createdSequence } : {}),
     turnId: entry.turnId,
     activity: {
       id: entry.id,

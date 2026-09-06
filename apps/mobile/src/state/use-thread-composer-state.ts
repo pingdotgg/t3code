@@ -23,6 +23,7 @@ import {
 } from "@t3tools/client-runtime/state/threads";
 import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
 import { deriveActiveWorkStartedAt } from "@t3tools/shared/orchestrationTiming";
+import { nextLocalMessageSequence } from "@t3tools/shared/chronology";
 
 import { makeQueuedMessageMetadata } from "../lib/commandMetadata";
 import { isModelSelectionUnavailable } from "../lib/modelOptions";
@@ -299,6 +300,9 @@ export function useThreadComposerState() {
           id: MessageId.make(metadata.messageId),
           command: text,
           createdAt: metadata.createdAt,
+          createdSequence: selectedThreadDetail
+            ? nextLocalMessageSequence(selectedThreadDetail)
+            : undefined,
         },
         clearDraft: () => clearComposerDraftContent(threadKey),
         onUpdate: (submission) => {

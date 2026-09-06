@@ -3,22 +3,23 @@ import type { ThreadId } from "@t3tools/contracts";
 /**
  * Opaque, exclusive cursor for windowed thread detail reads. Encodes the thread
  * id and the keyset boundary of an already-delivered page: the boundary turn's
- * anchor timestamp (`COALESCE(requested_at, started_at, '')`) and turn id.
+ * creation sequence, anchor timestamp and turn id.
  * Passing it back requests the adjacent disjoint slice of strictly older turns
- * under `(anchor, turn_id)` ordering.
+ * under `(creation sequence, anchor, turn_id)` ordering.
  *
  * The boundary is deliberately NOT a `projection_turns.row_id`: row ids are
  * rewritten by the revert projector (delete + re-upsert) and by projection
  * rebuilds, which would silently invalidate every persisted cursor with no
- * event emitted. The (anchor, turnId) pair is derived from event content, so
- * cursors survive both and no client-side refresh machinery is needed. The
- * anchor doubles as the time bound for rows with no turn linkage (straggler
- * user messages, turnless activities). The thread id is embedded so a cursor
+ * event emitted. Creation sequences and turn keys survive both rewrites.
+ * Timestamps break ties for legacy rows without a creation sequence.
+ * The thread id is embedded so a cursor
  * can never be replayed against a different thread. Clients must treat the
  * string as opaque.
  */
 export interface ThreadDetailPageCursor {
   readonly threadId: ThreadId;
+  /** Absent in legacy timestamp cursors; resolved from their boundary turn. */
+  readonly beforeSequence?: number;
   readonly beforeAnchorAt: string;
   /** Boundary turn id; "" for the rare turn row with a null turn_id. */
   readonly beforeTurnId: string;
@@ -26,7 +27,12 @@ export interface ThreadDetailPageCursor {
 
 export function encodeThreadDetailPageCursor(cursor: ThreadDetailPageCursor): string {
   return Buffer.from(
-    JSON.stringify({ t: cursor.threadId, a: cursor.beforeAnchorAt, i: cursor.beforeTurnId }),
+    JSON.stringify({
+      t: cursor.threadId,
+      a: cursor.beforeAnchorAt,
+      i: cursor.beforeTurnId,
+      ...(cursor.beforeSequence === undefined ? {} : { v: 2, s: cursor.beforeSequence }),
+    }),
   ).toString("base64url");
 }
 
@@ -48,15 +54,28 @@ export function decodeThreadDetailPageCursor(encoded: string): ThreadDetailPageC
   if (typeof record.t !== "string" || record.t.length === 0) {
     return null;
   }
-  // Empty strings are valid boundary values, not malformed input: the anchor
-  // is COALESCE(requested_at, started_at, ''), so a boundary turn with no
-  // timestamps encodes a: "" (and sorts before every real anchor, correctly
-  // ending the walk); the turn key is "" for a null turn_id.
+  // Empty strings are valid legacy boundary values; the turn key is "" for
+  // a null turn_id.
   if (typeof record.a !== "string") {
     return null;
   }
   if (typeof record.i !== "string") {
     return null;
   }
-  return { threadId: record.t as ThreadId, beforeAnchorAt: record.a, beforeTurnId: record.i };
+  if (
+    record.v !== undefined &&
+    (record.v !== 2 ||
+      typeof record.s !== "number" ||
+      !Number.isSafeInteger(record.s) ||
+      record.s < 0)
+  ) {
+    return null;
+  }
+  if (record.v === undefined && record.s !== undefined) return null;
+  return {
+    threadId: record.t as ThreadId,
+    beforeAnchorAt: record.a,
+    beforeTurnId: record.i,
+    ...(record.v === 2 ? { beforeSequence: record.s as number } : {}),
+  };
 }

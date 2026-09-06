@@ -60,6 +60,332 @@ const exists = (filePath: string) =>
 
 const BaseTestLayer = makeProjectionPipelinePrefixedTestLayer("t3-projection-pipeline-test-");
 
+it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-clock-order-")))(
+  "OrchestrationProjectionPipeline clock rollback",
+  (it) => {
+    it.effect("only reanchors an early assistant turn when its pending prompt is associated", () =>
+      Effect.gen(function* () {
+        const pipeline = yield* OrchestrationProjectionPipeline;
+        const eventStore = yield* OrchestrationEventStore;
+        const sql = yield* SqlClient.SqlClient;
+        const threadId = ThreadId.make("clock-late-turn-identity");
+        const before = "2026-09-01T12:00:00.000Z";
+        const after = "2026-09-01T01:00:00.000Z";
+        const messageId = MessageId.make("late-identity-user");
+        const turnId = TurnId.make("late-identity-turn");
+        let eventNumber = 0;
+        const envelope = (occurredAt: string) => ({
+          eventId: EventId.make(`identity-event-${++eventNumber}`),
+          aggregateKind: "thread" as const,
+          aggregateId: threadId,
+          occurredAt,
+          commandId: CommandId.make(`identity-command-${eventNumber}`),
+          causationEventId: null,
+          correlationId: null,
+          metadata: {},
+        });
+        const project = Effect.fn("projectIdentityEvent")(function* (
+          input: Parameters<typeof eventStore.append>[0],
+        ) {
+          const event = yield* eventStore.append(input);
+          yield* pipeline.projectEvent(event);
+          return event;
+        });
+        const prompt = yield* project({
+          ...envelope(after),
+          type: "thread.message-sent",
+          payload: {
+            threadId,
+            messageId,
+            role: "user",
+            text: "New prompt",
+            turnId: null,
+            streaming: false,
+            createdAt: after,
+            updatedAt: after,
+          },
+        });
+        yield* project({
+          ...envelope(after),
+          type: "thread.turn-start-requested",
+          payload: {
+            threadId,
+            messageId,
+            runtimeMode: "full-access",
+            createdAt: after,
+          },
+        });
+        const oldDiff = yield* project({
+          ...envelope(before),
+          type: "thread.turn-diff-completed",
+          payload: {
+            threadId,
+            turnId: TurnId.make("late-unseen-old-turn"),
+            checkpointTurnCount: 1,
+            checkpointRef: CheckpointRef.make("refs/t3/checkpoints/late-old"),
+            status: "ready",
+            files: [],
+            assistantMessageId: null,
+            completedAt: before,
+          },
+        });
+        const assistant = yield* project({
+          ...envelope(after),
+          type: "thread.message-sent",
+          payload: {
+            threadId,
+            messageId: MessageId.make("late-identity-assistant"),
+            role: "assistant",
+            text: "Answer before session announcement",
+            turnId,
+            streaming: true,
+            createdAt: after,
+            updatedAt: after,
+          },
+        });
+        assert.deepEqual(
+          yield* sql`SELECT turn_id, pending_message_id, created_sequence
+          FROM projection_turns WHERE thread_id = ${threadId} AND turn_id IS NOT NULL
+          ORDER BY created_sequence`,
+          [
+            {
+              turn_id: "late-unseen-old-turn",
+              pending_message_id: null,
+              created_sequence: oldDiff.sequence,
+            },
+            { turn_id: turnId, pending_message_id: null, created_sequence: assistant.sequence },
+          ],
+        );
+        for (let index = 0; index < 2; index += 1) {
+          yield* project({
+            ...envelope(after),
+            type: "thread.session-set",
+            payload: {
+              threadId,
+              session: {
+                threadId,
+                status: "running",
+                providerName: "codex",
+                runtimeMode: "full-access",
+                activeTurnId: turnId,
+                lastError: null,
+                updatedAt: after,
+              },
+            },
+          });
+        }
+        assert.deepEqual(
+          yield* sql`SELECT turn_id, pending_message_id, created_sequence
+          FROM projection_turns WHERE thread_id = ${threadId} ORDER BY created_sequence`,
+          [
+            { turn_id: turnId, pending_message_id: messageId, created_sequence: prompt.sequence },
+            {
+              turn_id: "late-unseen-old-turn",
+              pending_message_id: null,
+              created_sequence: oldDiff.sequence,
+            },
+          ],
+        );
+      }),
+    );
+
+    it.effect("preserves creation order and resolved input through updates and full replay", () =>
+      Effect.gen(function* () {
+        const pipeline = yield* OrchestrationProjectionPipeline;
+        const eventStore = yield* OrchestrationEventStore;
+        const sql = yield* SqlClient.SqlClient;
+        const threadId = ThreadId.make("clock-order");
+        const before = "2026-09-01T12:00:00.000Z";
+        const after = "2026-09-01T01:00:00.000Z";
+        let eventNumber = 0;
+        const envelope = (occurredAt: string) => ({
+          eventId: EventId.make(`clock-event-${++eventNumber}`),
+          aggregateKind: "thread" as const,
+          aggregateId: threadId,
+          occurredAt,
+          commandId: CommandId.make(`clock-command-${eventNumber}`),
+          causationEventId: null,
+          correlationId: null,
+          metadata: {},
+        });
+        yield* eventStore.append({
+          ...envelope(before),
+          type: "thread.created",
+          payload: {
+            threadId,
+            projectId: ProjectId.make("clock-project"),
+            title: "Clock rollback",
+            modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5" },
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            createdAt: before,
+            updatedAt: before,
+          },
+        });
+        const messageSequences: number[] = [];
+        for (const [index, createdAt] of [before, after].entries()) {
+          const messageId = MessageId.make(`clock-user-${index}`);
+          const turnId = TurnId.make(`clock-turn-${index}`);
+          const message = yield* eventStore.append({
+            ...envelope(createdAt),
+            type: "thread.message-sent",
+            payload: {
+              threadId,
+              messageId,
+              role: "user",
+              text: "Prompt",
+              turnId: null,
+              streaming: false,
+              createdAt,
+              updatedAt: createdAt,
+            },
+          });
+          messageSequences.push(message.sequence);
+          yield* eventStore.append({
+            ...envelope(createdAt),
+            type: "thread.turn-start-requested",
+            payload: {
+              threadId,
+              messageId,
+              runtimeMode: "full-access",
+              createdAt,
+            },
+          });
+          yield* eventStore.append({
+            ...envelope(createdAt),
+            type: "thread.session-set",
+            payload: {
+              threadId,
+              session: {
+                threadId,
+                status: "running",
+                providerName: "codex",
+                runtimeMode: "full-access",
+                activeTurnId: turnId,
+                lastError: null,
+                updatedAt: createdAt,
+              },
+            },
+          });
+        }
+        yield* pipeline.bootstrap;
+
+        const activitySequences: number[] = [];
+        for (const [index, kind] of ["user-input.requested", "user-input.resolved"].entries()) {
+          const event = yield* eventStore.append({
+            ...envelope(index === 0 ? before : after),
+            type: "thread.activity-appended",
+            payload: {
+              threadId,
+              activity: {
+                id: EventId.make(`clock-activity-${index}`),
+                tone: "info",
+                kind,
+                summary: "Question lifecycle",
+                payload: { requestId: "question" },
+                turnId: TurnId.make("clock-turn-1"),
+                sequence: index === 0 ? 100 : 1,
+                createdAt: index === 0 ? before : after,
+              },
+            },
+          });
+          activitySequences.push(event.sequence);
+          yield* pipeline.projectEvent(event);
+        }
+        const duplicate = yield* eventStore.append({
+          ...envelope(after),
+          type: "thread.activity-appended",
+          payload: {
+            threadId,
+            activity: {
+              id: EventId.make("clock-activity-0"),
+              tone: "info",
+              kind: "user-input.requested",
+              summary: "Updated question",
+              payload: { requestId: "question" },
+              turnId: TurnId.make("clock-turn-1"),
+              sequence: 200,
+              createdAt: before,
+            },
+          },
+        });
+        yield* pipeline.projectEvent(duplicate);
+        const planSequences: number[] = [];
+        for (const [index, createdAt] of [before, after, before].entries()) {
+          const event = yield* eventStore.append({
+            ...envelope(after),
+            type: "thread.proposed-plan-upserted",
+            payload: {
+              threadId,
+              proposedPlan: {
+                id: `clock-plan-${index % 2}`,
+                turnId: TurnId.make("clock-turn-1"),
+                planMarkdown: `revision-${index}`,
+                implementedAt: null,
+                implementationThreadId: null,
+                createdAt,
+                updatedAt: after,
+              },
+            },
+          });
+          if (index < 2) planSequences.push(event.sequence);
+          yield* pipeline.projectEvent(event);
+        }
+
+        const verify = Effect.gen(function* () {
+          assert.deepEqual(
+            yield* sql`SELECT message_id, created_sequence FROM projection_thread_messages
+            WHERE thread_id = ${threadId}
+            ORDER BY created_sequence`,
+            messageSequences.map((created_sequence, index) => ({
+              message_id: `clock-user-${index}`,
+              created_sequence,
+            })),
+          );
+          assert.deepEqual(
+            yield* sql`SELECT turn_id, created_sequence FROM projection_turns
+            WHERE thread_id = ${threadId}
+            ORDER BY created_sequence`,
+            messageSequences.map((created_sequence, index) => ({
+              turn_id: `clock-turn-${index}`,
+              created_sequence,
+            })),
+          );
+          assert.deepEqual(
+            yield* sql`SELECT activity_id, created_sequence FROM projection_thread_activities
+            WHERE thread_id = ${threadId}
+            ORDER BY created_sequence`,
+            activitySequences.map((created_sequence, index) => ({
+              activity_id: `clock-activity-${index}`,
+              created_sequence,
+            })),
+          );
+          assert.deepEqual(
+            yield* sql`SELECT plan_id, created_sequence FROM projection_thread_proposed_plans
+            WHERE thread_id = ${threadId}
+            ORDER BY created_sequence`,
+            planSequences.map((created_sequence, index) => ({
+              plan_id: `clock-plan-${index}`,
+              created_sequence,
+            })),
+          );
+          assert.deepEqual(
+            yield* sql`SELECT latest_user_message_at, pending_user_input_count
+            FROM projection_threads WHERE thread_id = ${threadId}`,
+            [{ latest_user_message_at: after, pending_user_input_count: 0 }],
+          );
+        });
+        yield* verify;
+        yield* sql`DELETE FROM projection_state`;
+        yield* pipeline.bootstrap;
+        yield* verify;
+      }),
+    );
+  },
+);
+
 it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-projection-cursor-batch-")))(
   "OrchestrationProjectionPipeline cursor batches",
   (it) => {

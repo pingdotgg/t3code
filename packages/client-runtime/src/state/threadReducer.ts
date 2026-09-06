@@ -13,17 +13,18 @@ import type {
   TurnId,
 } from "@t3tools/contracts";
 import { isImportedAgentSessionMessageId } from "@t3tools/contracts";
-import { compareDateTimeStrings } from "@t3tools/shared/dateTime";
+import { compareCreatedOrder } from "@t3tools/shared/chronology";
 
 export type ThreadDetailReducerResult =
   | { readonly kind: "updated"; readonly thread: OrchestrationThread }
   | { readonly kind: "deleted" }
   | { readonly kind: "unchanged" };
 
-const proposedPlanOrder = O.combine<OrchestrationThread["proposedPlans"][number]>(
+const proposedPlanOrder = O.combineAll<OrchestrationThread["proposedPlans"][number]>([
+  O.mapInput(O.Number, (p) => p.createdSequence ?? 0),
   O.mapInput(O.String, (p) => p.createdAt),
   O.mapInput(O.String, (p) => p.id),
-);
+]);
 
 const checkpointOrder = O.mapInput(
   O.Number,
@@ -32,6 +33,7 @@ const checkpointOrder = O.mapInput(
 );
 
 const activityOrder = O.combineAll<OrchestrationThreadActivity>([
+  O.mapInput(O.Number, (a) => a.createdSequence ?? 0),
   O.mapInput(O.Number, (a) => a.sequence ?? Number.MAX_SAFE_INTEGER),
   O.mapInput(O.String, (a) => a.createdAt),
   O.mapInput(O.String, (a) => a.id),
@@ -306,6 +308,7 @@ export function applyThreadDetailEvent(
     case "thread.message-sent": {
       const message: OrchestrationMessage = {
         id: event.payload.messageId,
+        createdSequence: event.sequence,
         role: event.payload.role,
         text: event.payload.text,
         ...(event.payload.attachments !== undefined
@@ -324,6 +327,7 @@ export function applyThreadDetailEvent(
               ? entry
               : {
                   ...entry,
+                  createdSequence: entry.createdSequence ?? event.sequence,
                   text: message.streaming
                     ? `${entry.text}${message.text}`
                     : message.text.length > 0
@@ -356,6 +360,7 @@ export function applyThreadDetailEvent(
           (thread.latestTurn === null || thread.latestTurn.turnId === event.payload.turnId)
           ? {
               turnId: event.payload.turnId,
+              createdSequence: turnCreatedSequence(thread, event.payload.turnId, event.sequence),
               state: settlesTurn
                 ? thread.latestTurn?.state === "interrupted"
                   ? "interrupted"
@@ -414,6 +419,14 @@ export function applyThreadDetailEvent(
         event.payload.session.status === "running" && event.payload.session.activeTurnId !== null
           ? {
               turnId: event.payload.session.activeTurnId,
+              createdSequence:
+                thread.session?.activeTurnId !== event.payload.session.activeTurnId
+                  ? (thread.messages.findLast(
+                      (message) =>
+                        message.role === "user" && !isImportedAgentSessionMessageId(message.id),
+                    )?.createdSequence ??
+                    turnCreatedSequence(thread, event.payload.session.activeTurnId, event.sequence))
+                  : turnCreatedSequence(thread, event.payload.session.activeTurnId, event.sequence),
               state: "running",
               requestedAt:
                 thread.latestTurn?.turnId === event.payload.session.activeTurnId
@@ -473,7 +486,13 @@ export function applyThreadDetailEvent(
 
     // ── Proposed plans ──────────────────────────────────────────────
     case "thread.proposed-plan-upserted": {
-      const proposedPlan = event.payload.proposedPlan;
+      const previousPlan = thread.proposedPlans.find(
+        (plan) => plan.id === event.payload.proposedPlan.id,
+      );
+      const proposedPlan = {
+        ...event.payload.proposedPlan,
+        createdSequence: previousPlan?.createdSequence ?? event.sequence,
+      };
 
       const proposedPlans = pipe(
         thread.proposedPlans,
@@ -523,6 +542,7 @@ export function applyThreadDetailEvent(
         (thread.latestTurn === null || thread.latestTurn.turnId === event.payload.turnId)
           ? {
               turnId: event.payload.turnId,
+              createdSequence: turnCreatedSequence(thread, event.payload.turnId, event.sequence),
               state:
                 thread.latestTurn?.state === "interrupted"
                   ? "interrupted"
@@ -567,6 +587,15 @@ export function applyThreadDetailEvent(
         Arr.filter((activity) => activity.turnId === null || retainedTurnIds.has(activity.turnId)),
       );
       const latestCheckpoint = checkpoints.at(-1) ?? null;
+      const revertedTurnSequence =
+        latestCheckpoint === null
+          ? undefined
+          : thread.latestTurn?.turnId === latestCheckpoint.turnId
+            ? thread.latestTurn.createdSequence
+            : messages.findLast(
+                (message) =>
+                  message.role === "user" && !isImportedAgentSessionMessageId(message.id),
+              )?.createdSequence;
 
       return {
         kind: "updated",
@@ -581,6 +610,9 @@ export function applyThreadDetailEvent(
               ? null
               : {
                   turnId: latestCheckpoint.turnId,
+                  ...(revertedTurnSequence !== undefined
+                    ? { createdSequence: revertedTurnSequence }
+                    : {}),
                   state: checkpointStatusToTurnState(
                     latestCheckpoint.status as "ready" | "missing" | "error",
                   ),
@@ -596,7 +628,14 @@ export function applyThreadDetailEvent(
 
     // ── Activities ──────────────────────────────────────────────────
     case "thread.activity-appended": {
-      const activity = event.payload.activity;
+      const previousActivity =
+        activityIdIndex.get(thread.activities)?.has(event.payload.activity.id) === false
+          ? undefined
+          : thread.activities.find((entry) => entry.id === event.payload.activity.id);
+      const activity = {
+        ...event.payload.activity,
+        createdSequence: previousActivity?.createdSequence ?? event.sequence,
+      };
       // A resolvable context-window update supersedes earlier resolvable ones
       // for the same turn: consumers only read the latest value (walking the
       // array backwards), and providers stream these updates continuously, so
@@ -702,6 +741,14 @@ function checkpointStatusToTurnState(
   }
 }
 
+function turnCreatedSequence(thread: OrchestrationThread, turnId: TurnId, sequence: number) {
+  if (thread.latestTurn?.turnId === turnId) return thread.latestTurn.createdSequence;
+  return (
+    thread.messages.find((message) => message.role === "assistant" && message.turnId === turnId)
+      ?.createdSequence ?? sequence
+  );
+}
+
 /**
  * Returns `previous` when `next` matches it field for field, otherwise `next`.
  * Streaming cases recompute the latest turn on every delta, and keeping the
@@ -715,6 +762,7 @@ function reuseLatestTurn(
     return next;
   }
   return previous.turnId === next.turnId &&
+    previous.createdSequence === next.createdSequence &&
     previous.state === next.state &&
     previous.requestedAt === next.requestedAt &&
     previous.startedAt === next.startedAt &&
@@ -776,11 +824,7 @@ function retainMessagesAfterRevert(
           !retainedMessageIds.has(message.id) &&
           (message.turnId === null || retainedTurnIds.has(message.turnId)),
       )
-      .toSorted(
-        (left, right) =>
-          compareDateTimeStrings(left.createdAt, right.createdAt) ||
-          left.id.localeCompare(right.id),
-      )
+      .toSorted(compareCreatedOrder)
       .slice(0, missingCount);
     for (const message of fallbackMessages) {
       retainedMessageIds.add(message.id);

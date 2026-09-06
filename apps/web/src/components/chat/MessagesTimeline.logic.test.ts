@@ -869,6 +869,57 @@ describe("resolveAssistantMessageCopyState", () => {
 });
 
 describe("deriveMessagesTimelineRows", () => {
+  it("settles a clock-corrected turn without showing a fabricated duration", () => {
+    const turnId = TurnId.make("clock-turn");
+    const before = "2026-09-06T12:00:00.000Z";
+    const after = "2026-09-06T01:00:00.000Z";
+    const messages: ChatMessage[] = [
+      {
+        id: MessageId.make("clock-user"),
+        role: "user",
+        text: "Check",
+        turnId: null,
+        streaming: false,
+        createdAt: before,
+        updatedAt: before,
+        createdSequence: 10,
+      },
+      {
+        id: MessageId.make("clock-answer"),
+        role: "assistant",
+        text: "Done",
+        turnId,
+        streaming: false,
+        createdAt: after,
+        updatedAt: after,
+        createdSequence: 12,
+      },
+    ];
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: deriveTimelineEntries(
+        messages,
+        [],
+        [
+          {
+            id: "clock-work",
+            tone: "tool",
+            label: "Checked",
+            turnId,
+            createdAt: after,
+            createdSequence: 11,
+          },
+        ],
+      ),
+      latestTurn: { turnId, state: "completed", startedAt: before, completedAt: after },
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      revertTurnCountByUserMessageId: new Map(),
+    });
+    expect(rows.find((row) => row.kind === "turn-fold")).toMatchObject({ label: "Worked" });
+    expect(rows.some((row) => row.kind === "thinking")).toBe(false);
+  });
+
   it("keeps context compaction visible outside folded work", () => {
     const rows = deriveMessagesTimelineRows({
       timelineEntries: [

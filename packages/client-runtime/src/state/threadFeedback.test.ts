@@ -38,6 +38,7 @@ describe("submitCodexFeedback", () => {
     id: MessageId.make("feedback-message-1"),
     command: "/feedback The agent stopped early.",
     createdAt: "2026-08-23T00:00:00.000Z",
+    createdSequence: 42,
   } as const;
 
   it("shows the command and clears the draft before the upload finishes", async () => {
@@ -70,6 +71,7 @@ describe("submitCodexFeedback", () => {
       id: submission.id,
       role: "user",
       text: submission.command,
+      createdSequence: submission.createdSequence,
     });
     expect(codexFeedbackMessage(states[0]!, "assistant").text).toBe(
       "Sending feedback to OpenAI...",

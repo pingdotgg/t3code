@@ -37,6 +37,7 @@ import { type EnvironmentConnectionPresentation } from "@t3tools/client-runtime/
 import { wasBootstrapThreadDeleted } from "@t3tools/client-runtime/errors";
 import { type CodexArtifactTemplate } from "@t3tools/client-runtime/codex-artifact-templates";
 import { effectiveSnoozed, threadWokeAt } from "@t3tools/client-runtime/state/thread-settled";
+import { nextLocalMessageSequence } from "@t3tools/shared/chronology";
 import {
   codexFeedbackMessage,
   parseCodexFeedbackCommand,
@@ -393,6 +394,7 @@ import {
   cloneComposerImageForRetry,
   deriveLockedProvider,
   readFileAsDataUrl,
+  readLocalMessageSequenceForSend,
   resolveFileAttachmentUrl,
   reconcileMountedTerminalThreadIds,
   resolveBackgroundDraftWorkspaceOptions,
@@ -3057,7 +3059,13 @@ export default function ChatView(props: ChatViewProps) {
     if (pendingMessages.length === 0) {
       return serverMessagesWithPreviewHandoff;
     }
-    return [...serverMessagesWithPreviewHandoff, ...pendingMessages];
+    return [
+      ...serverMessagesWithPreviewHandoff,
+      ...pendingMessages.map((message) => ({
+        ...message,
+        local: true,
+      })),
+    ];
   }, [
     attachmentPreviewHandoffByMessageId,
     displayServerMessages,
@@ -6494,6 +6502,7 @@ export default function ChatView(props: ChatViewProps) {
           id: newMessageId(),
           command: trimmed,
           createdAt: new Date().toISOString(),
+          createdSequence: readLocalMessageSequenceForSend(activeThread),
         },
         clearDraft: () => {
           promptRef.current = "";
@@ -6833,11 +6842,15 @@ export default function ChatView(props: ChatViewProps) {
     } else {
       scrollToEnd();
     }
+    const messageCreatedSequence = isServerThread
+      ? readLocalMessageSequenceForSend(activeThread)
+      : nextLocalMessageSequence(activeThread);
     setOptimisticUserMessages((existing) => [
       ...existing,
       {
         id: messageIdForSend,
         role: "user",
+        createdSequence: messageCreatedSequence,
         text: outgoingMessageText,
         ...(optimisticAttachments.length > 0 ? { attachments: optimisticAttachments } : {}),
         turnId: null,

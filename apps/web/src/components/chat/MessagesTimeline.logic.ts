@@ -249,7 +249,7 @@ function computeElapsedMs(startIso: string, endIso: string): number | null {
   const start = Date.parse(startIso);
   const end = Date.parse(endIso);
   if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
-  return Math.max(0, end - start);
+  return end < start ? null : end - start;
 }
 
 function maxIsoTimestamp(a: string | null, b: string | null): string | null {
