@@ -74,4 +74,51 @@ describe("buildExpandedImagePreview", () => {
     detach();
     await expect(fetch(url)).rejects.toThrow();
   });
+
+  it("uses the thumbnail previewUrl for composer images instead of the original file", () => {
+    const thumbnailBytes = new Uint8Array([10, 20, 30, 40]);
+    const previewUrl = URL.createObjectURL(new Blob([thumbnailBytes], { type: "image/jpeg" }));
+    const file = new File([new Uint8Array(8_192).fill(9)], "huge.png", { type: "image/png" });
+    const image = {
+      type: "image" as const,
+      id: "img-1",
+      name: file.name,
+      mimeType: file.type,
+      sizeBytes: file.size,
+      previewUrl,
+      file,
+    };
+
+    const createObjectURL = vi.spyOn(URL, "createObjectURL");
+    const preview = buildExpandedImagePreview([image], image.id);
+
+    expect(preview?.images[0]?.src).toBe(previewUrl);
+    expect(createObjectURL).not.toHaveBeenCalled();
+    createObjectURL.mockRestore();
+    URL.revokeObjectURL(previewUrl);
+  });
+
+  it("prefers displayPreviewUrl over previewUrl for raster images", () => {
+    const previewUrl = URL.createObjectURL(
+      new Blob([new Uint8Array([1, 2, 3])], { type: "image/jpeg" }),
+    );
+    const displayPreviewUrl = URL.createObjectURL(
+      new Blob([new Uint8Array([4, 5, 6])], { type: "image/jpeg" }),
+    );
+    const image = {
+      type: "image" as const,
+      id: "img-display",
+      name: "photo.png",
+      mimeType: "image/png",
+      sizeBytes: 3,
+      previewUrl,
+      displayPreviewUrl,
+    };
+
+    const preview = buildExpandedImagePreview([image], image.id);
+
+    expect(preview?.images[0]?.src).toBe(displayPreviewUrl);
+    URL.revokeObjectURL(previewUrl);
+    URL.revokeObjectURL(displayPreviewUrl);
+  });
 });

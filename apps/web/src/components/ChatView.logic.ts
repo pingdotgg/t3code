@@ -661,16 +661,18 @@ export function resolveBackgroundDraftWorkspaceOptions(input: {
   };
 }
 
-export function cloneComposerImageForRetry(
+export async function cloneComposerImageForRetry(
   image: ComposerImageAttachment,
-): ComposerImageAttachment {
-  if (typeof URL === "undefined" || !image.previewUrl.startsWith("blob:")) {
+): Promise<ComposerImageAttachment> {
+  if (!image.file || typeof URL === "undefined" || !image.previewUrl.startsWith("blob:")) {
     return image;
   }
   try {
+    const previewBlob = await fetch(image.previewUrl).then((response) => response.blob());
+    const { displayPreviewUrl: _displayPreviewUrl, ...rest } = image;
     return {
-      ...image,
-      previewUrl: URL.createObjectURL(image.file),
+      ...rest,
+      previewUrl: URL.createObjectURL(previewBlob),
     };
   } catch {
     return image;

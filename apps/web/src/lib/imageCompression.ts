@@ -7,16 +7,33 @@
  * - The composer accepts pasted/dropped images larger than the provider's
  *   `PROVIDER_SEND_TURN_MAX_IMAGE_BYTES` wire cap and shrinks them to fit
  *   via `compressImageToByteLimit` instead of rejecting the paste.
+ * - Composer chips and the lightbox decode a bounded preview instead of the
+ *   original, via `createComposerImageThumbnail` / `createComposerImageDisplayPreview`.
  *
  * Supported images already within budget pass through untouched. HEIC/HEIF
  * photos are decoded to JPEG first because providers cannot consume them.
  */
 
+import {
+  IMAGE_DIMENSIONS_HEADER_BYTES,
+  readImageDimensions,
+} from "@t3tools/shared/imageDimensions";
+
+/**
+ * Longest edge for composer chip thumbnails. 256px covers a 64×64 tile at 2x
+ * and the smaller resting chips without decoding the original.
+ */
+export const COMPOSER_IMAGE_THUMBNAIL_MAX_EDGE = 256;
+/**
+ * Longest edge for the composer lightbox preview. Same cap as the attachment
+ * re-encoder so expand never paints a 75-megapixel original.
+ */
+export const COMPOSER_IMAGE_DISPLAY_PREVIEW_MAX_EDGE = 2048;
 /**
  * Longest edge kept when an image has to be re-encoded. Sized so a typical
  * retina screenshot (3024px wide) stays legible rather than being halved.
  */
-const MAX_DIMENSION = 2048;
+const MAX_DIMENSION = COMPOSER_IMAGE_DISPLAY_PREVIEW_MAX_EDGE;
 /** Base64 budget for a single stashed image (~975KB of binary). */
 export const MAX_STASH_IMAGE_DATA_URL_CHARS = 1_300_000;
 /**
@@ -465,4 +482,71 @@ export async function prepareImageForAttachment(
   });
 
   return result.ok ? { ...result, recompressed: true } : result;
+}
+
+function scaledSizeWithinMaxEdge(
+  width: number,
+  height: number,
+  maxEdge: number,
+): { width: number; height: number } {
+  const scale = Math.min(1, maxEdge / Math.max(width, height));
+  return {
+    width: Math.max(1, Math.round(width * scale)),
+    height: Math.max(1, Math.round(height * scale)),
+  };
+}
+
+/**
+ * Decoder-side resize so `createImageBitmap` never materializes a 75 MP
+ * bitmap for a 256px chip. Skipped when headers are missing or the source
+ * already fits `maxEdge`.
+ */
+async function composerPreviewDecodeResize(
+  file: File,
+  maxEdge: number,
+): Promise<{ resizeWidth: number; resizeHeight: number } | undefined> {
+  try {
+    const header = new Uint8Array(await file.slice(0, IMAGE_DIMENSIONS_HEADER_BYTES).arrayBuffer());
+    const dimensions = readImageDimensions(header);
+    if (!dimensions) return undefined;
+    if (Math.max(dimensions.width, dimensions.height) <= maxEdge) return undefined;
+    const size = scaledSizeWithinMaxEdge(dimensions.width, dimensions.height, maxEdge);
+    return { resizeWidth: size.width, resizeHeight: size.height };
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Bounded WebP/JPEG preview of `file`. Used by composer chips (256) and the
+ * lightbox (2048) so `<img>` never decodes the original. Returns null when
+ * the browser cannot re-encode or decode/encode fails; never throws.
+ */
+async function createComposerImagePreview(file: File, maxEdge: number): Promise<Blob | null> {
+  if (!canRecompress()) return null;
+
+  let bitmap: ImageBitmap | undefined;
+  try {
+    const resize = await composerPreviewDecodeResize(file, maxEdge);
+    bitmap = resize ? await createImageBitmap(file, resize) : await createImageBitmap(file);
+    const encoded = await encodeWithinBudget(bitmap, maxEdge, Number.POSITIVE_INFINITY);
+    if (!encoded) return null;
+    return dataUrlToFile(
+      encoded.dataUrl,
+      fileNameForMimeType(file.name || "image", encoded.mimeType),
+      encoded.mimeType,
+    );
+  } catch {
+    return null;
+  } finally {
+    bitmap?.close();
+  }
+}
+
+export function createComposerImageThumbnail(file: File): Promise<Blob | null> {
+  return createComposerImagePreview(file, COMPOSER_IMAGE_THUMBNAIL_MAX_EDGE);
+}
+
+export function createComposerImageDisplayPreview(file: File): Promise<Blob | null> {
+  return createComposerImagePreview(file, COMPOSER_IMAGE_DISPLAY_PREVIEW_MAX_EDGE);
 }

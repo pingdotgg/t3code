@@ -59,12 +59,14 @@ import { createDeferredStorage, createMemoryStorage } from "./lib/storage";
 import { getDefaultServerModel } from "./providerModels";
 import { UnifiedSettings } from "@t3tools/contracts/settings";
 import { ReviewCommentContextSchema, type ReviewCommentContext } from "./reviewCommentContext";
+import { getComposerImageBlobStore } from "./lib/composerImageBlobStore";
+import { createComposerImageThumbnail } from "./lib/imageCompression";
 const isRuntimeMode = Schema.is(RuntimeMode);
 const isProviderDriverKind = Schema.is(ProviderDriverKind);
 const isReviewCommentContext = Schema.is(ReviewCommentContextSchema);
 
 export const COMPOSER_DRAFT_STORAGE_KEY = "t3code:composer-drafts:v1";
-const COMPOSER_DRAFT_STORAGE_VERSION = 9;
+const COMPOSER_DRAFT_STORAGE_VERSION = 10;
 const DraftThreadEnvModeSchema = Schema.Literals(["local", "worktree"]);
 export type DraftThreadEnvMode = typeof DraftThreadEnvModeSchema.Type;
 
@@ -118,13 +120,18 @@ export const PersistedComposerImageAttachment = Schema.Struct({
   name: Schema.String,
   mimeType: Schema.String,
   sizeBytes: Schema.Number,
-  dataUrl: Schema.String,
+  /** Legacy drafts and prompt-stash entries still write original bytes here. */
+  dataUrl: Schema.optionalKey(Schema.String),
+  /** Bounded chip encoding. v10 drafts persist this instead of original bytes. */
+  thumbnailDataUrl: Schema.optionalKey(Schema.String),
 });
 export type PersistedComposerImageAttachment = typeof PersistedComposerImageAttachment.Type;
 
 export interface ComposerImageAttachment extends Omit<ChatImageAttachment, "previewUrl"> {
   previewUrl: string;
-  file: File;
+  file: File | null;
+  displayPreviewUrl?: string;
+  blobHydration?: "pending" | "missing";
 }
 
 export interface ComposerFileAttachment extends Omit<ChatFileAttachment, "previewUrl"> {
@@ -141,6 +148,15 @@ export interface ComposerFileAttachment extends Omit<ChatFileAttachment, "previe
  */
 export function composerFileNeedsReattach(file: ComposerFileAttachment): boolean {
   return file.file === null && file.uploadedAttachmentId === undefined;
+}
+
+/**
+ * A hydrated draft image whose IndexedDB blob was missing after reload has
+ * neither bytes nor a pending restore. The composer renders it as a
+ * needs-reattach chip: the user must attach the image again or remove it.
+ */
+export function composerImageNeedsReattach(image: ComposerImageAttachment): boolean {
+  return image.file === null && image.blobHydration !== "pending";
 }
 
 function clearStaleFileUploadMetadata(
@@ -601,6 +617,11 @@ interface ComposerDraftStoreState {
   addImage: (threadRef: ComposerThreadTarget, image: ComposerImageAttachment) => void;
   addImages: (threadRef: ComposerThreadTarget, images: ComposerImageAttachment[]) => void;
   removeImage: (threadRef: ComposerThreadTarget, imageId: string) => void;
+  setImageDisplayPreviewUrl: (
+    threadRef: ComposerThreadTarget,
+    imageId: string,
+    url: string,
+  ) => void;
   addFiles: (threadRef: ComposerThreadTarget, files: ComposerFileAttachment[]) => void;
   removeFile: (threadRef: ComposerThreadTarget, fileId: string) => void;
   setFileUpload: (
@@ -807,6 +828,17 @@ export function composerFileDedupKey(
   file: Pick<ComposerFileAttachment, "mimeType" | "sizeBytes" | "name">,
 ): string {
   return `${file.mimeType}\u0000${file.sizeBytes}\u0000${file.name}`;
+}
+
+export function composerImageMatchesReattachMarker(
+  marker: Pick<ComposerImageAttachment, "mimeType" | "sizeBytes" | "name">,
+  image: Pick<ComposerImageAttachment, "mimeType" | "sizeBytes" | "name">,
+): boolean {
+  return (
+    marker.name === image.name &&
+    marker.sizeBytes === image.sizeBytes &&
+    marker.mimeType === image.mimeType
+  );
 }
 
 export function composerFileMatchesReattachMarker(
@@ -1250,13 +1282,59 @@ function revokeObjectPreviewUrl(previewUrl: string): void {
   URL.revokeObjectURL(previewUrl);
 }
 
+function revokeComposerImagePreviewUrls(image: ComposerImageAttachment): void {
+  revokeObjectPreviewUrl(image.previewUrl);
+  if (image.displayPreviewUrl) {
+    revokeObjectPreviewUrl(image.displayPreviewUrl);
+  }
+}
+
+function deleteComposerImageBlob(imageId: string): void {
+  void getComposerImageBlobStore().delete(imageId);
+}
+
+function releaseComposerImages(images: ReadonlyArray<ComposerImageAttachment>): void {
+  for (const image of images) {
+    revokeComposerImagePreviewUrls(image);
+    deleteComposerImageBlob(image.id);
+  }
+}
+
+/**
+ * Send copies chip `previewUrl`s onto the optimistic user message, then
+ * clears the draft. Revoking those URLs here would blank the timeline chip
+ * and make retry's `fetch(previewUrl)` fail. Lightbox URLs and the IDB
+ * original are draft-only, so they can go immediately.
+ */
+function releaseComposerImagesAfterSend(images: ReadonlyArray<ComposerImageAttachment>): void {
+  for (const image of images) {
+    if (image.displayPreviewUrl) {
+      revokeObjectPreviewUrl(image.displayPreviewUrl);
+    }
+    deleteComposerImageBlob(image.id);
+  }
+}
+
+function composerImageReferencedPreviewUrls(image: ComposerImageAttachment): string[] {
+  return image.displayPreviewUrl ? [image.previewUrl, image.displayPreviewUrl] : [image.previewUrl];
+}
+
+function revokeUnreferencedComposerImageUrls(
+  image: ComposerImageAttachment,
+  referenced: ReadonlySet<string>,
+): void {
+  for (const url of composerImageReferencedPreviewUrls(image)) {
+    if (!referenced.has(url)) {
+      revokeObjectPreviewUrl(url);
+    }
+  }
+}
+
 function revokeDraftThreadPreviewUrls(draft: ComposerThreadDraftState | undefined): void {
   if (!draft) {
     return;
   }
-  for (const image of draft.images) {
-    revokeObjectPreviewUrl(image.previewUrl);
-  }
+  releaseComposerImages(draft.images);
 }
 
 function normalizePersistedAttachment(value: unknown): PersistedComposerImageAttachment | null {
@@ -1268,25 +1346,31 @@ function normalizePersistedAttachment(value: unknown): PersistedComposerImageAtt
   const name = candidate.name;
   const mimeType = candidate.mimeType;
   const sizeBytes = candidate.sizeBytes;
-  const dataUrl = candidate.dataUrl;
   if (
     typeof id !== "string" ||
     typeof name !== "string" ||
     typeof mimeType !== "string" ||
     typeof sizeBytes !== "number" ||
     !Number.isFinite(sizeBytes) ||
-    typeof dataUrl !== "string" ||
-    id.length === 0 ||
-    dataUrl.length === 0
+    id.length === 0
   ) {
     return null;
   }
+  const dataUrl =
+    typeof candidate.dataUrl === "string" && candidate.dataUrl.length > 0
+      ? candidate.dataUrl
+      : undefined;
+  const thumbnailDataUrl =
+    typeof candidate.thumbnailDataUrl === "string" && candidate.thumbnailDataUrl.length > 0
+      ? candidate.thumbnailDataUrl
+      : undefined;
   return {
     id,
     name,
     mimeType,
     sizeBytes,
-    dataUrl,
+    ...(dataUrl ? { dataUrl } : {}),
+    ...(thumbnailDataUrl ? { thumbnailDataUrl } : {}),
   };
 }
 
@@ -2129,7 +2213,13 @@ export function partializeComposerDraftStoreState(
     }
     const persistedDraft: DeepMutable<PersistedComposerThreadDraftState> = {
       prompt: draft.prompt,
-      attachments: draft.persistedAttachments,
+      attachments: draft.persistedAttachments.map((attachment) => ({
+        id: attachment.id,
+        name: attachment.name,
+        mimeType: attachment.mimeType,
+        sizeBytes: attachment.sizeBytes,
+        ...(attachment.thumbnailDataUrl ? { thumbnailDataUrl: attachment.thumbnailDataUrl } : {}),
+      })),
       ...(draft.files.length > 0
         ? {
             // A file whose upload has not finished has no serializable bytes.
@@ -2369,9 +2459,13 @@ function verifyPersistedAttachments(
 function hydratePersistedComposerImageAttachment(
   attachment: PersistedComposerImageAttachment,
 ): File | null {
-  const commaIndex = attachment.dataUrl.indexOf(",");
-  const header = commaIndex === -1 ? attachment.dataUrl : attachment.dataUrl.slice(0, commaIndex);
-  const payload = commaIndex === -1 ? "" : attachment.dataUrl.slice(commaIndex + 1);
+  const dataUrl = attachment.dataUrl;
+  if (!dataUrl) {
+    return null;
+  }
+  const commaIndex = dataUrl.indexOf(",");
+  const header = commaIndex === -1 ? dataUrl : dataUrl.slice(0, commaIndex);
+  const payload = commaIndex === -1 ? "" : dataUrl.slice(commaIndex + 1);
   if (payload.length === 0) {
     return null;
   }
@@ -2401,21 +2495,30 @@ function hydratePersistedComposerImageAttachment(
 export function hydrateImagesFromPersisted(
   attachments: ReadonlyArray<PersistedComposerImageAttachment>,
 ): ComposerImageAttachment[] {
-  return attachments.flatMap((attachment) => {
+  return attachments.map((attachment) => {
     const file = hydratePersistedComposerImageAttachment(attachment);
-    if (!file) return [];
-
-    return [
-      {
+    if (file) {
+      return {
         type: "image" as const,
         id: attachment.id,
         name: attachment.name,
         mimeType: attachment.mimeType,
         sizeBytes: attachment.sizeBytes,
-        previewUrl: attachment.dataUrl,
+        previewUrl: attachment.thumbnailDataUrl ?? attachment.dataUrl ?? "",
         file,
-      } satisfies ComposerImageAttachment,
-    ];
+      } satisfies ComposerImageAttachment;
+    }
+
+    return {
+      type: "image" as const,
+      id: attachment.id,
+      name: attachment.name,
+      mimeType: attachment.mimeType,
+      sizeBytes: attachment.sizeBytes,
+      previewUrl: attachment.thumbnailDataUrl ?? "",
+      file: null,
+      blobHydration: "pending",
+    } satisfies ComposerImageAttachment;
   });
 }
 
@@ -2506,6 +2609,12 @@ function toHydratedDraftThreadState(
       : null,
   };
 }
+
+// Must be initialized before `create()`: persist rehydrates synchronously from
+// localStorage during store construction, and the post-rehydrate callback
+// used to call `hydrateComposerImageBlobs` while this binding was still in
+// the temporal dead zone (images stayed `blobHydration: "pending"` forever).
+let composerImageBlobHydration: Promise<void> | null = null;
 
 const composerDraftStore = create<ComposerDraftStoreState>()(
   persist(
@@ -3277,45 +3386,80 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
           }
           set((state) => {
             const existing = state.draftsByThreadKey[threadKey] ?? createEmptyThreadDraft();
-            const existingIds = new Set(existing.images.map((image) => image.id));
-            const existingDedupKeys = new Set(
-              existing.images.map((image) => composerImageDedupKey(image)),
+            const knownIds = new Set(existing.images.map((image) => image.id));
+            const knownImages = new Map<string, ComposerImageAttachment>(
+              existing.images.map((image) => [composerImageDedupKey(image), image]),
             );
-            const acceptedPreviewUrls = new Set(existing.images.map((image) => image.previewUrl));
-            const dedupedIncoming: ComposerImageAttachment[] = [];
+            const acceptedPreviewUrls = new Set(
+              existing.images.flatMap((image) => composerImageReferencedPreviewUrls(image)),
+            );
+            const accepted: ComposerImageAttachment[] = [];
+            // Needs-reattach markers replaced in place by a re-pick, keyed by
+            // the marker's id.
+            const replacements = new Map<string, ComposerImageAttachment>();
             for (const image of images) {
-              const dedupKey = composerImageDedupKey(image);
-              if (existingIds.has(image.id) || existingDedupKeys.has(dedupKey)) {
-                // Avoid revoking a blob URL that's still referenced by an accepted image.
-                if (!acceptedPreviewUrls.has(image.previewUrl)) {
-                  revokeObjectPreviewUrl(image.previewUrl);
+              const key = composerImageDedupKey(image);
+              if (knownIds.has(image.id)) {
+                continue;
+              }
+              const duplicate =
+                knownImages.get(key) ??
+                existing.images.find(
+                  (candidate) =>
+                    composerImageNeedsReattach(candidate) &&
+                    !replacements.has(candidate.id) &&
+                    composerImageMatchesReattachMarker(candidate, image),
+                );
+              if (duplicate) {
+                // A needs-reattach marker is not a usable duplicate. Replace
+                // it so the chip and blob persist restart.
+                if (composerImageNeedsReattach(duplicate) && !replacements.has(duplicate.id)) {
+                  replacements.set(duplicate.id, image);
+                  knownIds.add(image.id);
+                  knownImages.set(key, image);
+                  for (const url of composerImageReferencedPreviewUrls(image)) {
+                    acceptedPreviewUrls.add(url);
+                  }
+                } else {
+                  revokeUnreferencedComposerImageUrls(image, acceptedPreviewUrls);
                 }
                 continue;
               }
               if (
-                existing.images.length + existing.files.length + dedupedIncoming.length >=
+                existing.images.length + existing.files.length + accepted.length >=
                 PROVIDER_SEND_TURN_MAX_ATTACHMENTS
               ) {
-                if (!acceptedPreviewUrls.has(image.previewUrl)) {
-                  revokeObjectPreviewUrl(image.previewUrl);
-                }
+                revokeUnreferencedComposerImageUrls(image, acceptedPreviewUrls);
                 continue;
               }
-              dedupedIncoming.push(image);
-              existingIds.add(image.id);
-              existingDedupKeys.add(dedupKey);
-              acceptedPreviewUrls.add(image.previewUrl);
+              accepted.push(image);
+              knownIds.add(image.id);
+              knownImages.set(key, image);
+              for (const url of composerImageReferencedPreviewUrls(image)) {
+                acceptedPreviewUrls.add(url);
+              }
             }
-            if (dedupedIncoming.length === 0) {
+            if (accepted.length === 0 && replacements.size === 0) {
               return state;
             }
+            for (const [markerId, replacement] of replacements) {
+              const marker = existing.images.find((image) => image.id === markerId);
+              if (!marker) {
+                continue;
+              }
+              revokeUnreferencedComposerImageUrls(
+                marker,
+                new Set(composerImageReferencedPreviewUrls(replacement)),
+              );
+              if (marker.id !== replacement.id) {
+                deleteComposerImageBlob(marker.id);
+              }
+            }
+            const retained = existing.images.map((image) => replacements.get(image.id) ?? image);
             return {
               draftsByThreadKey: {
                 ...state.draftsByThreadKey,
-                [threadKey]: {
-                  ...existing,
-                  images: [...existing.images, ...dedupedIncoming],
-                },
+                [threadKey]: { ...existing, images: [...retained, ...accepted] },
               },
             };
           });
@@ -3331,7 +3475,8 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
           }
           const removedImage = existing.images.find((image) => image.id === imageId);
           if (removedImage) {
-            revokeObjectPreviewUrl(removedImage.previewUrl);
+            revokeComposerImagePreviewUrls(removedImage);
+            deleteComposerImageBlob(removedImage.id);
           }
           set((state) => {
             const current = state.draftsByThreadKey[threadKey];
@@ -3353,6 +3498,36 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               nextDraftsByThreadKey[threadKey] = nextDraft;
             }
             return { draftsByThreadKey: nextDraftsByThreadKey };
+          });
+        },
+        setImageDisplayPreviewUrl: (threadRef, imageId, url) => {
+          const threadKey = resolveComposerDraftKey(get(), threadRef) ?? "";
+          if (threadKey.length === 0) {
+            return;
+          }
+          set((state) => {
+            const current = state.draftsByThreadKey[threadKey];
+            if (!current) {
+              return state;
+            }
+            const image = current.images.find((entry) => entry.id === imageId);
+            if (!image || image.displayPreviewUrl === url) {
+              return state;
+            }
+            if (image.displayPreviewUrl) {
+              revokeObjectPreviewUrl(image.displayPreviewUrl);
+            }
+            return {
+              draftsByThreadKey: {
+                ...state.draftsByThreadKey,
+                [threadKey]: {
+                  ...current,
+                  images: current.images.map((entry) =>
+                    entry.id === imageId ? { ...entry, displayPreviewUrl: url } : entry,
+                  ),
+                },
+              },
+            };
           });
         },
         addFiles: (threadRef, files) => {
@@ -3908,6 +4083,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             if (!current) {
               return state;
             }
+            releaseComposerImagesAfterSend(current.images);
             const nextDraft: ComposerThreadDraftState = {
               ...current,
               prompt: "",
@@ -3939,9 +4115,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             if (!current) {
               return state;
             }
-            for (const image of current.images) {
-              revokeObjectPreviewUrl(image.previewUrl);
-            }
+            releaseComposerImages(current.images);
             const nextDraft: ComposerThreadDraftState = {
               ...current,
               prompt: ensureInlineTerminalContextPlaceholders("", current.terminalContexts.length),
@@ -3968,6 +4142,16 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
       migrate: migratePersistedComposerDraftStoreState,
       // Defer the draft walk and serialization until the storage write flushes.
       partialize: (state): ComposerPersistState => ({ capturedState: state }),
+      onRehydrateStorage: () => (_state, error) => {
+        if (error) {
+          return;
+        }
+        // Persist's getItem is sync, so rehydrate can finish inside `create()`.
+        // Yield so blob hydration runs after the module finishes initializing.
+        queueMicrotask(() => {
+          void hydrateComposerImageBlobs();
+        });
+      },
       merge: (persistedState, currentState) => {
         const normalizedPersisted =
           normalizeCurrentPersistedComposerDraftStoreState(persistedState);
@@ -3997,6 +4181,112 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
 );
 
 export const useComposerDraftStore = composerDraftStore;
+
+async function hydrateComposerImageBlobsOnce(): Promise<void> {
+  const blobStore = getComposerImageBlobStore();
+  const pendingIds = new Set<string>();
+  for (const draft of Object.values(composerDraftStore.getState().draftsByThreadKey)) {
+    for (const image of draft.images) {
+      if (image.file === null && image.blobHydration === "pending") {
+        pendingIds.add(image.id);
+      }
+    }
+  }
+
+  const blobById = new Map<string, Blob | undefined>();
+  await Promise.all(
+    [...pendingIds].map(async (imageId) => {
+      blobById.set(imageId, await blobStore.get(imageId));
+    }),
+  );
+
+  if (pendingIds.size > 0) {
+    composerDraftStore.setState((state) => {
+      let changed = false;
+      const nextDraftsByThreadKey = { ...state.draftsByThreadKey };
+      for (const [threadKey, draft] of Object.entries(nextDraftsByThreadKey)) {
+        let draftChanged = false;
+        const images = draft.images.map((image) => {
+          if (image.file !== null || image.blobHydration !== "pending") {
+            return image;
+          }
+          draftChanged = true;
+          const blob = blobById.get(image.id);
+          if (!blob) {
+            return {
+              ...image,
+              file: null,
+              blobHydration: "missing" as const,
+            };
+          }
+          const { blobHydration: _blobHydration, ...rest } = image;
+          return {
+            ...rest,
+            file: new File([blob], image.name, { type: image.mimeType }),
+          };
+        });
+        if (draftChanged) {
+          changed = true;
+          nextDraftsByThreadKey[threadKey] = { ...draft, images };
+        }
+      }
+      return changed ? { draftsByThreadKey: nextDraftsByThreadKey } : state;
+    });
+  }
+
+  const keepIds = new Set<string>();
+  for (const draft of Object.values(composerDraftStore.getState().draftsByThreadKey)) {
+    for (const image of draft.images) {
+      keepIds.add(image.id);
+    }
+  }
+  const oversizedChipImages: ComposerImageAttachment[] = [];
+  for (const draft of Object.values(composerDraftStore.getState().draftsByThreadKey)) {
+    for (const image of draft.images) {
+      if (image.file && image.previewUrl.startsWith("data:") && image.previewUrl.length > 100_000) {
+        oversizedChipImages.push(image);
+      }
+    }
+  }
+  const thumbnailUrlByImageId = new Map<string, string>();
+  await Promise.all(
+    oversizedChipImages.map(async (image) => {
+      if (!image.file) return;
+      const thumbnail = await createComposerImageThumbnail(image.file);
+      if (!thumbnail || typeof URL === "undefined") return;
+      thumbnailUrlByImageId.set(image.id, URL.createObjectURL(thumbnail));
+    }),
+  );
+  if (thumbnailUrlByImageId.size > 0) {
+    composerDraftStore.setState((state) => {
+      let changed = false;
+      const nextDraftsByThreadKey = { ...state.draftsByThreadKey };
+      for (const [threadKey, draft] of Object.entries(nextDraftsByThreadKey)) {
+        let draftChanged = false;
+        const images = draft.images.map((image) => {
+          const thumbnailUrl = thumbnailUrlByImageId.get(image.id);
+          if (!thumbnailUrl) return image;
+          draftChanged = true;
+          return { ...image, previewUrl: thumbnailUrl };
+        });
+        if (draftChanged) {
+          changed = true;
+          nextDraftsByThreadKey[threadKey] = { ...draft, images };
+        }
+      }
+      return changed ? { draftsByThreadKey: nextDraftsByThreadKey } : state;
+    });
+  }
+
+  await blobStore.deleteAllExcept(keepIds);
+}
+
+export function hydrateComposerImageBlobs(): Promise<void> {
+  composerImageBlobHydration ??= hydrateComposerImageBlobsOnce().finally(() => {
+    composerImageBlobHydration = null;
+  });
+  return composerImageBlobHydration;
+}
 
 export function beginBackgroundDraftSubmissionByRef(threadRef: ScopedThreadRef): void {
   const threadKey = scopedThreadKey(threadRef);

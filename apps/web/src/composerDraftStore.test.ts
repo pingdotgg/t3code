@@ -72,6 +72,9 @@ import {
   type ComposerFileAttachment,
   type ComposerImageAttachment,
   composerFileNeedsReattach,
+  composerImageNeedsReattach,
+  hydrateComposerImageBlobs,
+  hydrateImagesFromPersisted,
   partializeComposerDraftStoreState,
   useComposerDraftStore,
   DraftId,
@@ -83,6 +86,11 @@ import {
   type TerminalContextDraft,
 } from "./lib/terminalContext";
 import { createDeferredStorage } from "./lib/storage";
+import {
+  createMemoryComposerImageBlobStore,
+  getComposerImageBlobStore,
+  setComposerImageBlobStoreForTests,
+} from "./lib/composerImageBlobStore";
 
 function makeImage(input: {
   id: string;
@@ -91,23 +99,29 @@ function makeImage(input: {
   mimeType?: string;
   sizeBytes?: number;
   lastModified?: number;
+  file?: File | null;
+  displayPreviewUrl?: string;
 }): ComposerImageAttachment {
   const name = input.name ?? "image.png";
   const mimeType = input.mimeType ?? "image/png";
   const sizeBytes = input.sizeBytes ?? 4;
   const lastModified = input.lastModified ?? 1_700_000_000_000;
-  const file = new File([new Uint8Array(sizeBytes).fill(1)], name, {
-    type: mimeType,
-    lastModified,
-  });
+  const file =
+    input.file !== undefined
+      ? input.file
+      : new File([new Uint8Array(sizeBytes).fill(1)], name, {
+          type: mimeType,
+          lastModified,
+        });
   return {
     type: "image",
     id: input.id,
     name,
     mimeType,
-    sizeBytes: file.size,
+    sizeBytes: file?.size ?? sizeBytes,
     previewUrl: input.previewUrl,
     file,
+    ...(input.displayPreviewUrl ? { displayPreviewUrl: input.displayPreviewUrl } : {}),
   };
 }
 
@@ -317,6 +331,47 @@ describe("composerDraftStore addImages", () => {
     expect(draft?.images.map((image) => image.id)).toEqual(["img-shared"]);
     expect(revokeSpy).not.toHaveBeenCalledWith("blob:shared");
   });
+
+  it("replaces a needs-reattach image when the same image is picked again", async () => {
+    const blobStore = createMemoryComposerImageBlobStore();
+    setComposerImageBlobStoreForTests(blobStore);
+    try {
+      await blobStore.put("img-marker", new Blob([new Uint8Array([1, 2, 3])]));
+      const marker = makeImage({
+        id: "img-marker",
+        previewUrl: "blob:marker",
+        name: "photo.png",
+        mimeType: "image/png",
+        sizeBytes: 12,
+        file: null,
+      });
+      useComposerDraftStore.getState().addImages(threadRef, [marker]);
+      expect(
+        useComposerDraftStore
+          .getState()
+          .getComposerDraft(threadRef)
+          ?.images.every(composerImageNeedsReattach),
+      ).toBe(true);
+
+      const repicked = makeImage({
+        id: "img-repicked",
+        previewUrl: "blob:repicked",
+        name: "photo.png",
+        mimeType: "image/png",
+        sizeBytes: 12,
+      });
+      useComposerDraftStore.getState().addImages(threadRef, [repicked]);
+
+      const images = useComposerDraftStore.getState().getComposerDraft(threadRef)?.images;
+      expect(images?.map((image) => image.id)).toEqual(["img-repicked"]);
+      expect(images?.[0]?.file).not.toBeNull();
+      expect(images?.some(composerImageNeedsReattach)).toBe(false);
+      expect(revokeSpy).toHaveBeenCalledWith("blob:marker");
+      expect(await blobStore.get("img-marker")).toBeUndefined();
+    } finally {
+      setComposerImageBlobStoreForTests(null);
+    }
+  });
 });
 
 describe("composerDraftStore clearComposerContent", () => {
@@ -336,10 +391,11 @@ describe("composerDraftStore clearComposerContent", () => {
     URL.revokeObjectURL = originalRevokeObjectUrl;
   });
 
-  it("does not revoke blob preview URLs when clearing composer content", () => {
+  it("keeps chip preview URLs alive for the optimistic send handoff", () => {
     const first = makeImage({
       id: "img-optimistic",
       previewUrl: "blob:optimistic",
+      displayPreviewUrl: "blob:lightbox",
     });
     useComposerDraftStore.getState().addImage(threadRef, first);
 
@@ -347,6 +403,7 @@ describe("composerDraftStore clearComposerContent", () => {
 
     const draft = draftFor(threadId, TEST_ENVIRONMENT_ID);
     expect(draft).toBeUndefined();
+    expect(revokeSpy).toHaveBeenCalledWith("blob:lightbox");
     expect(revokeSpy).not.toHaveBeenCalledWith("blob:optimistic");
   });
 });
@@ -2610,13 +2667,23 @@ describe("composer draft persistence", () => {
       await vi.advanceTimersByTimeAsync(300);
       expect(attachmentReads).toBe(1);
       expect(stringify).toHaveBeenCalledTimes(1);
+      const serialized = stringify.mock.results[0]?.value;
+      expect(typeof serialized).toBe("string");
+      expect(serialized).not.toContain(attachments[0]!.dataUrl);
+      expect((serialized as string).length).toBeLessThan(attachments[0]!.dataUrl.length);
 
       resetComposerDraftStore();
       await useComposerDraftStore.persist.rehydrate();
       expect(draftFor(typingThreadId, TEST_ENVIRONMENT_ID)?.prompt).toBe("Draft 20");
-      expect(draftFor(heavyThreadId, TEST_ENVIRONMENT_ID)?.persistedAttachments).toEqual(
-        attachments,
-      );
+      expect(draftFor(heavyThreadId, TEST_ENVIRONMENT_ID)?.prompt).toBe("Keep this image");
+      expect(draftFor(heavyThreadId, TEST_ENVIRONMENT_ID)?.persistedAttachments).toEqual([
+        {
+          id: "heavy-image",
+          name: "image.png",
+          mimeType: "image/png",
+          sizeBytes: 49_152,
+        },
+      ]);
     } finally {
       stringify.mockRestore();
       await useComposerDraftStore.persist.clearStorage();
@@ -2736,5 +2803,257 @@ describe("createDeferredStorage", () => {
     vi.advanceTimersByTime(300);
     expect(base.setItem).toHaveBeenCalledTimes(1);
     expect(base.setItem).toHaveBeenCalledWith("key", "s:v2");
+  });
+});
+
+describe("composer draft v10 image blobs", () => {
+  const threadId = ThreadId.make("thread-v10-blobs");
+  const threadRef = scopeThreadRef(TEST_ENVIRONMENT_ID, threadId);
+  const threadKey = scopedThreadKey(threadRef);
+
+  const persistApi = () =>
+    useComposerDraftStore.persist as unknown as {
+      getOptions: () => {
+        merge: (
+          persistedState: unknown,
+          currentState: ReturnType<typeof useComposerDraftStore.getState>,
+        ) => ReturnType<typeof useComposerDraftStore.getState>;
+      };
+    };
+
+  beforeEach(() => {
+    setComposerImageBlobStoreForTests(createMemoryComposerImageBlobStore());
+    resetComposerDraftStore();
+  });
+
+  afterEach(() => {
+    setComposerImageBlobStoreForTests(null);
+    resetComposerDraftStore();
+  });
+
+  it("v10 persist omits original dataUrl", async () => {
+    const originalBytes = new Uint8Array(50_000).fill(7);
+    const file = new File([originalBytes], "huge.png", { type: "image/png" });
+    const thumbnailDataUrl = "data:image/jpeg;base64,AAAA";
+    await getComposerImageBlobStore().put("img-v10", file);
+
+    useComposerDraftStore.getState().setPrompt(threadRef, "keep this image");
+    useComposerDraftStore.setState((state) => ({
+      draftsByThreadKey: {
+        ...state.draftsByThreadKey,
+        [threadKey]: {
+          ...state.draftsByThreadKey[threadKey]!,
+          persistedAttachments: [
+            {
+              id: "img-v10",
+              name: file.name,
+              mimeType: file.type,
+              sizeBytes: file.size,
+              dataUrl: `data:image/png;base64,${"AQID".repeat(8_192)}`,
+              thumbnailDataUrl,
+            },
+          ],
+        },
+      },
+    }));
+
+    const persisted = partializeComposerDraftStoreState(useComposerDraftStore.getState());
+    const json = JSON.stringify(persisted);
+    expect(json).not.toContain("AQID");
+    expect(json.length).toBeLessThan(2_000);
+    expect(persisted.draftsByThreadKey[threadKey]?.attachments).toEqual([
+      {
+        id: "img-v10",
+        name: "huge.png",
+        mimeType: "image/png",
+        sizeBytes: file.size,
+        thumbnailDataUrl,
+      },
+    ]);
+  });
+
+  it("legacy dataUrl hydrate restores a File and uses dataUrl as preview when no thumbnail", async () => {
+    const dataUrl = "data:image/png;base64,AQIDBA==";
+    const expectedBytes = new Uint8Array([1, 2, 3, 4]);
+    const attachment = {
+      id: "img-legacy",
+      name: "photo.png",
+      mimeType: "image/png",
+      sizeBytes: 4,
+      dataUrl,
+    };
+
+    const hydrated = hydrateImagesFromPersisted([attachment]);
+    expect(hydrated).toHaveLength(1);
+    expect(hydrated[0]?.file).toBeInstanceOf(File);
+    expect(hydrated[0]?.previewUrl).toBe(dataUrl);
+    expect(hydrated[0]?.blobHydration).toBeUndefined();
+    expect(new Uint8Array(await hydrated[0]!.file!.arrayBuffer())).toEqual(expectedBytes);
+
+    const thumbnailDataUrl = "data:image/jpeg;base64,thumb";
+    const withThumbnail = hydrateImagesFromPersisted([{ ...attachment, thumbnailDataUrl }]);
+    expect(withThumbnail[0]?.previewUrl).toBe(thumbnailDataUrl);
+    expect(withThumbnail[0]?.file).toBeInstanceOf(File);
+
+    const merged = persistApi()
+      .getOptions()
+      .merge(
+        {
+          draftsByThreadKey: {
+            [threadKey]: {
+              prompt: "legacy image",
+              attachments: [attachment],
+            },
+          },
+          draftThreadsByThreadKey: {},
+          logicalProjectDraftThreadKeyByLogicalProjectKey: {},
+        },
+        useComposerDraftStore.getState(),
+      );
+    useComposerDraftStore.setState(merged);
+    const restored = draftFor(threadId, TEST_ENVIRONMENT_ID)?.images[0];
+    expect(restored?.file).toBeInstanceOf(File);
+    expect(restored?.previewUrl).toBe(dataUrl);
+    expect(new Uint8Array(await restored!.file!.arrayBuffer())).toEqual(expectedBytes);
+  });
+
+  it("persist rehydrate restores File bytes via deferred blob hydration", async () => {
+    const bytes = new Uint8Array([3, 1, 4, 1, 5]);
+    const thumbnailDataUrl = "data:image/jpeg;base64,chip";
+    await getComposerImageBlobStore().put(
+      "img-rehydrate",
+      new Blob([bytes], { type: "image/png" }),
+    );
+
+    vi.useFakeTimers();
+    try {
+      useComposerDraftStore.getState().setPrompt(threadRef, "rehydrate image");
+      useComposerDraftStore.setState((state) => ({
+        draftsByThreadKey: {
+          ...state.draftsByThreadKey,
+          [threadKey]: {
+            ...state.draftsByThreadKey[threadKey]!,
+            persistedAttachments: [
+              {
+                id: "img-rehydrate",
+                name: "photo.png",
+                mimeType: "image/png",
+                sizeBytes: bytes.byteLength,
+                thumbnailDataUrl,
+              },
+            ],
+          },
+        },
+      }));
+      await vi.advanceTimersByTimeAsync(300);
+      resetComposerDraftStore();
+      await useComposerDraftStore.persist.rehydrate();
+      await hydrateComposerImageBlobs();
+    } finally {
+      vi.useRealTimers();
+      await useComposerDraftStore.persist.clearStorage();
+    }
+
+    const restored = draftFor(threadId, TEST_ENVIRONMENT_ID)?.images[0];
+    expect(restored?.previewUrl).toBe(thumbnailDataUrl);
+    expect(restored?.blobHydration).toBeUndefined();
+    expect(restored?.file).toBeInstanceOf(File);
+    expect(new Uint8Array(await restored!.file!.arrayBuffer())).toEqual(bytes);
+  });
+
+  it("blob hydrate restores File bytes from the memory blob store", async () => {
+    const bytes = new Uint8Array([9, 8, 7, 6, 5]);
+    const thumbnailDataUrl = "data:image/jpeg;base64,thumb";
+    await getComposerImageBlobStore().put("img-blob", new Blob([bytes], { type: "image/png" }));
+
+    const merged = persistApi()
+      .getOptions()
+      .merge(
+        {
+          draftsByThreadKey: {
+            [threadKey]: {
+              prompt: "blob image",
+              attachments: [
+                {
+                  id: "img-blob",
+                  name: "photo.png",
+                  mimeType: "image/png",
+                  sizeBytes: bytes.byteLength,
+                  thumbnailDataUrl,
+                },
+              ],
+            },
+          },
+          draftThreadsByThreadKey: {},
+          logicalProjectDraftThreadKeyByLogicalProjectKey: {},
+        },
+        useComposerDraftStore.getState(),
+      );
+    useComposerDraftStore.setState(merged);
+    await hydrateComposerImageBlobs();
+
+    const restored = draftFor(threadId, TEST_ENVIRONMENT_ID)?.images[0];
+    expect(restored?.previewUrl).toBe(thumbnailDataUrl);
+    expect(restored?.blobHydration).toBeUndefined();
+    expect(restored?.file).toBeInstanceOf(File);
+    expect(new Uint8Array(await restored!.file!.arrayBuffer())).toEqual(bytes);
+  });
+
+  it("missing blob keeps chip metadata and needs reattach", async () => {
+    const merged = persistApi()
+      .getOptions()
+      .merge(
+        {
+          draftsByThreadKey: {
+            [threadKey]: {
+              prompt: "missing blob",
+              attachments: [
+                {
+                  id: "img-missing",
+                  name: "gone.png",
+                  mimeType: "image/png",
+                  sizeBytes: 12,
+                  thumbnailDataUrl: "data:image/jpeg;base64,chip",
+                },
+              ],
+            },
+          },
+          draftThreadsByThreadKey: {},
+          logicalProjectDraftThreadKeyByLogicalProjectKey: {},
+        },
+        useComposerDraftStore.getState(),
+      );
+    useComposerDraftStore.setState(merged);
+    await hydrateComposerImageBlobs();
+
+    const draft = draftFor(threadId, TEST_ENVIRONMENT_ID);
+    const image = draft?.images[0];
+    expect(image).toMatchObject({
+      id: "img-missing",
+      name: "gone.png",
+      mimeType: "image/png",
+      sizeBytes: 12,
+      previewUrl: "data:image/jpeg;base64,chip",
+      file: null,
+      blobHydration: "missing",
+    });
+    expect(image && composerImageNeedsReattach(image)).toBe(true);
+  });
+
+  it("removeImage deletes the blob from the memory store", async () => {
+    const blobStore = getComposerImageBlobStore();
+    await blobStore.put("img-remove", new Blob([new Uint8Array([1, 2, 3])]));
+    useComposerDraftStore.getState().setPrompt(threadRef, "keep the draft");
+    useComposerDraftStore.getState().addImages(threadRef, [
+      makeImage({
+        id: "img-remove",
+        previewUrl: "blob:remove",
+      }),
+    ]);
+
+    useComposerDraftStore.getState().removeImage(threadRef, "img-remove");
+
+    expect(await blobStore.get("img-remove")).toBeUndefined();
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.images).toEqual([]);
   });
 });
