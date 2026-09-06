@@ -6,8 +6,8 @@ on:
       - "v*.*.*"
       - "!v*-nightly.*"
   schedule:
-    # Off minute zero: GitHub delays scheduled runs most at the top of the hour.
-    - cron: "38 */3 * * *"
+    # Avoid minute zero, when GitHub scheduled jobs are busiest.
+    - cron: "8,38 * * * *"
   workflow_dispatch:
     inputs:
       channel:
@@ -28,7 +28,7 @@ on:
 # own group so a nightly never blocks them. Running publishers are never
 # canceled, and queue: max keeps every pending run instead of the default
 # newest-wins single slot, so a queued stable tag can never be silently
-# dropped. Queued nightlies with no new commits skip via check_changes.
+# dropped. Automatic nightlies recheck the release gap after leaving the queue.
 concurrency:
   group: release-${{ (github.event_name == 'schedule' || inputs.channel == 'nightly') && 'nightly' || 'stable' }}
   cancel-in-progress: false
@@ -40,41 +40,25 @@ permissions:
 
 jobs:
   check_changes:
-    name: Check for changes since last nightly
+    name: Check automatic nightly release
     if: github.event_name == 'schedule'
     runs-on: blacksmith-8vcpu-ubuntu-2404
+    timeout-minutes: 5
     outputs:
-      has_changes: ${{ steps.check.outputs.has_changes }}
+      has_changes: ${{ steps.check.outputs.result }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
         with:
-          fetch-depth: 0
-          sparse-checkout: |
-            /*
-            !/.repos/
-          sparse-checkout-cone-mode: false
+          sparse-checkout: .github/scripts
 
       - id: check
-        name: Compare HEAD to last nightly tag
-        run: |
-          last_nightly_tag=$(git tag --list 'v*-nightly.*' 'nightly-v*' --sort=-creatordate | head -n 1)
-          if [[ -z "$last_nightly_tag" ]]; then
-            echo "No previous nightly tag found. Proceeding with release."
-            echo "has_changes=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          last_nightly_sha=$(git rev-parse "$last_nightly_tag^{commit}")
-          head_sha=$(git rev-parse HEAD)
-
-          if [[ "$last_nightly_sha" == "$head_sha" ]]; then
-            echo "No changes on main since last nightly release ($last_nightly_tag). Skipping."
-            echo "has_changes=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "Changes detected on main since $last_nightly_tag ($last_nightly_sha → $head_sha). Proceeding."
-            echo "has_changes=true" >> "$GITHUB_OUTPUT"
-          fi
+        name: Check release gap and new commits
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const { shouldReleaseNightly } = require('./.github/scripts/check-nightly-release.cjs');
+            return await shouldReleaseNightly({ github, context, core });
 
   preflight:
     name: Preflight
@@ -228,7 +212,7 @@ jobs:
     name: Resolve T3 Connect public config
     # Consumes only the commit SHA, not preflight's resolved version, so it runs
     # alongside preflight instead of after it. The condition mirrors preflight's:
-    # check_changes is skipped on non-schedule events (skipped is neither failure
+    # check_changes is skipped on manual and tag releases (skipped is neither failure
     # nor success, so success() would be wrong here).
     needs: [check_changes]
     if: |
