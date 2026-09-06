@@ -4603,10 +4603,6 @@ export default function Sidebar() {
                             onUnsnooze={attemptUnsnooze}
                             onUnpin={attemptUnpin}
                             onAcknowledgeWoke={acknowledgeWoke}
-                            changeRequestSnapshot={
-                              changeRequestSnapshotByKey.get(threadKey) ?? null
-                            }
-                            onChangeRequestSnapshot={setThreadChangeRequestSnapshot}
                           />
                         );
                       };
