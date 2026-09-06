@@ -816,6 +816,55 @@ struct FeatureComposerPowerTests {
     }
 
     @Test @MainActor
+    func skillCatalogUpdatePreservesMarkedComposerText() throws {
+        let input = FeatureComposerTextInput(
+            text: .constant("Use $file-pr に"),
+            focused: .constant(false),
+            placeholder: "",
+            acceptsImages: false,
+            isReadOnly: false,
+            skills: [FeatureProviderSkill(name: "file-pr", displayName: "File PR")],
+            selectionRequest: nil,
+            onSelectionChange: { _ in },
+            onPasteImages: { _ in },
+            onDismissKeyboard: nil
+        )
+        let coordinator = FeatureComposerTextInput.Coordinator(input)
+        let textView = FeatureComposerUITextView()
+        textView.delegate = coordinator
+        textView.font = UIFont.preferredFont(forTextStyle: .body)
+        textView.text = "Use $file-pr "
+        textView.selectedRange = NSRange(location: textView.text.utf16.count, length: 0)
+
+        let viewController = UIViewController()
+        let window = UIWindow(frame: UIScreen.main.bounds)
+        window.rootViewController = viewController
+        viewController.view.addSubview(textView)
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        #expect(textView.becomeFirstResponder())
+        textView.setMarkedText("に", selectedRange: NSRange(location: 1, length: 0))
+        let markedRange = try #require(textView.markedTextRange)
+        #expect(textView.text(in: markedRange) == "に")
+        let source = FeatureInlineSkillProjection.plainText(from: textView.attributedText)
+        let selection = textView.selectedRange
+
+        #expect(!coordinator.synchronizeInlineSkills(
+            in: textView,
+            source: source,
+            selection: selection
+        ))
+        #expect(textView.markedTextRange != nil)
+        #expect(textView.selectedRange == selection)
+        #expect(FeatureInlineSkillProjection.signatures(in: textView.attributedText).isEmpty)
+
+        textView.unmarkText()
+        coordinator.textViewDidChange(textView)
+        #expect(FeatureInlineSkillProjection.plainText(from: textView.attributedText) == source)
+        #expect(FeatureInlineSkillProjection.signatures(in: textView.attributedText).count == 1)
+    }
+
+    @Test @MainActor
     func inlineSkillSynchronizationPreservesComposerUndoHistory() throws {
         let input = FeatureComposerTextInput(
             text: .constant("Use"),
