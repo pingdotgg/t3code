@@ -29,6 +29,19 @@ it("preserves an explicitly forwarded SSH agent", () => {
   assert.equal(env.SSH_AUTH_SOCK, "/forwarded/agent.sock");
 });
 
+it("takes the agent from the accepted shell when an earlier candidate has no PATH", () => {
+  const env: NodeJS.ProcessEnv = { SHELL: "/custom/shell-without-path" };
+
+  hydratePosixEnvironment(env, "linux", (shell) =>
+    shell === env.SHELL
+      ? { SSH_AUTH_SOCK: "/stale/agent.sock" }
+      : { PATH: "/usr/bin", SSH_AUTH_SOCK: "/current/agent.sock" },
+  );
+
+  assert.equal(env.SSH_AUTH_SOCK, "/current/agent.sock");
+  assert.equal(env.PATH, "/usr/bin");
+});
+
 it("leaves the SSH agent unset when the login shell has none", () => {
   const env: NodeJS.ProcessEnv = { PATH: "/service/bin" };
 

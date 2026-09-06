@@ -28,7 +28,7 @@ export function hydratePosixEnvironment(
     try {
       const shellEnvironment = readShellEnvironment(shell, ["PATH", "SSH_AUTH_SOCK"]);
       shellPath = shellEnvironment.PATH;
-      if (!env.SSH_AUTH_SOCK && shellEnvironment.SSH_AUTH_SOCK) {
+      if (shellPath && !env.SSH_AUTH_SOCK && shellEnvironment.SSH_AUTH_SOCK) {
         env.SSH_AUTH_SOCK = shellEnvironment.SSH_AUTH_SOCK;
       }
     } catch (error) {
