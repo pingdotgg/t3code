@@ -1,9 +1,8 @@
 import {
-  ApprovalRequestId,
-  isToolLifecycleItemType,
-  ProviderApprovalOption,
-  ProviderRequestKind,
-} from "@t3tools/contracts";
+  requestKindFromRequestType,
+  type PendingApproval,
+} from "@t3tools/client-runtime/pending-requests";
+import { isToolLifecycleItemType } from "@t3tools/contracts";
 import type {
   OrchestrationLatestTurn,
   OrchestrationThread,
@@ -36,25 +35,8 @@ import { commandProgramName } from "@t3tools/client-runtime/work-log/command-lab
 
 import * as Arr from "effect/Array";
 import * as Order from "effect/Order";
-import * as Schema from "effect/Schema";
 
-export interface PendingApproval {
-  readonly requestId: ApprovalRequestId;
-  readonly requestKind: ProviderRequestKind;
-  readonly createdAt: string;
-  readonly detail?: string;
-  readonly appName?: string;
-  readonly options?: ReadonlyArray<ProviderApprovalOption>;
-}
-
-const isProviderRequestKind = Schema.is(ProviderRequestKind);
-const isProviderApprovalOption = Schema.is(ProviderApprovalOption);
-
-export interface PendingUserInput {
-  readonly requestId: ApprovalRequestId;
-  readonly createdAt: string;
-  readonly questions: ReadonlyArray<UserInputQuestion>;
-}
+export type { PendingApproval, PendingUserInput } from "@t3tools/client-runtime/pending-requests";
 
 export interface PendingUserInputDraftAnswer {
   readonly selectedOptionValues?: ReadonlyArray<string>;
@@ -274,94 +256,6 @@ export function isContextCompactionActivityGroup(
     entry.activities.length === 1 &&
     entry.activities[0]?.workEntry.sourceActivityKind === "context-compaction"
   );
-}
-
-function requestKindFromRequestType(requestType: unknown): PendingApproval["requestKind"] | null {
-  switch (requestType) {
-    case "command_execution_approval":
-    case "exec_command_approval":
-      return "command";
-    case "file_read_approval":
-      return "file-read";
-    case "file_change_approval":
-    case "apply_patch_approval":
-      return "file-change";
-    case "mcp_elicitation_approval":
-      return "mcp-elicitation";
-    default:
-      return null;
-  }
-}
-
-function isStalePendingRequestFailureDetail(detail: string | undefined): boolean {
-  const normalized = detail?.toLowerCase();
-  if (!normalized) {
-    return false;
-  }
-  return (
-    normalized.includes("stale pending approval request") ||
-    normalized.includes("stale pending user-input request") ||
-    normalized.includes("unknown pending approval request") ||
-    normalized.includes("unknown pending permission request") ||
-    normalized.includes("unknown pending user-input request")
-  );
-}
-
-function parseApprovalRequestId(value: unknown): ApprovalRequestId | null {
-  return typeof value === "string" && value.length > 0 ? ApprovalRequestId.make(value) : null;
-}
-
-function parseUserInputQuestions(
-  payload: Record<string, unknown> | null,
-): ReadonlyArray<UserInputQuestion> | null {
-  const questions = payload?.questions;
-  if (!Array.isArray(questions)) {
-    return null;
-  }
-
-  const parsed = questions
-    .map<UserInputQuestion | null>((entry) => {
-      if (!entry || typeof entry !== "object") return null;
-      const question = entry as Record<string, unknown>;
-      if (
-        typeof question.id !== "string" ||
-        typeof question.header !== "string" ||
-        typeof question.question !== "string" ||
-        !Array.isArray(question.options)
-      ) {
-        return null;
-      }
-      const options = question.options
-        .map<UserInputQuestion["options"][number] | null>((option) => {
-          if (!option || typeof option !== "object") return null;
-          const record = option as Record<string, unknown>;
-          if (typeof record.label !== "string" || typeof record.description !== "string") {
-            return null;
-          }
-          return {
-            label: record.label,
-            description: record.description,
-            ...(typeof record.value === "string" ? { value: record.value } : {}),
-          };
-        })
-        .filter((option): option is UserInputQuestion["options"][number] => option !== null);
-      if (options.length === 0 && question.allowCustomAnswer === false) {
-        return null;
-      }
-      return {
-        id: question.id,
-        header: question.header,
-        question: question.question,
-        options,
-        multiSelect: question.multiSelect === true,
-        ...(typeof question.allowCustomAnswer === "boolean"
-          ? { allowCustomAnswer: question.allowCustomAnswer }
-          : {}),
-      };
-    })
-    .filter((question): question is UserInputQuestion => question !== null);
-
-  return parsed.length > 0 ? parsed : null;
 }
 
 function normalizeDraftAnswer(value: string | undefined): string | null {
@@ -2167,116 +2061,6 @@ function liveToolActivitySummary(activity: ThreadFeedActivity, presentTense: boo
     return `${verb} ${program ?? "command"}`;
   }
   return activity.detail ?? activity.summary;
-}
-
-/**
- * Sorts activities into lifecycle order. `derivePendingApprovals` and
- * `derivePendingUserInputs` both expect this ordering; sorting once and
- * passing the result to both avoids re-sorting the full activity history
- * per derivation.
- */
-export function sortThreadActivities(
-  activities: ReadonlyArray<OrchestrationThreadActivity>,
-): ReadonlyArray<OrchestrationThreadActivity> {
-  return Arr.sort(activities, activityOrder);
-}
-
-export function derivePendingApprovals(
-  sortedActivities: ReadonlyArray<OrchestrationThreadActivity>,
-): PendingApproval[] {
-  const openByRequestId = new Map<ApprovalRequestId, PendingApproval>();
-
-  for (const activity of sortedActivities) {
-    const payload =
-      activity.payload && typeof activity.payload === "object"
-        ? (activity.payload as Record<string, unknown>)
-        : null;
-    const requestId = parseApprovalRequestId(payload?.requestId);
-    const requestKind = isProviderRequestKind(payload?.requestKind)
-      ? payload.requestKind
-      : requestKindFromRequestType(payload?.requestType);
-    const detail = typeof payload?.detail === "string" ? payload.detail : undefined;
-    const appName = typeof payload?.appName === "string" ? payload.appName : undefined;
-    const options = Array.isArray(payload?.options)
-      ? payload.options.filter(isProviderApprovalOption)
-      : undefined;
-
-    if (
-      activity.kind === "approval.requested" &&
-      requestId &&
-      payload?.requestType !== "tool_user_input" &&
-      payload?.requestType !== "auth_tokens_refresh"
-    ) {
-      openByRequestId.set(requestId, {
-        requestId,
-        // Older OpenCode requests can have no recognized approval kind.
-        requestKind: requestKind ?? "command",
-        createdAt: activity.createdAt,
-        ...(detail ? { detail } : {}),
-        ...(appName ? { appName } : {}),
-        ...(options && options.length > 0 ? { options } : {}),
-      });
-      continue;
-    }
-
-    if (activity.kind === "approval.resolved" && requestId) {
-      openByRequestId.delete(requestId);
-      continue;
-    }
-
-    if (
-      activity.kind === "provider.approval.respond.failed" &&
-      requestId &&
-      isStalePendingRequestFailureDetail(detail)
-    ) {
-      openByRequestId.delete(requestId);
-    }
-  }
-
-  return Arr.sortWith([...openByRequestId.values()], (s) => new Date(s.createdAt), Order.Date);
-}
-
-export function derivePendingUserInputs(
-  sortedActivities: ReadonlyArray<OrchestrationThreadActivity>,
-): PendingUserInput[] {
-  const openByRequestId = new Map<ApprovalRequestId, PendingUserInput>();
-
-  for (const activity of sortedActivities) {
-    const payload =
-      activity.payload && typeof activity.payload === "object"
-        ? (activity.payload as Record<string, unknown>)
-        : null;
-    const requestId = parseApprovalRequestId(payload?.requestId);
-    const detail = typeof payload?.detail === "string" ? payload.detail : undefined;
-
-    if (activity.kind === "user-input.requested" && requestId) {
-      const questions = parseUserInputQuestions(payload);
-      if (!questions) {
-        continue;
-      }
-      openByRequestId.set(requestId, {
-        requestId,
-        createdAt: activity.createdAt,
-        questions,
-      });
-      continue;
-    }
-
-    if (activity.kind === "user-input.resolved" && requestId) {
-      openByRequestId.delete(requestId);
-      continue;
-    }
-
-    if (
-      activity.kind === "provider.user-input.respond.failed" &&
-      requestId &&
-      isStalePendingRequestFailureDetail(detail)
-    ) {
-      openByRequestId.delete(requestId);
-    }
-  }
-
-  return Arr.sortWith(openByRequestId.values(), (s) => new Date(s.createdAt), Order.Date);
 }
 
 export function setPendingUserInputCustomAnswer(
