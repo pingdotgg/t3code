@@ -416,6 +416,149 @@ function makeThread(
 }
 
 describe("buildThreadFeed", () => {
+  it("keeps anchored local feedback before the next persisted event despite a backward clock", () => {
+    const later = {
+      id: MessageId.make("later"),
+      role: "assistant" as const,
+      text: "Done",
+      turnId: null,
+      streaming: false,
+      createdSequence: 11,
+      createdAt: "2026-09-06T01:00:00.000Z",
+      updatedAt: "2026-09-06T01:00:00.000Z",
+    };
+    const submission = {
+      id: MessageId.make("local-feedback"),
+      command: "/feedback issue",
+      status: "sent" as const,
+      feedbackId: "feedback",
+      createdSequence: 11,
+      createdAt: "2026-09-06T12:00:00.000Z",
+    };
+    const thread = makeThread({
+      id: ThreadId.make("clock"),
+      projectId: ProjectId.make("project"),
+      title: "Clock",
+      messages: [later],
+    });
+    expect(
+      buildThreadFeed(thread, {
+        localMessages: [
+          codexFeedbackMessage(submission),
+          codexFeedbackMessage(submission, "assistant"),
+        ],
+      }).map((entry) => entry.id),
+    ).toEqual(["local-feedback", "local-feedback:feedback", "later"]);
+  });
+
+  it("settles a clock-corrected turn without showing a fabricated duration", () => {
+    const turnId = TurnId.make("clock-turn");
+    const before = "2026-09-06T12:00:00.000Z";
+    const after = "2026-09-06T01:00:00.000Z";
+    const thread = makeThread({
+      id: ThreadId.make("clock"),
+      projectId: ProjectId.make("project"),
+      title: "Clock",
+      latestTurn: {
+        turnId,
+        state: "completed",
+        requestedAt: before,
+        startedAt: before,
+        completedAt: after,
+        assistantMessageId: MessageId.make("clock-answer"),
+      },
+      messages: [
+        {
+          id: MessageId.make("clock-user"),
+          role: "user",
+          text: "Check",
+          turnId: null,
+          streaming: false,
+          createdAt: before,
+          updatedAt: before,
+          createdSequence: 10,
+        },
+        {
+          id: MessageId.make("clock-answer"),
+          role: "assistant",
+          text: "Done",
+          turnId,
+          streaming: false,
+          createdAt: after,
+          updatedAt: after,
+          createdSequence: 12,
+        },
+      ],
+      activities: [
+        makeActivity({
+          id: EventId.make("clock-work"),
+          kind: "tool.completed",
+          summary: "Checked",
+          turnId,
+          createdAt: after,
+          createdSequence: 11,
+        }),
+      ],
+    });
+    const rows = deriveThreadFeedPresentation(
+      buildThreadFeed(thread),
+      thread.latestTurn,
+      new Set(),
+    );
+    expect(rows.find((row) => row.type === "turn-fold")).toMatchObject({ label: "Worked" });
+    expect(rows.some((row) => row.type === "thinking")).toBe(false);
+  });
+
+  it("retains post-correction activity in a paged feed and keeps local sends last", () => {
+    const user = {
+      id: MessageId.make("clock-user"),
+      role: "user" as const,
+      text: "Run checks",
+      turnId: null,
+      streaming: false,
+      createdSequence: 10,
+      createdAt: "2026-09-06T12:00:00.000Z",
+      updatedAt: "2026-09-06T12:00:00.000Z",
+    };
+    const assistant = {
+      ...user,
+      id: MessageId.make("clock-assistant"),
+      role: "assistant" as const,
+      createdSequence: 12,
+      createdAt: "2026-09-06T01:00:01.000Z",
+    };
+    const activity = makeActivity({
+      id: EventId.make("clock-work"),
+      kind: "tool.completed",
+      createdSequence: 11,
+      createdAt: "2026-09-06T01:00:00.000Z",
+      summary: "Checked files",
+    });
+    const local = {
+      ...user,
+      id: MessageId.make("clock-local"),
+      createdSequence: undefined,
+      createdAt: "2026-09-06T00:00:00.000Z",
+    };
+    const thread = makeThread({
+      id: ThreadId.make("clock-thread"),
+      projectId: ProjectId.make("clock-project"),
+      title: "Clock correction",
+      messages: [user, assistant],
+      activities: [activity],
+    });
+    const feed = buildThreadFeed(thread, {
+      loadedMessages: [user, assistant],
+      localMessages: [local],
+    });
+    expect(feed.map((entry) => entry.id)).toEqual([
+      "clock-user",
+      "clock-work",
+      "clock-assistant",
+      "clock-local",
+    ]);
+  });
+
   it("reuses unchanged feed and presentation rows during an assistant text update", () => {
     const completedTurnId = TurnId.make("completed-turn");
     const activeTurnId = TurnId.make("active-turn");

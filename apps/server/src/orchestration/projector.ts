@@ -6,7 +6,7 @@ import {
   OrchestrationSession,
   OrchestrationThread,
 } from "@t3tools/contracts";
-import { compareDateTimeStrings } from "@t3tools/shared/dateTime";
+import { compareCreatedOrder } from "@t3tools/shared/chronology";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Predicate from "effect/Predicate";
@@ -143,11 +143,7 @@ function retainThreadMessagesAfterRevert(
           !retainedMessageIds.has(message.id) &&
           (message.turnId === null || retainedTurnIds.has(message.turnId)),
       )
-      .toSorted(
-        (left, right) =>
-          compareDateTimeStrings(left.createdAt, right.createdAt) ||
-          left.id.localeCompare(right.id),
-      )
+      .toSorted(compareCreatedOrder)
       .slice(0, missingUserCount);
     for (const message of fallbackUserMessages) {
       retainedMessageIds.add(message.id);
@@ -169,11 +165,7 @@ function retainThreadMessagesAfterRevert(
           !retainedMessageIds.has(message.id) &&
           (message.turnId === null || retainedTurnIds.has(message.turnId)),
       )
-      .toSorted(
-        (left, right) =>
-          compareDateTimeStrings(left.createdAt, right.createdAt) ||
-          left.id.localeCompare(right.id),
-      )
+      .toSorted(compareCreatedOrder)
       .slice(0, missingAssistantCount);
     for (const message of fallbackAssistantMessages) {
       retainedMessageIds.add(message.id);
@@ -205,6 +197,9 @@ function compareThreadActivities(
   left: OrchestrationThread["activities"][number],
   right: OrchestrationThread["activities"][number],
 ): number {
+  if (left.createdSequence !== undefined || right.createdSequence !== undefined) {
+    return compareCreatedOrder(left, right);
+  }
   if (left.sequence !== undefined && right.sequence !== undefined) {
     if (left.sequence !== right.sequence) {
       return left.sequence - right.sequence;
@@ -555,10 +550,12 @@ export function projectEvent(
           return nextBase;
         }
 
+        const existingMessage = thread.messages.find((entry) => entry.id === payload.messageId);
         const message: OrchestrationMessage = yield* decodeForEvent(
           OrchestrationMessage,
           {
             id: payload.messageId,
+            createdSequence: existingMessage?.createdSequence ?? event.sequence,
             role: payload.role,
             text: payload.text,
             ...(payload.attachments !== undefined ? { attachments: payload.attachments } : {}),
@@ -571,12 +568,12 @@ export function projectEvent(
           "message",
         );
 
-        const existingMessage = thread.messages.find((entry) => entry.id === message.id);
         const messages = existingMessage
           ? thread.messages.map((entry) =>
               entry.id === message.id
                 ? {
                     ...entry,
+                    createdSequence: message.createdSequence,
                     text: message.streaming
                       ? `${entry.text}${message.text}`
                       : message.text.length > 0
@@ -634,6 +631,24 @@ export function projectEvent(
               session.status === "running" && session.activeTurnId !== null
                 ? {
                     turnId: session.activeTurnId,
+                    createdSequence:
+                      thread.session?.activeTurnId === session.activeTurnId &&
+                      thread.latestTurn?.turnId === session.activeTurnId
+                        ? thread.latestTurn.createdSequence
+                        : (thread.messages.findLast(
+                            (message) =>
+                              message.role === "user" &&
+                              !isImportedAgentSessionMessageId(message.id),
+                          )?.createdSequence ??
+                          (thread.latestTurn?.turnId === session.activeTurnId
+                            ? thread.latestTurn.createdSequence
+                            : undefined) ??
+                          thread.messages.find(
+                            (message) =>
+                              message.role === "assistant" &&
+                              message.turnId === session.activeTurnId,
+                          )?.createdSequence ??
+                          event.sequence),
                     state: "running",
                     requestedAt:
                       thread.latestTurn?.turnId === session.activeTurnId
@@ -679,14 +694,17 @@ export function projectEvent(
           return nextBase;
         }
 
+        const existingPlan = thread.proposedPlans.find(
+          (entry) => entry.id === payload.proposedPlan.id,
+        );
         const proposedPlans = [
           ...thread.proposedPlans.filter((entry) => entry.id !== payload.proposedPlan.id),
-          payload.proposedPlan,
+          {
+            ...payload.proposedPlan,
+            createdSequence: existingPlan?.createdSequence ?? event.sequence,
+          },
         ]
-          .toSorted(
-            (left, right) =>
-              left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id),
-          )
+          .toSorted(compareCreatedOrder)
           .slice(-200);
 
         return {
@@ -756,6 +774,13 @@ export function projectEvent(
               ? thread.latestTurn
               : {
                   turnId: payload.turnId,
+                  createdSequence:
+                    thread.latestTurn?.turnId === payload.turnId
+                      ? thread.latestTurn.createdSequence
+                      : (thread.messages.find(
+                          (message) =>
+                            message.role === "assistant" && message.turnId === payload.turnId,
+                        )?.createdSequence ?? event.sequence),
                   state:
                     thread.latestTurn?.turnId === payload.turnId &&
                     thread.latestTurn.state === "interrupted"
@@ -807,6 +832,14 @@ export function projectEvent(
               ? null
               : {
                   turnId: latestCheckpoint.turnId,
+                  createdSequence:
+                    (thread.latestTurn?.turnId === latestCheckpoint.turnId
+                      ? thread.latestTurn.createdSequence
+                      : undefined) ??
+                    messages.findLast(
+                      (message) =>
+                        message.role === "user" && !isImportedAgentSessionMessageId(message.id),
+                    )?.createdSequence,
                   state: checkpointStatusToLatestTurnState(latestCheckpoint.status),
                   requestedAt: latestCheckpoint.completedAt,
                   startedAt: latestCheckpoint.completedAt,
@@ -844,7 +877,12 @@ export function projectEvent(
           const activities = retainThreadActivities(
             [
               ...thread.activities.filter((entry) => entry.id !== payload.activity.id),
-              payload.activity,
+              {
+                ...payload.activity,
+                createdSequence:
+                  thread.activities.find((entry) => entry.id === payload.activity.id)
+                    ?.createdSequence ?? event.sequence,
+              },
             ].toSorted(compareThreadActivities),
           );
 

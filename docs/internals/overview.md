@@ -41,6 +41,20 @@ Persisted events must remain decodable on replay. Changing a schema affects old 
 startup as well as live RPC traffic. Compatibility work must account for stored history, not just
 what the newest client sends.
 
+Conversation order follows persisted event sequence, not wall time: a host clock correction can
+move timestamps backward during a turn. `createdSequence` is the first event that created a timeline
+item and must survive later streaming updates. It is distinct from an activity's provider-local
+`sequence`, which can restart with a provider session. Keep timestamps for display rather than
+rewriting the event log to make them monotonic.
+
+Turn pagination uses the initiating prompt's creation sequence, since the prompt is persisted before
+the turn-start request and has no turn id yet. Using the later request sequence would put that prompt
+on the preceding page. If an assistant event creates the turn before its running session arrives,
+the session can establish that prompt anchor once; later events preserve it. See the
+[detail cursor](../../apps/server/src/orchestration/threadDetailCursor.ts)
+for legacy cursor handling. Older snapshots without creation keys retain timestamp order as a prefix
+before newly received events; see the [shared comparator](../../packages/shared/src/chronology.ts).
+
 ## Turn completion and checkpoints
 
 A turn ending and its follow-up work settling are separate milestones. The

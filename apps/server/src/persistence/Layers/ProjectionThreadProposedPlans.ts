@@ -2,6 +2,9 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
+import { NonNegativeInt } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
+import * as Struct from "effect/Struct";
 
 import { toPersistenceSqlError } from "../Errors.ts";
 import {
@@ -26,6 +29,7 @@ const makeProjectionThreadProposedPlanRepository = Effect.gen(function* () {
         implemented_at,
         implementation_thread_id,
         created_at,
+        created_sequence,
         updated_at
       )
       VALUES (
@@ -36,6 +40,7 @@ const makeProjectionThreadProposedPlanRepository = Effect.gen(function* () {
         ${row.implementedAt},
         ${row.implementationThreadId},
         ${row.createdAt},
+        ${row.createdSequence ?? null},
         ${row.updatedAt}
       )
       ON CONFLICT (plan_id)
@@ -46,13 +51,16 @@ const makeProjectionThreadProposedPlanRepository = Effect.gen(function* () {
         implemented_at = excluded.implemented_at,
         implementation_thread_id = excluded.implementation_thread_id,
         created_at = excluded.created_at,
+        created_sequence = COALESCE(projection_thread_proposed_plans.created_sequence, excluded.created_sequence),
         updated_at = excluded.updated_at
     `,
   });
 
   const listProjectionThreadProposedPlanRows = SqlSchema.findAll({
     Request: ListProjectionThreadProposedPlansInput,
-    Result: ProjectionThreadProposedPlan,
+    Result: ProjectionThreadProposedPlan.mapFields(
+      Struct.assign({ createdSequence: Schema.NullOr(NonNegativeInt) }),
+    ),
     execute: ({ threadId }) => sql`
       SELECT
         plan_id AS "planId",
@@ -62,10 +70,11 @@ const makeProjectionThreadProposedPlanRepository = Effect.gen(function* () {
         implemented_at AS "implementedAt",
         implementation_thread_id AS "implementationThreadId",
         created_at AS "createdAt",
+        created_sequence AS "createdSequence",
         updated_at AS "updatedAt"
       FROM projection_thread_proposed_plans
       WHERE thread_id = ${threadId}
-      ORDER BY created_at ASC, plan_id ASC
+      ORDER BY COALESCE(created_sequence, 0) ASC, created_at ASC, plan_id ASC
     `,
   });
 
@@ -84,6 +93,12 @@ const makeProjectionThreadProposedPlanRepository = Effect.gen(function* () {
 
   const listByThreadId: ProjectionThreadProposedPlanRepositoryShape["listByThreadId"] = (input) =>
     listProjectionThreadProposedPlanRows(input).pipe(
+      Effect.map((rows) =>
+        rows.map(({ createdSequence, ...row }) => ({
+          ...row,
+          ...(createdSequence !== null ? { createdSequence } : {}),
+        })),
+      ),
       Effect.mapError(
         toPersistenceSqlError("ProjectionThreadProposedPlanRepository.listByThreadId:query"),
       ),

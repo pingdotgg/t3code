@@ -1,5 +1,6 @@
 import {
   classifyTaskAgentKind,
+  CheckpointRef,
   EventId,
   MessageId,
   ThreadId,
@@ -20,6 +21,7 @@ import {
   deriveWorkLogEntries,
   findLatestProposedPlan,
   hasActionableProposedPlan,
+  inferCheckpointTurnCountByTurnId,
   isLatestTurnSettled,
   selectHandoffImageResources,
   selectMessageImageResources,
@@ -39,6 +41,7 @@ function makeActivity(overrides: {
   payload?: Record<string, unknown>;
   turnId?: string;
   sequence?: number;
+  createdSequence?: number;
 }): OrchestrationThreadActivity {
   // Fixtures model post-ingestion rows: ingestion stamps agentKind on every
   // task.* payload. Pass an explicit agentKind to model legacy rows.
@@ -62,6 +65,9 @@ function makeActivity(overrides: {
     payload,
     turnId: overrides.turnId ? TurnId.make(overrides.turnId) : null,
     ...(overrides.sequence !== undefined ? { sequence: overrides.sequence } : {}),
+    ...(overrides.createdSequence !== undefined
+      ? { createdSequence: overrides.createdSequence }
+      : {}),
   };
 }
 
@@ -705,6 +711,29 @@ describe("deriveActivePlanState", () => {
 });
 
 describe("findLatestProposedPlan", () => {
+  it("selects the latest persisted plan after a backward clock correction", () => {
+    const first = {
+      id: "first-plan",
+      turnId: TurnId.make("turn-1"),
+      planMarkdown: "# First",
+      implementedAt: null,
+      implementationThreadId: null,
+      createdSequence: 10,
+      createdAt: "2026-09-06T12:00:00.000Z",
+      updatedAt: "2026-09-06T12:00:00.000Z",
+    };
+    const latest = {
+      ...first,
+      id: "latest-plan",
+      planMarkdown: "# Latest",
+      createdSequence: 20,
+      createdAt: "2026-09-06T01:00:00.000Z",
+      updatedAt: "2026-09-06T01:00:00.000Z",
+    };
+    expect(findLatestProposedPlan([latest, first], null)?.id).toBe("latest-plan");
+    expect(findLatestProposedPlan([latest, first], first.turnId)?.id).toBe("latest-plan");
+  });
+
   it("prefers the latest proposed plan for the active turn", () => {
     expect(
       findLatestProposedPlan(
@@ -2200,6 +2229,131 @@ describe("image asset requests", () => {
 });
 
 describe("deriveTimelineEntries", () => {
+  it("uses persisted checkpoint counts when completed timestamps run backward", () => {
+    const common = {
+      checkpointRef: CheckpointRef.make("refs/checkpoints/test"),
+      status: "ready" as const,
+      files: [],
+      assistantMessageId: null,
+    };
+    expect(
+      inferCheckpointTurnCountByTurnId([
+        {
+          ...common,
+          turnId: TurnId.make("first"),
+          checkpointTurnCount: 5,
+          completedAt: "2026-09-06T12:00:00.000Z",
+        },
+        {
+          ...common,
+          turnId: TurnId.make("second"),
+          checkpointTurnCount: 6,
+          completedAt: "2026-09-06T01:00:00.000Z",
+        },
+      ]),
+    ).toEqual({ first: 5, second: 6 });
+  });
+
+  it("keeps local feedback before a later durable message with the same captured sequence", () => {
+    const local = {
+      id: MessageId.make("z-local"),
+      role: "user" as const,
+      text: "/feedback issue",
+      turnId: null,
+      streaming: false,
+      local: true,
+      createdSequence: 11,
+      createdAt: "2026-09-06T12:00:00.000Z",
+      updatedAt: "2026-09-06T12:00:00.000Z",
+    };
+    const later = {
+      ...local,
+      id: MessageId.make("a-durable"),
+      local: false,
+      createdAt: "2026-09-06T01:00:00.000Z",
+    };
+    const first = deriveTimelineEntriesWithState([local], [], []);
+    const next = deriveTimelineEntriesWithState([local, later], [], [], first);
+    expect(next.entries.map((entry) => entry.id)).toEqual(["z-local", "a-durable"]);
+  });
+
+  it("keeps persisted order across a clock correction and incremental streaming updates", () => {
+    const user = {
+      id: MessageId.make("clock-user"),
+      role: "user" as const,
+      text: "Run checks",
+      turnId: null,
+      streaming: false,
+      createdSequence: 10,
+      createdAt: "2026-09-06T12:00:00.000Z",
+      updatedAt: "2026-09-06T12:00:00.000Z",
+    };
+    const assistant = {
+      ...user,
+      id: MessageId.make("clock-assistant"),
+      role: "assistant" as const,
+      streaming: true,
+      createdSequence: 12,
+      createdAt: "2026-09-06T01:00:00.000Z",
+    };
+    const work = [
+      {
+        id: "clock-work",
+        label: "Checking",
+        tone: "tool" as const,
+        createdSequence: 11,
+        createdAt: "2026-09-06T01:00:00.000Z",
+      },
+    ];
+    const first = deriveTimelineEntriesWithState([user], [], work);
+    const next = deriveTimelineEntriesWithState([user, assistant], [], work, first);
+    expect(next.entries.map((entry) => entry.id)).toEqual([
+      "clock-user",
+      "clock-work",
+      "clock-assistant",
+    ]);
+    expect(next.entries).toEqual(deriveTimelineEntries([user, assistant], [], work));
+    const updated = { ...assistant, text: "Checks running" };
+    const streamed = deriveTimelineEntriesWithState([user, updated], [], work, next);
+    expect(streamed.entries[0]).toBe(next.entries[0]);
+    expect(streamed.entries.map((entry) => entry.id)).toEqual(
+      next.entries.map((entry) => entry.id),
+    );
+  });
+
+  it("keeps a completed tool at its first persisted position after a clock correction", () => {
+    const work = deriveWorkLogEntries([
+      makeActivity({
+        id: "clock-tool-start",
+        kind: "tool.updated",
+        createdSequence: 20,
+        sequence: 90,
+        createdAt: "2026-09-06T12:00:00.000Z",
+        payload: {
+          toolCallId: "clock-tool",
+          itemType: "command_execution",
+          command: "vp test",
+          status: "inProgress",
+        },
+      }),
+      makeActivity({
+        id: "clock-tool-end",
+        kind: "tool.completed",
+        createdSequence: 22,
+        sequence: 1,
+        createdAt: "2026-09-06T01:00:00.000Z",
+        payload: {
+          toolCallId: "clock-tool",
+          itemType: "command_execution",
+          command: "vp test",
+          status: "completed",
+        },
+      }),
+    ]);
+    expect(work).toHaveLength(1);
+    expect(work[0]).toMatchObject({ createdSequence: 20, toolLifecycleStatus: "completed" });
+  });
+
   const streamingMessage = {
     id: MessageId.make("streaming-message"),
     role: "assistant" as const,

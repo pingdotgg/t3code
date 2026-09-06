@@ -7,6 +7,26 @@ import {
 } from "./threadDetailCursor.ts";
 
 describe("threadDetailCursor", () => {
+  it("round-trips a sequence cursor while retaining its timestamp tiebreaker", () => {
+    const cursor = {
+      threadId: ThreadId.make("thread-1"),
+      beforeSequence: 273,
+      beforeAnchorAt: "2026-09-04T17:18:56.456Z",
+      beforeTurnId: "turn-9",
+    };
+    expect(decodeThreadDetailPageCursor(encodeThreadDetailPageCursor(cursor))).toEqual(cursor);
+  });
+
+  it.each([-1, 1.5, "273", null, Number.MAX_SAFE_INTEGER + 1])(
+    "rejects an invalid sequence boundary %j",
+    (sequence) => {
+      const encoded = Buffer.from(
+        JSON.stringify({ t: "thread-1", a: "", i: "", v: 2, s: sequence }),
+      ).toString("base64url");
+      expect(decodeThreadDetailPageCursor(encoded)).toBeNull();
+    },
+  );
+
   it("round-trips a cursor", () => {
     const cursor = {
       threadId: ThreadId.make("thread-1"),

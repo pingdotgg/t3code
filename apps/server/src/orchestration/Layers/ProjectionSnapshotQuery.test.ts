@@ -1,5 +1,6 @@
 import {
   type AgentSessionImportSource,
+  ApprovalRequestId,
   CheckpointRef,
   EventId,
   MessageId,
@@ -13,6 +14,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
+import * as Tracer from "effect/Tracer";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
@@ -1295,6 +1297,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           )
       `;
 
+      yield* sql`UPDATE projection_thread_activities SET created_sequence = sequence WHERE thread_id = 'thread-1'`;
       const snapshot = yield* snapshotQuery.getSnapshot();
       const threadDetail = yield* snapshotQuery.getThreadDetailById(ThreadId.make("thread-1"));
 
@@ -1321,6 +1324,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           payload: { source: "sequence-1" },
           turnId: null,
           sequence: 1,
+          createdSequence: 1,
           createdAt: "2026-04-01T00:00:05.000Z",
         },
         {
@@ -1331,6 +1335,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           payload: { source: "sequence-2" },
           turnId: null,
           sequence: 2,
+          createdSequence: 2,
           createdAt: "2026-04-01T00:00:04.000Z",
         },
       ]);
@@ -2254,6 +2259,156 @@ projectionSnapshotLayer("ProjectionSnapshotQuery windowed thread detail", (it) =
     snapshot.thread.messages.map((message) => message.id).toSorted();
   const activityIds = (snapshot: { thread: { activities: ReadonlyArray<{ id: string }> } }) =>
     snapshot.thread.activities.map((activity) => activity.id).toSorted();
+
+  it.effect("pages by creation sequence across a clock rollback and accepts legacy cursors", () =>
+    Effect.gen(function* () {
+      yield* seedFanOutThread();
+      const sql = yield* SqlClient.SqlClient;
+      for (let index = 1; index <= 5; index += 1) {
+        yield* sql`UPDATE projection_turns SET created_sequence = ${index * 10} WHERE turn_id = ${"turn-" + index}`;
+        yield* sql`UPDATE projection_thread_messages SET created_sequence = ${index * 10} WHERE message_id = ${"user-msg-" + index}`;
+        yield* sql`UPDATE projection_thread_messages SET created_sequence = ${index * 10 + 1} WHERE message_id = ${"turn-" + index + "-reply"}`;
+        yield* sql`UPDATE projection_thread_activities SET created_sequence = ${index * 10 + 2} WHERE turn_id = ${"turn-" + index}`;
+      }
+      yield* sql`UPDATE projection_thread_messages SET created_sequence = 45 WHERE message_id = 'user-msg-straggler'`;
+      yield* sql`UPDATE projection_thread_activities SET created_sequence = 46 WHERE activity_id = 'turnless-activity'`;
+      yield* sql`UPDATE projection_turns SET requested_at = '2027-01-01T00:00:00.000Z' WHERE turn_id = 'turn-1'`;
+      yield* sql`UPDATE projection_thread_messages SET created_at = '2027-01-01T00:00:00.000Z' WHERE message_id IN ('user-msg-1', 'turn-1-reply')`;
+      // The pending prompt predates its turn request but shares its anchor sequence.
+      yield* sql`UPDATE projection_turns SET requested_at = '2026-03-01T00:03:01.000Z' WHERE turn_id = 'turn-4'`;
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const recent = yield* snapshotQuery.getThreadDetailSnapshot(threadW, { turnLimit: 2 });
+      assert.equal(recent._tag, "Some");
+      if (recent._tag !== "Some") return;
+      assert.deepEqual(
+        recent.value.thread.messages.map((message) => message.id),
+        ["user-msg-4", "turn-4-reply", "user-msg-straggler", "user-msg-5", "turn-5-reply"],
+      );
+      assert.deepEqual(
+        recent.value.thread.activities.map((activity) => activity.id),
+        ["turn-4-activity", "turnless-activity", "turn-5-activity"],
+      );
+      const cursor = recent.value.page?.beforeCursor;
+      assert.isString(cursor);
+      if (!cursor) return;
+      const legacyCursor = encodeThreadDetailPageCursor({
+        threadId: threadW,
+        beforeAnchorAt: "2026-03-01T00:03:01.000Z",
+        beforeTurnId: "turn-4",
+      });
+      for (const beforeCursor of [cursor, legacyCursor]) {
+        const older = yield* snapshotQuery.getThreadDetailSnapshot(threadW, {
+          turnLimit: 2,
+          beforeCursor,
+        });
+        assert.equal(older._tag, "Some");
+        if (older._tag !== "Some") continue;
+        assert.deepEqual(
+          older.value.thread.messages.map((message) => message.id),
+          ["user-msg-1", "turn-1-reply", "turn-2-reply", "turn-3-reply"],
+        );
+        assert.equal(older.value.page?.hasMore, false);
+      }
+      const complete = yield* snapshotQuery.getThreadDetailSnapshot(threadW);
+      assert.equal(complete._tag, "Some");
+      if (complete._tag === "Some") {
+        assert.equal(complete.value.thread.messages[0]?.id, "user-msg-1");
+        assert.equal(complete.value.thread.messages.at(-1)?.id, "turn-5-reply");
+      }
+    }),
+  );
+
+  it.effect("selects a bounded turn page through the creation-sequence index", () =>
+    Effect.gen(function* () {
+      yield* seedFanOutThread();
+      const sql = yield* SqlClient.SqlClient;
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const spans: Tracer.NativeSpan[] = [];
+      const tracer = Tracer.make({
+        span: (options) => {
+          const span = new Tracer.NativeSpan(options);
+          spans.push(span);
+          return span;
+        },
+      });
+      yield* snapshotQuery
+        .getThreadDetailSnapshot(threadW, { turnLimit: 2 })
+        .pipe(Effect.withTracer(tracer));
+      const statement = spans
+        .map((span) => span.attributes.get("db.query.text"))
+        .find(
+          (value): value is string =>
+            typeof value === "string" && value.includes("WITH candidates AS"),
+        );
+      assert.isDefined(statement);
+      if (statement === undefined) return;
+      const plan = yield* sql.unsafe<{ id: number; parent: number; detail: string }>(
+        `EXPLAIN QUERY PLAN ${statement}`,
+        Array.from({ length: statement.split("?").length - 1 }, () => 1),
+      );
+      const candidates = plan.find((step) =>
+        /(?:CO-ROUTINE|MATERIALIZE) candidates/.test(step.detail),
+      );
+      assert.isDefined(candidates);
+      if (candidates === undefined) return;
+      const candidateSteps = plan.filter((step) => step.parent === candidates.id);
+      assert.isTrue(
+        candidateSteps.some(
+          (step) =>
+            step.detail.includes("USING INDEX idx_projection_turns_created_sequence") &&
+            step.detail.includes("<expr><?"),
+        ),
+      );
+      assert.isFalse(candidateSteps.some((step) => step.detail.includes("USE TEMP B-TREE")));
+      const hydrationStatements = spans
+        .map((span) => span.attributes.get("db.query.text"))
+        .filter(
+          (value): value is string =>
+            typeof value === "string" && value.includes("SELECT turn_id FROM projection_turns"),
+        );
+      assert.isAtLeast(hydrationStatements.length, 2);
+      for (const hydrationStatement of hydrationStatements) {
+        const hydrationPlan = yield* sql.unsafe<{ detail: string }>(
+          `EXPLAIN QUERY PLAN ${hydrationStatement}`,
+          Array.from({ length: hydrationStatement.split("?").length - 1 }, () => 1),
+        );
+        assert.isTrue(
+          hydrationPlan.some(
+            (step) =>
+              step.detail.includes("idx_projection_turns_created_sequence") &&
+              step.detail.includes("<expr>>? AND <expr><?"),
+          ),
+        );
+      }
+    }),
+  );
+
+  it.effect("keeps a user-input resolution newer than its request after a clock rollback", () =>
+    Effect.gen(function* () {
+      yield* seedFanOutThread();
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`
+        INSERT INTO projection_thread_activities (
+          activity_id, thread_id, turn_id, tone, kind, summary, payload_json,
+          sequence, created_sequence, created_at
+        ) VALUES
+          ('request-before-rollback', 'thread-w', 'turn-5', 'info', 'user-input.requested',
+            'question', '{"requestId":"rollback-request"}', 200, 100, '2027-01-01T00:00:00.000Z'),
+          ('resolved-after-rollback', 'thread-w', 'turn-5', 'info', 'user-input.resolved',
+            'answered', '{"requestId":"rollback-request"}', 1, 101, '2026-01-01T00:00:00.000Z')
+      `;
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const activity = yield* snapshotQuery.getUserInputActivity({
+        threadId: threadW,
+        requestId: ApprovalRequestId.make("rollback-request"),
+      });
+      assert.equal(activity._tag, "Some");
+      if (activity._tag === "Some") {
+        assert.equal(activity.value.id, "resolved-after-rollback");
+        assert.equal(activity.value.createdSequence, 101);
+      }
+    }),
+  );
 
   it.effect("returns the full thread with no page metadata when no window is requested", () =>
     Effect.gen(function* () {

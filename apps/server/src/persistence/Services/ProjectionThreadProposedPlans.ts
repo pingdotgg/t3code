@@ -1,5 +1,6 @@
 import {
   IsoDateTime,
+  NonNegativeInt,
   OrchestrationProposedPlanId,
   ThreadId,
   TrimmedNonEmptyString,
@@ -19,6 +20,7 @@ export const ProjectionThreadProposedPlan = Schema.Struct({
   implementedAt: Schema.NullOr(IsoDateTime),
   implementationThreadId: Schema.NullOr(ThreadId),
   createdAt: IsoDateTime,
+  createdSequence: Schema.optional(NonNegativeInt),
   updatedAt: IsoDateTime,
 });
 export type ProjectionThreadProposedPlan = typeof ProjectionThreadProposedPlan.Type;

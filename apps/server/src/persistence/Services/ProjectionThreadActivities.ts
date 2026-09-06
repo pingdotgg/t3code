@@ -30,6 +30,7 @@ export const ProjectionThreadActivity = Schema.Struct({
   payload: Schema.Unknown,
   sequence: Schema.optional(NonNegativeInt),
   createdAt: IsoDateTime,
+  createdSequence: Schema.optional(NonNegativeInt),
 });
 export type ProjectionThreadActivity = typeof ProjectionThreadActivity.Type;
 
@@ -60,8 +61,7 @@ export interface ProjectionThreadActivityRepositoryShape {
   /**
    * List projected thread activity rows for a thread.
    *
-   * Returned in ascending runtime sequence order (or creation order when
-   * sequence is unavailable).
+   * Returned in persisted creation order, with timestamp ordering for legacy rows.
    */
   readonly listByThreadId: (
     input: ListProjectionThreadActivitiesInput,

@@ -10,7 +10,7 @@ import {
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
-import type { OrchestrationThread } from "@t3tools/contracts";
+import type { OrchestrationEvent, OrchestrationThread } from "@t3tools/contracts";
 
 import { applyThreadDetailEvent } from "./threadReducer.ts";
 
@@ -46,6 +46,158 @@ const baseThread: OrchestrationThread = {
 };
 
 describe("applyThreadDetailEvent", () => {
+  it("preserves creation keys through streaming, completion and a clock-safe revert", () => {
+    let thread = baseThread;
+    const turnId = TurnId.make("clock-turn");
+    const before = "2026-09-06T12:00:00.000Z";
+    const after = "2026-09-06T01:00:00.000Z";
+    const apply = (event: OrchestrationEvent) => {
+      const result = applyThreadDetailEvent(thread, event);
+      expect(result.kind).toBe("updated");
+      if (result.kind === "updated") thread = result.thread;
+    };
+    const message = (
+      sequence: number,
+      id: string,
+      role: "user" | "assistant",
+      createdAt: string,
+      streaming = false,
+    ): OrchestrationEvent => ({
+      ...baseEventFields,
+      sequence,
+      occurredAt: createdAt,
+      aggregateKind: "thread",
+      aggregateId: thread.id,
+      type: "thread.message-sent",
+      payload: {
+        threadId: thread.id,
+        messageId: MessageId.make(id),
+        role,
+        text: "text",
+        turnId: role === "assistant" ? turnId : null,
+        streaming,
+        createdAt,
+        updatedAt: createdAt,
+      },
+    });
+    apply(message(10, "first-user", "user", before));
+    apply(message(12, "first-answer", "assistant", after, true));
+    expect(thread.latestTurn?.createdSequence).toBe(12);
+    const sessionEvent = (sequence: number, status: "running" | "ready"): OrchestrationEvent => ({
+      ...baseEventFields,
+      sequence,
+      occurredAt: after,
+      aggregateKind: "thread",
+      aggregateId: thread.id,
+      type: "thread.session-set",
+      payload: {
+        threadId: thread.id,
+        session: {
+          threadId: thread.id,
+          status,
+          providerName: "codex",
+          runtimeMode: "full-access",
+          activeTurnId: status === "running" ? turnId : null,
+          lastError: null,
+          updatedAt: after,
+        },
+      },
+    });
+    apply(sessionEvent(13, "running"));
+    expect(thread.latestTurn?.createdSequence).toBe(10);
+    apply(message(14, "first-answer", "assistant", after, true));
+    apply(message(15, "first-answer", "assistant", after));
+    apply(sessionEvent(16, "ready"));
+    expect(thread.messages.map((entry) => entry.createdSequence)).toEqual([10, 12]);
+    expect(thread.latestTurn).toMatchObject({
+      createdSequence: 10,
+      state: "completed",
+      completedAt: after,
+    });
+    apply({
+      ...baseEventFields,
+      sequence: 17,
+      occurredAt: after,
+      aggregateKind: "thread",
+      aggregateId: thread.id,
+      type: "thread.turn-diff-completed",
+      payload: {
+        threadId: thread.id,
+        turnId,
+        checkpointTurnCount: 1,
+        checkpointRef: CheckpointRef.make("refs/checkpoints/clock"),
+        status: "ready",
+        files: [],
+        assistantMessageId: MessageId.make("first-answer"),
+        completedAt: after,
+      },
+    });
+    apply(message(20, "second-user", "user", after));
+    apply({
+      ...baseEventFields,
+      sequence: 21,
+      occurredAt: after,
+      aggregateKind: "thread",
+      aggregateId: thread.id,
+      type: "thread.reverted",
+      payload: { threadId: thread.id, turnCount: 1 },
+    });
+    expect(thread.messages.map((entry) => entry.id)).toEqual(["first-user", "first-answer"]);
+    expect(thread.latestTurn?.createdSequence).toBe(10);
+  });
+
+  it("does not assign a queued prompt's creation key to a late checkpoint", () => {
+    const turnId = TurnId.make("older-turn");
+    const createdAt = "2026-09-06T01:00:00.000Z";
+    const result = applyThreadDetailEvent(
+      {
+        ...baseThread,
+        messages: [
+          {
+            id: MessageId.make("older-answer"),
+            role: "assistant",
+            text: "Done",
+            turnId,
+            streaming: false,
+            createdAt,
+            updatedAt: createdAt,
+            createdSequence: 2,
+          },
+          {
+            id: MessageId.make("queued-user"),
+            role: "user",
+            text: "Next",
+            turnId: null,
+            streaming: false,
+            createdAt,
+            updatedAt: createdAt,
+            createdSequence: 10,
+          },
+        ],
+      },
+      {
+        ...baseEventFields,
+        sequence: 20,
+        occurredAt: createdAt,
+        aggregateKind: "thread",
+        aggregateId: baseThread.id,
+        type: "thread.turn-diff-completed",
+        payload: {
+          threadId: baseThread.id,
+          turnId,
+          checkpointTurnCount: 1,
+          checkpointRef: CheckpointRef.make("refs/checkpoints/older"),
+          status: "ready",
+          files: [],
+          assistantMessageId: MessageId.make("older-answer"),
+          completedAt: createdAt,
+        },
+      },
+    );
+    expect(result.kind).toBe("updated");
+    if (result.kind === "updated") expect(result.thread.latestTurn?.createdSequence).toBe(2);
+  });
+
   describe("project events", () => {
     it("returns unchanged for project.created", () => {
       const result = applyThreadDetailEvent(baseThread, {
@@ -895,7 +1047,7 @@ describe("applyThreadDetailEvent", () => {
       }
     });
 
-    it("re-sorts when an activity arrives out of order", () => {
+    it("keeps legacy activities before newly sequenced events", () => {
       const makeActivity = (id: string, sequence: number) => ({
         id: EventId.make(id),
         tone: "tool" as const,
@@ -929,8 +1081,8 @@ describe("applyThreadDetailEvent", () => {
       if (result.kind === "updated") {
         expect(result.thread.activities.map((activity) => activity.id)).toEqual([
           "activity-a",
-          "activity-b",
           "activity-c",
+          "activity-b",
         ]);
       }
     });
@@ -972,8 +1124,8 @@ describe("applyThreadDetailEvent", () => {
       if (result.kind === "updated") {
         expect(result.thread.activities.map((activity) => activity.id)).toEqual([
           "activity-a",
-          "activity-b",
           "activity-null",
+          "activity-b",
         ]);
       }
     });

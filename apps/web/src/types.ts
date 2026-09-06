@@ -76,6 +76,7 @@ export function isBrowserPreviewAttachment(attachment: ChatFileAttachment): bool
 }
 
 export interface ChatMessage extends Omit<OrchestrationMessage, "attachments"> {
+  readonly local?: boolean;
   readonly attachments?: ReadonlyArray<ChatAttachment> | undefined;
 }
 
