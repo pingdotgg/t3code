@@ -11,6 +11,8 @@ import {
   getSidebarThreadIdsToPrewarm,
   resolveAdjacentThreadId,
   reduceSidebarProjectScopeMenuState,
+  resolveSidebarProjectScopePress,
+  isSidebarProjectScopeTogglePress,
   getFallbackThreadIdAfterDelete,
   getProjectSortTimestamp,
   hasUnseenCompletion,
@@ -719,30 +721,121 @@ describe("filterSidebarProjectScopeItems", () => {
     { value: "alpha", label: "Alpha workspace" },
     { value: "beta", label: "Beta tools" },
   ] as const;
-  const filter = (activeScopeKey: string | null, query: string) =>
+  const filter = (hasActiveScope: boolean, query: string) =>
     filterSidebarProjectScopeItems({
       items,
-      activeScopeKey,
+      hasActiveScope,
       query,
       matches: (item, candidate) =>
         item.label.toLocaleLowerCase().includes(candidate.toLocaleLowerCase()),
     });
 
   it("omits the reset row when the sidebar is already unscoped", () => {
-    expect(filter(null, "")).toEqual(items.slice(1));
+    expect(filter(false, "")).toEqual(items.slice(1));
   });
 
   it("shows the reset row first while a project scope is active", () => {
-    expect(filter("alpha", "")).toEqual(items);
+    expect(filter(true, "")).toEqual(items);
   });
 
   it("hides the reset row while filtering an active scope", () => {
-    expect(filter("alpha", "all")).toEqual([]);
+    expect(filter(true, "all")).toEqual([]);
   });
 
   it("returns matching projects in source order and supports no-match results", () => {
-    expect(filter(null, "WORK")).toEqual([items[1]]);
-    expect(filter(null, "missing")).toEqual([]);
+    expect(filter(false, "WORK")).toEqual([items[1]]);
+    expect(filter(false, "missing")).toEqual([]);
+  });
+});
+
+describe("isSidebarProjectScopeTogglePress", () => {
+  it("reads the modifier off a pointer press", () => {
+    expect(isSidebarProjectScopeTogglePress({ ctrlKey: true, metaKey: false })).toBe(true);
+    expect(isSidebarProjectScopeTogglePress({ ctrlKey: false, metaKey: true })).toBe(true);
+    expect(isSidebarProjectScopeTogglePress({ ctrlKey: false, metaKey: false })).toBe(false);
+  });
+
+  // Enter commits through the search input's keydown, which carries the same
+  // modifier flags as a click, so both press paths resolve identically.
+  it("reads the modifier off an Enter keydown", () => {
+    expect(isSidebarProjectScopeTogglePress({ key: "Enter", ctrlKey: true })).toBe(true);
+    expect(isSidebarProjectScopeTogglePress({ key: "Enter", metaKey: true })).toBe(true);
+    expect(isSidebarProjectScopeTogglePress({ key: "Enter" })).toBe(false);
+  });
+
+  it("treats events without modifier state as a plain press", () => {
+    expect(isSidebarProjectScopeTogglePress(null)).toBe(false);
+    expect(isSidebarProjectScopeTogglePress(undefined)).toBe(false);
+    expect(isSidebarProjectScopeTogglePress({})).toBe(false);
+  });
+});
+
+describe("resolveSidebarProjectScopePress", () => {
+  it("scopes to the pressed project on a plain press", () => {
+    expect(
+      resolveSidebarProjectScopePress({
+        previousKeys: [],
+        nextKeys: ["alpha"],
+        toggleMode: false,
+      }),
+    ).toEqual({ type: "solo", key: "alpha" });
+  });
+
+  it("scopes to the pressed project when a plain press replaces a multi-scope", () => {
+    expect(
+      resolveSidebarProjectScopePress({
+        previousKeys: ["alpha", "beta"],
+        nextKeys: ["alpha", "beta", "gamma"],
+        toggleMode: false,
+      }),
+    ).toEqual({ type: "solo", key: "gamma" });
+  });
+
+  it("scopes to the pressed project when a plain press lands on a selected one", () => {
+    expect(
+      resolveSidebarProjectScopePress({
+        previousKeys: ["alpha", "beta"],
+        nextKeys: ["beta"],
+        toggleMode: false,
+      }),
+    ).toEqual({ type: "solo", key: "alpha" });
+  });
+
+  it("toggles the pressed project on a modifier press", () => {
+    expect(
+      resolveSidebarProjectScopePress({
+        previousKeys: ["alpha"],
+        nextKeys: ["alpha", "beta"],
+        toggleMode: true,
+      }),
+    ).toEqual({ type: "toggle", key: "beta" });
+    expect(
+      resolveSidebarProjectScopePress({
+        previousKeys: ["alpha", "beta"],
+        nextKeys: ["alpha"],
+        toggleMode: true,
+      }),
+    ).toEqual({ type: "toggle", key: "beta" });
+  });
+
+  it("resets the scope when All projects is pressed", () => {
+    expect(
+      resolveSidebarProjectScopePress({
+        previousKeys: ["alpha"],
+        nextKeys: ["alpha", "all"],
+        toggleMode: false,
+      }),
+    ).toEqual({ type: "reset" });
+  });
+
+  it("returns null when the toggle changed nothing", () => {
+    expect(
+      resolveSidebarProjectScopePress({
+        previousKeys: ["alpha"],
+        nextKeys: ["alpha"],
+        toggleMode: true,
+      }),
+    ).toBeNull();
   });
 });
 
