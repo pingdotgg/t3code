@@ -2697,7 +2697,7 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
     }),
   );
 
-  it.effect("maintains shell summaries without reading message bodies", () =>
+  it.effect("maintains shell summaries without decoding message or plan bodies", () =>
     Effect.gen(function* () {
       const projectionPipeline = yield* OrchestrationProjectionPipeline;
       const eventStore = yield* OrchestrationEventStore;
@@ -2923,12 +2923,13 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
           ('summary-other-thread', 'thread-shell-summary-other', NULL, 'pending', NULL,
            '2026-03-01T08:00:06.000Z', NULL)
       `;
+      // Empty markdown must not be decoded when the shell only needs plan status.
       yield* sql`
         INSERT INTO projection_thread_proposed_plans (
           plan_id, thread_id, turn_id, plan_markdown, implemented_at,
           implementation_thread_id, created_at, updated_at
         ) VALUES (
-          'summary-plan', 'thread-shell-summary', 'turn-shell-summary-1', '# Plan', NULL,
+          'summary-plan', 'thread-shell-summary', 'turn-shell-summary-1', '', NULL,
           NULL, '2026-03-01T08:00:06.000Z', '2026-03-01T08:00:06.000Z'
         )
       `;
