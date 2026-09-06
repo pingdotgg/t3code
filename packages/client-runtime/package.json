@@ -203,6 +203,10 @@
       "types": "./src/state/threads.ts",
       "default": "./src/state/threads.ts"
     },
+    "./state/threadCommands": {
+      "types": "./src/state/threadCommands.ts",
+      "default": "./src/state/threadCommands.ts"
+    },
     "./state/subagentRuntime": {
       "types": "./src/state/subagentRuntime.ts",
       "default": "./src/state/subagentRuntime.ts"

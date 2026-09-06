@@ -2,7 +2,6 @@ import * as Schema from "effect/Schema";
 
 import { NonNegativeInt, PositiveInt, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
-
 export const CODEX_GOAL_OBJECTIVE_MAX_CHARS = 4_000;
 const CodexGoalObjective = TrimmedNonEmptyString.check(
   Schema.makeFilter(

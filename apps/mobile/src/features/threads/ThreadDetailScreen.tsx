@@ -10,8 +10,10 @@ import {
   formatCodexGoalUsage,
   parseCodexGoalCommand,
   toCodexGoalSetInput,
-  type CodexFeedbackSubmission,
-  type EnvironmentThreadStatus,
+} from "@t3tools/client-runtime/state/threadCommands";
+import type {
+  CodexFeedbackSubmission,
+  EnvironmentThreadStatus,
 } from "@t3tools/client-runtime/state/threads";
 import {
   isAtomCommandInterrupted,
@@ -532,7 +534,6 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
     composerOverlayRef,
     Math.max(0, estimatedOverlayHeight - nativeInsetOvercount),
     -nativeInsetOvercount,
-    Platform.OS === "ios" ? COMPOSER_TRANSITION_DURATION_MS : 0,
   );
   // The expanded questionnaire is an absolute overlay on iOS, so it never
   // changes the measured overlay height (that constancy is what keeps the
