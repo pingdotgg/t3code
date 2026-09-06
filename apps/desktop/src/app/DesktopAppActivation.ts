@@ -213,6 +213,7 @@ export class DesktopAppActivation extends Context.Service<
 
 const { logWarning } = makeComponentLogger("desktop-app-activation");
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const desktopEnvironment = yield* DesktopEnvironment.DesktopEnvironment;
   const desktopWindow = yield* DesktopWindow.DesktopWindow;
