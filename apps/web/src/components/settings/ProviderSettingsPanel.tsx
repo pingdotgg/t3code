@@ -185,20 +185,30 @@ function CodexUsageLimits({
       ) : notice ? (
         <SettingsRow title="Usage limits unavailable" description={notice} />
       ) : (
-        <div className="space-y-3 p-3 sm:p-4">
-          <SettingsRow
-            title="Current subscription"
-            description={provider.auth.label ?? provider.auth.type ?? "Not reported"}
-          />
-          <LimitWindows driver={provider.driver} windows={usageLimits.windows} now={now} />
-          {usageLimits.resetCredits ? (
-            <ResetCredits
-              environmentId={environmentId}
-              instanceId={provider.instanceId}
-              credits={usageLimits.resetCredits}
-              now={now}
-            />
-          ) : null}
+        <div className="overflow-hidden p-3 sm:p-4">
+          <div className="relative overflow-hidden">
+            <div className="flex items-start justify-between gap-4">
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-foreground">Current subscription</p>
+                <p className="mt-1 truncate text-xs text-muted-foreground">
+                  {provider.auth.label ?? provider.auth.type ?? "Not reported"}
+                </p>
+              </div>
+            </div>
+            <div className="mt-4 border-t border-border/60 pt-3">
+              <LimitWindows driver={provider.driver} windows={usageLimits.windows} now={now} />
+            </div>
+            {usageLimits.resetCredits ? (
+              <div className="mt-3 border-t border-border/60 pt-3">
+                <ResetCredits
+                  environmentId={environmentId}
+                  instanceId={provider.instanceId}
+                  credits={usageLimits.resetCredits}
+                  now={now}
+                />
+              </div>
+            ) : null}
+          </div>
         </div>
       )}
     </SettingsSection>

@@ -176,14 +176,14 @@ export function LimitWindows({
         const resetsIn = formatResetsIn(window, now);
         return (
           <Fragment key={window.id}>
-            <span className="flex min-w-0 items-center gap-2 text-xs">
+            <span className="flex min-w-0 items-center gap-1 text-xs">
               <span className="truncate text-muted-foreground">{window.label}</span>
               <span className="ms-auto shrink-0 font-medium text-foreground tabular-nums">
                 {remainingPercent(window)}% left
               </span>
             </span>
             <WindowBar color={color} window={window} now={now} />
-            <span className="flex items-center gap-2 text-xs whitespace-nowrap text-muted-foreground tabular-nums">
+            <span className="flex items-center gap-2 text-xs whitespace-nowrap text-muted-foreground tabular-nums w-full">
               {pace ? <PaceIcon pace={pace} /> : null}
               <span className="ms-auto shrink-0">{resetsIn ?? ""}</span>
             </span>
