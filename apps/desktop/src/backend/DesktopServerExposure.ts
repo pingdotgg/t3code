@@ -27,7 +27,7 @@ import { resolveTailscaleAdvertisedEndpoints } from "./tailscaleEndpointProvider
 
 const TAILSCALE_STATUS_CACHE_TTL = Duration.seconds(60);
 
-export const DESKTOP_LOOPBACK_HOST = "127.0.0.1";
+const DESKTOP_LOOPBACK_HOST = "127.0.0.1";
 const DESKTOP_LAN_BIND_HOST = "0.0.0.0";
 
 interface ResolvedDesktopServerExposure {
@@ -411,6 +411,7 @@ const requiresBackendRelaunch = (previous: RuntimeState, next: RuntimeState): bo
   previous.bindHost !== next.bindHost ||
   previous.localHttpUrl !== next.localHttpUrl;
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const config = yield* DesktopConfig.DesktopConfig;
   const networkInterfaces = yield* DesktopNetworkInterfaces.DesktopNetworkInterfaces;
