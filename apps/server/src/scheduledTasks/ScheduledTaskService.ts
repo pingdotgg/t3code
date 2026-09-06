@@ -96,10 +96,6 @@ function taskError(message: string, input?: { taskId?: ScheduledTaskId; cause?: 
   });
 }
 
-function automationPrompt(task: ScheduledTask): string {
-  return `[Triggered by schedule task: ${task.title}]\n\n${task.prompt}`;
-}
-
 function iso(value: DateTime.DateTime): string {
   return DateTime.formatIso(DateTime.toUtc(value));
 }
@@ -471,7 +467,7 @@ export const layer = Layer.effect(
         const messageId = MessageId.make(`scheduled-task-message:${fireKey}`);
         // Dispatch from the fresh row so prompt/model/binding edits made
         // after the poll read are honoured.
-        const prompt = automationPrompt(active);
+        const prompt = active.prompt;
 
         // Effect.exit (not Effect.result) so defects and interruptions in the
         // dispatch are also captured and recorded as a failed run instead of
@@ -489,6 +485,7 @@ export const layer = Layer.effect(
                   workspaceStrategy: active.workspaceStrategy,
                   initialMessage: {
                     messageId,
+                    scheduledTaskId: active.id,
                     text: prompt,
                     attachments: [],
                   },
@@ -502,6 +499,7 @@ export const layer = Layer.effect(
                   commandId,
                   threadId: ThreadId.make(active.threadId),
                   messageId,
+                  scheduledTaskId: active.id,
                   text: prompt,
                   attachments: [],
                   modelSelection: active.modelSelection,

@@ -1,3 +1,4 @@
+import { CommandId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -181,6 +182,35 @@ export const executorLayer: Layer.Layer<
                 messageId: effect.request.messageId,
               })
               .pipe(
+                Effect.catch((error) =>
+                  Effect.gen(function* () {
+                    if (!error.turnCompleted || effect.request.type !== "provider-turn.steer") {
+                      return yield* error;
+                    }
+                    const projection = yield* threads.getThreadProjection(effect.threadId);
+                    const messageId = effect.request.messageId;
+                    const message = projection.messages.find((item) => item.id === messageId);
+                    const run = projection.runs.find((item) => item.id === message?.runId);
+                    if (message === undefined || run === undefined) return yield* error;
+                    // Reuse the message identity and a stable command receipt so an outbox
+                    // retry cannot append a duplicate message or start a second follow-up.
+                    yield* threads.dispatch({
+                      type: "message.dispatch",
+                      commandId: CommandId.make(`command:steer-follow-up:${effect.id}`),
+                      threadId: effect.threadId,
+                      messageId: message.id,
+                      text: message.text,
+                      attachments: message.attachments,
+                      modelSelection: run.modelSelection,
+                      dispatchMode: { type: "start_immediately" },
+                      createdBy: message.createdBy,
+                      creationSource: message.creationSource,
+                      ...(message.scheduledTaskId === undefined
+                        ? {}
+                        : { scheduledTaskId: message.scheduledTaskId }),
+                    });
+                  }),
+                ),
                 Effect.mapError(
                   (cause) =>
                     new OrchestrationEffectExecutionError({
