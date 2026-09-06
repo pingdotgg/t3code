@@ -615,6 +615,43 @@ describe("buildHomeThreadGroups", () => {
     expect(group?.threads.map((thread) => thread.id)).toEqual(["recent-1", "recent-2", "old"]);
   });
 
+  it("keeps an old thread in the default view while a message waits in its outbox", () => {
+    const environmentId = EnvironmentId.make("environment-1");
+    const project = makeProject({
+      environmentId,
+      id: ProjectId.make("project-1"),
+      title: "T3 Code",
+    });
+    const threads = [
+      makeThread({
+        environmentId,
+        id: ThreadId.make("recent"),
+        projectId: project.id,
+        title: "Today",
+        updatedAt: "2026-06-28T00:00:00.000Z",
+      }),
+      makeThread({
+        environmentId,
+        id: ThreadId.make("old-queued"),
+        projectId: project.id,
+        title: "Two weeks ago, follow-up queued offline",
+        updatedAt: "2026-06-14T00:00:00.000Z",
+      }),
+      makeThread({
+        environmentId,
+        id: ThreadId.make("old"),
+        projectId: project.id,
+        title: "Two weeks ago",
+        updatedAt: "2026-06-13T00:00:00.000Z",
+      }),
+    ];
+
+    const group = buildGroups([project], threads, {
+      queuedThreadKeys: new Set([`${environmentId}:old-queued`]),
+    })[0];
+    expect(group?.recentThreads.map((thread) => thread.id)).toEqual(["recent", "old-queued"]);
+  });
+
   it("falls back to the most recent 3 threads when none are within 5 days", () => {
     const environmentId = EnvironmentId.make("environment-1");
     const project = makeProject({

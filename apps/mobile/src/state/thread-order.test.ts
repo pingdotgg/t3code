@@ -24,6 +24,10 @@ vi.mock("./server", async () => {
   const { Atom } = await import("effect/unstable/reactivity");
   return { environmentServerConfigsAtom: Atom.make(new Map()).pipe(Atom.keepAlive) };
 });
+vi.mock("./use-thread-outbox", async () => {
+  const { Atom } = await import("effect/unstable/reactivity");
+  return { queuedThreadKeysAtom: Atom.make(new Set<string>()).pipe(Atom.keepAlive) };
+});
 
 // The mocked shell source is writable so tests can deliver canonical upserts.
 const shellsAtom = environmentThreadShells.threadShellsAtom as Atom.Writable<
