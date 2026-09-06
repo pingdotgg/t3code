@@ -102,12 +102,20 @@ const NIGHTLY_STARS: ReadonlyArray<{
   { cx: 268, cy: 34, r: 0.4, opacity: 0.45 },
 ];
 
-const NIGHTLY_EXTENDED_STARS = Array.from({ length: 32 }, (_, index) => ({
-  cx: (index * 73 + 31) % 288,
-  cy: 55 + index * 9,
-  r: 0.35 + (index % 3) * 0.12,
-  opacity: 0.35 + (index % 4) * 0.1,
-}));
+const NIGHTLY_EXTENDED_STARS = [
+  ...Array.from({ length: 32 }, (_, index) => ({
+    cx: (index * 73 + 31) % 288,
+    cy: 55 + index * 9,
+    r: 0.35 + (index % 3) * 0.12,
+    opacity: 0.35 + (index % 4) * 0.1,
+  })),
+  ...Array.from({ length: 64 }, (_, index) => ({
+    cx: (index * 109 + 47) % 288,
+    cy: 104 + ((index * 67 + 19) % 264),
+    r: 0.4 + (index % 4) * 0.12,
+    opacity: 0.5 + (index % 5) * 0.1,
+  })),
+];
 
 const NIGHTLY_SPARKLES: ReadonlyArray<{ x: number; y: number }> = [
   { x: 70, y: 28 },
