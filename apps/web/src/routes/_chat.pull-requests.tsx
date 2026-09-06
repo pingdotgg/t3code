@@ -125,6 +125,7 @@ import { useLiveRefresh } from "../hooks/useLiveRefresh";
 import { useOpenPanelPullRequestUrl } from "../hooks/useOpenPanelPullRequestUrl";
 import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
 import { toastManager } from "../components/ui/toast";
+import { useEscapeToGoBack } from "../hooks/useNavigateBack";
 import { usePanelAnimationSettings, usePanelPresence } from "../panelAnimations";
 import {
   PULL_REQUESTS_PANEL_REF,
@@ -292,6 +293,7 @@ export const Route = createFileRoute("/_chat/pull-requests")({
 });
 
 function PullRequestsRouteView() {
+  useEscapeToGoBack();
   const search = Route.useSearch();
   const sort = search.sort ?? "ready";
   const statsPolicy: PullRequestStatsPolicy =
