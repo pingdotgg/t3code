@@ -1,6 +1,7 @@
 import {
   type ClaudeSettings,
   type ModelCapabilities,
+  type ServerProviderModel,
   type ServerProviderSlashCommand,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -33,6 +34,7 @@ import {
   type ServerProviderDraft,
 } from "../providerSnapshot.ts";
 import { resolveClaudeSdkExecutablePath } from "../Drivers/ClaudeExecutable.ts";
+import { readClaudeRestrictedModels } from "../Drivers/ClaudeEntitlements.ts";
 import { makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
 import { discoverClaudeSkills } from "../Drivers/ClaudeSkills.ts";
 import { makeUnavailableUsageLimits } from "../providerUsageLimits.ts";
@@ -162,6 +164,47 @@ function apiProviderAuthMetadata(
   return apiProvider === "bedrock" ? { type: "bedrock", label: "Amazon Bedrock" } : undefined;
 }
 
+/**
+ * Split the catalog into the models this account can run and the ones its
+ * organization has disallowed. Claude Code drops the latter from its own
+ * `/model` menu and silently substitutes the org default when one is
+ * requested anyway, so listing them would let a pick land on a different
+ * model than the label promises. Mirrors the CLI in consulting the
+ * entitlement cache only on the first-party and gateway backends: on Bedrock,
+ * Vertex, or Foundry the models come from the cloud account, so a cache left
+ * behind by an earlier claude.ai login must not hide anything. A backend the
+ * init handshake did not name counts as unknown, and unknown withholds
+ * nothing.
+ */
+function partitionClaudeModelsByEntitlement(
+  models: ReadonlyArray<ServerProviderModel>,
+  restrictedModels: ReadonlySet<string>,
+  apiProvider: string | undefined,
+): {
+  readonly entitled: ReadonlyArray<ServerProviderModel>;
+  readonly restricted: ReadonlyArray<ServerProviderModel>;
+} {
+  if (restrictedModels.size === 0 || (apiProvider !== "firstParty" && apiProvider !== "gateway")) {
+    return { entitled: models, restricted: [] };
+  }
+  return {
+    entitled: models.filter((model) => !restrictedModels.has(model.slug)),
+    restricted: models.filter((model) => restrictedModels.has(model.slug)),
+  };
+}
+
+/**
+ * Shown in the provider's status detail so a model missing from the picker
+ * has a visible explanation, the way the version upgrade message explains a
+ * model the installed CLI is too old for.
+ */
+function formatClaudeRestrictedModelsMessage(
+  restricted: ReadonlyArray<ServerProviderModel>,
+): string | undefined {
+  if (restricted.length === 0) return undefined;
+  return `Restricted by your organization: ${restricted.map((model) => model.name).join(", ")}.`;
+}
+
 // ── SDK capability probe ────────────────────────────────────────────
 
 // Amazon Bedrock initializes far slower than first-party auth: the SDK boots the
@@ -234,6 +277,13 @@ type ClaudeCapabilitiesProbe = {
    */
   readonly apiProvider: string | undefined;
   readonly slashCommands: ReadonlyArray<ServerProviderSlashCommand>;
+  /**
+   * API model ids the account's organization has disallowed, read from the
+   * entitlements Claude Code caches beside its config. Read alongside the
+   * account probe so it shares the probe's cache and so provider snapshots
+   * stay a pure function of the probe result.
+   */
+  readonly restrictedModels: ReadonlySet<string>;
   /**
    * Subscription windows from the SDK's `get_usage` control request, or
    * `undefined` when the request itself failed. Absent windows on an
@@ -339,6 +389,7 @@ const probeClaudeCapabilities = (
       claudeSettings.binaryPath,
       claudeEnvironment,
     );
+    const restrictedModels = yield* readClaudeRestrictedModels(claudeEnvironment);
     return yield* Effect.tryPromise(async () => {
       const q = claudeQuery({
         // Never yield — we only need initialization data, not a conversation.
@@ -355,11 +406,11 @@ const probeClaudeCapabilities = (
         }),
       });
       const init = await q.initializationResult();
-      return { q, init };
+      return { q, init, restrictedModels };
     });
   }).pipe(
     Effect.timeout(CAPABILITIES_PROBE_TIMEOUT_MS),
-    Effect.flatMap(({ q, init }) =>
+    Effect.flatMap(({ q, init, restrictedModels }) =>
       Effect.gen(function* () {
         // Usage has its own deadline so a slow optional request cannot discard initialization.
         const usageResult = yield* Effect.tryPromise(() =>
@@ -385,6 +436,7 @@ const probeClaudeCapabilities = (
           tokenSource: account?.tokenSource,
           apiProvider: account?.apiProvider,
           slashCommands: parseClaudeInitializationCommands(init.commands),
+          restrictedModels,
           ...(usage ? { usage } : {}),
         } satisfies ClaudeCapabilitiesProbe;
       }),
@@ -522,11 +574,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     });
   }
 
-  const models = providerModelsFromSettings(
-    resolveClaudeModelsForVersion(modelCatalog, parsedVersion),
-    claudeSettings.customModels,
-    DEFAULT_CLAUDE_MODEL_CAPABILITIES,
-  );
+  const catalogModels = resolveClaudeModelsForVersion(modelCatalog, parsedVersion);
   const versionUpgradeMessage = formatClaudeVersionUpgradeMessage(modelCatalog, parsedVersion);
 
   const capabilities = resolveCapabilities
@@ -537,11 +585,17 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   const dedupedSlashCommands = dedupeSlashCommands(slashCommands);
 
   if (!capabilities) {
+    // Without a probe there is no entitlement list, so nothing is withheld:
+    // an unknown org is treated as unrestrictive.
     return buildServerProvider({
       presentation: CLAUDE_PRESENTATION,
       enabled: claudeSettings.enabled,
       checkedAt,
-      models,
+      models: providerModelsFromSettings(
+        catalogModels,
+        claudeSettings.customModels,
+        DEFAULT_CLAUDE_MODEL_CAPABILITIES,
+      ),
       slashCommands: dedupedSlashCommands,
       skills,
       probe: {
@@ -554,6 +608,24 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     });
   }
 
+  // Custom models are the user's own declarations and stay listed; the CLI
+  // reports a substitution on those if the org disallows them.
+  const entitlement = partitionClaudeModelsByEntitlement(
+    catalogModels,
+    capabilities.restrictedModels,
+    capabilities.apiProvider,
+  );
+  const models = providerModelsFromSettings(
+    entitlement.entitled,
+    claudeSettings.customModels,
+    DEFAULT_CLAUDE_MODEL_CAPABILITIES,
+  );
+  const message = [
+    versionUpgradeMessage,
+    formatClaudeRestrictedModelsMessage(entitlement.restricted),
+  ]
+    .filter((part) => part !== undefined)
+    .join(" ");
   const authMetadata =
     claudeAuthMetadata({
       subscriptionType: capabilities.subscriptionType,
@@ -583,7 +655,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
         ...(capabilities.email ? { email: capabilities.email } : {}),
         ...(authMetadata ? authMetadata : {}),
       },
-      ...(versionUpgradeMessage ? { message: versionUpgradeMessage } : {}),
+      ...(message ? { message } : {}),
       usageLimits,
     },
   });

@@ -79,6 +79,19 @@ it.layer(NodeServices.layer)("Claude capability probe SDK boundary", (it) => {
           }).catch(() => undefined),
         ),
       );
+      // Point the probe at an isolated config dir so entitlements come from
+      // this fixture rather than the developer's real ~/.claude.json.
+      const claudeConfigDir = path.join(tempDir, "claude-config");
+      yield* fs.makeDirectory(claudeConfigDir, { recursive: true });
+      yield* fs.writeFileString(
+        path.join(claudeConfigDir, ".claude.json"),
+        `{
+          "modelAccessCache": [
+            { "apiName": "claude-fable-5", "entitled": false },
+            { "apiName": "claude-opus-5", "entitled": true }
+          ]
+        }`,
+      );
 
       yield* fs.writeFileString(
         executablePath,
@@ -141,6 +154,7 @@ it.layer(NodeServices.layer)("Claude capability probe SDK boundary", (it) => {
           ...process.env,
           T3_PROBE_INVOCATION_PATH: invocationPath,
           ENABLE_CLAUDEAI_MCP_SERVERS: "true",
+          CLAUDE_CONFIG_DIR: claudeConfigDir,
         },
         workspaceCwd,
       );
@@ -157,6 +171,7 @@ it.layer(NodeServices.layer)("Claude capability probe SDK boundary", (it) => {
             input: { hint: "[path]" },
           },
         ],
+        restrictedModels: new Set(["claude-fable-5"]),
         usage: {
           rate_limits_available: true,
           rate_limits: { five_hour: { utilization: 12, resets_at: "2026-07-18T14:39:00Z" } },
