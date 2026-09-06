@@ -1,4 +1,3 @@
-import { AuthFilesystemReadScope } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import {
   type AssetUrlState,
@@ -7,15 +6,13 @@ import {
   resolveAssetUrl,
 } from "@t3tools/client-runtime/state/assets";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import { resolveFilesystemReadAccess } from "@t3tools/client-runtime/state/filesystem";
 import type { AssetResource, EnvironmentId } from "@t3tools/contracts";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { useCallback, useMemo } from "react";
 
 import { assetEnvironment } from "~/state/assets";
-import { environmentSession, usePreparedConnection, useEnvironmentScope } from "~/state/session";
-import { useEnvironmentPresentation } from "~/state/presentation";
-import { useEnvironmentQuery } from "~/state/query";
+import { useFilesystemReadAccess } from "~/state/filesystem";
+import { usePreparedConnection } from "~/state/session";
 import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
 
 export { resolveAssetUrl, type AssetUrlState } from "@t3tools/client-runtime/state/assets";
@@ -24,16 +21,7 @@ export function useAssetUrlState(
   environmentId: EnvironmentId | null,
   resource: AssetResource | null,
 ): AssetUrlState {
-  const fileAccessSession = useEnvironmentQuery(
-    environmentId === null ? null : environmentSession.sessionStateAtom(environmentId),
-  );
-  const fileEnvironment = useEnvironmentPresentation(environmentId);
-  const fileAccess = resolveFilesystemReadAccess({
-    isCatalogReady: fileEnvironment.isReady,
-    connection: fileEnvironment.presentation?.connection ?? null,
-    session: fileAccessSession.data,
-    sessionError: fileAccessSession.error,
-  });
+  const fileAccess = useFilesystemReadAccess(environmentId);
   const canReadResource =
     fileAccess.canReadFiles ||
     (resource?._tag !== "workspace-file" && resource?._tag !== "media-file");
@@ -70,7 +58,7 @@ export function useAssetUrls(
   resources: ReadonlyArray<AssetResource>,
 ): ReadonlyArray<string | null> {
   const preparedConnection = usePreparedConnection(environmentId);
-  const canReadFiles = useEnvironmentScope(environmentId, AuthFilesystemReadScope);
+  const { canReadFiles } = useFilesystemReadAccess(environmentId);
   const allowedResources = useMemo(
     () =>
       canReadFiles

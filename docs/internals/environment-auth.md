@@ -57,7 +57,9 @@ file's identity when serving it, so atomic replacement requires a new URL while
 editing the same file in place does not. An HTML file authorized this way cannot
 load sibling assets; directory-scoped workspace previews are a separate grant.
 Clients should share the authored file reference so they do not disclose the
-temporary URL's credential.
+temporary URL's credential. `filesystem:read` is checked when the URL is minted,
+not when it is served: a URL issued before the grant was revoked keeps working
+until it expires, and it is not bound to the session that minted it.
 
 Host videos can change in place. Their [HTTP
 responses](../../apps/server/src/http.ts) omit cache validators because file

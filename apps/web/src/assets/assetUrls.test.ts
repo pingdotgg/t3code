@@ -25,18 +25,20 @@ vi.mock("@effect/atom-react", () => ({
       : AsyncResult.initial(false),
 }));
 vi.mock("~/state/session", () => ({
-  environmentSession: { sessionStateAtom: () => ({}) },
   usePreparedConnection: () => ({ _tag: "Some", value: { httpBaseUrl: "https://host.test" } }),
 }));
-vi.mock("~/state/presentation", () => ({
-  useEnvironmentPresentation: () => ({
-    isReady: true,
-    presentation: { connection: { phase: state.phase, error: null } },
-  }),
-}));
-vi.mock("~/state/query", () => ({
-  useEnvironmentQuery: () => ({ data: state.session, error: null }),
-}));
+vi.mock("~/state/filesystem", async () => {
+  const { resolveFilesystemReadAccess } = await import("@t3tools/client-runtime/state/filesystem");
+  return {
+    useFilesystemReadAccess: () =>
+      resolveFilesystemReadAccess({
+        isCatalogReady: true,
+        connection: { phase: state.phase, error: null },
+        session: state.session,
+        sessionError: null,
+      }),
+  };
+});
 vi.mock("~/state/assets", () => ({
   assetEnvironment: { createUrl: state.assetQuery },
 }));

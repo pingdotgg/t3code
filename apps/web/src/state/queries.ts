@@ -1,6 +1,3 @@
-import { resolveFilesystemReadAccess } from "@t3tools/client-runtime/state/filesystem";
-import { environmentSession } from "./session";
-import { useEnvironmentPresentation } from "./presentation";
 import { useAtomValue } from "@effect/atom-react";
 import {
   type CheckpointDiffTarget,
@@ -26,6 +23,7 @@ import { AsyncResult, Atom } from "effect/unstable/reactivity";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { appAtomRegistry } from "../rpc/atomRegistry";
+import { useFilesystemReadAccess } from "./filesystem";
 import { orchestrationEnvironment } from "./orchestration";
 import { isPaginatedBranchesNextPagePending } from "./paginatedBranches";
 import { projectContentSearch, projectEnvironment } from "./projects";
@@ -242,18 +240,7 @@ export function useProjectPathSearch(
     [target.cwd, target.environmentId, target.imageOnly, target.kind, target.query],
   );
   const debouncedTarget = useDebouncedValue(normalizedTarget, PROJECT_PATH_SEARCH_DEBOUNCE_MS);
-  const fileAccessSession = useEnvironmentQuery(
-    debouncedTarget.environmentId === null
-      ? null
-      : environmentSession.sessionStateAtom(debouncedTarget.environmentId),
-  );
-  const fileEnvironment = useEnvironmentPresentation(debouncedTarget.environmentId);
-  const fileAccess = resolveFilesystemReadAccess({
-    isCatalogReady: fileEnvironment.isReady,
-    connection: fileEnvironment.presentation?.connection ?? null,
-    session: fileAccessSession.data,
-    sessionError: fileAccessSession.error,
-  });
+  const fileAccess = useFilesystemReadAccess(debouncedTarget.environmentId);
   const { canReadFiles } = fileAccess;
   const searchTarget =
     debouncedTarget.environmentId !== null &&
@@ -307,18 +294,7 @@ interface ProjectContentSearchTarget {
 
 export function useProjectContentSearch(target: ProjectContentSearchTarget) {
   const hasTarget = target.environmentId !== null && target.cwd !== null;
-  const fileAccessSession = useEnvironmentQuery(
-    target.environmentId === null
-      ? null
-      : environmentSession.sessionStateAtom(target.environmentId),
-  );
-  const fileEnvironment = useEnvironmentPresentation(target.environmentId);
-  const fileAccess = resolveFilesystemReadAccess({
-    isCatalogReady: fileEnvironment.isReady,
-    connection: fileEnvironment.presentation?.connection ?? null,
-    session: fileAccessSession.data,
-    sessionError: fileAccessSession.error,
-  });
+  const fileAccess = useFilesystemReadAccess(target.environmentId);
   const canReadFiles = hasTarget && fileAccess.canReadFiles;
   const isCheckingAccess = hasTarget && fileAccess.isPending;
   // Whitespace is significant in content queries; trimming is only used to
