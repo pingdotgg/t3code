@@ -3222,6 +3222,7 @@ export function ConnectionsSettings() {
             >
               <ScrollArea
                 scrollFade
+                chainVerticalScroll
                 className="max-h-[22.5rem]"
                 data-testid="authorized-clients-scroll-area"
               >
