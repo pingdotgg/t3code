@@ -69,7 +69,6 @@ export const CodexGoalStreamEvent = Schema.Union([
 export type CodexGoalStreamEvent = typeof CodexGoalStreamEvent.Type;
 export const CodexGoalOperation = Schema.Literals(["get", "set", "clear", "subscribe"]);
 export type CodexGoalOperation = typeof CodexGoalOperation.Type;
-
 export class CodexGoalOperationError extends Schema.TaggedErrorClass<CodexGoalOperationError>()(
   "CodexGoalOperationError",
   {
