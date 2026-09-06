@@ -11,6 +11,7 @@ import type {
   OrchestrationV2ThreadShell,
   OrchestrationV2ThreadProjection,
   OrchestrationV2TurnItem,
+  ProviderInstanceId,
   ProviderSessionId,
   ProviderThreadId,
   ProviderTurnId,
@@ -1110,6 +1111,10 @@ export function threadShellFromProjection(
       (plan) => plan.kind === "proposed_plan" && plan.status === "active",
     ),
     pendingBackgroundTasks: [...pendingBackgroundTasks],
+    providerInstanceHistory: providerInstanceHistoryForShell({
+      threadId: projection.thread.id,
+      providerThreads: projection.providerThreads,
+    }),
     itemCount: activeLocalTurnItems(projection).length,
     visibleItemCount: projection.visibleTurnItems.length,
     createdAt: projection.thread.createdAt,
@@ -1126,6 +1131,32 @@ export function threadShellFromProjection(
     titleRegeneration: projection.thread.titleRegeneration ?? null,
     deletedAt: projection.thread.deletedAt,
   };
+}
+
+/**
+ * Provider instances that have owned this thread's root conversation, oldest
+ * first. Subagent provider threads carry an owner node and are excluded so a
+ * delegated Codex child does not make a Claude thread look handed off.
+ */
+export function providerInstanceHistoryForShell(input: {
+  readonly threadId: ThreadId;
+  readonly providerThreads: ReadonlyArray<
+    OrchestrationV2ThreadProjection["providerThreads"][number]
+  >;
+}): ReadonlyArray<ProviderInstanceId> {
+  const history: Array<ProviderInstanceId> = [];
+  for (const providerThread of input.providerThreads
+    .filter((thread) => thread.appThreadId === input.threadId && thread.ownerNodeId === null)
+    .toSorted(
+      (left, right) =>
+        DateTime.toEpochMillis(left.createdAt) - DateTime.toEpochMillis(right.createdAt) ||
+        left.id.localeCompare(right.id),
+    )) {
+    if (!history.includes(providerThread.providerInstanceId)) {
+      history.push(providerThread.providerInstanceId);
+    }
+  }
+  return history;
 }
 
 function isInterruptibleRunForShell(run: OrchestrationV2ThreadProjection["runs"][number]): boolean {
@@ -1156,6 +1187,7 @@ type ShellThreadState = {
   readonly latestUserMessageAt: DateTime.Utc | null;
   readonly hasActionableProposedPlan: boolean;
   readonly pendingBackgroundTasks: OrchestrationV2ThreadShell["pendingBackgroundTasks"];
+  readonly providerInstanceHistory: OrchestrationV2ThreadShell["providerInstanceHistory"];
   readonly itemCount: number;
   readonly runlessItemCount: number;
   readonly updatedAt: OrchestrationV2ThreadProjection["updatedAt"];
@@ -1290,6 +1322,7 @@ function shellFromState(input: {
     latestUserMessageAt: input.state.latestUserMessageAt,
     hasActionableProposedPlan: input.state.hasActionableProposedPlan,
     pendingBackgroundTasks: input.state.pendingBackgroundTasks,
+    providerInstanceHistory: input.state.providerInstanceHistory,
     itemCount: input.state.itemCount,
     visibleItemCount: input.visibleItemCount,
     createdAt: input.state.thread.createdAt,
@@ -3725,6 +3758,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               : DateTime.makeUnsafe(row.latest_user_message_at),
           hasActionableProposedPlan: row.has_actionable_proposed_plan === 1,
           pendingBackgroundTasks,
+          providerInstanceHistory: providerInstanceHistoryForShell({
+            threadId: thread.id,
+            providerThreads: providerThreadsByThreadId.get(thread.id) ?? [],
+          }),
           itemCount: row.item_count,
           runlessItemCount: row.runless_item_count,
           updatedAt: thread.updatedAt,
