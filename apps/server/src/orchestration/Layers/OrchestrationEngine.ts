@@ -185,6 +185,23 @@ const makeOrchestrationEngine = Effect.gen(function* () {
           });
         }
 
+        // The decider compares the lookup inputs. Only recreation needs an
+        // event check, since it can reset a thread to the same field values.
+        if (
+          envelope.command.type === "thread.pull-request.sync" &&
+          (yield* eventStore.hasEventAfter({
+            aggregateKind: "thread",
+            aggregateId: envelope.command.threadId,
+            sequenceExclusive: envelope.command.snapshotSequence,
+            type: "thread.created",
+          }))
+        ) {
+          return yield* new OrchestrationCommandInvariantError({
+            commandType: envelope.command.type,
+            detail: `thread ${envelope.command.threadId} was recreated before pull request discovery`,
+          });
+        }
+
         if (
           envelope.command.type === "thread.auto-settle" &&
           threadBackgroundLiveness.getThreadBackgroundLiveness(envelope.command.threadId) !== null

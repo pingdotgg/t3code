@@ -302,6 +302,7 @@ describe("CheckpointReactor", () => {
     readonly providerName?: ProviderDriverKind;
     readonly gitStatusRefreshCalls?: Array<string>;
     readonly pullRequestRefreshCalls?: Array<string>;
+    readonly pullRequestRefresh?: Effect.Effect<void>;
   }) {
     const cwd = createGitRepository();
     if (options?.initializeGit === false) {
@@ -357,7 +358,7 @@ describe("CheckpointReactor", () => {
       refreshPullRequestStatus: (cwd: string) =>
         Effect.sync(() => {
           options?.pullRequestRefreshCalls?.push(cwd);
-        }).pipe(Effect.as(null)),
+        }).pipe(Effect.andThen(options?.pullRequestRefresh ?? Effect.void), Effect.as(null)),
       streamStatus: () => Stream.empty,
     });
 
@@ -878,6 +879,49 @@ describe("CheckpointReactor", () => {
 
     expect(pullRequestRefreshCalls).toEqual([harness.cwd]);
   });
+
+  effectIt.effect("captures files while the pull request lookup is still pending", () =>
+    Effect.gen(function* () {
+      const lookupStarted = yield* Deferred.make<void>();
+      const finishLookup = yield* Deferred.make<void>();
+      const harness = yield* Effect.promise(() =>
+        createHarness({
+          seedFilesystemCheckpoints: false,
+          threadBranch: "t3code/feature",
+          localStatusRefName: "t3code/feature",
+          pullRequestRefresh: Deferred.succeed(lookupStarted, undefined).pipe(
+            Effect.andThen(Deferred.await(finishLookup)),
+          ),
+        }),
+      );
+      NodeFS.writeFileSync(NodePath.join(harness.cwd, "README.md"), "completed turn\n");
+      harness.provider.emit({
+        type: "turn.completed",
+        eventId: EventId.make("evt-turn-completed-slow-pr"),
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: "2026-01-01T00:00:00.000Z",
+        threadId: ThreadId.make("thread-1"),
+        turnId: asTurnId("turn-slow-pr"),
+        payload: { state: "completed" },
+      });
+
+      yield* Deferred.await(lookupStarted);
+      yield* Effect.gen(function* () {
+        expect(yield* harness.nextReceipt).toMatchObject({
+          type: "checkpoint.diff.finalized",
+          turnId: "turn-slow-pr",
+        });
+        expect(
+          gitShowFileAtRef(
+            harness.cwd,
+            checkpointRefForThreadTurn(ThreadId.make("thread-1"), 1),
+            "README.md",
+          ),
+        ).toBe("completed turn\n");
+      }).pipe(Effect.ensuring(Deferred.succeed(finishLookup, undefined)));
+      yield* Effect.promise(harness.drain);
+    }),
+  );
 
   it("re-asks for the pull request after adopting a drifted checkout", async () => {
     const pullRequestRefreshCalls: string[] = [];

@@ -297,8 +297,8 @@ export const PendingTaskListRow = memo(function PendingTaskListRow(props: {
   );
 
   const statusPill = (
-    <View className="rounded-full bg-adaptive-zinc-500-a12-a16 px-1.5 py-0.5">
-      <Text className="text-3xs font-t3-bold text-adaptive-zinc-600-300">Pending</Text>
+    <View className="rounded-full bg-subtle px-1.5 py-0.5">
+      <Text className="text-3xs font-t3-bold text-foreground-muted">Pending</Text>
     </View>
   );
 
@@ -416,7 +416,6 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
   readonly thread: EnvironmentThreadShell;
   readonly environmentLabel: string | null;
   readonly environmentMachine?: EnvironmentMachineKind;
-  readonly projectCwd: string | null;
   readonly searchMatch?: EnvironmentThreadSearchMatch;
   readonly searchQuery?: string;
   readonly isLast: boolean;
@@ -453,7 +452,7 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
   const { thread, onSelectThread, onArchiveThread, onDeleteThread, onRegenerateThreadTitle } =
     props;
   const status = resolveThreadStatus(thread);
-  const pr = useThreadPr(thread, props.projectCwd);
+  const pr = useThreadPr(thread);
   const timestamp = relativeTime(
     thread.latestUserMessageAt ?? thread.updatedAt ?? thread.createdAt,
   );

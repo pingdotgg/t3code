@@ -21,6 +21,7 @@ import {
   type UsageLimitSourceConfig,
   ProviderDriverKind,
   ProviderInstanceId,
+  resolveProviderInstanceEnabled,
   ServerSettings,
   ServerSettingsError,
   type ServerSettingsPatch,
@@ -321,7 +322,13 @@ function resolveTextGenerationProvider(settings: ServerSettings): ServerSettings
 }
 
 function fallbackTextGenerationProvider(settings: ServerSettings): ServerSettings {
-  const fallbackEntry = Object.entries(settings.providers).find(([, provider]) => provider.enabled);
+  // Same precedence as isModelSelectionProviderEnabled: an explicit provider
+  // instance wins over the legacy providers map, which decodes to defaults
+  // (codex enabled) when the Providers UI has only written providerInstances.
+  const fallbackEntry = Object.entries(settings.providers).find(([driver, provider]) => {
+    const instance = settings.providerInstances[ProviderInstanceId.make(driver)];
+    return instance === undefined ? provider.enabled : resolveProviderInstanceEnabled(instance);
+  });
   const fallback = fallbackEntry ? ProviderDriverKind.make(fallbackEntry[0]) : undefined;
   if (!fallback) {
     return settings;

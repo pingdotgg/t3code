@@ -1,6 +1,6 @@
 export const COMPOSER_FOOTER_COMPACT_BREAKPOINT_PX = 620;
 export const COMPOSER_FOOTER_WIDE_ACTIONS_COMPACT_BREAKPOINT_PX = 780;
-export const RESTING_COMPOSER_IMAGE_THUMBNAIL_LIMIT = 3;
+const RESTING_COMPOSER_IMAGE_THUMBNAIL_LIMIT = 3;
 
 export function getRestingComposerImagePreviewCounts(imageCount: number): {
   visibleCount: number;

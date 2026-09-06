@@ -102,6 +102,22 @@ describe("cliproxyStatusToAccounts", () => {
       },
     ]);
   });
+
+  it("names a Codex five-hour window `primary`, as the Codex driver does", () => {
+    const accounts = cliproxyStatusToAccounts(
+      {
+        accounts: {
+          "codex-abc-someone@example.com-pro.json": {
+            provider: "codex",
+            plan: "pro",
+            five_hour: { hard_limited: false, known: true, used_percent: 40 },
+          },
+        },
+      },
+      checkedAt,
+    );
+    expect(accounts[0]?.usageLimits.windows.map((window) => window.id)).toEqual(["primary"]);
+  });
 });
 
 describe("accountEmailFromAuthFile", () => {

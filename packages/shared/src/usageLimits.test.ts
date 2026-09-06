@@ -9,6 +9,13 @@ import {
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  isUsageLimitsCommand,
+  collectProviderUsageLimits,
+  sameUsageLimitCommandCoverage,
+  withUsageLimitsCommands,
+  collectLimitAccounts,
+  collectLimitNotices,
+  collectLimitPools,
   collectLimitSources,
   collectLimitsGroups,
   elapsedShare,
@@ -16,6 +23,7 @@ import {
   limitsNotice,
   paceOf,
   providersWithLimits,
+  remainingPercent,
 } from "./usageLimits.ts";
 
 const now = Date.parse("2026-09-03T12:00:00.000Z");
@@ -302,5 +310,582 @@ describe("collectLimitSources", () => {
       "Laptop · hub",
       "Desktop · hub",
     ]);
+  });
+});
+
+describe("pools", () => {
+  const checkedAt = "2026-09-03T11:00:00.000Z";
+  const weekly = {
+    id: "seven_day",
+    kind: "weekly",
+    label: "Weekly",
+    windowDurationMins: 7 * 24 * 60,
+    resetsAt: "2026-09-06T12:00:00.000Z",
+  } as const;
+  const claude = ProviderDriverKind.make("claudeAgent");
+  const source = {
+    id: UsageLimitSourceId.make("hub"),
+    kind: "cliproxy" as const,
+    label: "hub",
+    checkedAt,
+  };
+  const laptop = { entry: { target: { label: "Laptop" } } };
+
+  it("merges one account reported natively on two environments and by a hub into one entry", () => {
+    const native = provider({
+      driver: claude,
+      instanceId: ProviderInstanceId.make("claude"),
+      auth: { status: "authenticated", email: "Same@example.com" },
+      usageLimits: { checkedAt, windows: [{ ...window, usedPercent: 40 }] },
+    });
+    const input = new Map([
+      [EnvironmentId.make("env-a"), { ...laptop, serverConfig: { providers: [native] } }],
+      [
+        EnvironmentId.make("env-b"),
+        {
+          entry: { target: { label: "Desktop" } },
+          serverConfig: {
+            providers: [
+              {
+                ...native,
+                usageLimits: {
+                  checkedAt: "2026-09-03T11:30:00.000Z",
+                  windows: [{ ...window, usedPercent: 55 }],
+                },
+              },
+            ],
+            usageLimitSources: [
+              {
+                ...source,
+                accounts: [
+                  {
+                    id: "claude-same@example.com.json",
+                    driver: claude,
+                    email: "same@example.com",
+                    plan: "Claude Subscription",
+                    usageLimits: { checkedAt, windows: [{ ...window, usedPercent: 10 }] },
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      ],
+    ]);
+    const accounts = collectLimitAccounts(input);
+    expect(accounts).toHaveLength(1);
+    expect(accounts[0]).toMatchObject({
+      key: "env-a:claude",
+      sourceLabel: null,
+      // Desktop's read is fresher, so its credits and its redeem are the ones on show.
+      redeem: { environmentId: "env-b", instanceId: "claude" },
+      environments: [
+        { environmentId: "env-a", label: "Laptop" },
+        { environmentId: "env-b", label: "Desktop" },
+      ],
+    });
+    // The fresher native snapshot wins; the hub row is pre-filtered by email.
+    expect(accounts[0]?.limits.windows[0]?.usedPercent).toBe(55);
+  });
+
+  it("takes windows from a fresher hub read but credits and redeem from the native instance", () => {
+    const native = provider({
+      driver: claude,
+      instanceId: ProviderInstanceId.make("claude"),
+      auth: { status: "authenticated", email: "same@example.com" },
+      usageLimits: {
+        checkedAt,
+        windows: [{ ...window, usedPercent: 40 }],
+        resetCredits: { availableCount: 2 },
+      },
+    });
+    const input = new Map([
+      [
+        EnvironmentId.make("env-a"),
+        {
+          ...laptop,
+          serverConfig: {
+            providers: [native],
+            usageLimitSources: [
+              {
+                ...source,
+                accounts: [
+                  {
+                    id: "claude-same@example.com.json",
+                    driver: claude,
+                    email: "same@example.com",
+                    usageLimits: {
+                      checkedAt: "2026-09-03T11:30:00.000Z",
+                      windows: [{ ...window, usedPercent: 55 }],
+                    },
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      ],
+    ]);
+    const [account] = collectLimitAccounts(input);
+    expect(account?.limits.windows[0]?.usedPercent).toBe(55);
+    expect(account?.limits.resetCredits?.availableCount).toBe(2);
+    expect(account?.redeem).toEqual({ environmentId: "env-a", instanceId: "claude" });
+    expect(account?.environments).toEqual([{ environmentId: "env-a", label: "Laptop" }]);
+  });
+
+  it("redeems on the environment whose snapshot supplied the credits on show", () => {
+    const stale = provider({
+      auth: { status: "authenticated", email: "same@example.com" },
+      usageLimits: {
+        checkedAt,
+        windows: [window],
+        resetCredits: { availableCount: 0 },
+      },
+    });
+    const fresh = {
+      ...stale,
+      usageLimits: {
+        checkedAt: "2026-09-03T11:30:00.000Z",
+        windows: [window],
+        resetCredits: { availableCount: 2 },
+      },
+    };
+    const input = new Map([
+      [EnvironmentId.make("env-a"), { ...laptop, serverConfig: { providers: [stale] } }],
+      [
+        EnvironmentId.make("env-b"),
+        { entry: { target: { label: "Desktop" } }, serverConfig: { providers: [fresh] } },
+      ],
+    ]);
+    const [account] = collectLimitAccounts(input);
+    expect(account?.limits.resetCredits?.availableCount).toBe(2);
+    expect(account?.redeem).toEqual({ environmentId: "env-b", instanceId: "codex" });
+  });
+
+  it("names an environment once however many of its instances share the account", () => {
+    const shared = provider({
+      auth: { status: "authenticated", email: "same@example.com" },
+      usageLimits: { checkedAt, windows: [window] },
+    });
+    const input = new Map([
+      [
+        EnvironmentId.make("env-a"),
+        {
+          ...laptop,
+          serverConfig: {
+            providers: [shared, { ...shared, instanceId: ProviderInstanceId.make("work") }],
+          },
+        },
+      ],
+    ]);
+    expect(collectLimitAccounts(input)[0]?.environments).toEqual([
+      { environmentId: "env-a", label: "Laptop" },
+    ]);
+  });
+
+  it("keys a hub account without an email by hub, so two environments on one hub share it", () => {
+    const seat = {
+      id: "claude-team-seat.json",
+      driver: claude,
+      usageLimits: { checkedAt, windows: [window] },
+    };
+    const hub = { ...source, accounts: [seat] };
+    const input = new Map([
+      [EnvironmentId.make("env-a"), { ...laptop, serverConfig: { usageLimitSources: [hub] } }],
+      [
+        EnvironmentId.make("env-b"),
+        { entry: { target: { label: "Desktop" } }, serverConfig: { usageLimitSources: [hub] } },
+      ],
+    ]);
+    const accounts = collectLimitAccounts(input);
+    expect(accounts.map((account) => account.key)).toEqual(["hub:claude-team-seat.json"]);
+    expect(accounts[0]?.displayName).toBe("claude-team-seat");
+  });
+
+  it("pools windows by id across accounts and orders resets by when they land", () => {
+    const input = new Map([
+      [
+        EnvironmentId.make("env-a"),
+        {
+          ...laptop,
+          serverConfig: {
+            providers: [],
+            usageLimitSources: [
+              {
+                ...source,
+                accounts: [
+                  {
+                    id: "a",
+                    driver: claude,
+                    usageLimits: {
+                      checkedAt,
+                      windows: [
+                        { ...window, usedPercent: 80, resetsAt: "2026-09-03T13:00:00.000Z" },
+                        { ...weekly, usedPercent: 20 },
+                      ],
+                    },
+                  },
+                  {
+                    id: "b",
+                    driver: claude,
+                    usageLimits: {
+                      checkedAt,
+                      windows: [{ ...window, usedPercent: 40 }],
+                    },
+                  },
+                  {
+                    id: "c",
+                    driver: ProviderDriverKind.make("codex"),
+                    usageLimits: { checkedAt, windows: [{ ...weekly, usedPercent: 50 }] },
+                  },
+                  {
+                    id: "unsupported",
+                    driver: claude,
+                    usageLimits: {
+                      checkedAt,
+                      windows: [],
+                      unavailable: { reason: "unsupported" as const },
+                    },
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      ],
+    ]);
+    const pools = collectLimitPools(collectLimitAccounts(input), now);
+    expect(pools.map((pool) => [pool.driver, pool.accounts.length])).toEqual([
+      ["claudeAgent", 2],
+      ["codex", 1],
+    ]);
+    const [session, week] = pools[0]!.windows;
+    // A member with no reset has no clock, so it does not vote on pace.
+    const untimed = collectLimitPools(
+      collectLimitAccounts(input).map((account) =>
+        account.key === "hub:b"
+          ? {
+              ...account,
+              limits: {
+                ...account.limits,
+                windows: account.limits.windows.map((w) => ({ ...w, resetsAt: undefined })),
+              },
+            }
+          : account,
+      ),
+      now,
+    );
+    // Only a votes: 80% used, 80% elapsed.
+    expect(untimed[0]?.windows[0]?.pace).toBe("on");
+    // a is 80% through its window and b 60%: the pool is 70% elapsed, 60% used.
+    expect(session).toMatchObject({
+      id: "five_hour",
+      remainingPercent: 40,
+      usedPercent: 60,
+      pace: "under",
+    });
+    expect(
+      session?.resets.map((reset) => [reset.member.account.key, reset.restoresPercent]),
+    ).toEqual([
+      ["hub:a", 40],
+      ["hub:b", 20],
+    ]);
+    expect(week).toMatchObject({ id: "seven_day", remainingPercent: 80, members: [{}] });
+    // Codex reports `primary` for both its five-hour and (on Go) monthly window.
+    const mixed = collectLimitPools(
+      [
+        ...collectLimitAccounts(input),
+        {
+          key: "go",
+          driver: claude,
+          displayName: "Go",
+          email: undefined,
+          plan: undefined,
+          accentColor: undefined,
+          environments: [],
+          sourceLabel: null,
+          redeem: null,
+          limits: {
+            checkedAt,
+            windows: [
+              {
+                id: "five_hour",
+                kind: "monthly",
+                label: "Monthly",
+                usedPercent: 82,
+                windowDurationMins: 30 * 24 * 60,
+                resetsAt: "2026-09-14T12:00:00.000Z",
+              },
+            ],
+          },
+        },
+      ],
+      now,
+    );
+    expect(mixed[0]?.windows.map((window) => [window.kind, window.members.length])).toEqual([
+      ["session", 2],
+      ["weekly", 1],
+      ["monthly", 1],
+    ]);
+    // Segments read left to right as "who refills next", matching the reset list.
+    expect(session?.members.map((member) => member.account.key)).toEqual(["hub:a", "hub:b"]);
+    expect(pools[0]?.accounts.map((account) => account.key)).toEqual(["hub:a", "hub:b"]);
+  });
+});
+
+describe("collectLimitNotices", () => {
+  const checkedAt = "2026-09-03T11:00:00.000Z";
+  const claude = ProviderDriverKind.make("claudeAgent");
+  const laptop = { entry: { target: { label: "Laptop" } } };
+  const hub = {
+    id: UsageLimitSourceId.make("hub"),
+    kind: "cliproxy" as const,
+    label: "hub",
+    checkedAt,
+    accounts: [],
+  };
+
+  it("names failures and silence, skips unsupported accounts, and labels environments only when several", () => {
+    const failed = provider({
+      instanceId: ProviderInstanceId.make("claude"),
+      driver: claude,
+      displayName: "Claude Max",
+      usageLimits: { checkedAt, windows: [], unavailable: { reason: "probeFailed" } },
+    });
+    const apiKey = provider({
+      instanceId: ProviderInstanceId.make("api"),
+      driver: claude,
+      usageLimits: { checkedAt, windows: [], unavailable: { reason: "unsupported" } },
+    });
+    const silent = provider({ usageLimits: { checkedAt, windows: [] } });
+    const one = new Map([
+      [
+        EnvironmentId.make("env-a"),
+        {
+          ...laptop,
+          serverConfig: {
+            providers: [failed, apiKey, silent],
+            usageLimitSources: [
+              hub,
+              { ...hub, id: UsageLimitSourceId.make("down"), label: "down", error: "ECONNREFUSED" },
+            ],
+          },
+        },
+      ],
+    ]);
+    expect(collectLimitNotices(one)).toEqual([
+      "Claude Max: Could not read limits.",
+      "codex: No limits reported.",
+      "hub: No accounts reported.",
+      "down: ECONNREFUSED",
+    ]);
+
+    one.set(EnvironmentId.make("env-b"), {
+      entry: { target: { label: "Desktop" } },
+      serverConfig: { providers: [], usageLimitSources: [] },
+    });
+    expect(collectLimitNotices(one)[0]).toBe("Laptop · Claude Max: Could not read limits.");
+  });
+});
+
+describe("/usage-limits", () => {
+  const limits = { checkedAt: "2026-09-03T11:00:00.000Z", windows: [window] };
+  const selected = provider({
+    usageLimits: limits,
+    auth: { status: "authenticated", email: "same@example.com" },
+  });
+  const sources = [
+    {
+      id: UsageLimitSourceId.make("hub"),
+      kind: "cliproxy" as const,
+      label: "Accounts",
+      checkedAt: limits.checkedAt,
+      accounts: [
+        {
+          id: "duplicate",
+          driver: selected.driver,
+          email: "SAME@example.com",
+          usageLimits: limits,
+        },
+        { id: "oss", driver: selected.driver, plan: "Codex OSS", usageLimits: limits },
+        { id: "other-provider", driver: ProviderDriverKind.make("claude"), usageLimits: limits },
+      ],
+    },
+  ];
+
+  it("keeps accounts and custom instances separate, filtering by driver", () => {
+    const report = collectProviderUsageLimits(
+      selected.instanceId,
+      [
+        selected,
+        provider({
+          instanceId: ProviderInstanceId.make("codex-work"),
+          displayName: "Work",
+          usageLimits: { ...limits, resetCredits: { availableCount: 2 } },
+        }),
+        provider({
+          driver: ProviderDriverKind.make("claude"),
+          instanceId: ProviderInstanceId.make("claude"),
+          usageLimits: limits,
+        }),
+      ],
+      sources,
+      now,
+    );
+    expect(report?.createdAt).toBe("2026-09-03T12:00:00.000Z");
+    expect(report?.accounts.map((account) => account.id)).toEqual([
+      "codex",
+      "codex-work",
+      "hub:oss",
+    ]);
+    expect(report?.accounts[0]).toMatchObject({
+      instanceId: selected.instanceId,
+      email: selected.auth.email,
+    });
+    expect(report?.accounts[1]).toMatchObject({
+      displayName: "Work",
+      limits: { resetCredits: { availableCount: 2 } },
+    });
+    expect(report?.accounts[2]).toMatchObject({
+      label: "Accounts · oss",
+      sourceLabel: "CLI Proxy",
+      plan: "Codex OSS",
+    });
+    expect(report?.notices).toEqual([]);
+  });
+
+  it("supports a source-only provider and keeps duplicates when the native probe failed", () => {
+    expect(
+      collectProviderUsageLimits(selected.instanceId, [provider({})], sources, now)?.accounts.map(
+        (account) => account.id,
+      ),
+    ).toEqual(["hub:duplicate", "hub:oss"]);
+    const failed = provider({ usageLimits: { ...limits, unavailable: { reason: "probeFailed" } } });
+    expect(
+      collectProviderUsageLimits(selected.instanceId, [failed], sources, now)?.accounts.map(
+        (account) => account.id,
+      ),
+    ).toEqual(["codex", "hub:duplicate", "hub:oss"]);
+    expect(collectProviderUsageLimits(selected.instanceId, [provider({})], [], now)).toBeNull();
+    expect(
+      collectProviderUsageLimits(
+        selected.instanceId,
+        [provider({ enabled: false, usageLimits: limits })],
+        [],
+        now,
+      ),
+    ).toBeNull();
+  });
+
+  it("surfaces source errors only for sources that carry the selected driver", () => {
+    const failing = { ...sources[0]!, error: "token expired" };
+    expect(
+      collectProviderUsageLimits(selected.instanceId, [selected], [failing], now)?.notices,
+    ).toEqual(["Accounts: token expired"]);
+    const claudeOnly = { ...failing, accounts: failing.accounts.slice(2) };
+    expect(
+      collectProviderUsageLimits(selected.instanceId, [selected], [claudeOnly], now)?.notices,
+    ).toEqual([]);
+    // A read failure clears the accounts, so the error must not depend on a match.
+    const unreadable = { ...failing, accounts: [] };
+    expect(
+      collectProviderUsageLimits(selected.instanceId, [selected], [unreadable], now)?.notices,
+    ).toEqual(["Accounts: token expired"]);
+    // A source-only provider still gets the report, carrying only the error.
+    const sourceOnly = collectProviderUsageLimits(
+      selected.instanceId,
+      [provider({})],
+      [unreadable],
+      now,
+    );
+    expect(sourceOnly?.accounts).toEqual([]);
+    expect(sourceOnly?.notices).toEqual(["Accounts: token expired"]);
+  });
+
+  it("advertises global and workspace commands only for providers present in Limits", () => {
+    const withWorkspace = provider({
+      workspaceSnapshots: [
+        { cwd: "/tmp/project", checkedAt: limits.checkedAt, slashCommands: [], skills: [] },
+      ],
+    });
+    const [supported] = withUsageLimitsCommands([withWorkspace], sources);
+    expect(supported?.slashCommands.map((command) => command.name)).toEqual(["usage-limits"]);
+    expect(
+      supported?.workspaceSnapshots?.[0]?.slashCommands.map((command) => command.name),
+    ).toEqual(["usage-limits"]);
+    expect(withUsageLimitsCommands([withWorkspace], [])[0]?.slashCommands).toEqual([]);
+    // A provider's own command of the same name is left alone without coverage.
+    const ownCommand = provider({
+      slashCommands: [{ name: "usage-limits", description: "Provider's own" }],
+    });
+    expect(withUsageLimitsCommands([ownCommand], [])[0]?.slashCommands).toEqual([
+      { name: "usage-limits", description: "Provider's own" },
+    ]);
+    const unreadable = { ...sources[0]!, accounts: [], error: "token expired" };
+    expect(
+      withUsageLimitsCommands([withWorkspace], [unreadable])[0]?.slashCommands.map(
+        (command) => command.name,
+      ),
+    ).toEqual(["usage-limits"]);
+    expect(
+      withUsageLimitsCommands([selected], [])[0]?.slashCommands.map((command) => command.name),
+    ).toEqual(["usage-limits"]);
+  });
+});
+
+describe("sameUsageLimitCommandCoverage", () => {
+  const codexAccount = {
+    id: "a",
+    driver: ProviderDriverKind.make("codex"),
+    usageLimits: { checkedAt: "2026-09-03T11:00:00.000Z", windows: [] },
+  };
+  const base = {
+    id: UsageLimitSourceId.make("hub"),
+    kind: "cliproxy" as const,
+    label: "Accounts",
+    checkedAt: "2026-09-03T11:00:00.000Z",
+  };
+  it("ignores quota movement but not the drivers offered the command", () => {
+    const withCodex = [{ ...base, accounts: [codexAccount] }];
+    const withCodexLater = [
+      {
+        ...base,
+        accounts: [
+          {
+            ...codexAccount,
+            usageLimits: { ...codexAccount.usageLimits, checkedAt: "2026-09-03T12:00:00.000Z" },
+          },
+        ],
+      },
+    ];
+    expect(sameUsageLimitCommandCoverage(withCodex, withCodexLater)).toBe(true);
+    expect(sameUsageLimitCommandCoverage(withCodex, [{ ...base, accounts: [] }])).toBe(false);
+  });
+  it("treats a failed read as a change in coverage, in both directions", () => {
+    const empty = [{ ...base, accounts: [] }];
+    const failed = [{ ...base, accounts: [], error: "token expired" }];
+    expect(sameUsageLimitCommandCoverage(empty, failed)).toBe(false);
+    expect(sameUsageLimitCommandCoverage(failed, empty)).toBe(false);
+    expect(
+      sameUsageLimitCommandCoverage(failed, [{ ...base, accounts: [], error: "still down" }]),
+    ).toBe(true);
+  });
+});
+
+describe("remainingPercent", () => {
+  it("inverts and clamps the reported usage", () => {
+    expect(remainingPercent(window)).toBe(60);
+    expect(remainingPercent({ ...window, usedPercent: 0 })).toBe(100);
+    expect(remainingPercent({ ...window, usedPercent: 100 })).toBe(0);
+    expect(remainingPercent({ ...window, usedPercent: 33.4 })).toBe(67);
+  });
+});
+
+describe("isUsageLimitsCommand", () => {
+  it("recognizes only the standalone local action", () => {
+    expect(isUsageLimitsCommand("  /USAGE-LIMITS\n")).toBe(true);
+    expect(isUsageLimitsCommand("/usage-limits explain")).toBe(false);
+    expect(isUsageLimitsCommand("Explain /usage-limits")).toBe(false);
+    expect(isUsageLimitsCommand("/usage")).toBe(false);
   });
 });

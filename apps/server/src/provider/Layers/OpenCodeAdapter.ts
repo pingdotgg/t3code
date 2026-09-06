@@ -4,6 +4,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   type ProviderRuntimeEvent,
+  type ProviderSendTurnInput,
   type ProviderSession,
   RuntimeItemId,
   RuntimeRequestId,
@@ -322,6 +323,16 @@ function isOpenCodeDefaultTitle(title: string): boolean {
   return OPENCODE_DEFAULT_TITLE_PATTERN.test(title);
 }
 
+type OpenCodeTextPart = Extract<Part, { readonly type: "text" | "reasoning" }>;
+
+type OpenCodeTextPartState = Pick<OpenCodeTextPart, "id" | "messageID" | "type" | "time"> & {
+  text: string | undefined;
+  emittedText: string | undefined;
+  completed: boolean;
+};
+
+type OpenCodeStepUsage = Pick<Extract<Part, { readonly type: "step-finish" }>, "id" | "tokens">;
+
 interface OpenCodeSessionContext {
   session: ProviderSession;
   readonly client: OpencodeClient;
@@ -336,9 +347,9 @@ interface OpenCodeSessionContext {
   readonly pendingPermissions: Map<string, PermissionRequest>;
   readonly pendingQuestions: Map<string, QuestionRequest>;
   readonly messageRoleById: Map<string, "user" | "assistant">;
-  readonly partById: Map<string, Part>;
-  readonly emittedTextByPartId: Map<string, string>;
-  readonly completedAssistantPartIds: Set<string>;
+  // OpenCode permits edits to completed parts. Keep text for snapshot comparison
+  // until native removal or session teardown, but do not retain other part payloads.
+  readonly textPartsByMessageId: Map<string, Map<string, OpenCodeTextPartState>>;
   turnTokenUsage: OpenCodeTurnTokenUsageAccumulator | undefined;
   activeTurnId: TurnId | undefined;
   activeAgent: string | undefined;
@@ -374,7 +385,8 @@ interface OpenCodeTurnTokenUsageAccumulator {
   readonly partIds: Set<string>;
   readonly promptMessageIds: Set<string>;
   readonly assistantOwnershipByMessageId: Map<string, "owned" | "other" | "unknown">;
-  readonly unresolvedStepPartIds: Set<string>;
+  // Native removal does not undo usage. Keep unresolved counts until this turn settles.
+  readonly unresolvedStepsByMessageId: Map<string, Map<string, OpenCodeStepUsage>>;
   inputTokens: number;
   cachedInputTokens: number;
   cacheCreationTokens: number;
@@ -389,7 +401,7 @@ function makeOpenCodeTurnTokenUsageAccumulator(): OpenCodeTurnTokenUsageAccumula
     partIds: new Set(),
     promptMessageIds: new Set(),
     assistantOwnershipByMessageId: new Map(),
-    unresolvedStepPartIds: new Set(),
+    unresolvedStepsByMessageId: new Map(),
     inputTokens: 0,
     cachedInputTokens: 0,
     cacheCreationTokens: 0,
@@ -402,7 +414,7 @@ function makeOpenCodeTurnTokenUsageAccumulator(): OpenCodeTurnTokenUsageAccumula
 
 function accumulateOpenCodeStepUsage(
   accumulator: OpenCodeTurnTokenUsageAccumulator,
-  part: Extract<Part, { readonly type: "step-finish" }>,
+  part: OpenCodeStepUsage,
 ): void {
   if (accumulator.partIds.has(part.id)) return;
   accumulator.partIds.add(part.id);
@@ -428,7 +440,9 @@ function takeOpenCodeTurnTokenUsage(
   }
   return {
     usageStatus:
-      complete && usage.complete && usage.unresolvedStepPartIds.size === 0 ? "complete" : "partial",
+      complete && usage.complete && usage.unresolvedStepsByMessageId.size === 0
+        ? "complete"
+        : "partial",
     usageScope: "main_agent",
     inputTokens: usage.inputTokens,
     cachedInputTokens: usage.cachedInputTokens,
@@ -579,18 +593,29 @@ function normalizeQuestionRequest(request: QuestionRequest): ReadonlyArray<UserI
   }));
 }
 
-function resolveTextStreamKind(part: Part | undefined): "assistant_text" | "reasoning_text" {
-  return part?.type === "reasoning" ? "reasoning_text" : "assistant_text";
+function resolveTextStreamKind(part: Pick<Part, "type">): "assistant_text" | "reasoning_text" {
+  return part.type === "reasoning" ? "reasoning_text" : "assistant_text";
 }
 
-function textFromPart(part: Part): string | undefined {
-  switch (part.type) {
-    case "text":
-    case "reasoning":
-      return part.text;
-    default:
-      return undefined;
-  }
+function retainOpenCodeTextPart(
+  context: OpenCodeSessionContext,
+  part: OpenCodeTextPart,
+): OpenCodeTextPartState {
+  const parts =
+    context.textPartsByMessageId.get(part.messageID) ?? new Map<string, OpenCodeTextPartState>();
+  const previous = parts.get(part.id);
+  const state = {
+    id: part.id,
+    messageID: part.messageID,
+    type: part.type,
+    text: part.text,
+    ...(part.time !== undefined ? { time: part.time } : {}),
+    emittedText: previous?.emittedText,
+    completed: previous?.completed ?? false,
+  };
+  parts.set(part.id, state);
+  context.textPartsByMessageId.set(part.messageID, parts);
+  return state;
 }
 
 function commonPrefixLength(left: string, right: string): number {
@@ -1362,6 +1387,7 @@ export function makeOpenCodeAdapter(
             if (message?.info.id === promptAdmission.messageId && message.info.role === "user") {
               promptAdmission.messageObserved = true;
               context.messageRoleById.set(promptAdmission.messageId, "user");
+              context.textPartsByMessageId.delete(promptAdmission.messageId);
             }
           }
 
@@ -1568,35 +1594,23 @@ export function makeOpenCodeAdapter(
     /** Emit content.delta and item.completed events for an assistant text part. */
     const emitAssistantTextDelta = Effect.fn("emitAssistantTextDelta")(function* (
       context: OpenCodeSessionContext,
-      part: Part,
+      part: OpenCodeTextPartState,
       turnId: TurnId | undefined,
       raw: unknown,
     ) {
-      const text = textFromPart(part);
-      if (text === undefined) {
+      if (part.text === undefined) {
         return;
       }
-      const previousText = context.emittedTextByPartId.get(part.id);
-      const { latestText, deltaToEmit } = mergeOpenCodeAssistantText(previousText, text);
-      context.emittedTextByPartId.set(part.id, latestText);
-      if (latestText !== text) {
-        context.partById.set(
-          part.id,
-          (part.type === "text" || part.type === "reasoning"
-            ? { ...part, text: latestText }
-            : part) satisfies Part,
-        );
-      }
+      const { latestText, deltaToEmit } = mergeOpenCodeAssistantText(part.emittedText, part.text);
+      part.emittedText = latestText;
+      part.text = latestText;
       if (deltaToEmit.length > 0) {
         yield* emit({
           ...(yield* buildEventBase({
             threadId: context.session.threadId,
             turnId,
             itemId: part.id,
-            createdAt:
-              (part.type === "text" || part.type === "reasoning") && part.time !== undefined
-                ? isoFromEpochMs(part.time.start)
-                : undefined,
+            createdAt: part.time !== undefined ? isoFromEpochMs(part.time.start) : undefined,
             raw,
           })),
           type: "content.delta",
@@ -1607,12 +1621,8 @@ export function makeOpenCodeAdapter(
         });
       }
 
-      if (
-        part.type === "text" &&
-        part.time?.end !== undefined &&
-        !context.completedAssistantPartIds.has(part.id)
-      ) {
-        context.completedAssistantPartIds.add(part.id);
+      if (part.type === "text" && part.time?.end !== undefined && !part.completed) {
+        part.completed = true;
         yield* emit({
           ...(yield* buildEventBase({
             threadId: context.session.threadId,
@@ -2315,6 +2325,9 @@ export function makeOpenCodeAdapter(
             }
           }
           context.messageRoleById.set(event.properties.info.id, event.properties.info.role);
+          if (event.properties.info.role === "user") {
+            context.textPartsByMessageId.delete(event.properties.info.id);
+          }
           if (event.properties.info.role === "assistant") {
             const usage = context.turnTokenUsage;
             const parentMessageId =
@@ -2337,15 +2350,19 @@ export function makeOpenCodeAdapter(
                 : priorOwnership;
             if (usage) {
               usage.assistantOwnershipByMessageId.set(event.properties.info.id, ownership);
+              if (ownership !== "unknown") {
+                const steps = usage.unresolvedStepsByMessageId.get(event.properties.info.id);
+                if (ownership === "owned" && steps) {
+                  for (const step of steps.values()) {
+                    accumulateOpenCodeStepUsage(usage, step);
+                  }
+                }
+                usage.unresolvedStepsByMessageId.delete(event.properties.info.id);
+              }
             }
-            for (const part of context.partById.values()) {
-              if (part.messageID !== event.properties.info.id) {
-                continue;
-              }
-              if (usage && part.type === "step-finish") {
-                if (ownership !== "unknown") usage.unresolvedStepPartIds.delete(part.id);
-                if (ownership === "owned") accumulateOpenCodeStepUsage(usage, part);
-              }
+            for (const part of context.textPartsByMessageId
+              .get(event.properties.info.id)
+              ?.values() ?? []) {
               yield* emitAssistantTextDelta(context, part, turnId, event);
             }
           }
@@ -2354,16 +2371,24 @@ export function makeOpenCodeAdapter(
 
         case "message.removed": {
           context.messageRoleById.delete(event.properties.messageID);
+          context.textPartsByMessageId.delete(event.properties.messageID);
+          break;
+        }
+
+        case "message.part.removed": {
+          const parts = context.textPartsByMessageId.get(event.properties.messageID);
+          parts?.delete(event.properties.partID);
+          if (parts?.size === 0) {
+            context.textPartsByMessageId.delete(event.properties.messageID);
+          }
           break;
         }
 
         case "message.part.delta": {
-          const existingPart = context.partById.get(event.properties.partID);
-          if (
-            !existingPart ||
-            (existingPart.type !== "text" && existingPart.type !== "reasoning") ||
-            event.properties.field !== "text"
-          ) {
+          const existingPart = context.textPartsByMessageId
+            .get(event.properties.messageID)
+            ?.get(event.properties.partID);
+          if (existingPart?.text === undefined || event.properties.field !== "text") {
             break;
           }
           const role = messageRoleForPart(context, existingPart);
@@ -2375,21 +2400,13 @@ export function makeOpenCodeAdapter(
           if (delta.length === 0) {
             break;
           }
-          const previousText =
-            context.emittedTextByPartId.get(event.properties.partID) ??
-            textFromPart(existingPart) ??
-            "";
+          const previousText = existingPart.emittedText ?? existingPart.text;
           const { nextText, deltaToEmit } = appendOpenCodeAssistantTextDelta(previousText, delta);
           if (deltaToEmit.length === 0) {
             break;
           }
-          context.emittedTextByPartId.set(event.properties.partID, nextText);
-          if (existingPart.type === "text" || existingPart.type === "reasoning") {
-            context.partById.set(event.properties.partID, {
-              ...existingPart,
-              text: nextText,
-            });
-          }
+          existingPart.emittedText = nextText;
+          existingPart.text = nextText;
           yield* emit({
             ...(yield* buildEventBase({
               threadId: context.session.threadId,
@@ -2408,29 +2425,38 @@ export function makeOpenCodeAdapter(
 
         case "message.part.updated": {
           const part = event.properties.part;
-          // Tool events use the incoming part and do not need a cached copy.
-          if (part.type !== "tool") {
-            context.partById.set(part.id, part);
-          }
           const messageRole = messageRoleForPart(context, part);
 
           if (turnId && part.type === "step-finish" && context.turnTokenUsage) {
-            const ownership = context.turnTokenUsage.assistantOwnershipByMessageId.get(
-              part.messageID,
-            );
+            const usage = context.turnTokenUsage;
+            const ownership = usage.assistantOwnershipByMessageId.get(part.messageID);
             if (ownership === "owned") {
-              accumulateOpenCodeStepUsage(context.turnTokenUsage, part);
+              accumulateOpenCodeStepUsage(usage, part);
             } else if (
               ownership === "unknown" ||
               (ownership === undefined &&
                 context.messageRoleById.get(part.messageID) !== "assistant")
             ) {
-              context.turnTokenUsage.unresolvedStepPartIds.add(part.id);
+              const steps =
+                usage.unresolvedStepsByMessageId.get(part.messageID) ??
+                new Map<string, OpenCodeStepUsage>();
+              steps.set(part.id, { id: part.id, tokens: part.tokens });
+              usage.unresolvedStepsByMessageId.set(part.messageID, steps);
             }
           }
 
-          if (messageRole === "assistant") {
-            yield* emitAssistantTextDelta(context, part, turnId, event);
+          if ((part.type === "text" || part.type === "reasoning") && messageRole !== "user") {
+            const state = retainOpenCodeTextPart(context, part);
+            if (messageRole === "assistant") {
+              yield* emitAssistantTextDelta(context, state, turnId, event);
+            }
+          } else {
+            const previous = context.textPartsByMessageId.get(part.messageID)?.get(part.id);
+            if (previous) {
+              // A non-text PATCH removes the current snapshot. Keep emitted text
+              // so a later text PATCH still emits only the changed suffix.
+              previous.text = undefined;
+            }
           }
 
           if (part.type === "tool") {
@@ -2963,10 +2989,8 @@ export function makeOpenCodeAdapter(
           requestRelationRetries: new Map(),
           pendingPermissions: new Map(),
           pendingQuestions: new Map(),
-          partById: new Map(),
-          emittedTextByPartId: new Map(),
+          textPartsByMessageId: new Map(),
           messageRoleById: new Map(),
-          completedAssistantPartIds: new Set(),
           turnTokenUsage: undefined,
           activeTurnId: undefined,
           activeAgent: undefined,
@@ -3403,9 +3427,10 @@ export function makeOpenCodeAdapter(
       );
     });
 
-    const compactThread: NonNullable<OpenCodeAdapterShape["compactThread"]> = Effect.fn(
-      "compactThread",
-    )(function* (threadId, requestedModelSelection) {
+    const compactThread = Effect.fn("compactThread")(function* (
+      threadId: ThreadId,
+      requestedModelSelection?: ProviderSendTurnInput["modelSelection"],
+    ) {
       const context = yield* ensureSessionContext(sessions, threadId);
       yield* awaitOpenCodeContextReady(context);
       const modelSelection =
@@ -3750,6 +3775,9 @@ export function makeOpenCodeAdapter(
     const readThread: OpenCodeAdapterShape["readThread"] = Effect.fn("readThread")(
       function* (threadId) {
         const context = yield* ensureSessionContext(sessions, threadId);
+        const session = yield* runOpenCodeSdk("session.get", () =>
+          context.client.session.get({ sessionID: context.openCodeSessionId }),
+        ).pipe(Effect.mapError(toRequestError));
         const messages = yield* runOpenCodeSdk("session.messages", () =>
           context.client.session.messages({
             sessionID: context.openCodeSessionId,
@@ -3758,6 +3786,7 @@ export function makeOpenCodeAdapter(
 
         const turns: Array<OpenCodeTurnSnapshot> = [];
         for (const entry of messages.data ?? []) {
+          if (entry.info.id === session.data?.revert?.messageID) break;
           if (entry.info.role === "assistant") {
             turns.push({
               id: TurnId.make(entry.info.id),
@@ -3776,25 +3805,21 @@ export function makeOpenCodeAdapter(
     const rollbackThread: OpenCodeAdapterShape["rollbackThread"] = Effect.fn("rollbackThread")(
       function* (threadId, numTurns) {
         const context = yield* ensureSessionContext(sessions, threadId);
-        const messages = yield* runOpenCodeSdk("session.messages", () =>
-          context.client.session.messages({
-            sessionID: context.openCodeSessionId,
-          }),
-        ).pipe(Effect.mapError(toRequestError));
+        const snapshot = yield* readThread(threadId);
+        const targetIndex = Math.max(0, snapshot.turns.length - numTurns);
+        const target = snapshot.turns[targetIndex];
+        if (target) {
+          yield* runOpenCodeSdk("session.revert", () =>
+            context.client.session.revert({
+              sessionID: context.openCodeSessionId,
+              messageID: target.id,
+            }),
+          ).pipe(Effect.mapError(toRequestError));
+          // Native revert can move the boundary to the preceding user message.
+          return yield* readThread(threadId);
+        }
 
-        const assistantMessages = (messages.data ?? []).filter(
-          (entry) => entry.info.role === "assistant",
-        );
-        const targetIndex = assistantMessages.length - numTurns - 1;
-        const target = targetIndex >= 0 ? assistantMessages[targetIndex] : null;
-        yield* runOpenCodeSdk("session.revert", () =>
-          context.client.session.revert({
-            sessionID: context.openCodeSessionId,
-            ...(target ? { messageID: target.info.id } : {}),
-          }),
-        ).pipe(Effect.mapError(toRequestError));
-
-        return yield* readThread(threadId);
+        return snapshot;
       },
     );
 
@@ -3820,7 +3845,7 @@ export function makeOpenCodeAdapter(
       },
       startSession,
       sendTurn,
-      compactThread,
+      compaction: { type: "native", start: compactThread },
       interruptTurn,
       respondToRequest,
       respondToUserInput,

@@ -60,14 +60,16 @@ static void T3MarkdownTextApplyAttachments(
     NSString *imageUri = [NSString stringWithUTF8String:attachmentRange.imageUri.c_str()];
     NSTextAttachment *attachment = [[NSTextAttachment alloc] init];
     UIImage *image = images[imageUri];
-    if ([imageUri hasPrefix:@"sf:"]) {
-      NSString *symbolName = [imageUri substringFromIndex:3];
-      UIColor *foregroundColor =
-          [attributedString attribute:NSForegroundColorAttributeName
-                              atIndex:attachmentRange.location
-                       effectiveRange:nil] ?: UIColor.labelColor;
-      image = [[UIImage systemImageNamed:symbolName] imageWithTintColor:foregroundColor
-                                                          renderingMode:UIImageRenderingModeAlwaysOriginal];
+    const BOOL isSymbol = [imageUri hasPrefix:@"sf:"];
+    if (isSymbol) {
+      image = [UIImage systemImageNamed:[imageUri substringFromIndex:3]];
+    }
+    UIColor *foregroundColor = [attributedString attribute:NSForegroundColorAttributeName
+                                                   atIndex:attachmentRange.location
+                                            effectiveRange:nil];
+    if (image != nil && (isSymbol || attachmentRange.tintWithForeground)) {
+      image = [image imageWithTintColor:foregroundColor ?: UIColor.labelColor
+                          renderingMode:UIImageRenderingModeAlwaysOriginal];
     }
     attachment.image = image ?: [[UIImage alloc] init];
     const CGFloat attachmentSize = T3MarkdownTextAttachmentSize(attachmentRange);
@@ -79,8 +81,15 @@ static void T3MarkdownTextApplyAttachments(
     const NSRange range = NSMakeRange(
         attachmentRange.location,
         MIN(attachmentRange.length, attributedString.length - attachmentRange.location));
-    NSAttributedString *attachmentString =
-        [NSAttributedString attributedStringWithAttachment:attachment];
+    NSMutableAttributedString *attachmentString =
+        [[NSAttributedString attributedStringWithAttachment:attachment] mutableCopy];
+    // Keep the run color on the attachment so a later re-apply (after the image
+    // loads asynchronously) still tints with the link color, not labelColor.
+    if (foregroundColor != nil) {
+      [attachmentString addAttribute:NSForegroundColorAttributeName
+                               value:foregroundColor
+                               range:NSMakeRange(0, attachmentString.length)];
+    }
     [attributedString replaceCharactersInRange:range withAttributedString:attachmentString];
   }
 }

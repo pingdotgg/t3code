@@ -2253,6 +2253,54 @@ describe("ClaudeAdapterLive", () => {
     return Effect.forEach(reasons, runDeadTurn, { discard: true });
   });
 
+  it.effect.each(["success", "error_during_execution"] as const)(
+    "preserves %s behavior for an unknown runtime terminal reason",
+    (subtype) => {
+      const harness = makeHarness();
+      return Effect.gen(function* () {
+        const adapter = yield* ClaudeAdapter;
+        const completionFiber = yield* adapter.streamEvents.pipe(
+          Stream.filter((event) => event.type === "turn.completed"),
+          Stream.runHead,
+          Effect.forkChild,
+        );
+        const session = yield* adapter.startSession({
+          threadId: THREAD_ID,
+          provider: ProviderDriverKind.make("claudeAgent"),
+          runtimeMode: "full-access",
+        });
+        yield* adapter.sendTurn({ threadId: session.threadId, input: "hello", attachments: [] });
+        // An installed CLI can send a terminal reason newer than the bundled SDK.
+        harness.query.emit({
+          type: "result",
+          subtype,
+          is_error: subtype !== "success",
+          result: "",
+          errors: subtype === "success" ? [] : ["Provider error detail"],
+          stop_reason: null,
+          terminal_reason: "future_terminal_reason",
+          session_id: "sdk-session-future-reason",
+          uuid: "result-future-reason",
+        } as unknown as SDKMessage);
+        const completed = yield* Fiber.join(completionFiber);
+        assert.equal(completed._tag, "Some");
+        if (completed._tag === "Some" && completed.value.type === "turn.completed") {
+          assert.equal(
+            completed.value.payload.state,
+            subtype === "success" ? "completed" : "failed",
+          );
+          assert.equal(
+            completed.value.payload.errorMessage,
+            subtype === "success" ? undefined : "Provider error detail",
+          );
+        }
+      }).pipe(
+        Effect.provideService(Random.Random, makeDeterministicRandomService()),
+        Effect.provide(harness.layer),
+      );
+    },
+  );
+
   it.effect("fails a turn when a success result reports a 529 overload", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
