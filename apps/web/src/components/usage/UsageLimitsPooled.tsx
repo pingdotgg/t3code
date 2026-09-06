@@ -49,7 +49,8 @@ function AccountChip({ email }: { readonly email: string }) {
   const hue = accountHue(email);
   return (
     <span
-      aria-hidden
+      role="img"
+      aria-label={`Account ${accountInitials(email)}`}
       className="inline-flex size-4 shrink-0 items-center justify-center rounded-full text-[9px] leading-none font-semibold"
       style={{ backgroundColor: `oklch(0.85 0.08 ${hue})`, color: `oklch(0.35 0.1 ${hue})` }}
     >
