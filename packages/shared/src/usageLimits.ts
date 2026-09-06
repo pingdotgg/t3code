@@ -202,6 +202,14 @@ export function collectLimitAccounts(
           !previous.environments.some((seen) => seen.environmentId === candidate.environmentId),
       ),
     ];
+    const winner = fresher ? next : previous;
+    // Windows come from the freshest snapshot, wherever it was read. Reset
+    // credits only ever come from a native instance, and the redeem must go
+    // to the instance whose credits are on show, so the two travel together:
+    // the freshest native snapshot supplies both, or neither.
+    const native = [previous, next]
+      .filter((candidate) => candidate.redeem !== null)
+      .toSorted((a, b) => Date.parse(b.limits.checkedAt) - Date.parse(a.limits.checkedAt))[0];
     accounts.set(key, {
       ...previous,
       displayName: previous.displayName ?? next.displayName,
@@ -210,8 +218,13 @@ export function collectLimitAccounts(
       environments,
       // A hub only names the account when no environment has it natively.
       sourceLabel: environments.length > 0 ? null : (previous.sourceLabel ?? next.sourceLabel),
-      redeem: previous.redeem ?? next.redeem,
-      limits: fresher ? next.limits : previous.limits,
+      redeem: native?.redeem ?? null,
+      limits: {
+        ...winner.limits,
+        ...(native?.limits.resetCredits
+          ? { resetCredits: native.limits.resetCredits }
+          : { resetCredits: undefined }),
+      },
     });
   };
   for (const [environmentId, presentation] of presentations) {
@@ -236,25 +249,30 @@ export function collectLimitAccounts(
       );
     }
   }
-  for (const source of collectLimitSources(presentations)) {
-    for (const account of source.accounts) {
-      if (limitsNotice(account.usageLimits) !== null) continue;
-      // Without an email the auth file name is the identity, keyed by source
-      // id so the same hub configured on two environments with the same URL
-      // yields one account. The id derives from the URL as typed, so a hub
-      // reached by two different hosts still counts twice.
-      merge(accountKey(account.driver, account.email) ?? `${source.id}:${account.id}`, {
-        key: `${source.id}:${account.id}`,
-        driver: account.driver,
-        displayName: account.email ? null : account.id.replace(/\.json$/i, ""),
-        email: account.email,
-        plan: account.plan,
-        accentColor: undefined,
-        environments: [],
-        sourceLabel: source.label,
-        redeem: null,
-        limits: account.usageLimits,
-      });
+  // Every hub account, including those a native instance also knows: the hub
+  // may hold a fresher read of the same subscription, and the merge above
+  // keeps the redeem target consistent with whichever snapshot wins.
+  const labelEnvironment = presentations.size > 1;
+  for (const presentation of presentations.values()) {
+    for (const source of presentation.serverConfig?.usageLimitSources ?? []) {
+      const sourceLabel = labelEnvironment
+        ? `${presentation.entry.target.label} · ${source.label}`
+        : source.label;
+      for (const account of source.accounts) {
+        if (limitsNotice(account.usageLimits) !== null) continue;
+        merge(accountKey(account.driver, account.email) ?? `${source.id}:${account.id}`, {
+          key: `${source.id}:${account.id}`,
+          driver: account.driver,
+          displayName: account.email ? null : account.id.replace(/\.json$/i, ""),
+          email: account.email,
+          plan: account.plan,
+          accentColor: undefined,
+          environments: [],
+          sourceLabel,
+          redeem: null,
+          limits: account.usageLimits,
+        });
+      }
     }
   }
   return [...accounts.values()];

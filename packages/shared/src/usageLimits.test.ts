@@ -377,7 +377,8 @@ describe("pools", () => {
     expect(accounts[0]).toMatchObject({
       key: "env-a:claude",
       sourceLabel: null,
-      redeem: { environmentId: "env-a", instanceId: "claude" },
+      // Desktop's read is fresher, so its credits and its redeem are the ones on show.
+      redeem: { environmentId: "env-b", instanceId: "claude" },
       environments: [
         { environmentId: "env-a", label: "Laptop" },
         { environmentId: "env-b", label: "Desktop" },
@@ -385,6 +386,80 @@ describe("pools", () => {
     });
     // The fresher native snapshot wins; the hub row is pre-filtered by email.
     expect(accounts[0]?.limits.windows[0]?.usedPercent).toBe(55);
+  });
+
+  it("takes windows from a fresher hub read but credits and redeem from the native instance", () => {
+    const native = provider({
+      driver: claude,
+      instanceId: ProviderInstanceId.make("claude"),
+      auth: { status: "authenticated", email: "same@example.com" },
+      usageLimits: {
+        checkedAt,
+        windows: [{ ...window, usedPercent: 40 }],
+        resetCredits: { availableCount: 2 },
+      },
+    });
+    const input = new Map([
+      [
+        EnvironmentId.make("env-a"),
+        {
+          ...laptop,
+          serverConfig: {
+            providers: [native],
+            usageLimitSources: [
+              {
+                ...source,
+                accounts: [
+                  {
+                    id: "claude-same@example.com.json",
+                    driver: claude,
+                    email: "same@example.com",
+                    usageLimits: {
+                      checkedAt: "2026-09-03T11:30:00.000Z",
+                      windows: [{ ...window, usedPercent: 55 }],
+                    },
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      ],
+    ]);
+    const [account] = collectLimitAccounts(input);
+    expect(account?.limits.windows[0]?.usedPercent).toBe(55);
+    expect(account?.limits.resetCredits?.availableCount).toBe(2);
+    expect(account?.redeem).toEqual({ environmentId: "env-a", instanceId: "claude" });
+    expect(account?.environments).toEqual([{ environmentId: "env-a", label: "Laptop" }]);
+  });
+
+  it("redeems on the environment whose snapshot supplied the credits on show", () => {
+    const stale = provider({
+      auth: { status: "authenticated", email: "same@example.com" },
+      usageLimits: {
+        checkedAt,
+        windows: [window],
+        resetCredits: { availableCount: 0 },
+      },
+    });
+    const fresh = {
+      ...stale,
+      usageLimits: {
+        checkedAt: "2026-09-03T11:30:00.000Z",
+        windows: [window],
+        resetCredits: { availableCount: 2 },
+      },
+    };
+    const input = new Map([
+      [EnvironmentId.make("env-a"), { ...laptop, serverConfig: { providers: [stale] } }],
+      [
+        EnvironmentId.make("env-b"),
+        { entry: { target: { label: "Desktop" } }, serverConfig: { providers: [fresh] } },
+      ],
+    ]);
+    const [account] = collectLimitAccounts(input);
+    expect(account?.limits.resetCredits?.availableCount).toBe(2);
+    expect(account?.redeem).toEqual({ environmentId: "env-b", instanceId: "codex" });
   });
 
   it("names an environment once however many of its instances share the account", () => {
