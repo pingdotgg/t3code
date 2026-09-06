@@ -6,18 +6,14 @@ import type {
   ServerProvider,
   ServerProviderResetCredits,
   ServerProviderUsageWindow,
-  UsageLimitSourceAccount,
   UsageProviderKind,
 } from "@t3tools/contracts";
 import {
-  collectLimitSources,
-  collectLimitsGroups,
   elapsedShare,
   formatDuration,
   formatResetsIn,
   limitsNotice,
   paceOf,
-  providerLimitsLabel,
   remainingPercent,
 } from "@t3tools/shared/usageLimits";
 import { type ReactNode, useState } from "react";
@@ -28,11 +24,9 @@ import { ProviderIcon } from "../../components/ProviderIcon";
 import { environmentPresentations } from "../../state/presentation";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { SettingsSection } from "../settings/components/SettingsSection";
 import { useProviderColors } from "./usageProviders";
 
 const PACE_LABEL = { ahead: "ahead of pace", on: "on pace", under: "under pace" } as const;
-const DRIVER_LABEL: Partial<Record<string, string>> = { codex: "Codex", claudeAgent: "Claude" };
 
 type Driver = ServerProvider["driver"];
 
@@ -186,7 +180,7 @@ export function ResetCredits(props: {
   });
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
-  if (credits.availableCount === 0 && status === null) return null;
+  if (dense && credits.availableCount === 0 && status === null) return null;
 
   const expiresIn = credits.nextExpiresAt
     ? formatDuration(Date.parse(credits.nextExpiresAt) - now)
@@ -237,7 +231,7 @@ export function ResetCredits(props: {
           className={
             dense
               ? "rounded-full bg-subtle-strong px-2.5 py-1"
-              : "rounded-full bg-subtle-strong px-3 py-1.5"
+              : "min-h-[44px] justify-center rounded-full bg-subtle-strong px-3 py-1.5"
           }
         >
           <Text
@@ -256,57 +250,6 @@ export function ResetCredits(props: {
   );
 }
 
-function ProviderLimits(props: {
-  readonly provider: ServerProvider;
-  readonly environmentId: EnvironmentId;
-  readonly now: number;
-  readonly first: boolean;
-}) {
-  const { provider, environmentId, now } = props;
-  const credits = provider.usageLimits?.resetCredits;
-  return (
-    <AccountLimits
-      driver={provider.driver}
-      label={DRIVER_LABEL[provider.driver] ?? String(provider.driver)}
-      instanceLabel={providerLimitsLabel(provider, (driver) => DRIVER_LABEL[driver])}
-      detail={provider.auth.label}
-      limits={provider.usageLimits}
-      now={now}
-      first={props.first}
-      footer={
-        credits ? (
-          <ResetCredits
-            environmentId={environmentId}
-            instanceId={provider.instanceId}
-            credits={credits}
-            now={now}
-          />
-        ) : undefined
-      }
-    />
-  );
-}
-
-/** Emails stay off the phone screen; the plan and driver identify the row. */
-function SourceAccountLimits(props: {
-  readonly account: UsageLimitSourceAccount;
-  readonly now: number;
-  readonly first: boolean;
-}) {
-  const { account } = props;
-  return (
-    <AccountLimits
-      driver={account.driver}
-      label={DRIVER_LABEL[account.driver] ?? String(account.driver)}
-      instanceLabel="CLI Proxy"
-      detail={account.plan}
-      limits={account.usageLimits}
-      now={props.now}
-      first={props.first}
-    />
-  );
-}
-
 /**
  * Re-probes every provider (and usage-limit source) on each connected
  * environment; the fresh snapshots then arrive over the config stream.
@@ -315,107 +258,47 @@ function SourceAccountLimits(props: {
  * Environments whose probe failed are named, since their rows keep showing
  * the previous quota with nothing else to say so.
  */
-export function useRefreshLimits() {
+export function useRefreshLimits(selectedEnvironmentIds: ReadonlySet<EnvironmentId> | null = null) {
   const presentations = useAtomValue(environmentPresentations.presentationsAtom);
   const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
     reportFailure: false,
   });
   const [now, setNow] = useState(() => Date.now());
   const [refreshing, setRefreshing] = useState(false);
-  const [failedLabels, setFailedLabels] = useState<readonly string[]>([]);
+  const [failedEnvironments, setFailedEnvironments] = useState<
+    readonly { environmentId: EnvironmentId; label: string }[]
+  >([]);
   // Always toggles `refreshing`, even with nothing to probe: Android's
   // RefreshControl keeps its spinner up until it sees true then false.
   const refresh = async () => {
     const connected = [...presentations].filter(
-      ([, presentation]) => presentation.connection.phase === "connected",
+      ([environmentId, presentation]) =>
+        presentation.connection.phase === "connected" &&
+        (selectedEnvironmentIds === null || selectedEnvironmentIds.has(environmentId)),
     );
     setRefreshing(true);
     try {
       const results = await Promise.all(
         connected.map(([environmentId]) => refreshProviders({ environmentId, input: {} })),
       );
-      setFailedLabels(
+      setFailedEnvironments(
         connected
           .filter((_, index) => results[index]?._tag === "Failure")
-          .map(([, presentation]) => presentation.entry.target.label),
+          .map(([environmentId, presentation]) => ({
+            environmentId,
+            label: presentation.entry.target.label,
+          })),
       );
     } finally {
       setNow(Date.now());
       setRefreshing(false);
     }
   };
+  const failedLabels = failedEnvironments
+    .filter(
+      ({ environmentId }) =>
+        selectedEnvironmentIds === null || selectedEnvironmentIds.has(environmentId),
+    )
+    .map(({ label }) => label);
   return { now, refreshing, failedLabels, refresh };
-}
-
-/**
- * Subscription quota windows from every connected environment's providers,
- * read from the config each environment already streams.
- */
-export function UsageLimitsSection(props: {
-  readonly now: number;
-  readonly failedLabels: readonly string[];
-}) {
-  const { now } = props;
-  const presentations = useAtomValue(environmentPresentations.presentationsAtom);
-  const groups = collectLimitsGroups(presentations);
-  const sources = collectLimitSources(presentations);
-
-  if (groups.length === 0 && sources.length === 0) {
-    return (
-      <Text className="py-16 text-center text-base text-foreground-muted">
-        No provider on a connected environment reports subscription limits.
-      </Text>
-    );
-  }
-
-  return (
-    <>
-      {props.failedLabels.length > 0 ? (
-        <View className="rounded-[16px] border-continuous bg-card px-4 py-3">
-          <Text className="text-sm text-foreground-muted">
-            {props.failedLabels.join(", ")} could not refresh limits. Showing the last known values.
-          </Text>
-        </View>
-      ) : null}
-      {groups.map((group) => (
-        <SettingsSection
-          key={group.environmentId}
-          title={group.environmentLabel ?? "Providers"}
-          card
-        >
-          {group.providers.map((provider, index) => (
-            <ProviderLimits
-              key={provider.instanceId}
-              provider={provider}
-              environmentId={group.environmentId}
-              now={now}
-              first={index === 0}
-            />
-          ))}
-        </SettingsSection>
-      ))}
-      {sources.map((source) => (
-        <SettingsSection key={source.key} card>
-          {source.error ? (
-            <Text className="p-4 text-sm text-foreground-muted">{source.error}</Text>
-          ) : source.accounts.length === 0 ? (
-            <Text className="p-4 text-sm text-foreground-muted">
-              {source.hiddenAccountCount > 0
-                ? "All accounts are shown by connected providers."
-                : "No accounts reported."}
-            </Text>
-          ) : (
-            source.accounts.map((account, index) => (
-              <SourceAccountLimits
-                key={account.id}
-                account={account}
-                now={now}
-                first={index === 0}
-              />
-            ))
-          )}
-        </SettingsSection>
-      ))}
-    </>
-  );
 }
