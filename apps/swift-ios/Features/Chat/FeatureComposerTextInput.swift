@@ -240,6 +240,8 @@ struct FeatureComposerTextInput: UIViewRepresentable {
             selection: NSRange,
             preservingTrailing restoredTrailingSkill: FeatureInlineSkillDescriptor? = nil
         ) -> Bool {
+            // Replacing attributed text would commit or discard active IME composition.
+            guard textView.markedTextRange == nil else { return false }
             let currentText = textView.attributedText ?? NSAttributedString()
             let currentSource = FeatureInlineSkillProjection.plainText(from: currentText)
             let currentSignatures = FeatureInlineSkillProjection.signatures(in: currentText)
