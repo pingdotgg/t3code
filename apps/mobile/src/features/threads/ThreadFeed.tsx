@@ -1932,7 +1932,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const [expandedFile, setExpandedFile] = useState<FilePreviewSource | null>(null);
   const [expandedVideo, setExpandedVideo] = useState<VideoPreviewSource | null>(null);
   const fileShareSourceIdentifier = useId();
-  const { share: shareFileChip, sharing: sharingFileChip } = useFileChipShare(
+  const shareFileChip = useFileChipShare(
     props.environmentId,
     props.threadId,
     fileShareSourceIdentifier,
@@ -2072,7 +2072,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       onLinkPress: onMarkdownLinkPress,
       fileContextMenu: (href) => {
         const target = resolveFileChipTarget(href, props.workspaceRoot);
-        return target ? fileChipMenu(target, sharingFileChip) : undefined;
+        return target ? fileChipMenu(target) : undefined;
       },
       onFileContextMenuAction: (href, actionId) => {
         const target = resolveFileChipTarget(href, props.workspaceRoot);
@@ -2093,7 +2093,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         }
       },
     }),
-    [onMarkdownLinkPress, props.workspaceRoot, shareFileChip, sharingFileChip],
+    [onMarkdownLinkPress, props.workspaceRoot, shareFileChip],
   );
   const renderMarkdownImage = useCallback<MarkdownImageRenderer>(
     (image) => {
@@ -2187,7 +2187,6 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       workRowSizing,
       iconSubtleColor,
       markdownStyles,
-      markdownLinkHandlers,
       reviewCommentColors,
       themeAppearance,
       userBubbleColor,
@@ -2199,7 +2198,6 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       workRowSizing,
       iconSubtleColor,
       markdownStyles,
-      markdownLinkHandlers,
       reviewCommentColors,
       themeAppearance,
       userBubbleColor,

@@ -1,7 +1,7 @@
 import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import * as Option from "effect/Option";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
 import { Alert } from "react-native";
 
 import { downloadAndShareAttachment } from "../../lib/attachmentDownload";
@@ -22,8 +22,11 @@ export function useFileChipShare(
     refresh: true,
     reportFailure: false,
   });
+  const connectionRef = useRef(httpBaseUrl);
+  useLayoutEffect(() => {
+    connectionRef.current = httpBaseUrl;
+  }, [httpBaseUrl]);
   const requestRef = useRef<AbortController | null>(null);
-  const [sharing, setSharing] = useState(false);
   useEffect(() => () => requestRef.current?.abort(), []);
 
   const share = useCallback(
@@ -32,7 +35,7 @@ export function useFileChipShare(
       if (!source || requestRef.current) return;
       const request = new AbortController();
       requestRef.current = request;
-      setSharing(true);
+      const httpBaseUrl = connectionRef.current;
       void (async () => {
         if (httpBaseUrl === null) throw new Error("Reconnect to the environment and try again.");
         const result = await createUrl({ environmentId, input: { resource: source.resource } });
@@ -58,11 +61,10 @@ export function useFileChipShare(
         .finally(() => {
           if (requestRef.current === request) {
             requestRef.current = null;
-            if (!request.signal.aborted) setSharing(false);
           }
         });
     },
-    [createUrl, environmentId, httpBaseUrl, sourceIdentifier, threadId],
+    [createUrl, environmentId, sourceIdentifier, threadId],
   );
-  return { share, sharing };
+  return share;
 }

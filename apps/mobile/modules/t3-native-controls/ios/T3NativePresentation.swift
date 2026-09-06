@@ -71,12 +71,5 @@ func presentFileShare(
   activity.popoverPresentationController?.sourceView = origin
   activity.popoverPresentationController?.sourceRect = source?.bounds
     ?? CGRect(x: origin.bounds.midX, y: origin.bounds.maxY, width: 0, height: 0)
-  // A feed-sized anchor leaves no room beside it on iPhone and clips the share panel.
-  if origin.traitCollection.horizontalSizeClass == .compact {
-    activity.popoverPresentationController?.sourceRect = CGRect(
-      x: origin.bounds.midX, y: origin.bounds.maxY, width: 0, height: 0
-    )
-    activity.popoverPresentationController?.permittedArrowDirections = []
-  }
   presenter.present(activity, animated: true)
 }

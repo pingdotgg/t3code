@@ -61,7 +61,6 @@ describe("file chip downloads", () => {
     expect(fileChipMenu(target).actions).toContainEqual({
       id: "save",
       title: "Save or share",
-      disabled: false,
     });
     expect(fileChipShareSource(target, threadId)).toEqual({
       name: path.split("/").at(-1),

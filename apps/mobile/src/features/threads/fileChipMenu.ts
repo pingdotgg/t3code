@@ -61,7 +61,7 @@ export function fileChipShareSource(target: FileChipTarget, threadId: ThreadId) 
 }
 
 /** Saving is available for the media and documents the host asset endpoint can serve. */
-export function fileChipMenu(target: FileChipTarget, sharing = false): MarkdownFileContextMenu {
+export function fileChipMenu(target: FileChipTarget): MarkdownFileContextMenu {
   return {
     title: target.fullPath ?? target.relativePath ?? "",
     actions: [
@@ -72,8 +72,7 @@ export function fileChipMenu(target: FileChipTarget, sharing = false): MarkdownF
         ? [
             {
               id: "save",
-              title: sharing ? "Opening share sheet…" : "Save or share",
-              disabled: sharing,
+              title: "Save or share",
             },
           ]
         : []),
