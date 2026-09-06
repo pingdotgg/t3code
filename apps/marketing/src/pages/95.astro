@@ -1,0 +1,354 @@
+---
+import RetroIcon from "../components/RetroIcon.astro";
+import RetroBox from "../components/RetroBox.astro";
+import { GITHUB_REPOSITORY_URL, MARKETING_STATS } from "../lib/site";
+import "../styles/retro.css";
+
+const agents = [
+  {
+    name: "Claude Code",
+    slug: "claude-code",
+    caption: "Now with manners.",
+    artwork: "Cream and orange software box with a bow-tied desktop computer and a gold PLEASE sticker.",
+  },
+  {
+    name: "Codex",
+    slug: "codex",
+    caption: "Some assembly automated.",
+    artwork: "Silver and green software box with a robot hand stacking glowing code blocks.",
+  },
+  {
+    name: "Cursor",
+    slug: "cursor",
+    caption: "Point. Click. Question everything.",
+    artwork: "Black and chrome software box with an enormous silver arrow and lightning bolts.",
+  },
+  {
+    name: "Grok",
+    slug: "grok",
+    caption: "Adult supervision sold separately.",
+    artwork: "Black and red software box with a spacecraft and an UH OH sticker.",
+  },
+  {
+    name: "OpenCode",
+    slug: "opencode",
+    caption: "Please copy this floppy.",
+    artwork: "Purple shareware box with floppy disks spilling from an open carton.",
+  },
+  {
+    name: "Antigravity",
+    slug: "antigravity",
+    caption: "System requirement: no gravity.",
+    artwork: "Blue and violet software box with a floating chrome triangle and metallic spheres.",
+  },
+];
+const userDigits = MARKETING_STATS.users.replaceAll(",", "").padStart(7, "0").split("");
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Introducing T3 Code. All your coding agents in one happy little window. Free, open source, and available without six CD-ROMs." />
+    <meta name="theme-color" content="#000000" />
+    <link rel="icon" href="/favicon.ico" sizes="48x48" />
+    <title>T3 Code '95 | The future is now. Like, right now.</title>
+  </head>
+  <body>
+    <a class="skip-link retro-button" href="#main-content">Skip to the sales pitch</a>
+
+    <nav class="desktop-icons" aria-label="Desktop shortcuts">
+      <a href="/" class="desktop-icon"><RetroIcon name="computer" /><span>My Computer</span></a>
+      <a href="/download" class="desktop-icon"><RetroIcon name="disk" /><span>Install T3 Code</span></a>
+      <a href={GITHUB_REPOSITORY_URL} class="desktop-icon"><RetroIcon name="globe" /><span>Network<br />Neighborhood</span></a>
+      <button type="button" class="desktop-icon" data-dialog="recycle"><RetroIcon name="bin" /><span>Bad Ideas</span></button>
+    </nav>
+
+    <div class="desktop">
+      <div class="browser-window raised" id="sales-window">
+        <header class="window-title" id="window-title" tabindex="0" aria-label="Move browser window. Drag or use arrow keys. Double-click to maximize.">
+          <span class="window-name"><RetroIcon name="globe" size={18} /><span>T3 Code '95 - Internet Explorer</span></span>
+          <div class="window-controls">
+            <button class="retro-button window-control" type="button" id="minimize" aria-label="Minimize window"><span aria-hidden="true">_</span></button>
+            <button class="retro-button window-control" type="button" id="maximize" aria-label="Maximize window" aria-pressed="false"><span class="maximize-icon" aria-hidden="true"></span></button>
+            <button class="retro-button window-control" type="button" data-dialog="close" aria-label="Close window"><span aria-hidden="true">×</span></button>
+          </div>
+        </header>
+
+        <nav class="browser-menu" aria-label="Page navigation">
+          <a href="#nightly"><u>N</u>ightly</a>
+          <a href="#features"><u>F</u>eatures</a>
+          <a href="#agents"><u>A</u>gents</a>
+          <a href="#order"><u>O</u>rder now</a>
+          <a href={GITHUB_REPOSITORY_URL}><u>S</u>ource</a>
+          <button type="button" data-dialog="help"><u>H</u>elp</button>
+        </nav>
+
+        <div class="address-bar">
+          <span>Address</span>
+          <div class="address-field sunken"><RetroIcon name="globe" size={16} /><span>https://t3.codes/95</span></div>
+          <a class="retro-button address-go" href="/">Go <span aria-hidden="true">↗</span></a>
+        </div>
+
+        <main id="main-content" tabindex="0">
+          <section class="hero" aria-labelledby="hero-title">
+            <div class="hero-copy">
+              <h1 id="hero-title">All your agents.<br />One happy<br /><span>little window.</span></h1>
+              <p class="hero-explanation">Your coding agents in one free, open-source app.<br />You bring the subscriptions. We bring the buttons.</p>
+              <div class="platform-line"><span>AVAILABLE FOR</span><strong>Windows</strong><b>·</b><strong>macOS</strong><b>·</b><strong>Linux</strong></div>
+            </div>
+
+            <div class="edition-packages" aria-label="Choose Stable or Nightly">
+              <a class="hero-package" href="/download" aria-label="Download T3 Code stable">
+                <RetroBox image="t3-code-lime" alt="T3 Code in a lime and teal software box." sizes="(max-width: 620px) 38vw, 170px" eager />
+                <span class="retro-button edition-download">Get Stable <span aria-hidden="true">↗</span></span>
+              </a>
+              <a class="hero-package nightly-package" id="nightly" href={`${GITHUB_REPOSITORY_URL}/releases?q=nightly&expanded=true`} aria-label="Download T3 Code Nightly preview builds">
+                <RetroBox image="t3-code-nightly-clouds" alt="T3 Code Nightly in a navy box with violet clouds." sizes="(max-width: 620px) 38vw, 170px" eager />
+                <span class="retro-button edition-download">Get Nightly <span aria-hidden="true">↗</span></span>
+              </a>
+            </div>
+          </section>
+
+          <section class="agents-section" id="agents" aria-labelledby="agents-title">
+            <div class="section-heading"><h2 id="agents-title">Bring your favorite agents.</h2></div>
+            <div class="agent-list">
+              {agents.map((agent, index) => (
+                <figure class="agent">
+                  <img
+                    class="agent-box"
+                    src={`/95/providers/${agent.slug}-640.webp`}
+                    srcset={[320, 640, 960].map((width) => `/95/providers/${agent.slug}-${width}.webp ${width}w`).join(", ")}
+                    sizes="auto, (max-width: 620px) 43vw, (max-width: 1100px) 27vw, 280px"
+                    alt={agent.artwork}
+                    width="640"
+                    height="800"
+                    loading={index < 3 ? "eager" : "lazy"}
+                    decoding="async"
+                  />
+                  <figcaption>
+                    <h3>{agent.name}</h3>
+                    <p>{agent.caption}</p>
+                  </figcaption>
+                </figure>
+              ))}
+            </div>
+            <p class="agents-note">Use the providers and subscriptions you already have. Provider charges still apply.</p>
+            <p class="agents-note">Parody packaging. No actual boxes for sale.</p>
+          </section>
+
+          <section class="features-section" id="features" aria-labelledby="features-title">
+            <div class="section-heading"><h2 id="features-title">Inside every copy.</h2></div>
+            <div class="feature-grid">
+              <article class="feature-window raised">
+                <div class="feature-titlebar"><span>01_multitasking.exe</span><span aria-hidden="true">■</span></div>
+                <div class="feature-body"><RetroIcon name="computer" size={38} /><h3>More agents.<br />Less window aerobics.</h3><p>Run agents side by side. Keep your threads, terminals, and diffs together. Reclaim your Alt-Tab finger.</p></div>
+              </article>
+              <article class="feature-window raised">
+                <div class="feature-titlebar"><span>02_remote_access.exe</span><span aria-hidden="true">■</span></div>
+                <div class="feature-body"><RetroIcon name="globe" size={38} /><h3>Your computer.<br />Now over there.</h3><p>Connect from the web, desktop, or mobile. Your agents keep working on your machine. You may approach the couch.</p></div>
+              </article>
+              <article class="feature-window raised">
+                <div class="feature-titlebar"><span>03_source_code.txt</span><span aria-hidden="true">■</span></div>
+                <div class="feature-body"><RetroIcon name="folder" size={38} /><h3>We left the<br />source code in.</h3><p>Read it. Change it. Fork the whole thing. It's MIT licensed, because your tools should actually be yours.</p><a class="feature-tag" href={GITHUB_REPOSITORY_URL}>View source <span aria-hidden="true">↗</span></a></div>
+              </article>
+              <article class="feature-window raised">
+                <div class="feature-titlebar"><span>04_terminal.exe</span><span aria-hidden="true">■</span></div>
+                <div class="feature-body"><RetroIcon name="computer" size={38} /><h3>A terminal.<br />Right where you work.</h3><p>Run commands alongside your agents. Keep the output with the project.</p></div>
+              </article>
+              <article class="feature-window raised">
+                <div class="feature-titlebar"><span>05_changes.diff</span><span aria-hidden="true">■</span></div>
+                <div class="feature-body"><RetroIcon name="folder" size={38} /><h3>See what<br />actually changed.</h3><p>Inspect file diffs and review the work before you ship it.</p></div>
+              </article>
+              <article class="feature-window raised">
+                <div class="feature-titlebar"><span>06_checkpoint.bak</span><span aria-hidden="true">■</span></div>
+                <div class="feature-body"><RetroIcon name="disk" size={38} /><h3>A way<br />back.</h3><p>Use turn checkpoints to inspect changes and restore earlier work.</p></div>
+              </article>
+            </div>
+          </section>
+
+          <section class="order-section" id="order" aria-labelledby="order-title">
+            <div class="order-pitch"><h2 id="order-title">For just <span>0 easy payments</span><br />of absolutely nothing.</h2><p>Get the app. Keep your subscriptions.</p><a class="retro-button primary-cta" href="/download"><RetroIcon name="disk" size={25} /><span>GET T3 CODE. IT'S FREE.</span><span aria-hidden="true">→</span></a><p class="offer-note">T3 Code is free. Your AI provider may charge for use.</p></div>
+            <div class="run-window raised"><div class="window-title"><span>Run</span><RetroIcon name="computer" size={18} /></div><div class="run-body"><p>Too cool for an installer?</p><label for="run-command">Type this in your terminal.</label><div class="command-row"><input id="run-command" class="sunken" value="npx t3" readonly spellcheck="false" aria-label="Terminal command" /><button type="button" class="retro-button" id="copy-command">Copy</button></div><p class="command-feedback" id="command-feedback" role="status">Node.js required. Modem optional.</p><div class="run-divider"></div><b>System requirements</b><ul><li>A modern computer</li><li>A supported coding agent</li><li>A dream, ideally a small one</li></ul><p class="requirements-note">Does not actually run on Windows 95.</p></div></div>
+          </section>
+
+          <section class="faq-section" aria-labelledby="faq-title">
+            <h2 id="faq-title">Questions</h2>
+            <details><summary>Wait. Is this a real product?</summary><p>Yes. T3 Code is a real, free, open-source app used by {MARKETING_STATS.users} developers. The packaging is a joke. The app is not. <a href="/">Visit the regular website.</a></p></details>
+            <details><summary>Does this replace my Claude or Codex subscription?</summary><p>No. T3 Code connects to the coding agents you already use. Keep your provider accounts and subscriptions. T3 Code gives you one app to work with them.</p></details>
+            <details><summary>Will it run on Windows 95?</summary><p>Absolutely not. We brought back the look, not the driver problems. <a href="/download">Get a build for a current version of Windows, macOS, or Linux.</a></p></details>
+            <details><summary>Where do I mail my check?</summary><p>Please do not mail us a check for zero dollars. Just download the app. The entire accounts department is a download button.</p></details>
+          </section>
+
+          <footer class="site-footer">
+            <div class="visitor-counter"><div class="counter-digits" aria-label={`${MARKETING_STATS.users} users`}>{userDigits.map((digit) => <span aria-hidden="true">{digit}</span>)}</div><span>developers use T3 Code.</span></div>
+            <p>© {new Date().getFullYear()} T3 Tools Inc.</p>
+            <nav aria-label="Footer"><a href="/">Back to the present</a><a href={GITHUB_REPOSITORY_URL}>GitHub</a><a href="/privacy-policy">Privacy</a><a href="/terms-of-service">Terms</a></nav>
+          </footer>
+        </main>
+
+        <div class="browser-status"><span class="sunken">Done.</span><span class="sunken"><RetroIcon name="globe" size={14} /> Internet</span><span class="resize-grip" aria-hidden="true"></span></div>
+      </div>
+
+      <div class="minimized-message" id="minimized-message" hidden><RetroIcon name="computer" size={64} /><h1>The future is minimized.</h1><p>Your productivity is one click away.</p><button type="button" class="retro-button" data-restore>Restore T3 Code '95</button></div>
+    </div>
+
+    <div class="taskbar raised">
+      <details class="start-menu" id="start-menu"><summary class="retro-button start-button"><span class="start-mark" aria-hidden="true"><i></i><i></i><i></i><i></i></span>Start</summary><nav class="start-panel raised" aria-label="Start menu"><div class="start-brand">T3 CODE <b>95</b></div><div><a href="/download"><RetroIcon name="disk" size={24} />Install T3 Code</a><button type="button" data-restore><RetroIcon name="computer" size={24} />Restore the future</button><a href={GITHUB_REPOSITORY_URL}><RetroIcon name="folder" size={24} />Explore source code</a><a href="/"><RetroIcon name="globe" size={24} />Return to the present</a></div></nav></details>
+      <span class="taskbar-divider" aria-hidden="true"></span>
+      <button class="task-button sunken" type="button" data-restore><RetroIcon name="globe" size={20} /><span>T3 Code '95</span></button>
+      <div class="taskbar-clock sunken"><span aria-hidden="true">◷</span><span>4:04 PM</span></div>
+    </div>
+
+    <dialog class="retro-dialog raised" id="sales-dialog" aria-labelledby="dialog-title" aria-describedby="dialog-message"><div class="window-title"><span id="dialog-title">T3 Code '95</span><button type="button" class="retro-button window-control" data-dismiss aria-label="Close dialog">×</button></div><div class="dialog-content"><RetroIcon name="computer" size={42} /><p id="dialog-message"></p></div><div class="dialog-actions"><button class="retro-button" type="button" data-dismiss autofocus>OK, fine.</button><a class="retro-button" href="/download">Get T3 Code</a></div></dialog>
+
+    <script>
+      const salesWindow = document.querySelector<HTMLElement>("#sales-window");
+      const minimizedMessage = document.querySelector<HTMLElement>("#minimized-message");
+      const minimizeButton = document.querySelector<HTMLButtonElement>("#minimize");
+      const maximizeButton = document.querySelector<HTMLButtonElement>("#maximize");
+      const startMenu = document.querySelector<HTMLDetailsElement>("#start-menu");
+      const taskButton = document.querySelector<HTMLButtonElement>(".task-button");
+      const titleBar = document.querySelector<HTMLElement>("#window-title");
+      const taskbar = document.querySelector<HTMLElement>(".taskbar");
+      let windowX = 0;
+      let windowY = 0;
+
+      // Keep the entire window above the taskbar, including after a viewport resize.
+      function moveWindow(x: number, y: number) {
+        if (!salesWindow || document.body.classList.contains("maximized")) return;
+        const rect = salesWindow.getBoundingClientRect();
+        const originX = rect.left - windowX;
+        const originY = rect.top - windowY;
+        const bottom = taskbar?.getBoundingClientRect().top ?? window.innerHeight;
+        windowX = Math.max(-originX, Math.min(x, window.innerWidth - rect.width - originX));
+        windowY = Math.max(-originY, Math.min(y, bottom - rect.height - originY));
+        salesWindow.style.setProperty("--window-x", `${windowX}px`);
+        salesWindow.style.setProperty("--window-y", `${windowY}px`);
+      }
+
+      function toggleMaximize() {
+        if (!maximizeButton) return;
+        const maximized = document.body.classList.toggle("maximized");
+        maximizeButton.setAttribute("aria-pressed", String(maximized));
+        maximizeButton.setAttribute("aria-label", maximized ? "Restore window size" : "Maximize window");
+        if (!maximized) moveWindow(windowX, windowY);
+      }
+
+      if (titleBar && salesWindow) {
+        let drag: { pointerId: number; startX: number; startY: number; x: number; y: number } | undefined;
+
+        titleBar.addEventListener("pointerdown", (event) => {
+          if (!event.isPrimary || event.button !== 0 || document.body.classList.contains("maximized")) return;
+          if (event.target instanceof Element && event.target.closest("button")) return;
+          drag = { pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, x: windowX, y: windowY };
+          titleBar.focus({ preventScroll: true });
+          titleBar.setPointerCapture(event.pointerId);
+          titleBar.classList.add("dragging");
+        });
+        titleBar.addEventListener("pointermove", (event) => {
+          if (!drag || event.pointerId !== drag.pointerId) return;
+          moveWindow(drag.x + event.clientX - drag.startX, drag.y + event.clientY - drag.startY);
+        });
+        const stopDrag = () => {
+          drag = undefined;
+          titleBar.classList.remove("dragging");
+        };
+        titleBar.addEventListener("pointerup", stopDrag);
+        titleBar.addEventListener("pointercancel", stopDrag);
+        titleBar.addEventListener("lostpointercapture", stopDrag);
+        titleBar.addEventListener("dblclick", (event) => {
+          if (event.target instanceof Element && event.target.closest("button")) return;
+          toggleMaximize();
+        });
+        titleBar.addEventListener("keydown", (event) => {
+          if (event.target !== titleBar || event.altKey || event.ctrlKey || event.metaKey) return;
+          const step = event.shiftKey ? 1 : 10;
+          switch (event.key) {
+            case "ArrowLeft": moveWindow(windowX - step, windowY); break;
+            case "ArrowRight": moveWindow(windowX + step, windowY); break;
+            case "ArrowUp": moveWindow(windowX, windowY - step); break;
+            case "ArrowDown": moveWindow(windowX, windowY + step); break;
+            default: return;
+          }
+          event.preventDefault();
+        });
+      }
+
+      window.addEventListener("resize", () => {
+        if (!salesWindow?.hidden) moveWindow(windowX, windowY);
+      });
+
+      minimizeButton?.addEventListener("click", () => {
+        if (!salesWindow || !minimizedMessage) return;
+        salesWindow.hidden = true;
+        minimizedMessage.hidden = false;
+        taskButton?.focus();
+      });
+
+      document.querySelectorAll<HTMLButtonElement>("[data-restore]").forEach((button) => {
+        button.addEventListener("click", () => {
+          if (!salesWindow || !minimizedMessage) return;
+          salesWindow.hidden = false;
+          minimizedMessage.hidden = true;
+          if (startMenu) startMenu.open = false;
+          moveWindow(windowX, windowY);
+          minimizeButton?.focus({ preventScroll: true });
+        });
+      });
+
+      maximizeButton?.addEventListener("click", toggleMaximize);
+
+      const messages = {
+        recycle: { title: "Recycle Bin", message: "Contents: 47 abandoned side projects, 12 startup ideas, and one very ambitious TODO comment. T3 Code cannot fix your commitment issues. But it can help you ship." },
+        close: { title: "Close the future?", message: "You are about to return to a world with too many terminal windows. Are you sure? Our sales department would prefer that you download T3 Code." },
+        help: { title: "Windows Help", message: "It looks like you're trying to ship software. Have you tried putting all your coding agents in one app? Click Get T3 Code. No paperclip will follow you home." },
+      };
+      const dialog = document.querySelector<HTMLDialogElement>("#sales-dialog");
+      const dialogTitle = document.querySelector<HTMLElement>("#dialog-title");
+      const dialogMessage = document.querySelector<HTMLElement>("#dialog-message");
+
+      document.querySelectorAll<HTMLButtonElement>("[data-dialog]").forEach((button) => {
+        button.addEventListener("click", () => {
+          const kind = button.dataset.dialog;
+          if (!dialog || !dialogTitle || !dialogMessage) return;
+          if (kind !== "recycle" && kind !== "close" && kind !== "help") return;
+          dialogTitle.textContent = messages[kind].title;
+          dialogMessage.textContent = messages[kind].message;
+          dialog.showModal();
+        });
+      });
+      document.querySelectorAll<HTMLButtonElement>("[data-dismiss]").forEach((button) => {
+        button.addEventListener("click", () => dialog?.close());
+      });
+
+      document.addEventListener("keydown", (event) => {
+        if (event.key === "Escape" && startMenu?.open) {
+          startMenu.open = false;
+          startMenu.querySelector("summary")?.focus();
+        }
+      });
+      document.addEventListener("click", (event) => {
+        if (startMenu?.open && event.target instanceof Node && !startMenu.contains(event.target)) {
+          startMenu.open = false;
+        }
+      });
+
+      const copyButton = document.querySelector<HTMLButtonElement>("#copy-command");
+      const command = document.querySelector<HTMLInputElement>("#run-command");
+      const feedback = document.querySelector<HTMLElement>("#command-feedback");
+      copyButton?.addEventListener("click", async () => {
+        if (!command || !feedback) return;
+        try {
+          await navigator.clipboard.writeText(command.value);
+          feedback.textContent = "Copied! Paste it in your terminal. Welcome to the future.";
+        } catch {
+          command.focus();
+          command.select();
+          feedback.textContent = "Select and copy the command, then paste it in your terminal.";
+        }
+      });
+    </script>
+  </body>
+</html>

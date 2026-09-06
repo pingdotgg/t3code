@@ -1,0 +1,23 @@
+---
+interface Props {
+  image: string;
+  alt: string;
+  sizes: string;
+  eager?: boolean;
+}
+
+const { image, alt, sizes, eager = false } = Astro.props;
+const base = `/95/t3-code-concepts/${image}`;
+---
+
+<img
+  src={`${base}-640.webp`}
+  srcset={`${base}-320.webp 320w, ${base}-640.webp 640w, ${base}.webp 960w`}
+  {sizes}
+  {alt}
+  width="960"
+  height="1200"
+  loading={eager ? "eager" : "lazy"}
+  fetchpriority={eager ? "high" : "auto"}
+  decoding="async"
+/>
