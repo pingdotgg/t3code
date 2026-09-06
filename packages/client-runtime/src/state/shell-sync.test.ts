@@ -6,6 +6,7 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
@@ -149,6 +150,88 @@ describe("environment shell synchronization", () => {
       expect(state.status).toBe("live");
       expect(Option.getOrThrow(state.snapshot)).toEqual(LIVE_SHELL_SNAPSHOT);
     }),
+  );
+
+  it.live("applies one chunk of live events as one state change", () =>
+    Effect.gen(function* () {
+      const events = yield* Queue.unbounded<OrchestrationShellStreamItem>();
+      const client = {
+        [ORCHESTRATION_WS_METHODS.subscribeShell]: () => Stream.fromQueue(events),
+      } as unknown as WsRpcProtocolClient;
+      const supervisorState = yield* SubscriptionRef.make(AVAILABLE_CONNECTION_STATE);
+      const activeSession = yield* SubscriptionRef.make<Option.Option<RpcSession.RpcSession>>(
+        Option.some(session(client)),
+      );
+      const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
+        target: TARGET,
+        state: supervisorState,
+        session: activeSession,
+        prepared: yield* SubscriptionRef.make(Option.some(PREPARED)),
+        connect: Effect.void,
+        disconnect: Effect.void,
+        retryNow: Effect.void,
+      } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
+      const cache = Persistence.EnvironmentCacheStore.of({
+        loadShell: () => Effect.succeed(Option.none()),
+        saveShell: () => Effect.void,
+        loadThread: () => Effect.succeed(Option.none()),
+        saveThread: () => Effect.void,
+        removeThread: () => Effect.void,
+        loadServerConfig: () => Effect.succeed(Option.none()),
+        saveServerConfig: () => Effect.void,
+        loadVcsRefs: () => Effect.succeed(Option.none()),
+        saveVcsRefs: () => Effect.void,
+        removeVcsRefs: () => Effect.void,
+        clearVcsRefs: () => Effect.void,
+        clear: () => Effect.void,
+      });
+      const shellState = yield* makeEnvironmentShellState().pipe(
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+        Effect.provideService(Persistence.EnvironmentCacheStore, cache),
+        Effect.provideService(
+          ShellSnapshotLoader,
+          ShellSnapshotLoader.of({ load: () => Effect.succeed(Option.none()) }),
+        ),
+      );
+      yield* SubscriptionRef.set(supervisorState, {
+        desired: true,
+        network: "online",
+        phase: "connected",
+        stage: null,
+        attempt: 1,
+        generation: 1,
+        lastFailure: null,
+        retryAt: null,
+      });
+      yield* Queue.offer(events, { kind: "snapshot", snapshot: LIVE_SHELL_SNAPSHOT });
+      yield* Queue.offer(events, { kind: "synchronized" });
+      yield* SubscriptionRef.changes(shellState).pipe(
+        Stream.filter((state) => state.status === "live"),
+        Stream.runHead,
+      );
+
+      // A bulk action (snooze 30 threads) reaches the client as one server
+      // coalesced chunk. The shell state must change once for it, not 30 times.
+      const observed = yield* SubscriptionRef.changes(shellState).pipe(
+        Stream.drop(1),
+        Stream.takeUntil(
+          (state) => Option.isSome(state.snapshot) && state.snapshot.value.threads.length === 30,
+        ),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      yield* Queue.offerAll(
+        events,
+        Array.from({ length: 30 }, (_, index) => ({
+          kind: "thread-upserted" as const,
+          sequence: 2 + index,
+          thread: { id: `thread-${index}` } as never,
+        })),
+      );
+      const states = yield* Fiber.join(observed);
+      expect(states).toHaveLength(1);
+      expect(Option.getOrThrow(states[0]!.snapshot).snapshotSequence).toBe(31);
+    }).pipe(Effect.scoped),
   );
 
   it.effect("requests a full socket snapshot when the HTTP refresh fails", () =>
