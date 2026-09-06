@@ -734,8 +734,14 @@ export const make = Effect.gen(function* () {
   });
 
   const exchangeBootstrapCredentialForAccessToken: EnvironmentAuth["Service"]["exchangeBootstrapCredentialForAccessToken"] =
-    (credential, requestedScopes, requestMetadata, input) =>
-      bootstrapCredentials
+    (credential, requestedScopesInput, requestMetadata, input) => {
+      // An empty request would pass the grant check and issue a session with no
+      // scopes at all; treat it like an omitted request and use the grant's.
+      const requestedScopes =
+        requestedScopesInput !== undefined && requestedScopesInput.length > 0
+          ? requestedScopesInput
+          : undefined;
+      return bootstrapCredentials
         .consume(credential, {
           ...input,
           ...(requestedScopes !== undefined ? { requestedScopes } : {}),
@@ -796,6 +802,7 @@ export const make = Effect.gen(function* () {
           ),
           Effect.withSpan("EnvironmentAuth.exchangeBootstrapCredentialForAccessToken"),
         );
+    };
 
   const issuePairingCredentialForSubject = (input: {
     readonly scopes: ReadonlyArray<AuthEnvironmentScope>;

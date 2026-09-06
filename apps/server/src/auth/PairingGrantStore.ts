@@ -531,6 +531,9 @@ export const make = Effect.gen(function* () {
         return yield* seededResult.error;
       }
 
+      // The scope check is part of the UPDATE's WHERE clause so a rejected
+      // request cannot consume a one-time link. The re-check below only
+      // explains why nothing matched.
       const consumed = yield* pairingLinks
         .consumeAvailable({
           credential,

@@ -181,7 +181,10 @@ it.layer(NodeServices.layer)("EnvironmentAuth.layer", (it) => {
     }).pipe(Effect.provide(makeEnvironmentAuthLayer())),
   );
 
-  it.effect("inherits a constrained pairing grant when token exchange omits scope", () =>
+  it.effect.each([
+    { label: "omits scope", requestedScopes: undefined },
+    { label: "requests no scopes", requestedScopes: [] },
+  ])("inherits a constrained pairing grant when token exchange $label", ({ requestedScopes }) =>
     Effect.gen(function* () {
       const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
       const pairingCredential = yield* serverAuth.issuePairingCredential({
@@ -190,7 +193,7 @@ it.layer(NodeServices.layer)("EnvironmentAuth.layer", (it) => {
 
       const token = yield* serverAuth.exchangeBootstrapCredentialForAccessToken(
         pairingCredential.credential,
-        undefined,
+        requestedScopes,
         requestMetadata,
       );
 

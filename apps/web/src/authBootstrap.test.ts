@@ -304,6 +304,7 @@ describe("resolveInitialServerAuthGateState", () => {
     { suffix: "#token=replacement-token", cached: false },
     { suffix: "#token=replacement-token", cached: true },
     { suffix: "?token=replacement-token", cached: true },
+    { suffix: "/#token=replacement-token", cached: true },
   ])(
     "re-pairs an authenticated browser with $suffix when cached=$cached",
     async ({ suffix, cached }) => {
@@ -318,11 +319,11 @@ describe("resolveInitialServerAuthGateState", () => {
       });
       const testWindow = installTestBrowser("http://localhost/");
       const {
-        fetchSessionState,
         resolveInitialServerAuthGateState,
         submitServerAuthCredential,
         takePairingTokenFromUrl,
       } = await import("./environments/primary");
+      const { fetchSessionState } = await import("./environments/primary/auth");
 
       if (cached) {
         await expect(resolveInitialServerAuthGateState()).resolves.toEqual({
@@ -376,11 +377,11 @@ describe("resolveInitialServerAuthGateState", () => {
       });
       const testWindow = installTestBrowser("http://localhost/");
       const {
-        fetchSessionState,
         resolveInitialServerAuthGateState,
         submitServerAuthCredential,
         takePairingTokenFromUrl,
       } = await import("./environments/primary");
+      const { fetchSessionState } = await import("./environments/primary/auth");
       if (cached) {
         await resolveInitialServerAuthGateState();
       }

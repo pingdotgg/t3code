@@ -26,6 +26,7 @@ import { fetchRemoteEnvironmentDescriptor } from "@t3tools/client-runtime/enviro
 import { managedRelayAccountChanges, managedRelaySessionAtom } from "@t3tools/client-runtime/relay";
 import { EnvironmentRpcRequestObserver } from "@t3tools/client-runtime/rpc";
 import {
+  AuthStandardClientScopes,
   type DesktopBridge,
   type DesktopEnvironmentBootstrap,
   type DesktopSshEnvironmentTarget,
@@ -327,9 +328,12 @@ const loadSecondaryConnectionRegistration = Effect.fn(
     Effect.mapError(mapRemoteEnvironmentError),
   );
   const issuedAtEpochMs = yield* Clock.currentTimeMillis;
+  // The desktop seed grant is administrative so the primary window can manage
+  // access; a secondary backend session only needs to operate its environment.
   const access = yield* bootstrapRemoteBearerSession({
     httpBaseUrl,
     credential: entry.bootstrapToken,
+    scopes: AuthStandardClientScopes,
     clientMetadata: clientMetadata(),
   }).pipe(Effect.mapError(mapRemoteEnvironmentError));
   // Keep the desktop pool's stable backend id in the connection id. The

@@ -7,6 +7,7 @@ import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hos
 import {
   type DeviceServiceState,
   AuthAccessTokenType,
+  AuthAdministrativeScopes,
   AuthStandardClientScopes,
   AuthEnvironmentBootstrapTokenType,
   AuthTokenExchangeGrantType,
@@ -1312,7 +1313,8 @@ const exchangeAccessToken = (
   credential = defaultDesktopBootstrapToken,
   options?: {
     readonly headers?: Record<string, string>;
-    readonly scope?: string;
+    /** Pass `undefined` explicitly to omit `scope` and receive the grant's scopes. */
+    readonly scope?: string | undefined;
     readonly clientMetadata?: {
       readonly label?: string;
       readonly deviceType?: string;
@@ -1333,9 +1335,14 @@ const exchangeAccessToken = (
         subject_token: credential,
         subject_token_type: AuthEnvironmentBootstrapTokenType,
         requested_token_type: AuthAccessTokenType,
-        scope:
-          options?.scope ??
-          "orchestration:read orchestration:operate terminal:operate review:write relay:read access:read access:write relay:write",
+        ...(options !== undefined && "scope" in options
+          ? options.scope !== undefined
+            ? { scope: options.scope }
+            : {}
+          : {
+              scope:
+                "orchestration:read orchestration:operate terminal:operate review:write relay:read access:read access:write relay:write",
+            }),
         ...(options?.clientMetadata?.label ? { client_label: options.clientMetadata.label } : {}),
         ...(options?.clientMetadata?.deviceType
           ? { client_device_type: options.clientMetadata.deviceType }
@@ -4543,6 +4550,27 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         body: yield* HttpBody.json({}),
       });
       assert.equal(response.status, 401);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("issues the grant's scopes when an exchange omits scope", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+      const owner = yield* exchangeAccessToken(defaultDesktopBootstrapToken, {
+        scope: undefined,
+      });
+      assert.equal(owner.response.status, 200);
+      assert.equal(owner.body.scope, AuthAdministrativeScopes.join(" "));
+
+      const createdResponse = yield* HttpClient.post("/api/auth/pairing-token", {
+        headers: { cookie: yield* getAuthenticatedSessionCookieHeader() },
+        body: yield* HttpBody.json({ scopes: ["orchestration:read", "relay:read"] }),
+      });
+      assert.equal(createdResponse.status, 200);
+      const created = (yield* createdResponse.json) as { credential: string };
+      const paired = yield* exchangeAccessToken(created.credential, { scope: undefined });
+      assert.equal(paired.response.status, 200);
+      assert.equal(paired.body.scope, "orchestration:read relay:read");
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
