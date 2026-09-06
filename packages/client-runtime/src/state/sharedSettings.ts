@@ -24,7 +24,6 @@ const SHARED_SERVER_SETTING_KEYS = [
   "continueThreadsAfterServerUpdate",
   "sidebarAutoSettleAfterDays",
   "sidebarAutoSettleOnMerge",
-  "defaultThreadEnvMode",
   "newWorktreesStartFromOrigin",
   "sourceControlWritingStyle",
 ] as const satisfies ReadonlyArray<keyof ServerSettings & keyof ServerSettingsPatch>;

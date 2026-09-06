@@ -149,8 +149,13 @@ export function DraftHeroHeadline({
             );
             if (!hasExplicitComposerModelSelection(currentDraft)) {
               applyStickyState(draftId);
-              if (project.defaultModelSelection) {
-                setModelSelection(draftId, project.defaultModelSelection, {
+              const defaultModelSelection =
+                project.defaultModelSelection ??
+                environments.find(
+                  (environment) => environment.environmentId === project.environmentId,
+                )?.serverConfig?.settings.defaultModelSelection;
+              if (defaultModelSelection) {
+                setModelSelection(draftId, defaultModelSelection, {
                   replaceOptions: true,
                 });
               }

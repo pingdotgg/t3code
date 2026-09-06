@@ -1,4 +1,10 @@
 import { DEFAULT_CLIENT_SETTINGS, DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts";
+import {
+  createMemoryHistory,
+  createRootRoute,
+  createRouter,
+  RouterProvider,
+} from "@tanstack/react-router";
 import { act, StrictMode, type ReactNode } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -44,13 +50,19 @@ afterEach(async () => {
 });
 
 async function openSettings() {
+  const router = createRouter({
+    routeTree: createRootRoute({ component: IntegrationsSettingsPanel }),
+    history: createMemoryHistory(),
+  });
+  await router.load();
   await act(() => {
     renderer = create(
       <StrictMode>
-        <IntegrationsSettingsPanel />
+        <RouterProvider router={router} />
       </StrictMode>,
     );
   });
+  expect(renderer!.root.findByType(IntegrationsSettingsPanel)).toBeDefined();
 }
 
 describe("Integrations browser discovery", () => {
