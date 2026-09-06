@@ -39,7 +39,7 @@ function buildTooltipContent(context: ElementContextDraft): string {
   return lines.join("\n");
 }
 
-export function ComposerPendingElementContextChip({
+function ComposerPendingElementContextChip({
   context,
   onRemove,
 }: ComposerPendingElementContextChipProps) {

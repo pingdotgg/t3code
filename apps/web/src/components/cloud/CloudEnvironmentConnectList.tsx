@@ -32,7 +32,7 @@ export interface SavedCloudEnvironmentConnection {
   readonly connection: EnvironmentConnectionPresentation;
 }
 
-export function RemoteEnvironmentRowsSkeleton() {
+function RemoteEnvironmentRowsSkeleton() {
   return (
     <div className={ITEM_ROW_CLASSNAME}>
       <div className={ITEM_ROW_INNER_CLASSNAME}>

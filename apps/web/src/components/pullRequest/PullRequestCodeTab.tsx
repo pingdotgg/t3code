@@ -187,7 +187,7 @@ function getReviewPositionAnchor(position: PullRequestReviewPosition): {
  * host sit under the line they were written on, and a new comment joins the review being
  * drafted rather than being posted as it is typed.
  */
-export function PullRequestCodeTab({
+function PullRequestCodeTab({
   environmentId,
   reference,
   detail,

@@ -14,7 +14,7 @@ const THEME_PAINT_KIND_ORDER: ReadonlyArray<ThemePaintKind> = [
   "foreground",
 ];
 
-export const THEME_INSPECTOR_MATCH_ATTRIBUTE = "data-theme-inspector-match";
+const THEME_INSPECTOR_MATCH_ATTRIBUTE = "data-theme-inspector-match";
 
 const THEME_TOKEN_PROBE_ATTRIBUTE = "data-theme-token-probe";
 const THEME_TOKEN_PROBE_COLOR = "#01fea7";

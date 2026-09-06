@@ -9,8 +9,8 @@ import {
 } from "../../providerInstances";
 import { getTriggerDisplayModelName, type ModelEsque } from "./providerIconUtils";
 
-export const CLAUDE_RESUME_COMPACTION_MINUTES = 70;
-export const CLAUDE_RESUME_COMPACTION_TOKENS = 100_000;
+const CLAUDE_RESUME_COMPACTION_MINUTES = 70;
+const CLAUDE_RESUME_COMPACTION_TOKENS = 100_000;
 
 export function providerSupportsManualCompaction(
   provider: ProviderInstanceEntry | null | undefined,

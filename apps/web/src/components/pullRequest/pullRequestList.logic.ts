@@ -67,7 +67,7 @@ export type PullRequestViewers = PullRequestListResult["viewers"];
 /** A row plus the environment that read it, where the caller has one to give. */
 type ScopedEntry = PullRequestListEntry & { readonly environmentId?: string };
 
-export const pullRequestViewerKey = (entry: ScopedEntry): string =>
+const pullRequestViewerKey = (entry: ScopedEntry): string =>
   `${entry.environmentId ?? ""} ${entry.host}`;
 
 const GROUP_LABELS: Record<PullRequestGroupKey, string> = {
