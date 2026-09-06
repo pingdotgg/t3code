@@ -5,6 +5,7 @@ import { create, type ReactTestRenderer } from "react-test-renderer";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import { getSyntaxHighlighterPromise } from "../lib/syntaxHighlighting";
+import { GitHubIcon } from "./Icons";
 import { Button } from "./ui/button";
 import { setMarkdownTaskChecked } from "./files/filePreviewMode";
 
@@ -78,10 +79,10 @@ describe("ChatMarkdown favicon privacy", () => {
     const markdown = (url: string) => <ChatMarkdown cwd="/tmp/project" text={`[Link](${url})`} />;
     try {
       await act(async () => {
-        renderer = create(markdown("https://github.com"));
+        renderer = create(markdown("https://example.com"));
       });
       expect(renderer!.root.findAllByType("img").map((image) => image.props.src)).toEqual([
-        "https://www.google.com/s2/favicons?domain=github.com&sz=32",
+        "https://www.google.com/s2/favicons?domain=example.com&sz=32",
       ]);
       for (const url of ["http://192.168.1.10:8080", "http://localhost:3000", "http://home.arpa"]) {
         await act(async () => {
@@ -90,9 +91,15 @@ describe("ChatMarkdown favicon privacy", () => {
         expect(renderer!.root.findAllByType("img")).toHaveLength(0);
       }
       await act(async () => {
-        renderer!.update(markdown("https://github.com"));
+        renderer!.update(markdown("https://example.com"));
       });
       expect(renderer!.root.findAllByType("img")).toHaveLength(1);
+      // GitHub links draw the brand mark in currentColor instead of fetching a favicon.
+      await act(async () => {
+        renderer!.update(markdown("https://github.com/pingdotgg/t3code/pull/1"));
+      });
+      expect(renderer!.root.findAllByType("img")).toHaveLength(0);
+      expect(renderer!.root.findAllByType(GitHubIcon)).toHaveLength(1);
     } finally {
       await act(async () => {
         renderer?.unmount();
