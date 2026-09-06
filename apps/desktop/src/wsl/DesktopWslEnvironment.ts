@@ -372,6 +372,10 @@ export const buildWslRuntimeInstallScript = (
     'cleanup_runtime_install() { rm -rf "$runtime_tmp"; }',
     "trap cleanup_runtime_install EXIT",
     `tar -xzf ${shellQuote(linuxArchivePath)} -C "$runtime_tmp"`,
+    // Windows cannot record Unix execute bits when staging the archive.
+    'for monitor in "$runtime_tmp"/apps/server/dist/resource-monitor/linux-*/t3-resource-monitor; do',
+    '  [ ! -f "$monitor" ] || chmod 755 "$monitor"',
+    "done",
     'test -f "$runtime_tmp/apps/server/dist/bin.mjs"',
     'test -f "$runtime_tmp/node_modules/node-pty/package.json"',
 

@@ -436,7 +436,7 @@ describe.skipIf(posixShellRunner === null)("WSL runtime install script (executed
     fixtures.length = 0;
   });
 
-  const createFixture = () => {
+  const createFixture = (includeMonitor = false) => {
     const result = runShell(
       [
         "set -eu",
@@ -447,6 +447,13 @@ describe.skipIf(posixShellRunner === null)("WSL runtime install script (executed
         `printf '%s' '{"name":"node-pty","version":"0.0.0-test"}' > "$stage/node_modules/node-pty/package.json"`,
         `printf '%s' 'pty-native-payload' > "$stage/node_modules/node-pty/prebuilds/linux-x64/pty.node"`,
         `printf '%s' '{"arch":"x64"}' > "$stage/node_modules/node-pty/prebuilds/linux-x64/t3code-wsl-node-pty.json"`,
+        ...(includeMonitor
+          ? [
+              'mkdir -p "$stage/apps/server/dist/resource-monitor/linux-x64"',
+              `printf '%s' ${sh("#!/bin/sh\nprintf monitor-ready\n")} > "$stage/apps/server/dist/resource-monitor/linux-x64/t3-resource-monitor"`,
+              'chmod 644 "$stage/apps/server/dist/resource-monitor/linux-x64/t3-resource-monitor"',
+            ]
+          : []),
         `tar -czf "$work/wsl-runtime.tar.gz" -C "$stage" apps/server/dist node_modules`,
         `printf 'work:%s\\n' "$work"`,
         `printf 'archiveSha:%s\\n' "$(sha256sum "$work/wsl-runtime.tar.gz" | cut -d ' ' -f 1)"`,
@@ -479,6 +486,17 @@ describe.skipIf(posixShellRunner === null)("WSL runtime install script (executed
       install: (archive?: string, sha?: string) => runShell(installScript(archive, sha)),
     };
   };
+
+  it("makes a monitor archived without execute permission runnable inside WSL", () => {
+    const fixture = createFixture(true);
+    const installed = fixture.install();
+    expect(installed.status, installed.stderr).toBe(0);
+
+    const monitor = `${fixture.runtimeRoot}/apps/server/dist/resource-monitor/linux-x64/t3-resource-monitor`;
+    const launched = runShell(`set -eu\ntest -x ${sh(monitor)}\n${sh(monitor)}`);
+    expect(launched.status, launched.stderr).toBe(0);
+    expect(launched.stdout).toBe("monitor-ready");
+  });
 
   it("reuses a warm cache without touching the archive", () => {
     const fixture = createFixture();
