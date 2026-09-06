@@ -20,6 +20,7 @@ function ComposerProbe({ isMobileViewport = false }: { isMobileViewport?: boolea
       isScrollCollapsed: state.isComposerScrollCollapsed,
       hasExpandedChrome: false,
       collapseOnBlur: true,
+      timelineOverflows: true,
     });
   });
   return null;

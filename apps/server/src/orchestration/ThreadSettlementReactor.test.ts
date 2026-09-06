@@ -127,6 +127,8 @@ function makePullRequestSummary(input: {
     headBranch: "feature",
     baseBranch: "main",
     updatedAt: input.updatedAt ?? NOW,
+    closedAt: input.state === "closed" ? (input.updatedAt ?? NOW) : null,
+    mergedAt: input.state === "merged" ? (input.updatedAt ?? NOW) : null,
   };
 }
 
@@ -372,7 +374,9 @@ describe("ThreadSettlementReactor", () => {
             }),
           ]),
           branchPullRequest: () =>
-            Ref.get(pullRequest).pipe(Effect.map((state) => ({ state, updatedAt: NOW }))),
+            Ref.get(pullRequest).pipe(
+              Effect.map((state) => ({ state, updatedAt: NOW, closedAt: NOW, mergedAt: NOW })),
+            ),
         });
 
         yield* Effect.gen(function* () {
@@ -472,7 +476,12 @@ describe("ThreadSettlementReactor", () => {
             ]),
             branchPullRequest: () =>
               Ref.get(state).pipe(
-                Effect.map((pullRequestState) => ({ state: pullRequestState, updatedAt: NOW })),
+                Effect.map((pullRequestState) => ({
+                  state: pullRequestState,
+                  updatedAt: NOW,
+                  closedAt: NOW,
+                  mergedAt: NOW,
+                })),
               ),
             onDispatch: () => Deferred.succeed(mergedThreadSettled, undefined),
           });
@@ -603,7 +612,12 @@ describe("ThreadSettlementReactor", () => {
                     : Effect.void,
               ),
               Effect.andThen(Ref.get(state)),
-              Effect.map((pullRequestState) => ({ state: pullRequestState, updatedAt: NOW })),
+              Effect.map((pullRequestState) => ({
+                state: pullRequestState,
+                updatedAt: NOW,
+                closedAt: NOW,
+                mergedAt: NOW,
+              })),
             ),
         });
 
@@ -749,7 +763,8 @@ describe("ThreadSettlementReactor", () => {
               makeProject(LINKED_PROJECT_ID, "/workspace/linked-root"),
             ],
           ),
-          branchPullRequest: () => Effect.succeed({ state: "closed", updatedAt: NOW }),
+          branchPullRequest: () =>
+            Effect.succeed({ state: "closed", updatedAt: NOW, closedAt: NOW }),
           pullRequestSummary: (input) =>
             Effect.succeed(makePullRequestSummary({ ...input, state: "merged" })),
         });

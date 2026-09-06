@@ -39,11 +39,16 @@ the dialog.
 
 ## Track subscription limits
 
-**Usage → Limits** shows quota use and reset times for Codex and Claude subscriptions. It also
-compares quota consumed with time elapsed in each window, so you can judge your pace before the
-next reset.
+**Usage → Limits** shows how much quota is left in each window and when it resets, for Codex and
+Claude subscriptions. For windows with timing data, each bar also marks how much of the window is
+left, so you can judge your pace before the next reset.
 
 If a window looks stale, refresh Limits to re-check every provider and hub.
+
+Pick `/usage-limits` from the composer's command menu, or send it as a message, to check the
+current model's limits without leaving the conversation. The result opens above the composer and
+closes when you dismiss it or send your next message. It uses the same snapshot as **Usage → Limits**, so it does not run the agent or refresh
+anything. The command is offered only for providers that appear under **Usage → Limits**.
 
 API-key accounts may not report subscription limits. This also applies to Claude connections
 using a proxy through `ANTHROPIC_AUTH_TOKEN`.

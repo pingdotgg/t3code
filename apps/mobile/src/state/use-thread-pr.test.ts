@@ -39,7 +39,7 @@ describe("presentThreadPr", () => {
       presentThreadPr({ ...pullRequest, state: "open", isDraft: true }, undefined),
     ).toMatchObject({
       accessibilityLabel: "#3774 pull request draft",
-      textClassName: "text-adaptive-zinc-500-400",
+      textClassName: "text-foreground-muted",
     });
   });
 });

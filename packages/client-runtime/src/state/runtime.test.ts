@@ -683,6 +683,24 @@ describe("executeAtomQuery", () => {
 
     registry.dispose();
   });
+
+  it("settles when its caller aborts a waiting query", async () => {
+    const registry = AtomRegistry.make();
+    const controller = new AbortController();
+    const resultPromise = executeAtomQuery(registry, Atom.make(Effect.never), {
+      reportDefect: false,
+      signal: controller.signal,
+    });
+
+    controller.abort();
+
+    const result = await resultPromise;
+    expect(result._tag).toBe("Failure");
+    if (result._tag === "Failure") {
+      expect(Cause.hasInterruptsOnly(result.cause)).toBe(true);
+    }
+    registry.dispose();
+  });
 });
 
 describe("runtime command runner", () => {
