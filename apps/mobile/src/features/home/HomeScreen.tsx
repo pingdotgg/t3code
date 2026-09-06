@@ -490,12 +490,7 @@ export function HomeScreen(props: HomeScreenProps) {
   // Settled threads stay in the live shell stream (settled ≠ archived), so
   // the partition works directly off live shells — no snapshot merging or
   // optimistic holds.
-  const handleSettleThread = useCallback(
-    (thread: EnvironmentThreadShell) => {
-      void props.onSettleThread(thread);
-    },
-    [props.onSettleThread],
-  );
+  const handleSettleThread = props.onSettleThread;
   const handleSnoozeThread = useCallback(
     (thread: EnvironmentThreadShell, snoozedUntil: string) => {
       void props.onSnoozeThread(thread, snoozedUntil);
