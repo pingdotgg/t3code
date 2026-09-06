@@ -86,6 +86,7 @@ describe("orchestration projector", () => {
         interactionMode: "default",
         branch: null,
         worktreePath: null,
+        branchPullRequest: null,
         latestTurn: null,
         createdAt: now,
         updatedAt: now,
@@ -104,6 +105,67 @@ describe("orchestration projector", () => {
       },
     ]);
   });
+
+  effectIt.effect("sets and clears branch pull requests without changing manual links", () =>
+    Effect.gen(function* () {
+      const now = "2026-01-01T00:00:00.000Z";
+      const eventFields = {
+        aggregateKind: "thread" as const,
+        aggregateId: "thread-1",
+        occurredAt: now,
+        commandId: null,
+      };
+      let model = yield* projectEvent(
+        createEmptyReadModel(now),
+        makeEvent({
+          ...eventFields,
+          sequence: 1,
+          type: "thread.created",
+          payload: {
+            threadId: "thread-1",
+            projectId: "project-1",
+            title: "Pull request thread",
+            modelSelection: { provider: "codex", model: "gpt-5-codex" },
+            runtimeMode: "full-access",
+            branch: "feature",
+            worktreePath: null,
+            createdAt: now,
+            updatedAt: now,
+          },
+        }),
+      );
+      const linkedPullRequest = {
+        projectId: "project-1",
+        repository: "pingdotgg/t3code",
+        number: 42,
+        url: "https://github.com/pingdotgg/t3code/pull/42",
+      };
+      const branchPullRequest = {
+        ...linkedPullRequest,
+        number: 43,
+        url: "https://github.com/pingdotgg/t3code/pull/43",
+      };
+      const updates = [
+        { payload: { linkedPullRequest, branchPullRequest }, expected: branchPullRequest },
+        { payload: { title: "Renamed thread" }, expected: branchPullRequest },
+        { payload: { branchPullRequest: null }, expected: null },
+      ];
+
+      for (const [index, update] of updates.entries()) {
+        model = yield* projectEvent(
+          model,
+          makeEvent({
+            ...eventFields,
+            sequence: index + 2,
+            type: "thread.meta-updated",
+            payload: { threadId: "thread-1", updatedAt: now, ...update.payload },
+          }),
+        );
+        expect(model.threads[0]?.branchPullRequest).toEqual(update.expected);
+        expect(model.threads[0]?.linkedPullRequest).toEqual(linkedPullRequest);
+      }
+    }),
+  );
 
   it("fails when event payload cannot be decoded by runtime schema", async () => {
     const now = "2026-01-01T00:00:00.000Z";

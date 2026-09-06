@@ -25,7 +25,10 @@ export interface RepositoryIdentityResolverOptions {
 export class RepositoryIdentityResolver extends Context.Service<
   RepositoryIdentityResolver,
   {
-    readonly resolve: (cwd: string) => Effect.Effect<RepositoryIdentity | null>;
+    readonly resolve: (
+      cwd: string,
+      options?: { readonly refresh?: boolean },
+    ) => Effect.Effect<RepositoryIdentity | null>;
   }
 >()("t3/project/RepositoryIdentityResolver") {}
 
@@ -170,9 +173,11 @@ export const make = Effect.fn("RepositoryIdentityResolver.make")(function* (
 
   const resolve: RepositoryIdentityResolver["Service"]["resolve"] = Effect.fn(
     "RepositoryIdentityResolver.resolve",
-  )(function* (cwd) {
+  )(function* (cwd, options) {
+    if (options?.refresh) yield* Cache.invalidate(repositoryRootCache, cwd);
     const cacheKey = yield* Cache.get(repositoryRootCache, cwd);
     if (cacheKey === null) return null;
+    if (options?.refresh) yield* Cache.invalidate(repositoryIdentityCache, cacheKey);
     return yield* Cache.get(repositoryIdentityCache, cacheKey);
   });
 

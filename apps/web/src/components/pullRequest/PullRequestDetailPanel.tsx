@@ -8,7 +8,6 @@ import {
   type PullRequestListEntry,
   type PullRequestUpdateMethod,
   type PullRequestRef,
-  type PullRequestState,
   resolveEnvironmentMachineKind,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
@@ -454,7 +453,6 @@ export function PullRequestDetailPanel({
   refreshToken: forcedRefreshToken = 0,
   onActed,
   onClose,
-  onStateChange,
   context = "page",
   composerDraftTarget,
 }: {
@@ -482,8 +480,6 @@ export function PullRequestDetailPanel({
   onActed?: () => void;
   /** Page-owned detail columns use this to clear the selected pull request. */
   onClose?: () => void;
-  /** Keeps surrounding inferred thread state in step with refreshed host state. */
-  onStateChange?: (status: { repository: string; number: number; state: PullRequestState }) => void;
   /**
    * Beside a thread, the checkout affordance disappears: the panel is showing that thread's
    * own pull request, so the branch is already under the reader's feet — and checking it out
@@ -714,14 +710,6 @@ export function PullRequestDetailPanel({
     }
     activityRevision.current = next;
   }, [activityQuery.refresh, coreDetail, tabScopeKey]);
-  useLayoutEffect(() => {
-    if (!resolvedCoreDetail) return;
-    onStateChange?.({
-      repository: resolvedCoreDetail.repository,
-      number: resolvedCoreDetail.number,
-      state: resolvedCoreDetail.state,
-    });
-  }, [onStateChange, resolvedCoreDetail]);
   // Reuse activity and diff until core detail reports a changed revision. Keyed by
   // the pull request rather than by the panel, because this one panel shows a different pull
   // request every time it is opened.
