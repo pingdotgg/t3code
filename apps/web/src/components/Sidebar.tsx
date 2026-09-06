@@ -130,6 +130,7 @@ import { useClientSettings } from "../hooks/useSettings";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { useLocalStorage } from "../hooks/useLocalStorage";
 import { useNowMinute } from "../hooks/useNowMinute";
+import { type LongPressPosition, useLongPress } from "../hooks/useLongPress";
 import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
 import {
   readThreadShell,
@@ -1234,13 +1235,22 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     },
     [onAcknowledgeWoke, props.wokeAt, threadRef],
   );
-  const handleContextMenu = useCallback(
-    (event: ReactMouseEvent) => {
-      event.preventDefault();
-      onContextMenu(threadRef, { x: event.clientX, y: event.clientY });
+  // Position rather than event, so both right-click and touch long-press open
+  // the same menu through the same path.
+  const openContextMenu = useCallback(
+    (position: LongPressPosition) => {
+      onContextMenu(threadRef, position);
     },
     [onContextMenu, threadRef],
   );
+  const handleContextMenu = useCallback(
+    (event: ReactMouseEvent) => {
+      event.preventDefault();
+      openContextMenu({ x: event.clientX, y: event.clientY });
+    },
+    [openContextMenu],
+  );
+  const longPressProps = useLongPress(openContextMenu);
   const handleKeyDown = useCallback(
     (event: ReactKeyboardEvent) => {
       if (event.target !== event.currentTarget) return;
@@ -1392,7 +1402,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   // a useful hierarchy nor a reliable hover cue. Status now lives in the row
   // content; surface is reserved for interaction (hover, multi-select, route).
   const rowSurfaceClassName = cn(
-    "group/sidebar-row relative w-full cursor-pointer overflow-hidden rounded-md text-left outline-none select-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+    "group/sidebar-row relative w-full cursor-pointer overflow-hidden rounded-md text-left outline-none select-none [-webkit-touch-callout:none] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
     variantAction === "unsettle" && "[&:not(:hover):not(:focus-within)_*]:text-secondary-label/70",
     props.isActive
       ? "bg-sidebar-row-active text-sidebar-foreground"
@@ -1600,6 +1610,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                 onDoubleClick={handleDoubleClick}
                 onKeyDown={handleKeyDown}
                 onContextMenu={handleContextMenu}
+                {...longPressProps}
               />
             }
           >
@@ -1753,6 +1764,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
               onDoubleClick={handleDoubleClick}
               onKeyDown={handleKeyDown}
               onContextMenu={handleContextMenu}
+              {...longPressProps}
             />
           }
         >

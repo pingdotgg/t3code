@@ -25,6 +25,12 @@ in a new thread's model picker to add or remove them. A regular click returns to
 single model. Choose a base branch and send. Each selection starts a separate thread
 and worktree while you stay in the new thread composer. This requires a Git project.
 
+## Open a thread's menu
+
+On web and desktop, right-click a thread in the sidebar to open its menu, or use
+the title above the conversation. On a touch screen, press and hold the thread in
+the sidebar. The menu holds rename, pin, settle, snooze, copy, and delete actions.
+
 ## Pin and reorder threads
 
 Pin a thread from its menu to keep it above your active work.
