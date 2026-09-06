@@ -327,7 +327,7 @@ jobs:
   # cross-compiling and no first-launch compiler/node-gyp/network on the user's
   # machine. node-pty is N-API, so one binary works across all WSL Node versions.
   build_wsl_node_pty:
-    name: Build WSL node-pty (linux-x64)
+    name: Build WSL native binaries (linux-x64)
     # Same gating as relay_public_config: only the commit SHA is needed, so this
     # runs alongside preflight. See the condition comment there.
     needs: [check_changes]
@@ -374,6 +374,21 @@ jobs:
         with:
           name: wsl-node-pty-x64
           path: wsl-prebuild/pty.node
+          if-no-files-found: error
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-gnu
+
+      - name: Build WSL resource monitor
+        run: cargo build --locked --release --manifest-path native/resource-monitor/Cargo.toml --target x86_64-unknown-linux-gnu
+
+      - name: Upload WSL resource monitor
+        uses: actions/upload-artifact@v7
+        with:
+          name: wsl-resource-monitor-x64
+          path: native/resource-monitor/target/x86_64-unknown-linux-gnu/release/t3-resource-monitor
           if-no-files-found: error
 
   build:
@@ -511,6 +526,13 @@ jobs:
         with:
           name: wsl-node-pty-x64
           path: wsl-prebuild
+
+      - name: Download WSL resource monitor
+        if: matrix.platform == 'win'
+        uses: actions/download-artifact@v8
+        with:
+          name: wsl-resource-monitor-x64
+          path: native/resource-monitor/target/x86_64-unknown-linux-gnu/release
 
       - name: Install Spectre-mitigated MSVC libs
         if: matrix.platform == 'win'

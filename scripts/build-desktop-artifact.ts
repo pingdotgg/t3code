@@ -2144,15 +2144,18 @@ export const stageResourceMonitor = Effect.fn("stageResourceMonitor")(function* 
   readonly platform: typeof BuildPlatform.Type;
   readonly arch: typeof BuildArch.Type;
   readonly verbose: boolean;
+  readonly reuseExisting?: boolean;
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const manifestPath = path.join(input.repoRoot, "native/resource-monitor/Cargo.toml");
   const executableName = resourceMonitorExecutableName(input.platform);
   const rustTargets = resolveResourceMonitorRustTargets(input.platform, input.arch);
-  const reuseResourceMonitor = yield* Config.boolean("T3CODE_DESKTOP_REUSE_RESOURCE_MONITOR").pipe(
-    Config.withDefault(false),
-  );
+  const reuseResourceMonitor =
+    input.reuseExisting ??
+    (yield* Config.boolean("T3CODE_DESKTOP_REUSE_RESOURCE_MONITOR").pipe(
+      Config.withDefault(false),
+    ));
   const builtBinaries: string[] = [];
 
   for (const rustTarget of rustTargets) {
@@ -2980,6 +2983,14 @@ export const stageWindowsServerSidecar = Effect.fn("stageWindowsServerSidecar")(
   // extract and reject on every launch. The desktop app treats a missing
   // archive as "no WSL-local runtime" and goes straight to the mounted tree.
   if (bundlesWslRuntime({ arch: input.arch, prebuildPath: input.wslPrebuildPath })) {
+    yield* stageResourceMonitor({
+      repoRoot: input.repoRoot,
+      stageResourcesDir: path.join(serverStageDir, "apps/server/dist"),
+      platform: "linux",
+      arch: input.arch,
+      verbose: input.verbose,
+      reuseExisting: true,
+    });
     yield* stageWslRuntimeArchive({
       sourceDir: serverStageDir,
       archivePath: input.wslRuntimeArchivePath,

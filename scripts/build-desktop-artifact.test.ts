@@ -1897,6 +1897,22 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         const hashPath = `${archivePath}.sha256`;
         yield* stageWslRuntimeTreeFixture(sourceDir, "export const serve = 1;\n");
 
+        const monitorPath = path.join(
+          root,
+          "native/resource-monitor/target/x86_64-unknown-linux-gnu/release/t3-resource-monitor",
+        );
+        yield* fs.makeDirectory(path.dirname(monitorPath), { recursive: true });
+        yield* fs.writeFileString(monitorPath, "linux monitor");
+        yield* fs.chmod(monitorPath, 0o644);
+        yield* stageResourceMonitor({
+          repoRoot: root,
+          stageResourcesDir: path.join(sourceDir, "apps/server/dist"),
+          platform: "linux",
+          arch: "x64",
+          verbose: false,
+          reuseExisting: true,
+        });
+
         const members = [
           "node_modules/node-pty/prebuilds/darwin-x64/pty.node",
           "node_modules/node-pty/prebuilds/win32-x64/pty.node",
@@ -1943,6 +1959,21 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         assert.equal(Number(yield* process.exitCode), 0);
 
         assert.include(listing, "apps/server/dist/bin.mjs");
+        assert.include(listing, "apps/server/dist/resource-monitor/t3-resource-monitor");
+        const extractedDir = path.join(root, "extracted");
+        yield* fs.makeDirectory(extractedDir);
+        const extract = yield* spawner.spawn(
+          ChildProcess.make("tar", ["-xzf", archivePath, "-C", extractedDir]),
+        );
+        assert.equal(Number(yield* extract.exitCode), 0);
+        const extractedMonitor = path.join(
+          extractedDir,
+          "apps/server/dist/resource-monitor/t3-resource-monitor",
+        );
+        assert.equal(yield* fs.readFileString(extractedMonitor), "linux monitor");
+        if ((yield* HostProcessPlatform) !== "win32") {
+          assert.equal((yield* fs.stat(extractedMonitor)).mode & 0o111, 0o111);
+        }
         assert.include(listing, "node_modules/node-pty/prebuilds/linux-x64/pty.node");
         assert.include(listing, "node_modules/@ff-labs/fff-bin-linux-x64-gnu/libfff.so");
         assert.include(listing, "node_modules/@yuuang/ffi-rs-linux-x64-gnu/libffi.so");
