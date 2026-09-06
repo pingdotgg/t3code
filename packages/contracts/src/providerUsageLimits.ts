@@ -35,6 +35,8 @@ export type ServerProviderUsageWindow = typeof ServerProviderUsageWindow.Type;
 export const ServerProviderResetCredits = Schema.Struct({
   availableCount: NonNegativeInt,
   nextExpiresAt: Schema.optional(IsoDateTime),
+  /** Pins hub redemption to the displayed credit, including retries from another client. */
+  nextCreditId: Schema.optional(TrimmedNonEmptyString),
 });
 export type ServerProviderResetCredits = typeof ServerProviderResetCredits.Type;
 
@@ -103,10 +105,28 @@ export type UsageLimitSourceSnapshot = typeof UsageLimitSourceSnapshot.Type;
 export const UsageLimitSourceSnapshots = ForwardCompatibleArray(UsageLimitSourceSnapshot);
 export type UsageLimitSourceSnapshots = typeof UsageLimitSourceSnapshots.Type;
 
-export const ProviderConsumeResetCreditInput = Schema.Struct({
-  instanceId: ProviderInstanceId,
+export const UsageLimitSourceConsumeResetCreditInput = Schema.Struct({
+  sourceId: UsageLimitSourceId,
+  accountId: TrimmedNonEmptyString,
+  creditId: TrimmedNonEmptyString,
 });
+export type UsageLimitSourceConsumeResetCreditInput =
+  typeof UsageLimitSourceConsumeResetCreditInput.Type;
+
+export const ProviderConsumeResetCreditInput = Schema.Union([
+  Schema.Struct({ instanceId: ProviderInstanceId }),
+  UsageLimitSourceConsumeResetCreditInput,
+]);
 export type ProviderConsumeResetCreditInput = typeof ProviderConsumeResetCreditInput.Type;
+
+export class UsageLimitSourceError extends Schema.TaggedErrorClass<UsageLimitSourceError>()(
+  "UsageLimitSourceError",
+  { detail: Schema.String },
+) {
+  override get message(): string {
+    return this.detail;
+  }
+}
 
 /** Mirrors Codex's own outcome set; other providers map onto it. */
 export const ProviderConsumeResetCreditOutcome = Schema.Literals([
@@ -119,6 +139,8 @@ export type ProviderConsumeResetCreditOutcome = typeof ProviderConsumeResetCredi
 
 export const ProviderConsumeResetCreditResult = Schema.Struct({
   outcome: ProviderConsumeResetCreditOutcome,
+  /** Redemption succeeded, but a follow-up such as clearing the hub cooldown failed. */
+  warning: Schema.optional(TrimmedNonEmptyString),
 });
 export type ProviderConsumeResetCreditResult = typeof ProviderConsumeResetCreditResult.Type;
 
@@ -134,6 +156,7 @@ export const UsageLimitsReport = Schema.Struct({
       email: Schema.optional(TrimmedNonEmptyString),
       sourceLabel: Schema.optional(TrimmedNonEmptyString),
       instanceId: Schema.optional(ProviderInstanceId),
+      resetCreditInput: Schema.optional(ProviderConsumeResetCreditInput),
       displayName: Schema.optional(Schema.String),
       accentColor: Schema.optional(Schema.String),
       limits: ServerProviderUsageLimits,

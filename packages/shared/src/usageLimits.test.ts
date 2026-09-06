@@ -378,7 +378,7 @@ describe("pools", () => {
       key: "env-a:claude",
       sourceLabel: null,
       // Desktop's read is fresher, so its credits and its redeem are the ones on show.
-      redeem: { environmentId: "env-b", instanceId: "claude" },
+      redeem: { environmentId: "env-b", input: { instanceId: "claude" } },
       environments: [
         { environmentId: "env-a", label: "Laptop" },
         { environmentId: "env-b", label: "Desktop" },
@@ -429,7 +429,7 @@ describe("pools", () => {
     const [account] = collectLimitAccounts(input);
     expect(account?.limits.windows[0]?.usedPercent).toBe(55);
     expect(account?.limits.resetCredits?.availableCount).toBe(2);
-    expect(account?.redeem).toEqual({ environmentId: "env-a", instanceId: "claude" });
+    expect(account?.redeem).toEqual({ environmentId: "env-a", input: { instanceId: "claude" } });
     expect(account?.environments).toEqual([{ environmentId: "env-a", label: "Laptop" }]);
   });
 
@@ -459,7 +459,108 @@ describe("pools", () => {
     ]);
     const [account] = collectLimitAccounts(input);
     expect(account?.limits.resetCredits?.availableCount).toBe(2);
-    expect(account?.redeem).toEqual({ environmentId: "env-b", instanceId: "codex" });
+    expect(account?.redeem).toEqual({ environmentId: "env-b", input: { instanceId: "codex" } });
+  });
+
+  it("uses the freshest hub credit and its environment even when the account is also native", () => {
+    const native = provider({
+      auth: { status: "authenticated", email: "same@example.com" },
+      usageLimits: { checkedAt, windows: [window], resetCredits: { availableCount: 1 } },
+    });
+    const hubAccount = {
+      id: "codex-same.json",
+      driver: native.driver,
+      email: "same@example.com",
+      usageLimits: {
+        checkedAt: "2026-09-03T11:30:00.000Z",
+        windows: [window],
+        resetCredits: { availableCount: 2, nextCreditId: "credit-2" },
+      },
+    };
+    const input = new Map([
+      [EnvironmentId.make("env-a"), { ...laptop, serverConfig: { providers: [native] } }],
+      [
+        EnvironmentId.make("env-b"),
+        {
+          ...laptop,
+          serverConfig: {
+            providers: [],
+            usageLimitSources: [{ ...source, accounts: [hubAccount] }],
+          },
+        },
+      ],
+    ]);
+    const [account] = collectLimitAccounts(input);
+    expect(account?.limits.resetCredits?.availableCount).toBe(2);
+    expect(account?.redeem).toEqual({
+      environmentId: "env-b",
+      input: { sourceId: "hub", accountId: "codex-same.json", creditId: "credit-2" },
+    });
+    hubAccount.usageLimits.resetCredits.availableCount = 0;
+    expect(collectLimitAccounts(input)[0]?.limits.resetCredits?.availableCount).toBe(0);
+  });
+
+  it("keeps distinct hub accounts redeemable through their own source", () => {
+    const hubAccounts = ["first", "second"].map((id) => ({
+      id,
+      driver: ProviderDriverKind.make("codex"),
+      email: `${id}@example.com`,
+      usageLimits: {
+        checkedAt,
+        windows: [window],
+        resetCredits: { availableCount: 2, nextCreditId: `${id}-credit` },
+      },
+    }));
+    const input = new Map([
+      [
+        EnvironmentId.make("env-a"),
+        {
+          ...laptop,
+          serverConfig: {
+            providers: [],
+            usageLimitSources: [{ ...source, accounts: hubAccounts }],
+          },
+        },
+      ],
+    ]);
+    expect(collectLimitAccounts(input).map((account) => account.redeem)).toEqual(
+      hubAccounts.map((account) => ({
+        environmentId: "env-a",
+        input: { sourceId: "hub", accountId: account.id, creditId: `${account.id}-credit` },
+      })),
+    );
+  });
+
+  it("does not give old credits the timestamp of a newer window-only read", () => {
+    const snapshots = [
+      { checkedAt, windows: [window], resetCredits: { availableCount: 2 } },
+      { checkedAt: "2026-09-03T12:00:00.000Z", windows: [window] },
+      {
+        checkedAt: "2026-09-03T11:30:00.000Z",
+        windows: [window],
+        resetCredits: { availableCount: 1 },
+      },
+    ];
+    const input = new Map(
+      snapshots.map((usageLimits, i) => [
+        EnvironmentId.make(`env-${i}`),
+        {
+          ...laptop,
+          serverConfig: {
+            providers: [
+              provider({
+                auth: { status: "authenticated", email: "same@example.com" },
+                usageLimits,
+              }),
+            ],
+          },
+        },
+      ]),
+    );
+    const [account] = collectLimitAccounts(input);
+    expect(account?.limits.checkedAt).toBe("2026-09-03T12:00:00.000Z");
+    expect(account?.limits.resetCredits?.availableCount).toBe(1);
+    expect(account?.redeem?.environmentId).toBe("env-2");
   });
 
   it("names an environment once however many of its instances share the account", () => {
@@ -712,6 +813,31 @@ describe("/usage-limits", () => {
       ],
     },
   ];
+
+  it("uses hub credit balances and redemption targets in the composer, including native duplicates", () => {
+    const hubs = sources.map((source) => ({
+      ...source,
+      accounts: source.accounts.map((account) => ({
+        ...account,
+        usageLimits: {
+          ...account.usageLimits,
+          resetCredits: { availableCount: 2, nextCreditId: `${account.id}-credit` },
+        },
+      })),
+    }));
+    const report = collectProviderUsageLimits(selected.instanceId, [selected], hubs, now);
+    expect(report?.accounts[0]?.limits.resetCredits?.availableCount).toBe(2);
+    expect(report?.accounts[0]?.resetCreditInput).toEqual({
+      sourceId: "hub",
+      accountId: "duplicate",
+      creditId: "duplicate-credit",
+    });
+    expect(report?.accounts.find((account) => account.id === "hub:oss")?.resetCreditInput).toEqual({
+      sourceId: "hub",
+      accountId: "oss",
+      creditId: "oss-credit",
+    });
+  });
 
   it("keeps accounts and custom instances separate, filtering by driver", () => {
     const report = collectProviderUsageLimits(
