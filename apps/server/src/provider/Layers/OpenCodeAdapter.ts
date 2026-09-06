@@ -480,7 +480,8 @@ const toRequestError = (cause: OpenCodeRuntimeError): ProviderAdapterRequestErro
 /**
  * Map a `Cause.squash`-ed failure into a `ProviderAdapterProcessError`. The
  * typed cause is usually an `OpenCodeRuntimeError` (from {@link runOpenCodeSdk}),
- * in which case we preserve its `detail`; otherwise we fall back to
+ * in which case the surfaced detail keeps the failing operation ahead of its
+ * `detail` (`operation: detail`); otherwise we fall back to
  * {@link openCodeRuntimeErrorDetail} for unknown causes (defects, etc.).
  */
 const toProcessError = (threadId: ThreadId, cause: unknown): ProviderAdapterProcessError =>
