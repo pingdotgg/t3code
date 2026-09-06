@@ -9,7 +9,6 @@ import {
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import {
-  collectLimitAccounts,
   elapsedShare,
   formatDuration,
   formatResetsIn,
@@ -36,7 +35,6 @@ import {
 } from "../ui/alert-dialog";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import type { makeLimitsFixture } from "./usageLimitsFixture";
 import { UsageLimitsPooled } from "./UsageLimitsPooled";
 import { PROVIDER_PRESENTATION } from "./usageProviders";
 
@@ -323,16 +321,12 @@ export function ResetCredits({
  */
 export function UsageLimitsSection({
   selectedEnvironmentIds,
-  fixture = null,
 }: {
   readonly selectedEnvironmentIds: ReadonlySet<EnvironmentId> | null;
-  /** Dev-only synthetic presentations standing in for the live ones. */
-  readonly fixture?: ReturnType<typeof makeLimitsFixture> | null;
 }) {
-  const live = useAtomValue(environmentPresentations.presentationsAtom);
+  const presentations = useAtomValue(environmentPresentations.presentationsAtom);
   // Anchored once per mount on purpose: countdowns must not tick (see above).
   const [now] = useState(() => Date.now());
-  const presentations: Parameters<typeof collectLimitAccounts>[0] = fixture ?? live;
   const selected =
     selectedEnvironmentIds === null
       ? presentations
