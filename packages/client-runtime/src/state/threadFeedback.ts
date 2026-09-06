@@ -1,8 +1,4 @@
-import {
-  MessageId,
-  type OrchestrationMessage,
-  type ProviderUploadFeedbackResult,
-} from "@t3tools/contracts";
+import type { MessageId, ProviderUploadFeedbackResult } from "@t3tools/contracts";
 
 import {
   isAtomCommandInterrupted,
@@ -32,28 +28,20 @@ export function parseCodexFeedbackCommand(text: string): { readonly reason?: str
   return reason ? { reason } : {};
 }
 
-export function codexFeedbackMessage(
-  submission: CodexFeedbackSubmission,
-  role: "user" | "assistant" = "user",
-): OrchestrationMessage {
-  const text =
-    role === "user"
-      ? submission.command
-      : submission.status === "sent"
-        ? `Feedback sent to OpenAI.\n\nThread ID: \`${submission.feedbackId}\``
-        : submission.status === "failed"
-          ? `Could not send feedback to OpenAI.\n\n${submission.errorMessage}`
-          : "Sending feedback to OpenAI...";
-
-  return {
-    id: role === "user" ? submission.id : MessageId.make(`${submission.id}:feedback`),
-    role,
-    text,
-    turnId: null,
-    streaming: false,
-    createdAt: submission.createdAt,
-    updatedAt: submission.createdAt,
-  };
+export function codexFeedbackNotice(submission: CodexFeedbackSubmission) {
+  switch (submission.status) {
+    case "interrupted":
+      return null;
+    case "uploading":
+      return { title: "Sending feedback to OpenAI...", description: undefined };
+    case "sent":
+      return {
+        title: "Feedback sent to OpenAI",
+        description: `Thread ID: ${submission.feedbackId}`,
+      };
+    case "failed":
+      return { title: "Could not send feedback to OpenAI", description: submission.errorMessage };
+  }
 }
 
 export async function submitCodexFeedback<E>(input: {
