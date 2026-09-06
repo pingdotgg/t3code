@@ -75,6 +75,12 @@ export function canUploadComposerAttachment(
   );
 }
 
+/**
+ * Only a failed upload blocks sending: the outbox drain would hit the same
+ * failure, so the user has to retry or remove the file first. An upload still
+ * in flight does not block; the message queues and the drain reuses the
+ * finished upload (or re-sends the local bytes) when it delivers.
+ */
 export function composerAttachmentUploadBlockReason(input: {
   readonly environmentId: EnvironmentId;
   readonly attachments: ReadonlyArray<DraftComposerAttachment>;
@@ -87,9 +93,22 @@ export function composerAttachmentUploadBlockReason(input: {
     if (!canUploadComposerAttachment(attachment, input.serverConfig)) continue;
     const state = input.states[composerAttachmentUploadKey(input.environmentId, attachment.id)];
     if (state?.status === "failed") return "Retry or remove the failed attachment";
-    if (state?.status !== "ready") return "Attachment still uploading";
   }
   return null;
+}
+
+/** Whether any attachment the environment accepts is still being uploaded. */
+export function composerAttachmentsStillUploading(input: {
+  readonly environmentId: EnvironmentId;
+  readonly attachments: ReadonlyArray<DraftComposerAttachment>;
+  readonly serverConfig: UploadServerConfig | null;
+  readonly states: Readonly<Record<string, ComposerAttachmentUploadState>>;
+}): boolean {
+  return input.attachments.some((attachment) => {
+    if (!canUploadComposerAttachment(attachment, input.serverConfig)) return false;
+    const state = input.states[composerAttachmentUploadKey(input.environmentId, attachment.id)];
+    return state?.status !== "ready" && state?.status !== "failed";
+  });
 }
 
 /** Bounds transfers across environments; disconnected or discarded drafts keep their local bytes. */

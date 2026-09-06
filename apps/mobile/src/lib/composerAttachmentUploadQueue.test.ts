@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
   composerAttachmentUploadBlockReason,
+  composerAttachmentsStillUploading,
   composerAttachmentUploadKey,
   composerDraftEnvironmentId,
   createComposerAttachmentUploadQueue,
@@ -248,7 +249,7 @@ describe("draft upload scope and offline submission", () => {
     );
   });
 
-  it("allows offline queuing while a connected composer waits for upload or retry", () => {
+  it("only a failed upload blocks sending; an in-flight one queues instead", () => {
     const key = composerAttachmentUploadKey(environmentId, "file");
     const input = {
       environmentId,
@@ -261,7 +262,16 @@ describe("draft upload scope and offline submission", () => {
       },
       states: {},
     };
-    expect(composerAttachmentUploadBlockReason(input)).toBe("Attachment still uploading");
+    // Not started yet and mid-transfer both let the send through as a queued
+    // message; the outbox drain finishes (or redoes) the upload.
+    expect(composerAttachmentUploadBlockReason(input)).toBeNull();
+    expect(composerAttachmentsStillUploading(input)).toBe(true);
+    expect(
+      composerAttachmentsStillUploading({
+        ...input,
+        states: { [key]: { status: "uploading", progress: 0.6 } },
+      }),
+    ).toBe(true);
     expect(composerAttachmentUploadBlockReason({ ...input, connected: false })).toBeNull();
     expect(
       composerAttachmentUploadBlockReason({
@@ -270,7 +280,18 @@ describe("draft upload scope and offline submission", () => {
       }),
     ).toBe("Retry or remove the failed attachment");
     expect(
+      composerAttachmentsStillUploading({
+        ...input,
+        states: { [key]: { status: "failed", reason: "Offline" } },
+      }),
+    ).toBe(false);
+    expect(
       composerAttachmentUploadBlockReason({ ...input, states: { [key]: { status: "ready" } } }),
     ).toBeNull();
+    expect(
+      composerAttachmentsStillUploading({ ...input, states: { [key]: { status: "ready" } } }),
+    ).toBe(false);
+    // Attachments the environment cannot accept never count as uploading.
+    expect(composerAttachmentsStillUploading({ ...input, serverConfig: null })).toBe(false);
   });
 });

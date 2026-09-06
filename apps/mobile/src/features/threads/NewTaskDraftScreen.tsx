@@ -42,6 +42,7 @@ import { ComposerAttachmentStrip } from "../../components/ComposerAttachmentStri
 import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
 import {
   composerAttachmentUploadBlockReason,
+  composerAttachmentsStillUploading,
   composerAttachmentUploadsAtom,
 } from "../../state/composer-attachment-uploads";
 import { FilePreviewModal, type FilePreviewSource } from "../../components/FilePreviewModal";
@@ -192,6 +193,18 @@ export function NewTaskDraftScreen(props: {
         states: uploadStates,
       })
     : null;
+  // A connected composer with uploads still in flight queues the task rather
+  // than making the user wait: the outbox drain finishes the upload and sends.
+  const attachmentsUploading =
+    environmentConnected &&
+    selectedProject !== null &&
+    composerAttachmentsStillUploading({
+      environmentId: selectedProject.environmentId,
+      attachments: flow.attachments,
+      serverConfig: selectedEnvironmentServerConfig,
+      states: uploadStates,
+    });
+  const queuesInsteadOfStarting = !environmentConnected || attachmentsUploading;
   const promptInputRef = useRef<ComposerEditorHandle>(null);
   const loadedBranchesProjectKeyRef = useRef<string | null>(null);
   const [isComposerFocused, setIsComposerFocused] = useState(false);
@@ -987,10 +1000,11 @@ export function NewTaskDraftScreen(props: {
 
     const editingPendingTask = flow.editingPendingTask;
 
-    if (!environmentConnected) {
-      // Offline: park the task in the outbox; the drain sends it when the
-      // environment reconnects. Editing an existing pending task re-queues it
-      // under its original identifiers.
+    if (queuesInsteadOfStarting) {
+      // Offline, or an attachment is still uploading: park the task in the
+      // outbox and let the drain send it once the environment is reachable
+      // and the bytes are on the server. Editing an existing pending task
+      // re-queues it under its original identifiers.
       const metadata = editingPendingTask
         ? {
             threadId: editingPendingTask.threadId,
@@ -1255,7 +1269,7 @@ export function NewTaskDraftScreen(props: {
 
   const workspaceControls = (
     <View className="flex-row items-center gap-1 px-2">
-      {flow.submitting && environmentConnected && flow.workspaceMode === "worktree" ? (
+      {flow.submitting && !queuesInsteadOfStarting && flow.workspaceMode === "worktree" ? (
         <View
           accessible
           accessibilityLabel="Setting up worktree…"
@@ -1444,12 +1458,14 @@ export function NewTaskDraftScreen(props: {
                     attachmentBlockReason ??
                     (flow.submitting
                       ? "Starting task"
-                      : environmentConnected
-                        ? "Start task"
-                        : "Queue task")
+                      : attachmentsUploading
+                        ? "Queue task, sends when uploads finish"
+                        : environmentConnected
+                          ? "Start task"
+                          : "Queue task")
                   }
                   disabled={!canStart}
-                  icon={environmentConnected ? "arrow.up" : "tray.and.arrow.up"}
+                  icon={queuesInsteadOfStarting ? "tray.and.arrow.up" : "arrow.up"}
                   onPress={() => void handleStart()}
                   variant="primary"
                 />
