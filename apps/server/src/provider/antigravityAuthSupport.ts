@@ -268,7 +268,7 @@ const linkAntigravityUserSkills = Effect.fn("linkAntigravityUserSkills")(functio
         Effect.logWarning("Antigravity user skills are not linked into the profile.", {
           link,
           target,
-          error: String(error),
+          error,
         }),
       ),
     );

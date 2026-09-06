@@ -351,5 +351,10 @@ it("resolves the home the agent expands ~ against", () => {
     resolveAntigravityUserHome("win32", { HOME: "/home/user", USERPROFILE: "C:\\Users\\user" }),
     "C:\\Users\\user",
   );
-  assert.equal(resolveAntigravityUserHome("darwin", { HOME: " " }).length > 0, true);
+  assert.equal(
+    resolveAntigravityUserHome("win32", { HOMEDRIVE: "D:", HOMEPATH: "\\Users\\alice" }),
+    "D:\\Users\\alice",
+  );
+  assert.equal(resolveAntigravityUserHome("darwin", { HOME: "/Users/a b " }), "/Users/a b ");
+  assert.equal(resolveAntigravityUserHome("darwin", { HOME: "" }).length > 0, true);
 });

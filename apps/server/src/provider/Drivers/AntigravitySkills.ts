@@ -10,16 +10,23 @@ import * as Stream from "effect/Stream";
 import { parse as parseYamlDocument } from "yaml";
 
 /**
- * The home directory the agent expands `~` against: `USERPROFILE` on Windows,
- * `HOME` elsewhere, matching Python's `os.path.expanduser` in the launch
- * environment T3 hands the process.
+ * The home directory the agent expands `~` against, matching Python's
+ * `os.path.expanduser` in the launch environment T3 hands the process:
+ * `USERPROFILE`, then `HOMEDRIVE` + `HOMEPATH`, on Windows and `HOME`
+ * elsewhere. Values are used verbatim; a path may contain spaces.
  */
 export function resolveAntigravityUserHome(
   platform: NodeJS.Platform,
   environment: NodeJS.ProcessEnv,
 ): string {
-  const home = (platform === "win32" ? environment.USERPROFILE : environment.HOME)?.trim();
-  return home ? home : NodeOS.homedir();
+  if (platform === "win32") {
+    if (environment.USERPROFILE) return environment.USERPROFILE;
+    if (environment.HOMEDRIVE && environment.HOMEPATH) {
+      return `${environment.HOMEDRIVE}${environment.HOMEPATH}`;
+    }
+    return NodeOS.homedir();
+  }
+  return environment.HOME || NodeOS.homedir();
 }
 
 /**
