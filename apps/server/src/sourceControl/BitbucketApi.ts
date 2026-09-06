@@ -262,7 +262,7 @@ export const BitbucketApiError = Schema.Union([
   BitbucketCheckoutError,
 ]);
 export type BitbucketApiError = typeof BitbucketApiError.Type;
-export const isBitbucketApiError = Schema.is(BitbucketApiError);
+const isBitbucketApiError = Schema.is(BitbucketApiError);
 
 const RawBitbucketRepositorySchema = Schema.Struct({
   full_name: TrimmedNonEmptyString,
@@ -606,6 +606,7 @@ function responseError(
   });
 }
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const config = yield* BitbucketApiEnvConfig;
   const httpClient = yield* HttpClient.HttpClient;
