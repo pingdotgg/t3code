@@ -299,7 +299,7 @@ const startHarness = Effect.fn("startThreadSettlementHarness")(function* (
 });
 
 describe("ThreadSettlementReactor", () => {
-  it.effect("uses saved branch PRs and does not settle a branch with a newer open PR", () =>
+  it.effect("uses saved PRs without settling resumed threads or branches with newer PRs", () =>
     Effect.scoped(
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse(NOW));
@@ -329,6 +329,16 @@ describe("ThreadSettlementReactor", () => {
               makeThread("reused-manual", { branch: "reused", linkedPullRequest: previous }),
               makeThread("reused-detected", { branch: "reused", branchPullRequest: previous }),
               makeThread("foreign-branch-pr", { branch: "foreign", linkedPullRequest: previous }),
+              makeThread("resumed-manual", {
+                branch: "main",
+                linkedPullRequest: previous,
+                latestUserMessageAt: "2026-08-28T00:00:00.000Z",
+              }),
+              makeThread("resumed-detected", {
+                branch: "main",
+                branchPullRequest: previous,
+                latestUserMessageAt: "2026-08-28T00:00:00.000Z",
+              }),
             ],
             [project],
           ),
@@ -349,7 +359,10 @@ describe("ThreadSettlementReactor", () => {
                   : null,
             ),
           pullRequestSummary: (input) =>
-            Effect.succeed(makePullRequestSummary({ ...input, state: "merged" })),
+            Effect.succeed({
+              ...makePullRequestSummary({ ...input, state: "merged" }),
+              mergedAt: "2026-08-27T00:00:00.000Z",
+            }),
         });
         yield* Effect.gen(function* () {
           const reactor = yield* ThreadSettlementReactor.ThreadSettlementReactor;
