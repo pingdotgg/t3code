@@ -59,6 +59,7 @@ import {
 import { WorkspacePageContainer } from "../WorkspacePageContainer";
 import { WorkspacePageHeader } from "../WorkspacePageHeader";
 import { UsageLimitsSection } from "./UsageLimits";
+import { makeLimitsFixture } from "./usageLimitsFixture";
 import { UsagePriceOverrides } from "./UsagePriceOverrides";
 import { UsageProviderChart, type UsageChartMetric } from "./UsageProviderChart";
 import { PROVIDER_ORDER, PROVIDER_PRESENTATION, providersWithUsage } from "./usageProviders";
@@ -109,10 +110,33 @@ export function UsagePage() {
     useState<ReadonlySet<EnvironmentId> | null>(null);
   const { days: windowDays, window } = windowSelection;
   const isPast24Hours = windowDays === 1;
-  const { merged, environments, selectedEnvironments, isPending, isPartial, refresh } = useUsage(
-    window,
-    selectedEnvironmentIds,
-  );
+  const usage = useUsage(window, selectedEnvironmentIds);
+  // Dev only: `/usage?limitsFixture=<name>` lists synthetic environments in the
+  // picker and feeds the Limits view from them, so merge rules can be eyeballed.
+  const [fixture] = useState(() => {
+    if (!import.meta.env.DEV) return null;
+    const name = new URLSearchParams(globalThis.location.search).get("limitsFixture");
+    return name ? makeLimitsFixture(name, Date.now()) : null;
+  });
+  const { merged, environments, selectedEnvironments, isPending, isPartial, refresh } =
+    useMemo(() => {
+      if (!fixture || !showingLimits) return usage;
+      const all = [...fixture].map(([environmentId, presentation]) => ({
+        environmentId,
+        label: presentation.entry.target.label,
+        isPending: false,
+        error: null,
+        summary: null,
+      }));
+      return {
+        ...usage,
+        environments: all,
+        selectedEnvironments:
+          selectedEnvironmentIds === null
+            ? all
+            : all.filter((environment) => selectedEnvironmentIds.has(environment.environmentId)),
+      };
+    }, [fixture, selectedEnvironmentIds, showingLimits, usage]);
   const presentations = useAtomValue(environmentPresentations.presentationsAtom);
   const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
     reportFailure: false,
@@ -166,6 +190,8 @@ export function UsagePage() {
     if (refreshingRef.current) return;
 
     if (showingLimits) {
+      // Synthetic data has nothing to re-read.
+      if (fixture) return;
       refreshingRef.current = true;
       setIsRefreshing(true);
       void Promise.all(
@@ -349,7 +375,10 @@ export function UsagePage() {
                   : `Select an environment to see ${showingLimits ? "limits" : "usage"}.`}
               </p>
             ) : showingLimits ? (
-              <UsageLimitsSection selectedEnvironmentIds={selectedEnvironmentIds} />
+              <UsageLimitsSection
+                selectedEnvironmentIds={selectedEnvironmentIds}
+                fixture={fixture}
+              />
             ) : isPending ? (
               <UsageSkeleton />
             ) : (

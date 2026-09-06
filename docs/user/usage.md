@@ -39,9 +39,18 @@ the dialog.
 
 ## Track subscription limits
 
-**Usage → Limits** shows how much quota is left in each window and when it resets, for Codex and
-Claude subscriptions. For windows with timing data, each bar also marks how much of the window is
-left, so you can judge your pace before the next reset.
+On web and desktop, **Usage → Limits** pools every subscription account it can see per provider, so with several Codex
+or Claude accounts across your environments and hubs you read one number per window rather than a
+list. Each window card shows how much of the pool is left and a bar with one segment per account,
+ordered by which resets soonest; when the provider reports reset times, the card also says when
+the next reset lands and how much it hands back. The hatched
+part of a segment is what that reset restores. Tap or hover a segment for the account's plan, where it is
+signed in, and its reset time; Codex accounts with banked reset credits show a ticket count on the
+segment and the **Use reset** action in that popover. On narrow screens, numbered rows below
+the bar show each account's quota, countdown, and credits. Tap a row to open its details.
+
+The same account signed in on more than one environment, or reported by a hub as well, counts once.
+Filter with the environment dropdown to see what a single machine has.
 
 If a window looks stale, refresh Limits to re-check every provider and hub.
 
