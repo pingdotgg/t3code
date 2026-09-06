@@ -11,6 +11,7 @@ import {
 } from "@t3tools/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
+import type { ComposerImageAttachment } from "../composerDraftStore";
 import type { Thread, ThreadShell, TurnDiffSummary } from "../types";
 import { deriveProviderInstanceEntries, NO_PROVIDER_MODEL_SELECTION } from "../providerInstances";
 import type { CodexArtifactTemplate } from "@t3tools/client-runtime/codex-artifact-templates";
@@ -33,6 +34,7 @@ import {
   buildExpiredTerminalContextToastCopy,
   buildLoadingThreadFromShell,
   buildThreadTurnInterruptInput,
+  cloneComposerImageForRetry,
   createLocalDispatchSnapshot,
   deriveComposerSendState,
   deriveLockedProvider,
@@ -1859,5 +1861,86 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
         latestTurnStartFailureId: "turn-start-failure-new",
       }),
     ).toBe(true);
+  });
+});
+
+describe("cloneComposerImageForRetry", () => {
+  async function readBlobBytes(url: string): Promise<Uint8Array> {
+    return new Uint8Array(await (await fetch(url)).arrayBuffer());
+  }
+
+  it("clones the thumbnail blob URL instead of the original File", async () => {
+    const thumbnailBytes = new Uint8Array([11, 22, 33, 44, 55]);
+    const originalBytes = new Uint8Array(4_096).fill(99);
+    const previewUrl = URL.createObjectURL(new Blob([thumbnailBytes], { type: "image/jpeg" }));
+    const file = new File([originalBytes], "huge.png", { type: "image/png" });
+    const image: ComposerImageAttachment = {
+      type: "image",
+      id: "img-retry",
+      name: file.name,
+      mimeType: file.type,
+      sizeBytes: file.size,
+      previewUrl,
+      displayPreviewUrl: "blob:lightbox-revoked",
+      file,
+    };
+
+    const cloned = await cloneComposerImageForRetry(image);
+
+    expect(cloned.id).toBe(image.id);
+    expect(cloned.file).toBe(file);
+    expect(cloned.previewUrl).not.toBe(previewUrl);
+    expect(cloned.previewUrl.startsWith("blob:")).toBe(true);
+    expect(await readBlobBytes(cloned.previewUrl)).toEqual(thumbnailBytes);
+    const clonedFile = cloned.file;
+    if (!clonedFile) {
+      throw new Error("expected cloned file");
+    }
+    expect(clonedFile.size).toBe(originalBytes.byteLength);
+    expect(new Uint8Array(await clonedFile.arrayBuffer())).toEqual(originalBytes);
+    expect(cloned.displayPreviewUrl).toBeUndefined();
+
+    URL.revokeObjectURL(previewUrl);
+    URL.revokeObjectURL(cloned.previewUrl);
+  });
+
+  it("returns non-blob preview URLs as-is", async () => {
+    const file = new File([new Uint8Array([1, 2, 3])], "photo.png", { type: "image/png" });
+    const image: ComposerImageAttachment = {
+      type: "image",
+      id: "img-remote",
+      name: file.name,
+      mimeType: file.type,
+      sizeBytes: file.size,
+      previewUrl: "https://cdn.example.com/thumb.jpg",
+      file,
+    };
+
+    const cloned = await cloneComposerImageForRetry(image);
+
+    expect(cloned).toBe(image);
+    expect(cloned.previewUrl).toBe("https://cdn.example.com/thumb.jpg");
+    expect(cloned.file).toBe(file);
+  });
+
+  it("returns the image unchanged when file is missing", async () => {
+    const previewUrl = URL.createObjectURL(
+      new Blob([new Uint8Array([7, 8, 9])], { type: "image/jpeg" }),
+    );
+    const image = {
+      type: "image",
+      id: "img-missing-file",
+      name: "photo.png",
+      mimeType: "image/png",
+      sizeBytes: 3,
+      previewUrl,
+      file: null,
+    } as unknown as ComposerImageAttachment;
+
+    const cloned = await cloneComposerImageForRetry(image);
+
+    expect(cloned).toBe(image);
+    expect(cloned.previewUrl).toBe(previewUrl);
+    URL.revokeObjectURL(previewUrl);
   });
 });

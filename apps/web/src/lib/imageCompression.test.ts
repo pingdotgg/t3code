@@ -1,8 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
+  COMPOSER_IMAGE_DISPLAY_PREVIEW_MAX_EDGE,
+  COMPOSER_IMAGE_THUMBNAIL_MAX_EDGE,
   compressImageForStash,
   compressImageToByteLimit,
+  createComposerImageDisplayPreview,
+  createComposerImageThumbnail,
   isHeicImageFile,
   MAX_COMPRESSIBLE_SOURCE_BYTES,
   MAX_STASH_IMAGE_DATA_URL_CHARS,
@@ -84,17 +88,18 @@ function stubCanvasPipeline(
   const supportsWebp = options?.supportsWebp ?? true;
   const close = vi.fn();
   const fillRect = vi.fn();
-  vi.stubGlobal(
-    "createImageBitmap",
-    vi.fn(async () => ({ width: 4000, height: 3000, close })),
-  );
+  const canvases: Array<{ width: number; height: number }> = [];
+  const createImageBitmap = vi.fn(async () => ({ width: 4000, height: 3000, close }));
+  vi.stubGlobal("createImageBitmap", createImageBitmap);
   vi.stubGlobal(
     "OffscreenCanvas",
     class {
       constructor(
         public width: number,
         public height: number,
-      ) {}
+      ) {
+        canvases.push({ width, height });
+      }
       getContext() {
         return {
           fillStyle: "",
@@ -108,7 +113,7 @@ function stubCanvasPipeline(
       }
     },
   );
-  return { close, fillRect };
+  return { close, fillRect, canvases, createImageBitmap };
 }
 
 afterEach(() => {
@@ -444,5 +449,108 @@ describe("HEIC attachment preparation", () => {
     expect(result.ok && result.file).toBe(original);
     expect(result.ok && result.recompressed).toBe(false);
     expect(mocks.heicTo).not.toHaveBeenCalled();
+  });
+});
+
+function makePngFile(width: number, height: number, extraBytes = 32): File {
+  const header = new Uint8Array(24 + extraBytes);
+  header.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 0);
+  const view = new DataView(header.buffer);
+  view.setUint32(8, 13);
+  header.set([0x49, 0x48, 0x44, 0x52], 12);
+  view.setUint32(16, width);
+  view.setUint32(20, height);
+  return new File([header], "shot.png", { type: "image/png" });
+}
+
+describe("composer image previews", () => {
+  it("caps the thumbnail canvas longest edge at 256", async () => {
+    const { canvases, close } = stubCanvasPipeline(() => 4_000);
+
+    const result = await createComposerImageThumbnail(makeFile(4_000_000));
+
+    expect(result).toBeInstanceOf(Blob);
+    expect(canvases[0]).toEqual({ width: 256, height: 192 });
+    expect(Math.max(canvases[0]!.width, canvases[0]!.height)).toBe(
+      COMPOSER_IMAGE_THUMBNAIL_MAX_EDGE,
+    );
+    expect(close).toHaveBeenCalled();
+  });
+
+  it("caps the display preview canvas longest edge at 2048", async () => {
+    const { canvases } = stubCanvasPipeline(() => 20_000);
+
+    const result = await createComposerImageDisplayPreview(makeFile(4_000_000));
+
+    expect(result).toBeInstanceOf(Blob);
+    expect(canvases[0]).toEqual({ width: 2048, height: 1536 });
+    expect(Math.max(canvases[0]!.width, canvases[0]!.height)).toBe(
+      COMPOSER_IMAGE_DISPLAY_PREVIEW_MAX_EDGE,
+    );
+  });
+
+  it("does not mutate the source File", async () => {
+    stubCanvasPipeline(() => 4_000);
+    const original = makeFile(50_000);
+    const snapshot = { size: original.size, type: original.type, name: original.name };
+
+    await createComposerImageThumbnail(original);
+
+    expect(original.size).toBe(snapshot.size);
+    expect(original.type).toBe(snapshot.type);
+    expect(original.name).toBe(snapshot.name);
+  });
+
+  it("returns null when createImageBitmap is unavailable", async () => {
+    vi.stubGlobal("createImageBitmap", undefined);
+
+    expect(await createComposerImageThumbnail(makeFile(4_000_000))).toBeNull();
+  });
+
+  it("returns null when decode throws and still closes a created bitmap", async () => {
+    vi.stubGlobal(
+      "createImageBitmap",
+      vi.fn(async () => {
+        throw new Error("corrupt image");
+      }),
+    );
+
+    expect(await createComposerImageThumbnail(makeFile(4_000_000))).toBeNull();
+
+    const close = vi.fn();
+    vi.stubGlobal(
+      "createImageBitmap",
+      vi.fn(async () => ({ width: 4000, height: 3000, close })),
+    );
+    vi.stubGlobal(
+      "OffscreenCanvas",
+      class {
+        constructor(
+          public width: number,
+          public height: number,
+        ) {}
+        getContext() {
+          return { fillStyle: "", fillRect: vi.fn(), drawImage: vi.fn() };
+        }
+        async convertToBlob() {
+          throw new Error("encode failed");
+        }
+      },
+    );
+
+    expect(await createComposerImageThumbnail(makeFile(4_000_000))).toBeNull();
+    expect(close).toHaveBeenCalled();
+  });
+
+  it("asks createImageBitmap to downsample using resizeWidth and resizeHeight", async () => {
+    const { createImageBitmap } = stubCanvasPipeline(() => 4_000);
+    const file = makePngFile(4000, 3000);
+
+    await createComposerImageThumbnail(file);
+
+    expect(createImageBitmap).toHaveBeenCalledWith(file, {
+      resizeWidth: 256,
+      resizeHeight: 192,
+    });
   });
 });

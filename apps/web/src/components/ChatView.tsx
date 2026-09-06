@@ -6573,6 +6573,11 @@ export default function ChatView(props: ChatViewProps) {
         if (attachment.type !== "image") {
           throw new Error("This server does not support file attachments.");
         }
+        if (!attachment.file) {
+          throw new Error(
+            `Image '${attachment.name}' has no file data. Attach it again or remove it.`,
+          );
+        }
         return {
           type: "image" as const,
           name: attachment.name,
@@ -6856,6 +6861,9 @@ export default function ChatView(props: ChatViewProps) {
         (useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)?.reviewComments
           .length ?? 0) === 0
       ) {
+        const retryComposerImages = await Promise.all(
+          composerImagesSnapshot.map(cloneComposerImageForRetry),
+        );
         setOptimisticUserMessages((existing) => {
           const removed = existing.filter((message) => message.id === messageIdForSend);
           for (const message of removed) {
@@ -6865,7 +6873,6 @@ export default function ChatView(props: ChatViewProps) {
           return next.length === existing.length ? existing : next;
         });
         promptRef.current = promptForSend;
-        const retryComposerImages = composerImagesSnapshot.map(cloneComposerImageForRetry);
         composerImagesRef.current = retryComposerImages;
         composerFilesRef.current = composerFilesSnapshot;
         composerTerminalContextsRef.current = composerTerminalContextsSnapshot;

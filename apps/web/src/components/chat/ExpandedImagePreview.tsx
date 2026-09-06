@@ -128,6 +128,21 @@ export function attachVideoThumbnail(video: HTMLVideoElement, file: File): () =>
   return () => URL.revokeObjectURL(url);
 }
 
+function rasterImagePreviewSrc(
+  image: ChatImageAttachment | ComposerFileAttachment,
+): string | undefined {
+  if (image.type !== "image") {
+    return undefined;
+  }
+  if (
+    "displayPreviewUrl" in image &&
+    typeof (image as { displayPreviewUrl?: string }).displayPreviewUrl === "string"
+  ) {
+    return (image as { displayPreviewUrl: string }).displayPreviewUrl;
+  }
+  return image.previewUrl;
+}
+
 export function buildExpandedImagePreview(
   images: ReadonlyArray<ChatImageAttachment | ComposerFileAttachment>,
   selectedImageId: string,
@@ -139,11 +154,13 @@ export function buildExpandedImagePreview(
       index: 0,
     };
   }
-  const previewableImages = images.flatMap((image) =>
-    image.type === "image" && image.previewUrl
-      ? [{ id: image.id, src: image.previewUrl, name: image.name }]
-      : [],
-  );
+  const previewableImages = images.flatMap((image) => {
+    if (image.type !== "image") {
+      return [];
+    }
+    const src = rasterImagePreviewSrc(image);
+    return src ? [{ id: image.id, src, name: image.name }] : [];
+  });
   if (previewableImages.length === 0) {
     return null;
   }
