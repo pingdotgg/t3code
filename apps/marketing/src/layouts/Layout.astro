@@ -80,6 +80,7 @@ const canonicalUrl = new URL(Astro.url.pathname, Astro.site);
             <span class="nav-brand-name">T3 Code</span>
           </a>
           <div class="nav-right">
+            <a class="nav-link" href="/download">Download</a>
             <a
               class="nav-stars"
               href={GITHUB_REPOSITORY_URL}
@@ -383,6 +384,19 @@ const canonicalUrl = new URL(Astro.url.pathname, Astro.site);
     display: inline-flex;
     align-items: center;
     gap: 8px;
+  }
+
+  .nav-link {
+    padding: 0 10px;
+    color: var(--fg-muted);
+    font-size: 13px;
+    letter-spacing: -0.01em;
+    white-space: nowrap;
+    transition: color 0.18s ease;
+  }
+
+  .nav-link:hover {
+    color: var(--fg);
   }
 
   .nav-stars {

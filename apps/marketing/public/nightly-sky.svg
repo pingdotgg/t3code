@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 540 112" preserveAspectRatio="xMidYMid slice">
+  <defs>
+    <linearGradient id="night-sky" x1="28" y1="0" x2="510" y2="112" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#07152F"/>
+      <stop offset="0.52" stop-color="#151443"/>
+      <stop offset="1" stop-color="#32155B"/>
+    </linearGradient>
+    <radialGradient id="night-glow" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(420 18) rotate(157) scale(260 126)">
+      <stop stop-color="#5165D8" stop-opacity="0.42"/>
+      <stop offset="0.55" stop-color="#283075" stop-opacity="0.15"/>
+      <stop offset="1" stop-color="#111635" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="night-cloud" x1="18" y1="62" x2="260" y2="112" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#4EA4FF" stop-opacity="0.5"/>
+      <stop offset="0.52" stop-color="#696FEA" stop-opacity="0.62"/>
+      <stop offset="1" stop-color="#A85BEA" stop-opacity="0.5"/>
+    </linearGradient>
+    <filter id="night-soft" x="-24" y="35" width="588" height="101" filterUnits="userSpaceOnUse">
+      <feGaussianBlur stdDeviation="4"/>
+    </filter>
+  </defs>
+
+
+  <rect width="540" height="112" fill="url(#night-sky)"/>
+  <rect width="540" height="112" fill="url(#night-glow)"/>
+
+  <g fill="#E4EAFF">
+    <circle cx="20" cy="18" r="0.8" opacity="0.82"/>
+    <circle cx="76" cy="27" r="0.55" opacity="0.55"/>
+    <circle cx="133" cy="13" r="0.65" opacity="0.7"/>
+    <circle cx="198" cy="28" r="0.5" opacity="0.5"/>
+    <circle cx="258" cy="15" r="0.75" opacity="0.8"/>
+    <circle cx="326" cy="29" r="0.5" opacity="0.55"/>
+    <circle cx="384" cy="12" r="0.65" opacity="0.72"/>
+    <circle cx="455" cy="26" r="0.55" opacity="0.58"/>
+    <circle cx="517" cy="15" r="0.75" opacity="0.78"/>
+  </g>
+
+  <g filter="url(#night-soft)">
+    <path d="M-12 112V101C-12 87 0 76 14 76C18 63 30 54 44 54C58 54 70 62 74 75C79 70 86 67 94 67C110 67 123 79 124 95C132 96 138 101 141 112H-12Z" fill="url(#night-cloud)"/>
+    <path d="M374 112C375 98 387 87 401 87C405 72 418 62 434 62C450 62 463 72 467 87C478 87 488 94 492 104C506 103 518 106 526 112H374Z" fill="url(#night-cloud)" opacity="0.82"/>
+  </g>
+  <path d="M0 111.5H540" stroke="#050A19" stroke-opacity="0.3"/>
+</svg>
