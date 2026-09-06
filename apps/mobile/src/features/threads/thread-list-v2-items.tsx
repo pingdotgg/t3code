@@ -339,7 +339,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   readonly snoozePresetMinute: string;
   readonly project: EnvironmentProject | null;
   readonly projectTitle?: string;
-  readonly providerDriver: string | null;
+  /** Provider drivers back to front: earlier owners first, current last.
+      Empty when the environment's config has not resolved yet. */
+  readonly providerDrivers: ReadonlyArray<string>;
   /** Which machine hosts the thread. Null when only one environment is
       connected — repeating the same label on every row is noise. Mirrors
       the web sidebar's remote-environment cloud icon, but as text since
