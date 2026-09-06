@@ -32,6 +32,12 @@ function makeDatabase() {
   const database = MobileDatabase.of({
     loadCache: (environmentId, kind, cacheKey) =>
       Effect.succeed(Option.fromUndefinedOr(values.get(cacheId(environmentId, kind, cacheKey)))),
+    listCache: (kind) =>
+      Effect.sync(() =>
+        [...values.entries()]
+          .filter(([key]) => key.split(":")[1] === kind)
+          .map(([, payload]) => payload),
+      ),
     saveCache: (environmentId, kind, cacheKey, _schemaVersion, payload) =>
       Effect.sync(() => {
         values.set(cacheId(environmentId, kind, cacheKey), payload);

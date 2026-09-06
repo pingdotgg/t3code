@@ -5,7 +5,7 @@ import { PROJECT_FAVICON_FALLBACK_MARKER } from "@t3tools/shared/projectFavicon"
 
 const testState = vi.hoisted(() => ({
   faviconUrl: "https://environment.test/api/assets/token-a/v1-20-favicon.svg",
-  lastResource: null as unknown,
+  lastTarget: null as unknown,
 }));
 
 const hooks = vi.hoisted(() => {
@@ -57,10 +57,12 @@ vi.mock("lucide-react/dynamic", () => ({
   DynamicIcon: "dynamic-icon",
   iconNames: ["alarm-clock", "folder-code"],
 }));
-vi.mock("../assets/assetUrls", () => ({
-  useAssetUrlState: (_environmentId: unknown, resource: unknown) => {
-    testState.lastResource = resource;
-    return { _tag: "Success", url: testState.faviconUrl };
+vi.mock("@effect/atom-react", () => ({
+  useAtomValue: () => testState.faviconUrl,
+}));
+vi.mock("../state/assets", () => ({
+  projectFaviconUrlAtom: (input: unknown) => {
+    testState.lastTarget = input;
   },
 }));
 
@@ -212,10 +214,10 @@ describe("ProjectFavicon", () => {
       faviconPath: "brand/icon.svg",
     });
 
-    expect(testState.lastResource).toEqual({
-      _tag: "project-favicon",
+    expect(testState.lastTarget).toMatchObject({
+      environmentId: "environment-test",
       cwd: "/workspace-test",
-      path: "brand/icon.svg",
+      faviconPath: "brand/icon.svg",
     });
   });
 });

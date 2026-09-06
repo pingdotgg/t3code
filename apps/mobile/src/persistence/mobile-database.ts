@@ -16,7 +16,13 @@ const LEGACY_CACHE_DIRECTORIES = [
   "connection-vcs-refs",
 ] as const;
 
-export const ClientCacheKind = Schema.Literals(["shell", "thread", "server-config", "vcs-refs"]);
+export const ClientCacheKind = Schema.Literals([
+  "shell",
+  "thread",
+  "server-config",
+  "vcs-refs",
+  "project-favicon",
+]);
 export type ClientCacheKind = typeof ClientCacheKind.Type;
 
 export interface ClientCacheSummaryRow {
@@ -44,6 +50,7 @@ const MobileDatabaseOperation = Schema.Literals([
   "open",
   "migrate",
   "load-cache",
+  "list-cache",
   "save-cache",
   "remove-cache",
   "clear-cache-kind",
@@ -192,6 +199,9 @@ export class MobileDatabase extends Context.Service<
       kind: ClientCacheKind,
       cacheKey: string,
     ) => Effect.Effect<Option.Option<string>, MobileDatabaseError>;
+    readonly listCache: (
+      kind: ClientCacheKind,
+    ) => Effect.Effect<ReadonlyArray<string>, MobileDatabaseError>;
     readonly saveCache: (
       environmentId: EnvironmentId,
       kind: ClientCacheKind,
@@ -291,6 +301,16 @@ const makeAvailable = Effect.gen(function* () {
           ),
         catch: databaseError("load-cache"),
       }).pipe(Effect.map((row) => Option.fromNullishOr(row?.payload))),
+    ),
+    listCache: Effect.fn("MobileDatabase.listCache")((kind) =>
+      Effect.tryPromise({
+        try: () =>
+          database.getAllAsync<{ readonly payload: string }>(
+            "SELECT payload FROM client_cache WHERE kind = ? ORDER BY updated_at",
+            kind,
+          ),
+        catch: databaseError("list-cache"),
+      }).pipe(Effect.map((rows) => rows.map((row) => row.payload))),
     ),
     saveCache: Effect.fn("MobileDatabase.saveCache")(
       (environmentId, kind, cacheKey, schemaVersion, payload) =>
@@ -405,6 +425,7 @@ function makeUnavailable(error: MobileDatabaseError): MobileDatabase["Service"] 
   const fail = Effect.fail(error);
   return MobileDatabase.of({
     loadCache: () => fail,
+    listCache: () => fail,
     saveCache: () => fail,
     removeCache: () => fail,
     clearCacheKind: () => fail,

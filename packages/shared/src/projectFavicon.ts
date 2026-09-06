@@ -1,5 +1,13 @@
 export const PROJECT_FAVICON_FALLBACK_MARKER = "project-favicon-missing";
 
+export function getProjectFaviconResourceKey(
+  environmentId: string,
+  workspaceRoot: string,
+  faviconPath?: string | null,
+) {
+  return JSON.stringify([environmentId, workspaceRoot, faviconPath || null]);
+}
+
 export function getProjectFaviconCacheKey(
   environmentId: string,
   workspaceRoot: string,
