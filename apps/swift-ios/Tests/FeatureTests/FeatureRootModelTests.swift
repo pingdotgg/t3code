@@ -10,6 +10,65 @@ import XCTest
 @Suite("Feature root model")
 struct FeatureRootModelTests {
     @Test
+    func transcriptSkillPillsUseTheThreadWorkspaceCatalog() async {
+        let skill = FeatureProviderSkill(name: "project-only", displayName: "Project only")
+        var provider = FeatureProvider(
+            id: "codex", name: "Codex", driver: "codex",
+            models: [.init(id: "test-model", name: "Test model")],
+            skills: [.init(name: "global-only")]
+        )
+        provider.workspaceSnapshots = [
+            .init(cwd: "/workspace", slashCommands: [], skills: [skill]),
+        ]
+        let thread = FeatureThread(
+            id: "workspace-skills", projectID: "project", environmentID: "environment",
+            title: "Workspace skills", worktreePath: "/workspace",
+            providerID: "codex", modelID: "test-model"
+        )
+        let client = FeatureClientStub()
+        client.snapshot = FeatureSnapshot(
+            threads: [thread], providersByEnvironment: ["environment": [provider]]
+        )
+        let model = testRootModel(client: client)
+        await model.reload()
+        let view = ThreadDetailView(model: model, thread: thread, submitMessage: { _ in true })
+
+        let pills = FeatureInlineSkillParser.descriptors(
+            in: "$project-only", skills: view.threadProviderSkills, allowsEndBoundary: true
+        )
+
+        #expect(pills.map(\.rawText) == ["$project-only"])
+        #expect(pills.map(\.displayName) == ["Project only"])
+
+        let source = "$project-only $new-skill $global-only"
+        provider.workspaceSnapshots = [
+            .init(cwd: "/workspace", slashCommands: [], skills: [
+                .init(name: "project-only", displayName: "Updated name"),
+                .init(name: "new-skill", displayName: "New skill"),
+            ]),
+        ]
+        client.snapshot.providersByEnvironment = ["environment": [provider]]
+        await model.reload()
+        let updated = FeatureInlineSkillParser.descriptors(
+            in: source, skills: view.threadProviderSkills, allowsEndBoundary: true
+        )
+        #expect(updated.map(\.rawText) == ["$project-only", "$new-skill"])
+        #expect(updated.map(\.displayName) == ["Updated name", "New skill"])
+
+        provider.workspaceSnapshots = [
+            .init(cwd: "/other-workspace", slashCommands: [], skills: [
+                .init(name: "project-only"),
+            ]),
+        ]
+        client.snapshot.providersByEnvironment = ["environment": [provider]]
+        await model.reload()
+        let removed = FeatureInlineSkillParser.descriptors(
+            in: source, skills: view.threadProviderSkills, allowsEndBoundary: true
+        )
+        #expect(removed.isEmpty)
+    }
+
+    @Test
     func foregroundRecoveryIgnoresInitialActivationAndReplacesLongSuspendedSockets() async {
         let client = FeatureClientStub()
         let model = testRootModel(client: client)

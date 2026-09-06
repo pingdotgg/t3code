@@ -784,9 +784,10 @@ public struct ThreadDetailView: View {
         }
     }
 
-    private var threadProviderSkills: [FeatureProviderSkill] {
+    var threadProviderSkills: [FeatureProviderSkill] {
         guard let selectedProviderID = currentSelection?.providerID else { return [] }
-        return threadProviders.first { $0.id == selectedProviderID }?.skills ?? []
+        return threadProviders.first { $0.id == selectedProviderID }?
+            .workspaceCatalog(cwd: workspaceCatalogPath).skills ?? []
     }
 
     private var timelineRenderUpdate: FeatureDetailRenderUpdate? {
