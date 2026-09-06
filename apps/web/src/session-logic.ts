@@ -432,7 +432,6 @@ const STANDALONE_V2_ITEM_TYPES = new Set<OrchestrationV2ProjectedTurnItem["item"
   "run_interrupt_result",
   "subagent",
   "thread_created",
-  "user_input_request",
 ]);
 
 const PERSISTENT_RESOURCE_V2_ITEM_TYPES = new Set<OrchestrationV2TurnItem["type"]>([
@@ -481,6 +480,7 @@ function projectedWorkEntryTone(item: OrchestrationV2TurnItem): WorkLogEntry["to
     case "web_search":
     case "dynamic_tool":
     case "subagent":
+    case "user_input_request":
       return "tool";
     default:
       return "info";
@@ -615,6 +615,12 @@ function projectedWorkEntry(row: OrchestrationV2ProjectedTurnItem): WorkLogEntry
         toolTitle: title ?? item.toolName ?? "Tool",
         toolData: { input: item.input, output: item.output },
       };
+    case "user_input_request":
+      return {
+        ...common,
+        label: title ?? "Input requested",
+        toolData: item,
+      };
     default:
       return {
         ...common,
@@ -698,7 +704,13 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
         runId: item.runId,
         streaming: item.type === "assistant_message" && item.streaming,
         ...(item.type === "user_message"
-          ? { createdBy: item.createdBy, creationSource: item.creationSource }
+          ? {
+              createdBy: item.createdBy,
+              creationSource: item.creationSource,
+              ...(item.scheduledTaskId !== undefined
+                ? { scheduledTaskId: item.scheduledTaskId }
+                : {}),
+            }
           : {}),
         createdAt,
         updatedAt: DateTime.formatIso(item.updatedAt),

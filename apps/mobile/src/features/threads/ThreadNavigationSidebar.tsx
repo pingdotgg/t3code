@@ -83,6 +83,7 @@ import {
 import {
   buildThreadListV2Items,
   buildThreadListV2ListItems,
+  resolveThreadListV2ProviderDrivers,
   THREAD_LIST_V2_SETTLED_INITIAL_COUNT,
   THREAD_LIST_V2_SETTLED_PAGE_COUNT,
   type ThreadListV2ListItem,
@@ -877,15 +878,10 @@ function ThreadNavigationSidebarPane(
               snoozeWakeLabelText={item.snoozeWakeLabelText}
               project={projectByKey.get(scopeKey) ?? null}
               projectTitle={projectTitleByProjectKey.get(scopeKey)}
-              providerDriver={
-                serverConfigs
-                  .get(thread.environmentId)
-                  ?.providers.find(
-                    (provider) =>
-                      provider.instanceId ===
-                      (thread.runtime?.providerInstanceId ?? thread.modelSelection.instanceId),
-                  )?.driver ?? null
-              }
+              providerDrivers={resolveThreadListV2ProviderDrivers(
+                thread,
+                serverConfigs.get(thread.environmentId)?.providers,
+              )}
               environmentLabel={
                 Object.keys(savedConnectionsById).length > 1
                   ? (savedConnectionsById[thread.environmentId]?.environmentLabel ?? null)

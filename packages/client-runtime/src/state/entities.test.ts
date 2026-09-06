@@ -2,6 +2,7 @@ import {
   EnvironmentId,
   MessageId,
   NodeId,
+  ProviderInstanceId,
   ProviderSessionId,
   RunId,
   RuntimeRequestId,
@@ -16,7 +17,7 @@ import {
   parseProjectRefCollectionKey,
   parseThreadKey,
 } from "./entities.ts";
-import { presentThreadShell } from "./models.ts";
+import { presentThreadShell, resolveThreadProviderStack } from "./models.ts";
 import { v2Projection, v2ThreadShell } from "./orchestrationV2TestFixtures.ts";
 import { deriveLatestThreadRun, deriveThreadRuntime } from "./threadExecution.ts";
 import { derivePendingThreadRequests } from "./threadRequests.ts";
@@ -124,6 +125,31 @@ describe("V2 client presentation", () => {
       activeRunId: null,
     });
     expect(shell.pendingBackgroundTasks).toEqual([{ taskId: "bg-1", description: "sleep 20" }]);
+  });
+
+  it("stacks earlier provider owners behind the current one, newest history first to go", () => {
+    const codex = ProviderInstanceId.make("codex");
+    const claude = ProviderInstanceId.make("claude");
+    const cursor = ProviderInstanceId.make("cursor");
+    const grok = ProviderInstanceId.make("grok");
+    const shell = presentThreadShell(environmentId, {
+      ...v2ThreadShell,
+      providerInstanceId: grok,
+      modelSelection: { instanceId: grok, model: "grok-4" },
+      providerInstanceHistory: [codex, claude, cursor, grok],
+    });
+
+    // Three slots: the two most recent earlier owners, then the current one.
+    expect(resolveThreadProviderStack(shell)).toEqual([claude, cursor, grok]);
+    expect(
+      resolveThreadProviderStack({ ...shell, providerInstanceHistory: [codex, grok] }),
+    ).toEqual([codex, grok]);
+    expect(resolveThreadProviderStack({ ...shell, providerInstanceHistory: [] })).toEqual([grok]);
+    // Servers that predate the field decode to an empty history.
+    expect(
+      presentThreadShell(environmentId, { ...v2ThreadShell, providerInstanceHistory: undefined })
+        .providerInstanceHistory,
+    ).toEqual([]);
   });
 
   it("keeps terminal runtime completed when there are no pending background tasks", () => {
