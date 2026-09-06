@@ -1,6 +1,11 @@
 import { Tooltip as TooltipPrimitive } from "@base-ui/react/tooltip";
 
 import { cn } from "~/lib/utils";
+import { useWindowControlsOverlayHeight } from "~/lib/windowControlsOverlay";
+
+// Base UI's own default; restated because an object padding zeroes the sides we
+// do not list.
+const COLLISION_PADDING = 5;
 
 const TooltipCreateHandle = TooltipPrimitive.createHandle;
 
@@ -28,12 +33,23 @@ function TooltipPopup({
   variant?: "default" | "glass";
   anchor?: TooltipPrimitive.Positioner.Props["anchor"];
 }) {
+  // A tooltip that flips up out of a panel header lands in the native titlebar
+  // strip, which the OS paints its window controls over. Treat that strip as
+  // off-screen so the tooltip flips down instead of hiding under the controls.
+  const windowControlsOverlayHeight = useWindowControlsOverlayHeight();
+
   return (
     <TooltipPrimitive.Portal>
       <TooltipPrimitive.Positioner
         align={align}
         anchor={anchor}
         className="pointer-events-none z-[140] h-(--positioner-height) w-(--positioner-width) max-w-(--available-width) transition-[top,left,right,bottom,transform] data-instant:transition-none"
+        collisionPadding={{
+          top: COLLISION_PADDING + windowControlsOverlayHeight,
+          right: COLLISION_PADDING,
+          bottom: COLLISION_PADDING,
+          left: COLLISION_PADDING,
+        }}
         data-slot="tooltip-positioner"
         side={side}
         sideOffset={sideOffset}
