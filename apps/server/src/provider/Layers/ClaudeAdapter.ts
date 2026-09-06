@@ -1564,21 +1564,24 @@ function resultOutcome(
   status: ProviderRuntimeTurnStatus;
   errorMessage: string | undefined;
 } {
-  // A turn that already named its cause (expired login, usage limit) can end
-  // as a generic API error or as a success flagged is_error; the hint wins.
-  const successFlaggedError =
-    result.terminal_reason === undefined &&
-    result.subtype === "success" &&
-    result.is_error === true;
+  // A success result flagged is_error only fails when the turn already
+  // reported its cause (expired login, rejected usage window).
+  const successTaggedFailure = result.subtype === "success" && result.is_error === true;
   const structuredError = isOverloadedResult(result)
     ? "Claude API is overloaded (529). Try again shortly."
     : (terminalResultError(result.terminal_reason, failureHint) ??
-      (successFlaggedError ? failureHint : undefined));
-  // CLI diagnostic entries must not become the error banner.
+      (successTaggedFailure ? failureHint : undefined));
+  // CLI diagnostic entries must not become the error banner. Success results
+  // carry no typed error list, but a success-tagged failure may still list one.
+  const listedErrors: ReadonlyArray<unknown> =
+    "errors" in result && Array.isArray(result.errors) ? result.errors : [];
   const listedError =
-    (result.subtype === "success" && result.is_error !== true) || !Array.isArray(result.errors)
+    result.subtype === "success" && !successTaggedFailure
       ? undefined
-      : result.errors.find((error) => !error.startsWith("[ede_diagnostic]"));
+      : listedErrors.find(
+          (error): error is string =>
+            typeof error === "string" && !error.startsWith("[ede_diagnostic]"),
+        );
   const errorMessage = listedError || structuredError;
   if (structuredError !== undefined) return { status: "failed", errorMessage };
   if (result.subtype === "success") return { status: "completed", errorMessage };
