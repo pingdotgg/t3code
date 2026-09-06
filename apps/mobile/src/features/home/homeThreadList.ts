@@ -105,10 +105,8 @@ export function sortHomeProjectScopes(input: {
   }
   for (const pendingTask of input.pendingTasks) {
     recordActivity(
-      scopeKeyByProjectRef.get(
-        scopedProjectKey(pendingTask.message.environmentId, pendingTask.creation.projectId),
-      ),
-      Date.parse(pendingTask.message.createdAt),
+      scopeKeyByProjectRef.get(scopedProjectKey(pendingTask.environmentId, pendingTask.projectId)),
+      Date.parse(pendingTask.createdAt),
     );
   }
 
@@ -177,7 +175,7 @@ function groupSortTimestamp(group: HomeThreadGroup, sortOrder: HomeProjectSortOr
     Number.NEGATIVE_INFINITY,
   );
   return group.pendingTasks.reduce((latest, pendingTask) => {
-    const timestamp = Date.parse(pendingTask.message.createdAt);
+    const timestamp = Date.parse(pendingTask.createdAt);
     return Number.isNaN(timestamp) ? latest : Math.max(latest, timestamp);
   }, latestThread);
 }
@@ -235,14 +233,11 @@ export function buildHomeThreadGroups(input: {
   }
 
   for (const pendingTask of input.pendingTasks ?? []) {
-    if (input.environmentId !== null && pendingTask.message.environmentId !== input.environmentId) {
+    if (input.environmentId !== null && pendingTask.environmentId !== input.environmentId) {
       continue;
     }
 
-    const physicalKey = scopedProjectKey(
-      pendingTask.message.environmentId,
-      pendingTask.creation.projectId,
-    );
+    const physicalKey = scopedProjectKey(pendingTask.environmentId, pendingTask.projectId);
     let groupKey = groupKeyByProjectKey.get(physicalKey);
     if (!groupKey) {
       // The project shell is not loaded (environment offline / project gone).
@@ -254,16 +249,15 @@ export function buildHomeThreadGroups(input: {
         key: groupKey,
         projects: [
           {
-            environmentId: pendingTask.message.environmentId,
-            id: pendingTask.creation.projectId,
-            title: pendingTask.creation.projectTitle ?? "Unknown project",
-            workspaceRoot:
-              pendingTask.creation.projectCwd ?? String(pendingTask.creation.projectId),
+            environmentId: pendingTask.environmentId,
+            id: pendingTask.projectId,
+            title: pendingTask.projectTitle ?? "Unknown project",
+            workspaceRoot: pendingTask.projectCwd ?? String(pendingTask.projectId),
             repositoryIdentity: null,
             defaultModelSelection: null,
             scripts: [],
-            createdAt: pendingTask.message.createdAt,
-            updatedAt: pendingTask.message.createdAt,
+            createdAt: pendingTask.createdAt,
+            updatedAt: pendingTask.createdAt,
           },
         ],
         pendingTasks: [],
