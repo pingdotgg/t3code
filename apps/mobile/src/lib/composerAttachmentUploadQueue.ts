@@ -1,6 +1,7 @@
 import { EnvironmentId, type ServerConfig } from "@t3tools/contracts";
 import { clampFileAttachmentUploadBytes } from "@t3tools/client-runtime/state/attachments";
 
+import { parseLegacyNewTaskDraftKey } from "../state/new-task-draft-key";
 import type { DraftComposerAttachment } from "./composerImages";
 
 export interface ComposerAttachmentUploadRequest {
@@ -20,12 +21,19 @@ export function composerAttachmentUploadKey(
   return `${environmentId}:${attachmentId}`;
 }
 
+/**
+ * Which environment a composer draft belongs to. Thread drafts carry it in
+ * the key; pending-task editor drafts borrow it from the queued message;
+ * new-task drafts carry it in their project stamp (legacy project-keyed
+ * new-task drafts still parse from the key until they are migrated on load).
+ */
 export function composerDraftEnvironmentId(
   draftKey: string,
   queuedMessages: ReadonlyArray<{
     readonly messageId: string;
     readonly environmentId: EnvironmentId;
   }>,
+  draft?: { readonly project?: { readonly environmentId: EnvironmentId } },
 ): EnvironmentId | null {
   if (draftKey.startsWith("pending-task:")) {
     return (
@@ -33,9 +41,15 @@ export function composerDraftEnvironmentId(
         ?.environmentId ?? null
     );
   }
-  const scope = draftKey.startsWith("new-task:") ? draftKey.slice("new-task:".length) : draftKey;
-  const separator = scope.lastIndexOf(":");
-  return separator > 0 ? EnvironmentId.make(scope.slice(0, separator)) : null;
+  if (draftKey.startsWith("new-task:")) {
+    if (draft?.project) {
+      return draft.project.environmentId;
+    }
+    const legacy = parseLegacyNewTaskDraftKey(draftKey);
+    return legacy === null ? null : EnvironmentId.make(legacy.environmentId);
+  }
+  const separator = draftKey.lastIndexOf(":");
+  return separator > 0 ? EnvironmentId.make(draftKey.slice(0, separator)) : null;
 }
 
 type UploadServerConfig = {

@@ -15,8 +15,6 @@ export function usePendingTaskListActions(): {
 
   const openPendingTask = useCallback(
     (pendingTask: PendingNewTask) => {
-      // A draft is the project's own new-task composer content, so opening
-      // the project's new-task screen lands on it without extra params.
       navigation.navigate("NewTaskSheet", {
         screen: "NewTaskDraft",
         params: {
@@ -24,7 +22,7 @@ export function usePendingTaskListActions(): {
           projectId: String(pendingTask.projectId),
           ...(pendingTask.kind === "pending"
             ? { pendingTaskId: String(pendingTask.message.messageId) }
-            : {}),
+            : { draftId: pendingTask.draftKey }),
         },
       });
     },

@@ -83,6 +83,7 @@ import {
   restoreComposerDraftSnapshot,
   scheduleUnusedComposerAttachmentCleanup,
   type ComposerDraft,
+  waitForComposerDraftsLoaded,
 } from "../../state/use-composer-drafts";
 import { useEnvironmentServerConfig, useProjects } from "../../state/entities";
 import {
@@ -150,6 +151,8 @@ export function NewTaskDraftScreen(props: {
   };
   /** Queued outbox message id when editing an existing pending task. */
   readonly pendingTaskId?: string;
+  /** Existing new-task draft key to resume (a Draft row in the thread list). */
+  readonly draftId?: string;
   /** Durable native share inbox item to merge into this project draft. */
   readonly incomingShareId?: string;
 }) {
@@ -420,7 +423,44 @@ export function NewTaskDraftScreen(props: {
     };
   }, []);
 
-  const { beginEditingPendingTask, cancelEditingPendingTask, editingPendingTask } = flow;
+  const { beginEditingPendingTask, cancelEditingPendingTask, editingPendingTask, openDraft } = flow;
+  // A Draft row opens its own draft; a fresh New Task never reuses one.
+  // Drafts hydrate from disk and projects arrive with the shell snapshot, so
+  // on a cold launch the draft or its project can be missing for a moment;
+  // wait for hydration and retry while projects load. Attempt each id once
+  // after that so a draft discarded mid-session does not keep bouncing to
+  // the picker.
+  const attemptedDraftIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!props.draftId || props.pendingTaskId) {
+      return;
+    }
+    const draftId = props.draftId;
+    if (attemptedDraftIdRef.current === draftId) {
+      return;
+    }
+    let cancelled = false;
+    void waitForComposerDraftsLoaded().then(() => {
+      if (cancelled || attemptedDraftIdRef.current === draftId) {
+        return;
+      }
+      if (openDraft(draftId)) {
+        attemptedDraftIdRef.current = draftId;
+        return;
+      }
+      if (getComposerDraftSnapshot(draftId).project !== undefined && projects.length === 0) {
+        // The draft exists; its project has not arrived yet. Retry on the
+        // next projects change instead of giving up.
+        return;
+      }
+      attemptedDraftIdRef.current = draftId;
+      navigation.dispatch(StackActions.replace("NewTask"));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [navigation, openDraft, projects, props.draftId, props.pendingTaskId]);
+
   const attemptedPendingTaskIdRef = useRef<string | null>(null);
   useEffect(() => {
     if (!props.pendingTaskId || editingPendingTask?.messageId === props.pendingTaskId) {
@@ -457,9 +497,10 @@ export function NewTaskDraftScreen(props: {
   const lastInitialProjectRefRef = useRef(props.initialProjectRef);
 
   useEffect(() => {
-    // Pending-task editing owns project selection (and must not fall through
-    // to the replace("NewTask") fallback while its hydration is in flight).
-    if (props.pendingTaskId) {
+    // Pending-task editing and draft resumption own project selection (and
+    // must not fall through to the replace("NewTask") fallback while their
+    // hydration is in flight).
+    if (props.pendingTaskId || props.draftId) {
       return;
     }
     if (lastInitialProjectRefRef.current !== props.initialProjectRef) {
@@ -518,6 +559,7 @@ export function NewTaskDraftScreen(props: {
     props.initialProjectRef,
     props.incomingShareId,
     props.pendingTaskId,
+    props.draftId,
     navigation,
     selectedProject,
     selectedProjectKey,
