@@ -2144,15 +2144,18 @@ export const stageResourceMonitor = Effect.fn("stageResourceMonitor")(function* 
   readonly platform: typeof BuildPlatform.Type;
   readonly arch: typeof BuildArch.Type;
   readonly verbose: boolean;
+  readonly reuseExisting?: boolean;
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const manifestPath = path.join(input.repoRoot, "native/resource-monitor/Cargo.toml");
   const executableName = resourceMonitorExecutableName(input.platform);
   const rustTargets = resolveResourceMonitorRustTargets(input.platform, input.arch);
-  const reuseResourceMonitor = yield* Config.boolean("T3CODE_DESKTOP_REUSE_RESOURCE_MONITOR").pipe(
-    Config.withDefault(false),
-  );
+  const reuseResourceMonitor =
+    input.reuseExisting ??
+    (yield* Config.boolean("T3CODE_DESKTOP_REUSE_RESOURCE_MONITOR").pipe(
+      Config.withDefault(false),
+    ));
   const builtBinaries: string[] = [];
 
   for (const rustTarget of rustTargets) {
@@ -2219,6 +2222,7 @@ export const stageResourceMonitor = Effect.fn("stageResourceMonitor")(function* 
   if (input.platform !== "win") {
     yield* fs.chmod(destinationPath, 0o755);
   }
+  return destinationPath;
 });
 
 export const stageBrowserSecret = Effect.fn("stageBrowserSecret")(function* (input: {
@@ -2980,6 +2984,21 @@ export const stageWindowsServerSidecar = Effect.fn("stageWindowsServerSidecar")(
   // extract and reject on every launch. The desktop app treats a missing
   // archive as "no WSL-local runtime" and goes straight to the mounted tree.
   if (bundlesWslRuntime({ arch: input.arch, prebuildPath: input.wslPrebuildPath })) {
+    const monitorPath = yield* stageResourceMonitor({
+      repoRoot: input.repoRoot,
+      stageResourcesDir: path.join(input.stageRoot, "wsl-monitor"),
+      platform: "linux",
+      arch: input.arch,
+      verbose: input.verbose,
+      reuseExisting: true,
+    });
+    const monitorDir = path.join(
+      serverStageDir,
+      "apps/server/dist/resource-monitor",
+      `linux-${input.arch}`,
+    );
+    yield* fs.makeDirectory(monitorDir, { recursive: true });
+    yield* fs.copyFile(monitorPath, path.join(monitorDir, "t3-resource-monitor"));
     yield* stageWslRuntimeArchive({
       sourceDir: serverStageDir,
       archivePath: input.wslRuntimeArchivePath,
