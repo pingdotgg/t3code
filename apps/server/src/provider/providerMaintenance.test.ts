@@ -25,6 +25,7 @@ import {
   parseHomebrewLatestVersion,
   ProviderVersionCache,
   resolveLatestProviderVersion,
+  resolvePackageManagedProviderMaintenance,
   resolveProviderMaintenanceCapabilitiesEffect,
   type ProviderMaintenanceCapabilities,
 } from "./providerMaintenance.ts";
@@ -309,6 +310,42 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
       ),
     ).toBeNull();
   });
+
+  // The Codex Windows installer exposes `%LOCALAPPDATA%\\Programs\\OpenAI\\Codex\\bin`
+  // as a junction into `%CODEX_HOME%\\packages\\standalone\\current\\bin`. Node's
+  // realpath follows junctions, so the real path carries the standalone marker
+  // even though the visible path does not.
+  it.effect("recognizes a Windows standalone install through its junctioned bin dir", () =>
+    Effect.gen(function* () {
+      const visiblePath =
+        "C:\\Users\\Theo\\AppData\\Local\\Programs\\OpenAI\\Codex\\bin\\codex.exe";
+      const realPath =
+        "C:\\Users\\Theo\\.codex\\packages\\standalone\\releases\\0.120.0-x86_64\\bin\\codex.exe";
+      const capabilities = yield* resolvePackageManagedProviderMaintenance(
+        {
+          provider: driver("codex"),
+          npmPackageName: "@openai/codex",
+          nativeUpdate: {
+            args: ["update"],
+            isCommandPath: isNativeTestCommandPath("/packages/standalone/"),
+          },
+        },
+        {
+          binaryPath: "codex",
+          resolvedCommandPath: visiblePath,
+          realCommandPath: realPath,
+          env: {},
+          platform: "win32",
+        },
+      ).pipe(Effect.provideService(HostProcessPlatform, "win32"));
+
+      expect(capabilities.update).toMatchObject({
+        executable: visiblePath,
+        args: ["update"],
+        lockKey: "codex-native",
+      });
+    }),
+  );
 
   it.effect("proves Windows npm ownership from the package manifest beside the shim", () =>
     Effect.gen(function* () {

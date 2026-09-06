@@ -42,6 +42,7 @@ import {
 } from "../../onboarding/projectImport.logic";
 import {
   getOnboardingProviderState,
+  resolveOnboardingProviderInstallCommand,
   resolveOnboardingProviderLoginCommand,
   selectOnboardingProvidersByDriver,
 } from "../../onboarding/providerReadiness.logic";
@@ -641,11 +642,6 @@ function PairDirectStep({
 const PRIMARY_AGENT_DRIVERS = ["claudeAgent", "codex"] as const;
 type OnboardingAgentDriver = (typeof PRIMARY_AGENT_DRIVERS)[number];
 
-const AGENT_INSTALL_COMMANDS: Record<OnboardingAgentDriver, string> = {
-  claudeAgent: "npm install -g @anthropic-ai/claude-code",
-  codex: "npm install -g @openai/codex",
-};
-
 /** Setup values stay fixed while provider probes refresh the surrounding cards. */
 interface AgentTerminalSession {
   readonly environmentId: EnvironmentId;
@@ -657,10 +653,11 @@ interface AgentTerminalSession {
 }
 
 /**
- * Claude Code and Codex use live probe status. Install opens the built-in terminal inline
- * with the command pre-typed — the update RPC can't install a binary that
- * isn't there yet (it infers the package manager from the installed binary's
- * path), and the terminal also handles the interactive login that follows.
+ * Claude Code and Codex use live probe status. Install opens the built-in
+ * terminal inline with the vendor's standalone installer pre-typed. The update
+ * RPC can't install a binary that isn't there yet (it infers the installer from
+ * the installed binary's path), and the terminal also handles the interactive
+ * login that follows.
  */
 function AgentsStep({
   mode,
@@ -761,7 +758,10 @@ function ConnectedAgentsStep({
                       serverConfig.settings,
                       serverConfig.environment.platform.os,
                     )
-                  : AGENT_INSTALL_COMMANDS[driver],
+                  : resolveOnboardingProviderInstallCommand(
+                      driver,
+                      serverConfig.environment.platform.os,
+                    ),
                 keybindings: serverConfig.keybindings,
               });
             }}
