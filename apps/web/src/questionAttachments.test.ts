@@ -81,3 +81,20 @@ it("does not match drafts belonging to threads with a shared id prefix", () => {
     ).toBe(false);
   }
 });
+
+it("does not clear another environment whose id contains a question prefix", () => {
+  const otherEnvironment = EnvironmentId.make(
+    `${environmentId}:question-${encodeURIComponent(JSON.stringify(threadId))}-nested`,
+  );
+  const otherKey = questionAttachmentDraftId(otherEnvironment, threadId, requestId, "q");
+  const ownKey = questionAttachmentDraftId(environmentId, threadId, requestId, "q");
+  const store = useComposerDraftStore.getState();
+  store.setPrompt(otherKey, "Keep this answer");
+  store.setPrompt(ownKey, "Discard this answer");
+  const prefix = questionAttachmentDraftPrefix(environmentId, threadId);
+  for (const key of [ownKey, otherKey]) {
+    if (key.startsWith(prefix)) clearQuestionAttachmentDraft(key);
+  }
+  expect(store.getComposerDraft(ownKey)).toBeNull();
+  expect(store.getComposerDraft(otherKey)?.prompt).toBe("Keep this answer");
+});
