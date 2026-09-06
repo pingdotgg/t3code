@@ -34,6 +34,7 @@ const state = vi.hoisted(() => ({
   localEffects: [] as string[],
   confirm: vi.fn<(message: string) => Promise<boolean>>(),
   afterRequest: undefined as ((action: string) => void) | undefined,
+  sessionLookupFails: false,
 }));
 
 vi.mock("react", () => ({
@@ -65,10 +66,12 @@ vi.mock("../state/use-atom-command", () => ({
 }));
 vi.mock("../state/use-atom-query-runner", () => ({
   useAtomQueryRunner: () => async (environmentId: string) =>
-    AsyncResult.success({
-      authenticated: true,
-      scopes: [...(state.scopes.get(environmentId) ?? [])],
-    }),
+    state.sessionLookupFails
+      ? AsyncResult.failure(Cause.fail(new Error("Session lookup failed")))
+      : AsyncResult.success({
+          authenticated: true,
+          scopes: [...(state.scopes.get(environmentId) ?? [])],
+        }),
 }));
 vi.mock("../state/threads", () => ({
   threadEnvironment: Object.fromEntries(
@@ -219,6 +222,7 @@ beforeEach(() => {
   state.localEffects = [];
   state.confirm.mockReset().mockResolvedValue(true);
   state.afterRequest = undefined;
+  state.sessionLookupFails = false;
 });
 
 describe("thread action permissions", () => {
@@ -308,9 +312,13 @@ describe("thread action permissions", () => {
     expect(state.localEffects).toEqual([]);
   });
 
-  it("deletes a thread without terminal or source-control permission", async () => {
+  it.each([
+    { reason: "without source-control permission", sessionLookupFails: false },
+    { reason: "when the permission lookup fails", sessionLookupFails: true },
+  ])("deletes a worktree thread and keeps its worktree $reason", async ({ sessionLookupFails }) => {
     state.scopes.get(secondary)!.add(AuthOrchestrationOperateScope);
     state.threads[0]!.worktreePath = "/worktrees/thread";
+    state.sessionLookupFails = sessionLookupFails;
     expect((await useThreadActions().deleteThread(target))._tag).toBe("Success");
     expect(state.confirm).not.toHaveBeenCalled();
     expect(state.requests.map((request) => request.action)).toEqual(["delete"]);

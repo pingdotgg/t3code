@@ -175,6 +175,12 @@ Grouping checkouts does not combine their permissions. Shared project settings
 require `orchestration:operate` on every member environment; actions on one
 checkout use that checkout's permissions.
 
+`source-control:write` covers direct Git and pull request changes made from the
+client: pushing, switching or creating branches, cloning, and removing
+worktrees. It does not restrict what a task does. Starting a task in a new
+worktree still creates that branch and worktree with `orchestration:operate`,
+and the agent it runs can use Git however the environment allows.
+
 Settings changes, provider management, and environment maintenance can be granted
 separately from access administration. New standard pairings include these
 permissions. Existing clients keep their original grants after an update; to

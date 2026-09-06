@@ -413,8 +413,17 @@ export function BranchToolbarBranchSelector({
     if (
       !readEnvironmentScope(environmentId, AuthSourceControlWriteScope) ||
       (hasServerThread && !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope))
-    )
+    ) {
+      // The menu already closed when the item was chosen; explain the no-op.
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Action unavailable",
+          description: "This connection cannot change the thread's branch.",
+        }),
+      );
       return;
+    }
     startBranchActionTransition(async () => {
       await action();
       branchRefState.refresh();

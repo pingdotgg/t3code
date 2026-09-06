@@ -382,13 +382,14 @@ export function useThreadActions() {
       const localApi = readLocalApi();
       let canDeleteWorktree = false;
       if (orphanedWorktreePath !== null && threadProject !== null && localApi) {
+        // The session lookup only decides whether to offer worktree cleanup.
+        // A failed lookup is treated like a missing grant: delete the thread
+        // and leave the worktree behind rather than refusing the delete.
         const sessionResult = await loadSessionState(threadRef.environmentId);
-        if (sessionResult._tag === "Failure") {
-          return sessionResult;
-        }
         const permissionFailure = threadOperationFailure(threadRef);
         if (permissionFailure) return permissionFailure;
         canDeleteWorktree =
+          sessionResult._tag === "Success" &&
           sessionResult.value.authenticated &&
           sessionResult.value.scopes?.includes(AuthSourceControlWriteScope) === true;
       }
