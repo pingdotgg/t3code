@@ -504,6 +504,36 @@ describe("ThreadPullRequestReactor", () => {
     ),
   );
 
+  it.effect("stops retrying a settled backfill after repeated lookup failures", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fixture = yield* makeHarness({
+          threads: [thread("backfill", { settledOverride: "settled", settledAt: NOW })],
+          branchPullRequest: ({ cwd }) =>
+            Effect.fail(
+              new GitManagerError({ operation: "branchPullRequest", cwd, detail: "No gh" }),
+            ),
+        });
+        yield* Effect.gen(function* () {
+          const reactor = yield* fixture.start();
+          for (
+            let attempt = 1;
+            attempt < ThreadPullRequestReactor.BACKFILL_ATTEMPTS + 2;
+            attempt++
+          ) {
+            yield* TestClock.adjust("1 minute");
+            yield* Queue.take(fixture.reads);
+            yield* reactor.drain;
+          }
+          expect(yield* Ref.get(fixture.branchCalls)).toHaveLength(
+            ThreadPullRequestReactor.BACKFILL_ATTEMPTS,
+          );
+          expect(yield* Ref.get(fixture.commands)).toHaveLength(0);
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
   it.effect("matches Azure SSH projects to HTTPS PRs with the provider repository selector", () =>
     Effect.scoped(
       Effect.gen(function* () {

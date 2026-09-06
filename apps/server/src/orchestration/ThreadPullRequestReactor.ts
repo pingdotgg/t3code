@@ -44,6 +44,9 @@ function samePullRequest(
   );
 }
 
+/** Startup lookups per settled thread before discovery gives up on it. */
+export const BACKFILL_ATTEMPTS = 5;
+
 interface RefreshRequest {
   readonly threadId: ThreadId | null;
   readonly refresh: boolean;
@@ -82,7 +85,21 @@ export const make = Effect.gen(function* () {
   const repositoryIdentities = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
   const crypto = yield* Crypto.Crypto;
   const fileSystem = yield* FileSystem.FileSystem;
-  const pendingBackfill = new Set<ThreadId>();
+  // Settled threads get one link discovery at startup. Failed lookups retry on
+  // the periodic pass a few times, then stop until the thread changes or the
+  // server restarts, so a missing or logged-out CLI cannot loop forever.
+  const pendingBackfill = new Map<ThreadId, number>();
+  const finishBackfill = (threads: ReadonlyArray<{ readonly id: ThreadId }>) => {
+    for (const thread of threads) pendingBackfill.delete(thread.id);
+  };
+  const failBackfill = (threads: ReadonlyArray<{ readonly id: ThreadId }>) => {
+    for (const thread of threads) {
+      const remaining = pendingBackfill.get(thread.id);
+      if (remaining === undefined) continue;
+      if (remaining <= 1) pendingBackfill.delete(thread.id);
+      else pendingBackfill.set(thread.id, remaining - 1);
+    }
+  };
 
   const synchronize = Effect.fn("ThreadPullRequestReactor.synchronize")(function* (
     request: RefreshRequest,
@@ -92,12 +109,12 @@ export const make = Effect.gen(function* () {
     if (request.backfill) {
       for (const thread of snapshot.threads) {
         if (thread.settledOverride === "settled" && thread.branchPullRequest == null) {
-          pendingBackfill.add(thread.id);
+          pendingBackfill.set(thread.id, BACKFILL_ATTEMPTS);
         }
       }
     }
     const threadIds = new Set(snapshot.threads.map((thread) => thread.id));
-    for (const threadId of pendingBackfill) {
+    for (const threadId of pendingBackfill.keys()) {
       if (!threadIds.has(threadId)) pendingBackfill.delete(threadId);
     }
     const threads = snapshot.threads.filter(
@@ -119,9 +136,9 @@ export const make = Effect.gen(function* () {
         Effect.gen(function* () {
           const first = group[0]!;
           const project = projects.get(first.projectId);
-          if (project === undefined) return;
+          if (project === undefined) return finishBackfill(group);
           const repository = PullRequestService.repositoryIdentityOf(project);
-          if (first.branch !== null && repository === null) return;
+          if (first.branch !== null && repository === null) return finishBackfill(group);
           const worktreeExists =
             first.worktreePath !== null && (yield* fileSystem.exists(first.worktreePath));
           const cwd =
@@ -138,7 +155,7 @@ export const make = Effect.gen(function* () {
           // A worktree can have different remotes, and the project identity
           // can lag a remote edit. Do not attach its PR to the wrong repository.
           if (detected !== null && !pullRequestMatchesProject(detected, project)) {
-            return;
+            return finishBackfill(group);
           }
           const detectedReference =
             detected !== null && repository !== null
@@ -199,7 +216,10 @@ export const make = Effect.gen(function* () {
                   : Effect.logWarning("thread pull request discovery failed", {
                       threadId: thread.id,
                       cause: Cause.pretty(cause),
-                    }).pipe(Effect.as(null)),
+                    }).pipe(
+                      Effect.tap(() => Effect.sync(() => failBackfill([thread]))),
+                      Effect.as(null),
+                    ),
               ),
             ),
           );
@@ -224,7 +244,7 @@ export const make = Effect.gen(function* () {
                 repositoryIdentity: currentIdentity,
               })
             ) {
-              return;
+              return failBackfill(updates.map((update) => update.thread));
             }
           }
 
@@ -251,14 +271,18 @@ export const make = Effect.gen(function* () {
                 });
                 pendingBackfill.delete(thread.id);
               }).pipe(
-                Effect.catchTags({ OrchestrationCommandInvariantError: () => Effect.void }),
+                // The thread changed since the lookup. Its own events requeue it.
+                Effect.catchTags({
+                  OrchestrationCommandInvariantError: () =>
+                    Effect.sync(() => finishBackfill([thread])),
+                }),
                 Effect.catchCause((cause) =>
                   Cause.hasInterruptsOnly(cause)
                     ? Effect.failCause(cause)
                     : Effect.logWarning("thread pull request update failed", {
                         threadId: thread.id,
                         cause: Cause.pretty(cause),
-                      }),
+                      }).pipe(Effect.tap(() => Effect.sync(() => failBackfill([thread])))),
                 ),
               ),
             { discard: true },
@@ -270,7 +294,7 @@ export const make = Effect.gen(function* () {
               : Effect.logWarning("thread branch pull request lookup failed", {
                   threadIds: group.map((thread) => thread.id),
                   cause: Cause.pretty(cause),
-                }),
+                }).pipe(Effect.tap(() => Effect.sync(() => failBackfill(group)))),
           ),
         ),
       { concurrency: 8, discard: true },
