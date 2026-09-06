@@ -339,6 +339,7 @@ import {
   ThreadErrorBanner,
 } from "./chat/ThreadErrorBanner";
 import type { ComposerBannerStackItem } from "./chat/ComposerBannerStack";
+import { useComposerProviderUpdateBannerItem } from "./chat/ComposerProviderUpdateNotice";
 import { ComposerSurface } from "./chat/ComposerSurface";
 import {
   hasAvailableCompactionProvider,
@@ -2345,6 +2346,7 @@ export default function ChatView(props: ChatViewProps) {
   const serverUpdateFailureDismissed =
     serverUpdateState === dismissedServerUpdateState ||
     isServerUpdateFailureDismissed(serverUpdateState);
+  const providerUpdateBannerItem = useComposerProviderUpdateBannerItem(serverUpdateEnvironmentId);
   const systemComposerBannerItems = useMemo<ComposerBannerStackItem[]>(() => {
     const items: ComposerBannerStackItem[] = [];
     const updateRunning = serverUpdateState.status === "running";
@@ -2495,9 +2497,14 @@ export default function ChatView(props: ChatViewProps) {
             }),
       });
     }
+    // After the server notice, so a version skew keeps priority over a provider one.
+    if (providerUpdateBannerItem) {
+      items.push(providerUpdateBannerItem);
+    }
     return items;
   }, [
     activeEnvironmentUnavailableState,
+    providerUpdateBannerItem,
     reconnectWarningGraceElapsed,
     handleReconnectActiveEnvironment,
     navigate,

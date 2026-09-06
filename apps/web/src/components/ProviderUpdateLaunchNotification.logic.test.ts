@@ -10,6 +10,7 @@ import { AsyncResult } from "effect/unstable/reactivity";
 
 import {
   buildLocalEnvironmentUpdateGroups,
+  buildRemoteProviderUpdateNotice,
   canOneClickUpdateProviderCandidate,
   collectProviderUpdateCandidates,
   collectProviderUpdateOutcomeSnapshots,
@@ -1036,5 +1037,143 @@ describe("provider update launch notification logic", () => {
         }),
       ).toMatchObject({ kind: "idle", text: "Codex" });
     });
+  });
+});
+
+describe("remote environment provider update notice", () => {
+  const base = {
+    environmentId: "env-remote" as EnvironmentId,
+    environmentLabel: "office-linux",
+    dismissedKeys: new Set<string>(),
+  };
+
+  it("skips providers that are current or disabled", () => {
+    expect(
+      buildRemoteProviderUpdateNotice({
+        ...base,
+        providers: [
+          provider({ driver: driver("codex"), advisoryStatus: "current", latestVersion: null }),
+          provider({ driver: driver("cursor"), enabled: false }),
+        ],
+      }),
+    ).toBeNull();
+  });
+
+  it("stays quiet without an update command to run", () => {
+    expect(
+      buildRemoteProviderUpdateNotice({
+        ...base,
+        providers: [provider({ driver: driver("codex"), updateCommand: null })],
+      }),
+    ).toBeNull();
+  });
+
+  it("names the provider, version and environment, and targets the driver once", () => {
+    const notice = buildRemoteProviderUpdateNotice({
+      ...base,
+      providers: [
+        provider({
+          driver: driver("codex"),
+          instanceId: instanceId("codex"),
+          latestVersion: "1.1.0",
+        }),
+        provider({
+          driver: driver("codex"),
+          instanceId: instanceId("codex_work"),
+          latestVersion: "1.1.0",
+        }),
+      ],
+    });
+    expect(notice).toMatchObject({
+      title: "Codex v1.1.0 is available on office-linux",
+      status: "idle",
+      failureMessage: null,
+    });
+    expect(notice?.targets).toHaveLength(1);
+  });
+
+  it("lists distinct providers in one notice", () => {
+    expect(
+      buildRemoteProviderUpdateNotice({
+        ...base,
+        providers: [
+          provider({ driver: driver("codex"), latestVersion: "1.1.0" }),
+          provider({ driver: driver("cursor"), latestVersion: "0.3.0" }),
+        ],
+      })?.title,
+    ).toBe("Codex and Cursor updates are available on office-linux");
+  });
+
+  it("stays dismissed until a newer version arrives", () => {
+    const providers = [provider({ driver: driver("codex"), latestVersion: "1.1.0" })];
+    const dismissedKeys = new Set(["env-remote|codex:1.1.0"]);
+    expect(buildRemoteProviderUpdateNotice({ ...base, providers })?.dismissalKey).toBe(
+      "env-remote|codex:1.1.0",
+    );
+    expect(buildRemoteProviderUpdateNotice({ ...base, providers, dismissedKeys })).toBeNull();
+    expect(
+      buildRemoteProviderUpdateNotice({
+        ...base,
+        dismissedKeys,
+        providers: [provider({ driver: driver("codex"), latestVersion: "1.2.0" })],
+      })?.dismissalKey,
+    ).toBe("env-remote|codex:1.2.0");
+  });
+
+  it("reports live update progress and failures from the environment", () => {
+    expect(
+      buildRemoteProviderUpdateNotice({
+        ...base,
+        providers: [
+          provider({
+            driver: driver("codex"),
+            updateState: {
+              status: "running",
+              startedAt: checkedAt,
+              finishedAt: null,
+              message: null,
+              output: null,
+            },
+          }),
+        ],
+      }),
+    ).toMatchObject({ status: "running" });
+    expect(
+      buildRemoteProviderUpdateNotice({
+        ...base,
+        providers: [
+          provider({
+            driver: driver("codex"),
+            updateState: {
+              status: "failed",
+              startedAt: checkedAt,
+              finishedAt: laterCheckedAt,
+              message: "npm exited with 1",
+              output: null,
+            },
+          }),
+        ],
+      }),
+    ).toMatchObject({ status: "failed", failureMessage: "npm exited with 1" });
+  });
+
+  it("treats an unchanged update as a failure so the retry stays visible", () => {
+    expect(
+      buildRemoteProviderUpdateNotice({
+        ...base,
+        providers: [
+          provider({
+            driver: driver("codex"),
+            updateState: {
+              status: "unchanged",
+              startedAt: checkedAt,
+              finishedAt: laterCheckedAt,
+              message: "codex is still on v1.0.0",
+              output: null,
+            },
+          }),
+        ],
+      }),
+    ).toMatchObject({ status: "failed", failureMessage: "codex is still on v1.0.0" });
   });
 });

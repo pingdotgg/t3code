@@ -780,3 +780,65 @@ export function resolveEnvironmentUpdateRowStatus(input: {
   }
   return { kind: "idle", text: environmentProviderNames(input.group) };
 }
+
+// Local environments get the launch popover above; remote ones (SSH, relay, T3
+// Connect) never do, so the same one-click update becomes a composer notice.
+
+export interface RemoteProviderUpdateNotice {
+  /** Covers environment, driver and latest version, so a newer release re-surfaces. */
+  readonly dismissalKey: string;
+  readonly title: string;
+  readonly status: "idle" | "running" | "failed";
+  readonly failureMessage: string | null;
+  readonly targets: ReadonlyArray<Pick<ServerProvider, "driver" | "instanceId">>;
+}
+
+/**
+ * The composer notice for one remote environment, or null when there is nothing
+ * to offer: nothing outdated, an update this environment cannot run itself
+ * (provider settings still show the manual command), or a candidate set the user
+ * already dismissed.
+ */
+export function buildRemoteProviderUpdateNotice(input: {
+  readonly environmentId: EnvironmentId;
+  readonly environmentLabel: string;
+  readonly providers: ReadonlyArray<ServerProvider>;
+  readonly dismissedKeys: ReadonlySet<string>;
+}): RemoteProviderUpdateNotice | null {
+  const candidates = input.providers.filter(
+    (provider): provider is ProviderUpdateCandidate =>
+      isProviderUpdateCandidate(provider) &&
+      hasOneClickUpdateProviderCandidate(provider, input.providers),
+  );
+  const byDriver = dedupeProvidersByDriver(candidates);
+  const [representative] = byDriver;
+  const notificationKey = providerUpdateNotificationKey(byDriver);
+  if (representative === undefined || notificationKey === null) {
+    return null;
+  }
+  const dismissalKey = `${input.environmentId}|${notificationKey}`;
+  if (input.dismissedKeys.has(dismissalKey)) {
+    return null;
+  }
+
+  const providerName = PROVIDER_DISPLAY_NAMES[representative.driver] ?? representative.driver;
+  const settled = candidates.find(
+    (candidate) =>
+      candidate.updateState?.status === "failed" || candidate.updateState?.status === "unchanged",
+  );
+  return {
+    dismissalKey,
+    title:
+      byDriver.length > 1
+        ? `${formatProviderList(byDriver)} updates are available on ${input.environmentLabel}`
+        : `${providerName} ${formatVersion(representative.versionAdvisory.latestVersion)} is available on ${input.environmentLabel}`,
+    status: candidates.some(isProviderUpdateActive) ? "running" : settled ? "failed" : "idle",
+    failureMessage: settled?.updateState?.message ?? null,
+    // One dispatch per driver: instances of a driver share the installer, so a
+    // per-instance dispatch would just re-run the same install.
+    targets: byDriver.map((candidate) => ({
+      driver: candidate.driver,
+      instanceId: candidate.instanceId,
+    })),
+  };
+}
