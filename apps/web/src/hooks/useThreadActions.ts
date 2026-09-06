@@ -487,12 +487,10 @@ export function useThreadActions() {
       let canDeleteWorktree = false;
       if (orphanedWorktreePath !== null && threadProject !== null && !isScratchProject(threadProject, environmentConfig?.scratchWorkspaceRoot) && localApi) {
         const sessionResult = await loadSessionState(threadRef.environmentId);
-        if (sessionResult._tag === "Failure") {
-          return sessionResult;
-        }
         const permissionFailure = threadOperationFailure(threadRef);
         if (permissionFailure) return permissionFailure;
         canDeleteWorktree =
+          sessionResult._tag === "Success" &&
           sessionResult.value.authenticated &&
           sessionResult.value.scopes?.includes(AuthSourceControlWriteScope) === true;
       }

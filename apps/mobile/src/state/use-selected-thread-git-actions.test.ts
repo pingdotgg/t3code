@@ -19,6 +19,7 @@ const state = vi.hoisted(() => ({
   metadataRequests: [] as { environmentId: string; branch: string }[],
   results: [] as { type: string; description?: string }[],
   afterGitAction: undefined as (() => void) | undefined,
+  statusRefreshes: 0,
 }));
 
 vi.mock("react", () => ({
@@ -75,7 +76,10 @@ vi.mock("./threads", () => ({
 }));
 vi.mock("./vcs", () => ({
   vcsEnvironment: {
-    refreshStatus: async () => AsyncResult.success({ refName: state.branch }),
+    refreshStatus: async () => {
+      state.statusRefreshes += 1;
+      return AsyncResult.success({ refName: state.branch });
+    },
     switchRef: async ({ input }: { input: { refName: string } }) => {
       state.branch = input.refName;
       state.afterGitAction?.();
@@ -127,6 +131,7 @@ describe("thread Git mutation permissions", () => {
     state.metadataRequests = [];
     state.results = [];
     state.afterGitAction = undefined;
+    state.statusRefreshes = 0;
   });
 
   it.each([false, true])(
@@ -217,6 +222,18 @@ describe("thread Git mutation permissions", () => {
       expect(state.results.map((result) => result.type)).toEqual(["error"]);
     },
   );
+
+  it("refreshes the worktree status when the metadata update is denied after checkout", async () => {
+    state.scopes.add(AuthOrchestrationOperateScope);
+    // Git already switched the branch, so the sheet must show it even though the
+    // thread record could not be updated.
+    state.afterGitAction = () => state.scopes.delete(AuthOrchestrationOperateScope);
+    expect(
+      await useSelectedThreadGitActions().onCheckoutSelectedThreadBranch("feature"),
+    ).toBeNull();
+    expect(state.branch).toBe("feature");
+    expect(state.statusRefreshes).toBe(1);
+  });
 
   it("uses a newly granted task permission for a retained branch callback", async () => {
     state.primaryScopes.clear();

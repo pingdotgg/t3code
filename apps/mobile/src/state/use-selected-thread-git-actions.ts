@@ -212,15 +212,17 @@ export function useSelectedThreadGitActions() {
         readonly worktreePath?: string | null;
       };
     }): Promise<AtomCommandResult<void, unknown>> => {
-      if (input.nextThreadState) {
-        const updateResult = await updateThreadGitContext(input.thread, input.nextThreadState);
-        if (AsyncResult.isFailure(updateResult)) {
-          return AsyncResult.failure(updateResult.cause);
-        }
-      }
+      // The Git mutation already landed; refresh what the worktree shows even
+      // when the thread metadata update is denied, so the sheet does not keep
+      // displaying the previous branch.
+      const updateResult = input.nextThreadState
+        ? await updateThreadGitContext(input.thread, input.nextThreadState)
+        : AsyncResult.success(undefined);
       branchState.refresh();
       await refreshSelectedThreadGitStatus({ quiet: true, cwd: input.cwd });
-      return AsyncResult.success(undefined);
+      return AsyncResult.isFailure(updateResult)
+        ? AsyncResult.failure(updateResult.cause)
+        : AsyncResult.success(undefined);
     },
     [branchState, refreshSelectedThreadGitStatus, updateThreadGitContext],
   );
