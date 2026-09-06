@@ -197,6 +197,81 @@ describe("mobile model options", () => {
     expect(resolveSelectableModelSelection(null, disabled)).toBe(disabled);
   });
 
+  describe("Claude catalog restrictions", () => {
+    const selection = {
+      instanceId: ProviderInstanceId.make("claude_work"),
+      model: "claude-fable-5",
+    };
+    const allowedModel = {
+      slug: "claude-opus-5",
+      name: "Claude Opus 5",
+      isDefault: true,
+      isCustom: false,
+      capabilities: null,
+    };
+    const provider = {
+      instanceId: selection.instanceId,
+      driver: "claudeAgent",
+      enabled: true,
+      installed: true,
+      status: "ready",
+      auth: { status: "authenticated" },
+      models: [allowedModel],
+    };
+    const config = { providers: [provider] } as unknown as ServerConfig;
+
+    it("keeps a saved restricted model disabled instead of making it selectable again", () => {
+      expect(buildModelOptions(config, null).map((option) => option.selection.model)).toEqual([
+        "claude-opus-5",
+      ]);
+      expect(buildModelOptions(config, selection)).toMatchObject([
+        { selection: { model: "claude-opus-5" } },
+        { selection, isUnavailable: true },
+      ]);
+      expect(isModelSelectionUnavailable(config, selection)).toBe(true);
+      expect(resolveSelectableModelSelection(config, selection)).toBeNull();
+      expect(resolveDefaultableModelSelection(config, selection)).toBeNull();
+      expect(
+        resolveNewTaskModelSelection({
+          draftSelection: resolveSelectableModelSelection(config, selection),
+          projectDefaultSelection: resolveDefaultableModelSelection(config, selection),
+          stickySelection: resolveDefaultableModelSelection(config, selection),
+          modelOptions: buildModelOptions(config, null),
+        }),
+      ).toMatchObject({ instanceId: selection.instanceId, model: "claude-opus-5" });
+    });
+
+    it("allows the model again when access returns or it is explicitly configured", () => {
+      for (const isCustom of [false, true]) {
+        const restored = {
+          providers: [
+            {
+              ...provider,
+              models: [allowedModel, { ...allowedModel, slug: selection.model, isCustom }],
+            },
+          ],
+        } as unknown as ServerConfig;
+        expect(isModelSelectionUnavailable(restored, selection)).toBe(false);
+        expect(resolveSelectableModelSelection(restored, selection)).toBe(selection);
+        expect(
+          buildModelOptions(restored, selection).find(
+            (option) => option.selection.model === selection.model,
+          )?.isUnavailable,
+        ).not.toBe(true);
+      }
+    });
+
+    it("does not infer restrictions from a pending or failed probe or an offline environment", () => {
+      for (const status of ["warning", "error"]) {
+        const unchecked = { providers: [{ ...provider, status }] } as unknown as ServerConfig;
+        expect(isModelSelectionUnavailable(unchecked, selection)).toBe(false);
+        expect(resolveSelectableModelSelection(unchecked, selection)).toBe(selection);
+      }
+      expect(isModelSelectionUnavailable(null, selection)).toBe(false);
+      expect(resolveSelectableModelSelection(null, selection)).toBe(selection);
+    });
+  });
+
   describe("Antigravity selections", () => {
     const selection = {
       instanceId: ProviderInstanceId.make("google_work"),

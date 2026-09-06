@@ -6,6 +6,7 @@ import type {
 import {
   buildExplicitProviderOptionSelectionsFromDescriptors,
   getProviderOptionDescriptors,
+  resolveSelectableModel,
 } from "@t3tools/shared/model";
 
 export type ModelOption = {
@@ -61,7 +62,7 @@ function normalizeSelectionOptions(
       };
 }
 
-/** Whether a known Antigravity selection needs setup or a different model. */
+/** Whether a saved selection needs setup or a different model before sending. */
 export function isModelSelectionUnavailable(
   config: T3ServerConfig | null | undefined,
   selection: ModelSelection | null | undefined,
@@ -74,6 +75,11 @@ export function isModelSelectionUnavailable(
   );
   const driver =
     provider?.driver ?? config.settings?.providerInstances[selection.instanceId]?.driver;
+  // A completed Claude probe omits version-gated and organization-restricted
+  // models. A saved selection must not make those models selectable again.
+  if (provider?.driver === "claudeAgent" && provider.status === "ready") {
+    return resolveSelectableModel(provider.driver, selection.model, provider.models) === null;
+  }
   return (
     driver === "antigravity" &&
     (!provider ||
@@ -104,6 +110,9 @@ export function resolveSelectableModelSelection(
     provider?.driver ?? config.settings?.providerInstances[selection.instanceId]?.driver;
   if (driver === "antigravity") {
     return selection;
+  }
+  if (isModelSelectionUnavailable(config, selection)) {
+    return null;
   }
   return provider &&
     provider.enabled &&

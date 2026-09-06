@@ -79,6 +79,19 @@ it.layer(NodeServices.layer)("Claude capability probe SDK boundary", (it) => {
           }).catch(() => undefined),
         ),
       );
+      // Point the probe at an isolated config dir so entitlements come from
+      // this fixture rather than the developer's real ~/.claude.json.
+      const claudeConfigDir = path.join(tempDir, "claude-config");
+      yield* fs.makeDirectory(claudeConfigDir, { recursive: true });
+      yield* fs.writeFileString(
+        path.join(claudeConfigDir, ".claude.json"),
+        `{
+          "modelAccessCache": [
+            { "apiName": "claude-fable-5", "entitled": false },
+            { "apiName": "claude-opus-5", "entitled": true }
+          ]
+        }`,
+      );
 
       yield* fs.writeFileString(
         executablePath,
@@ -109,6 +122,11 @@ it.layer(NodeServices.layer)("Claude capability probe SDK boundary", (it) => {
           '    response: { subtype: "success", request_id: message.request_id, response },',
           '  }) + "\\n");',
           '  if (message.request?.subtype === "initialize") {',
+          // Initialization can refresh entitlements. The probe must use the
+          // refreshed cache, not retain the pre-initialization restriction.
+          '    writeFileSync(process.env.CLAUDE_CONFIG_DIR + "/.claude.json", JSON.stringify({',
+          '      modelAccessCache: [{ apiName: "claude-fable-5-1", entitled: false }],',
+          "    }));",
           "    reply({",
           '      commands: [{ name: "review", description: "Review changes", argumentHint: "[path]" }],',
           "      agents: [],",
@@ -141,6 +159,7 @@ it.layer(NodeServices.layer)("Claude capability probe SDK boundary", (it) => {
           ...process.env,
           T3_PROBE_INVOCATION_PATH: invocationPath,
           ENABLE_CLAUDEAI_MCP_SERVERS: "true",
+          CLAUDE_CONFIG_DIR: claudeConfigDir,
         },
         workspaceCwd,
       );
@@ -157,6 +176,7 @@ it.layer(NodeServices.layer)("Claude capability probe SDK boundary", (it) => {
             input: { hint: "[path]" },
           },
         ],
+        restrictedModels: new Set(["claude-fable-5-1"]),
         usage: {
           rate_limits_available: true,
           rate_limits: { five_hour: { utilization: 12, resets_at: "2026-07-18T14:39:00Z" } },
@@ -207,9 +227,10 @@ it.effect("preserves initialized capabilities when optional usage times out", ()
       } as ReturnType<typeof ClaudeSdk.query>;
     });
     yield* Effect.addFinalizer(() => Effect.sync(() => query.mockRestore()));
-    const probe = yield* probeClaudeCapabilities(
-      decodeClaudeSettings({ binaryPath: "claude" }),
-    ).pipe(Effect.forkChild);
+    const probe = yield* probeClaudeCapabilities(decodeClaudeSettings({ binaryPath: "claude" }), {
+      ...process.env,
+      CLAUDE_CONFIG_DIR: "./unused-test-config",
+    }).pipe(Effect.forkChild);
     yield* Deferred.await(usageStarted);
     yield* TestClock.adjust("4 seconds");
     const capabilities = yield* Fiber.join(probe);

@@ -103,12 +103,22 @@ export function upsertProviderWorkspaceSnapshot(
 const shouldRetainMissingProviderModels = (provider: ServerProvider): boolean => {
   const isAntigravity = provider.driver === ProviderDriverKind.make("antigravity");
   const isCodex = provider.driver === ProviderDriverKind.make("codex");
-  if (!isAntigravity && !isCodex && provider.driver !== ProviderDriverKind.make("opencode")) {
+  // A Claude health check that reaches the account reports the catalog for
+  // that CLI version and account; a model it leaves out (too old a CLI, or
+  // one the organization has not entitled) must not come back from the
+  // boot-time snapshot, which lists the whole catalog.
+  const isClaude = provider.driver === ProviderDriverKind.make("claudeAgent");
+  if (
+    !isAntigravity &&
+    !isCodex &&
+    !isClaude &&
+    provider.driver !== ProviderDriverKind.make("opencode")
+  ) {
     return true;
   }
 
   if (
-    (isAntigravity || isCodex) &&
+    (isAntigravity || isCodex || isClaude) &&
     (!provider.enabled || provider.auth.status === "unauthenticated")
   ) {
     return false;
