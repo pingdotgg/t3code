@@ -161,7 +161,7 @@ export function FloatingWorkingControl(props: {
   // Hidden until the first measurement lands so the capsule never paints at
   // zero width around a clipped label.
   const capsuleStyle = useAnimatedStyle(() => ({
-    width: capsuleWidth.value ?? undefined,
+    width: capsuleWidth.value ?? CONTROL_HEIGHT,
     opacity: capsuleWidth.value === null ? 0 : 1,
     transform: [{ translateX: CONTROL_SEPARATION * (1 - separationProgress.value) }],
   }));
@@ -197,16 +197,22 @@ export function FloatingWorkingControl(props: {
           pointerEvents="box-none"
           className="flex-row items-center gap-4"
         >
-          <AnimatedGlassView
-            colorScheme={props.colorScheme}
-            glassEffectStyle="regular"
-            isInteractive={statusInteractive}
+          {/* A plain animated wrapper owns the animated width; the native glass
+              view only fills it, since it does not follow animated layout props. */}
+          <Animated.View
             pointerEvents={statusInteractive ? "box-none" : "none"}
-            className="h-11 rounded-full"
+            className="h-11"
             style={capsuleStyle}
           >
+            <UniwindGlassView
+              colorScheme={props.colorScheme}
+              glassEffectStyle="regular"
+              isInteractive={statusInteractive}
+              pointerEvents="none"
+              className="absolute inset-0 rounded-full"
+            />
             {statusLabel}
-          </AnimatedGlassView>
+          </Animated.View>
 
           <AnimatedGlassView
             colorScheme={props.colorScheme}
