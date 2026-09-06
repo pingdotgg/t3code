@@ -162,7 +162,7 @@ function ProviderLastChecked({ lastCheckedAt }: { lastCheckedAt: string | null }
   );
 }
 
-function CodexUsageLimits({
+function ProviderUsageLimits({
   environmentId,
   provider,
 }: {
@@ -1115,7 +1115,7 @@ export function EnvironmentProviderSettings({
                 <div className="space-y-6 p-4">
                   {renderProviderInstance(selectedRow, "editor")}
                   {selectedRow.driver === "codex" ? (
-                    <CodexUsageLimits
+                    <ProviderUsageLimits
                       environmentId={environmentId}
                       provider={selectedLiveProvider}
                     />
