@@ -1,3 +1,4 @@
+import { Spinner } from "~/components/ui/spinner";
 import {
   ArchiveIcon,
   ArrowUpDownIcon,
@@ -6,7 +7,6 @@ import {
   ContainerIcon,
   FolderPlusIcon,
   Globe2Icon,
-  LoaderIcon,
   SearchIcon,
   SquarePenIcon,
   TerminalIcon,
@@ -171,8 +171,11 @@ import {
   SidebarMenuSubItem,
   useSidebar,
 } from "./ui/sidebar";
-import { useThreadSelectionStore } from "../threadSelectionStore";
-import { openCommandPalette } from "../commandPaletteBus";
+import {
+  getThreadKeysToDeselectAfterDelete,
+  useThreadSelectionStore,
+} from "../threadSelectionStore";
+import { isCommandPaletteOpen, openCommandPalette } from "../commandPaletteBus";
 import {
   archiveSelectedThreadEntries,
   buildMultiSelectThreadContextMenuItems,
@@ -351,7 +354,7 @@ interface SidebarThreadRowProps {
   ) => boolean;
 }
 
-export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowProps) {
+const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowProps) {
   const {
     orderedProjectThreadKeys,
     isActive,
@@ -720,7 +723,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
         onContextMenu={handleRowContextMenu}
       >
         <div className="flex min-w-0 flex-1 items-center gap-1.5 text-left">
-          {prStatus && (
+          {prStatus && pr && (
             <Tooltip>
               <TooltipTrigger
                 render={
@@ -733,7 +736,11 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
                     onPointerDown={(event) => event.stopPropagation()}
                     onClick={handlePrClick}
                   >
-                    <ChangeRequestStatusIcon className="size-3" />
+                    <ChangeRequestStatusIcon
+                      state={pr.state}
+                      isDraft={pr.isDraft}
+                      className="size-3"
+                    />
                   </a>
                 }
               />
@@ -1718,11 +1725,20 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
           };
         };
 
+        actionHandlers.set("project-settings", () => {
+          if (isMobile) setOpenMobile(false);
+          void router.navigate({
+            to: "/projects/$projectKey",
+            params: { projectKey: project.projectKey },
+          });
+        });
+
         const clicked = await api.contextMenu.show(
           [
             buildTargetedItem("rename", "Rename"),
             buildTargetedItem("grouping", "Group into..."),
             buildTargetedItem("copy-path", "Copy Path"),
+            { id: "project-settings", label: "Project settings", icon: "settings" },
             buildTargetedItem("delete", "Remove", {
               destructive: true,
             }),
@@ -1743,10 +1759,14 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     [
       copyPathToClipboard,
       handleRemoveProject,
+      isMobile,
       openProjectGroupingDialog,
       openProjectRenameDialog,
       project.groupedProjectCount,
       project.memberProjects,
+      project.projectKey,
+      router,
+      setOpenMobile,
       suppressProjectClickForContextMenuRef,
     ],
   );
@@ -1906,26 +1926,35 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         if (!confirmed) return;
       }
 
-      const deletedThreadKeys = new Set(threadKeys);
-      for (const { threadRef } of selectedThreadEntries) {
+      // Only discount batch members after their deletions succeed.
+      const deletedThreadKeys = new Set<string>();
+      let firstError: unknown = null;
+      for (const { threadKey, threadRef } of selectedThreadEntries) {
         const result = await deleteThread(threadRef, {
           deletedThreadKeys,
         });
         if (result._tag === "Failure") {
-          if (!isAtomCommandInterrupted(result)) {
-            const error = squashAtomCommandFailure(result);
-            toastManager.add(
-              stackedThreadToast({
-                type: "error",
-                title: "Failed to delete threads",
-                description: error instanceof Error ? error.message : "An error occurred.",
-              }),
-            );
-          }
-          return;
+          if (isAtomCommandInterrupted(result)) break;
+          firstError ??= squashAtomCommandFailure(result);
+          continue;
         }
+        deletedThreadKeys.add(threadKey);
       }
-      removeFromSelection(threadKeys);
+      if (firstError !== null) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Failed to delete threads",
+            description: firstError instanceof Error ? firstError.message : "An error occurred.",
+          }),
+        );
+      }
+      removeFromSelection(
+        getThreadKeysToDeselectAfterDelete(threadKeys, deletedThreadKeys, (threadKey) => {
+          const threadRef = parseScopedThreadKey(threadKey);
+          return threadRef !== null && readThreadShell(threadRef) !== null;
+        }),
+      );
     },
     [
       appSettingsConfirmThreadArchive,
@@ -2344,7 +2373,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
             <ProjectFavicon
               environmentId={project.environmentId}
               cwd={project.workspaceRoot}
-              projectName={project.displayName}
+              projectName={project.title}
               faviconPath={project.faviconPath}
               projectIcon={project.projectIcon}
             />
@@ -2632,7 +2661,7 @@ function LocalSecondaryStatus() {
           variant="default"
           className="rounded-2xl border-border/40 bg-accent/40 text-muted-foreground"
         >
-          <LoaderIcon className="animate-spin" />
+          <Spinner />
           <AlertTitle className="text-xs font-medium text-foreground">
             Connecting {connecting.join(", ")}
           </AlertTitle>
@@ -3506,7 +3535,7 @@ export default function LegacySidebar() {
     const onWindowKeyDown = (event: globalThis.KeyboardEvent) => {
       const shortcutContext = getCurrentSidebarShortcutContext();
 
-      if (event.defaultPrevented || event.repeat) {
+      if (event.defaultPrevented || event.repeat || isCommandPaletteOpen() || isModelPickerOpen()) {
         return;
       }
 
@@ -3594,11 +3623,9 @@ export default function LegacySidebar() {
     desktopUpdateState && showArm64IntelBuildWarning
       ? getArm64IntelBuildWarningDescription(desktopUpdateState)
       : null;
-  const commandPaletteShortcutLabel = shortcutLabelForCommand(
-    keybindings,
-    "commandPalette.toggle",
-    newThreadShortcutLabelOptions,
-  );
+  const commandPaletteShortcutLabel = isMobile
+    ? null
+    : shortcutLabelForCommand(keybindings, "commandPalette.toggle", newThreadShortcutLabelOptions);
   const handleDesktopUpdateButtonClick = useCallback(async () => {
     const bridge = window.desktopBridge;
     if (!bridge || !desktopUpdateState) return;

@@ -1,13 +1,21 @@
 import {
   EventId,
+  MessageId,
+  UserInputRequestedPayload,
+  isImportedAgentSessionMessageId,
   type OrchestrationCommand,
   type OrchestrationEvent,
   type OrchestrationReadModel,
   type OrchestrationThread,
+  type OrchestrationThreadActivity,
 } from "@t3tools/contracts";
+import { compareDateTimeStrings } from "@t3tools/shared/dateTime";
 import * as DateTime from "effect/DateTime";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
+import * as Option from "effect/Option";
+import * as Predicate from "effect/Predicate";
 import type * as PlatformError from "effect/PlatformError";
 
 import {
@@ -29,6 +37,7 @@ import { projectEvent } from "./projector.ts";
 import { threadHasQueuedTurnStart } from "./ThreadSettlementPolicy.ts";
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
+const decodeUserInputRequestedPayload = Schema.decodeUnknownOption(UserInputRequestedPayload);
 
 /**
  * Blocked-on-you work derived from the thread's retained activities: an
@@ -55,12 +64,8 @@ function isStaleRequestFailureDetail(payload: Record<string, unknown> | null): b
 }
 
 // Scans the read model's activities, which the projector caps at the most
-// recent 500. That bound is safe here: an OPEN approval/user-input request
-// blocks its turn, so the thread cannot accumulate hundreds of later
-// activities while one is outstanding — a request that has scrolled out of
-// the window is one whose turn kept running, i.e. it was resolved or went
-// stale. (The projection pipeline's pendingApprovalCount reads the same
-// capped stream and stays consistent with this view.)
+// recent 500 plus pending async questions. Async questions remain actionable
+// while the agent works, so they must not expire with the activity window.
 function hasOpenBlockingRequest(thread: {
   readonly activities: ReadonlyArray<{ readonly kind: string; readonly payload: unknown }>;
 }): boolean {
@@ -95,7 +100,7 @@ function hasQueuedTurnStartForThread(
   let latestUserMessageAt: string | null = null;
   let latestUserMessageAtMs = Number.NEGATIVE_INFINITY;
   for (const message of thread.messages) {
-    if (message.role !== "user") continue;
+    if (message.role !== "user" || isImportedAgentSessionMessageId(message.id)) continue;
     const messageAtMs = Date.parse(message.createdAt);
     latestUserMessageAtMs = Math.max(latestUserMessageAtMs, messageAtMs);
     if (messageAtMs === latestUserMessageAtMs) {
@@ -185,9 +190,11 @@ const decideCommandSequence = Effect.fn("decideCommandSequence")(function* ({
 export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand")(function* ({
   command,
   readModel,
+  userInputActivity,
 }: {
   readonly command: OrchestrationCommand;
   readonly readModel: OrchestrationReadModel;
+  readonly userInputActivity?: OrchestrationThreadActivity;
 }): Effect.fn.Return<
   DecideOrchestrationCommandResult,
   OrchestrationCommandRejection | PlatformError.PlatformError,
@@ -342,6 +349,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           aggregateId: command.threadId,
           occurredAt: command.createdAt,
           commandId: command.commandId,
+          ...(command.historyImport === true ? { metadata: { historyImport: true } } : {}),
         })),
         type: "thread.created",
         payload: {
@@ -900,6 +908,12 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.turn.start": {
+      if (isImportedAgentSessionMessageId(command.message.messageId)) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Message id '${command.message.messageId}' uses the reserved imported-session namespace.`,
+        });
+      }
       const targetThread = yield* requireThread({
         readModel,
         command,
@@ -1061,11 +1075,76 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.user-input.respond": {
-      yield* requireThread({
+      const thread = yield* requireThread({
         readModel,
         command,
         threadId: command.threadId,
       });
+      const request = userInputActivity;
+      if (
+        request &&
+        Predicate.isObject(request.payload) &&
+        request.payload.responseMode === "message"
+      ) {
+        const payload = decodeUserInputRequestedPayload(request.payload);
+        if (request.kind !== "user-input.requested" || Option.isNone(payload)) {
+          return yield* new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: "This question has already been answered.",
+          });
+        }
+        const replies: string[] = [];
+        for (const question of payload.value.questions) {
+          const answer = command.answers[question.id];
+          if (typeof answer !== "string" || answer.trim().length === 0) {
+            return yield* new OrchestrationCommandInvariantError({
+              commandType: command.type,
+              detail: "Answer each question before sending.",
+            });
+          }
+          replies.push(`${question.question}\n${answer.trim()}`);
+        }
+        // Commit the answer and its message together. The normal turn path
+        // steers a running agent or resumes an idle session.
+        return yield* decideCommandSequence({
+          readModel,
+          commands: [
+            {
+              type: "thread.activity.append",
+              commandId: command.commandId,
+              threadId: command.threadId,
+              createdAt: command.createdAt,
+              activity: {
+                id: EventId.make(`async-answer:${command.requestId}`),
+                kind: "user-input.resolved",
+                summary: "User input submitted",
+                tone: "info",
+                turnId: request.turnId,
+                createdAt: command.createdAt,
+                payload: {
+                  requestId: command.requestId,
+                  responseMode: "message",
+                  answers: command.answers,
+                },
+              },
+            },
+            {
+              type: "thread.turn.start",
+              commandId: command.commandId,
+              threadId: command.threadId,
+              createdAt: command.createdAt,
+              runtimeMode: thread.runtimeMode,
+              interactionMode: thread.interactionMode,
+              message: {
+                messageId: MessageId.make(`async-answer:${command.requestId}`),
+                role: "user",
+                text: replies.join("\n\n"),
+                attachments: [],
+              },
+            },
+          ],
+        });
+      }
       return {
         ...(yield* withEventBase({
           aggregateKind: "thread",
@@ -1202,6 +1281,12 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.message.assistant.delta": {
+      if (isImportedAgentSessionMessageId(command.messageId)) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Message id '${command.messageId}' uses the reserved imported-session namespace.`,
+        });
+      }
       yield* requireThread({
         readModel,
         command,
@@ -1229,6 +1314,12 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.message.assistant.complete": {
+      if (isImportedAgentSessionMessageId(command.messageId)) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Message id '${command.messageId}' uses the reserved imported-session namespace.`,
+        });
+      }
       yield* requireThread({
         readModel,
         command,
@@ -1253,6 +1344,79 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           updatedAt: command.createdAt,
         },
       };
+    }
+
+    case "thread.history.import": {
+      const thread = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      if (
+        thread.deletedAt !== null ||
+        thread.archivedAt !== null ||
+        thread.messages.length > 0 ||
+        thread.latestTurn !== null ||
+        thread.session !== null ||
+        hasOpenBlockingRequest(thread)
+      ) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Thread '${command.threadId}' must be active and empty before history can be imported.`,
+        });
+      }
+      const firstMessage = command.messages[0];
+      if (firstMessage === undefined) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "Thread history imports require at least one message.",
+        });
+      }
+
+      const events: Array<PlannedOrchestrationEvent> = [];
+      for (const message of command.messages) {
+        events.push({
+          ...(yield* withEventBase({
+            aggregateKind: "thread",
+            aggregateId: command.threadId,
+            occurredAt: message.createdAt,
+            commandId: command.commandId,
+            metadata: { historyImport: true },
+          })),
+          type: "thread.message-sent",
+          payload: {
+            threadId: command.threadId,
+            messageId: message.messageId,
+            role: message.role,
+            text: message.text,
+            turnId: null,
+            streaming: false,
+            createdAt: message.createdAt,
+            updatedAt: message.createdAt,
+          },
+        });
+      }
+      const settledAt = command.messages.reduce(
+        (latest, message) =>
+          compareDateTimeStrings(message.createdAt, latest) > 0 ? message.createdAt : latest,
+        firstMessage.createdAt,
+      );
+      events.push({
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: settledAt,
+          commandId: command.commandId,
+          metadata: { historyImport: true },
+        })),
+        type: "thread.settled",
+        payload: {
+          threadId: command.threadId,
+          settledAt,
+          updatedAt: settledAt,
+        },
+      });
+      return events;
     }
 
     case "thread.proposed-plan.upsert": {

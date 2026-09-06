@@ -61,6 +61,7 @@ import type { HomeListFilterMenuEnvironment } from "./home-list-filter-menu";
 import {
   buildHomeListLayout,
   DEFAULT_GROUP_DISPLAY_STATE,
+  EMPTY_HOME_LIST_LAYOUT,
   homeListItemsAreEqual,
   nextGroupDisplayState,
   type HomeGroupDisplayAction,
@@ -339,48 +340,57 @@ export function HomeScreen(props: HomeScreenProps) {
   );
   const scopedProjects = useMemo(
     () =>
-      selectedProjectRefKeys === null
-        ? props.projects
-        : props.projects.filter((project) =>
-            selectedProjectRefKeys.has(scopedProjectKey(project.environmentId, project.id)),
-          ),
-    [props.projects, selectedProjectRefKeys],
+      threadListV2Enabled
+        ? []
+        : selectedProjectRefKeys === null
+          ? props.projects
+          : props.projects.filter((project) =>
+              selectedProjectRefKeys.has(scopedProjectKey(project.environmentId, project.id)),
+            ),
+    [threadListV2Enabled, props.projects, selectedProjectRefKeys],
   );
   const scopedThreads = useMemo(
     () =>
-      selectedProjectRefKeys === null
-        ? props.threads
-        : props.threads.filter((thread) =>
-            selectedProjectRefKeys.has(scopedProjectKey(thread.environmentId, thread.projectId)),
-          ),
-    [props.threads, selectedProjectRefKeys],
+      threadListV2Enabled
+        ? []
+        : selectedProjectRefKeys === null
+          ? props.threads
+          : props.threads.filter((thread) =>
+              selectedProjectRefKeys.has(scopedProjectKey(thread.environmentId, thread.projectId)),
+            ),
+    [threadListV2Enabled, props.threads, selectedProjectRefKeys],
   );
   const scopedPendingTasks = useMemo(
     () =>
-      selectedProjectRefKeys === null
-        ? props.pendingTasks
-        : props.pendingTasks.filter((pendingTask) =>
-            selectedProjectRefKeys.has(
-              scopedProjectKey(pendingTask.message.environmentId, pendingTask.creation.projectId),
+      threadListV2Enabled
+        ? []
+        : selectedProjectRefKeys === null
+          ? props.pendingTasks
+          : props.pendingTasks.filter((pendingTask) =>
+              selectedProjectRefKeys.has(
+                scopedProjectKey(pendingTask.message.environmentId, pendingTask.creation.projectId),
+              ),
             ),
-          ),
-    [props.pendingTasks, selectedProjectRefKeys],
+    [threadListV2Enabled, props.pendingTasks, selectedProjectRefKeys],
   );
 
   const projectGroups = useMemo(
     () =>
-      buildHomeThreadGroups({
-        projects: scopedProjects,
-        threads: scopedThreads,
-        pendingTasks: scopedPendingTasks,
-        environmentId: props.selectedEnvironmentId,
-        searchQuery: props.searchQuery,
-        matchedThreadKeys,
-        projectSortOrder: props.projectSortOrder,
-        threadSortOrder: props.threadSortOrder,
-        projectGroupingMode: props.projectGroupingMode,
-      }),
+      threadListV2Enabled
+        ? []
+        : buildHomeThreadGroups({
+            projects: scopedProjects,
+            threads: scopedThreads,
+            pendingTasks: scopedPendingTasks,
+            environmentId: props.selectedEnvironmentId,
+            searchQuery: props.searchQuery,
+            matchedThreadKeys,
+            projectSortOrder: props.projectSortOrder,
+            threadSortOrder: props.threadSortOrder,
+            projectGroupingMode: props.projectGroupingMode,
+          }),
     [
+      threadListV2Enabled,
       props.projectGroupingMode,
       props.projectSortOrder,
       props.searchQuery,
@@ -396,12 +406,14 @@ export function HomeScreen(props: HomeScreenProps) {
   const hasSearchQuery = props.searchQuery.trim().length > 0;
   const listLayout = useMemo(
     () =>
-      buildHomeListLayout({
-        groups: projectGroups,
-        displayStates: effectiveGroupDisplayStates,
-        showAllThreads: hasSearchQuery,
-      }),
-    [projectGroups, effectiveGroupDisplayStates, hasSearchQuery],
+      threadListV2Enabled
+        ? EMPTY_HOME_LIST_LAYOUT
+        : buildHomeListLayout({
+            groups: projectGroups,
+            displayStates: effectiveGroupDisplayStates,
+            showAllThreads: hasSearchQuery,
+          }),
+    [threadListV2Enabled, projectGroups, effectiveGroupDisplayStates, hasSearchQuery],
   );
 
   const projectCwdByKey = useMemo(() => {
@@ -1033,7 +1045,7 @@ export function HomeScreen(props: HomeScreenProps) {
   // so the v1 check already covers v2.
   const hasAnyThreads =
     props.threads.some((thread) => thread.archivedAt === null) || props.pendingTasks.length > 0;
-  const hasResults = projectGroups.length > 0;
+  const hasResults = threadListV2Enabled ? threadListV2Items.length > 0 : projectGroups.length > 0;
   const selectedEnvironmentLabel =
     props.selectedEnvironmentId === null
       ? null
@@ -1097,10 +1109,8 @@ export function HomeScreen(props: HomeScreenProps) {
       <EmptyState title="No threads yet" detail="Create a task to start a new coding session." />
     )
   ) : null;
-  // Self-contained: v1's listEmpty keys off projectGroups, which ignores the
-  // v2 project scope, so it can be null (results elsewhere) while this list
-  // is empty. Snoozed threads need no special empty state: their shelf header
-  // is a list row even while collapsed.
+  // Use the v2 project scope for its empty state. Snoozed threads need no
+  // special empty state: their shelf header is a list row even while collapsed.
   const v2ListEmpty =
     hasSearchQuery && threadSearch.isPending ? null : hasSearchQuery ? (
       <EmptyState title="No results" detail={`No threads matching "${props.searchQuery}".`} />

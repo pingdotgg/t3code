@@ -16,9 +16,11 @@ import IconArrowUpCircle from "@tabler/icons-react-native/IconArrowUpCircle";
 import IconArrowUpRight from "@tabler/icons-react-native/IconArrowUpRight";
 import IconArrowUpRightCircle from "@tabler/icons-react-native/IconArrowUpRightCircle";
 import IconArrowsMaximize from "@tabler/icons-react-native/IconArrowsMaximize";
+import IconArrowsMinimize from "@tabler/icons-react-native/IconArrowsMinimize";
 import IconBellRinging from "@tabler/icons-react-native/IconBellRinging";
 import IconBolt from "@tabler/icons-react-native/IconBolt";
 import IconBox from "@tabler/icons-react-native/IconBox";
+import IconBrain from "@tabler/icons-react-native/IconBrain";
 import IconCamera from "@tabler/icons-react-native/IconCamera";
 import IconChartBar from "@tabler/icons-react-native/IconChartBar";
 import IconCheck from "@tabler/icons-react-native/IconCheck";
@@ -99,6 +101,7 @@ const ANDROID_ICON_BY_SF_SYMBOL: Partial<Record<SFSymbol, Icon>> = {
   "arrow.up": IconArrowUp,
   "arrow.up.circle": IconArrowUpCircle,
   "arrow.up.left.and.arrow.down.right": IconArrowsMaximize,
+  "arrow.down.right.and.arrow.up.left": IconArrowsMinimize,
   "arrow.up.right": IconArrowUpRight,
   "arrow.up.right.circle": IconArrowUpRightCircle,
   "arrow.uturn.backward": IconArrowBackUp,
@@ -107,6 +110,7 @@ const ANDROID_ICON_BY_SF_SYMBOL: Partial<Record<SFSymbol, Icon>> = {
   "bell.badge": IconBellRinging,
   "bolt.circle": IconBolt,
   "bolt.horizontal.circle": IconBolt,
+  brain: IconBrain,
   camera: IconCamera,
   "chart.bar.xaxis": IconChartBar,
   checkmark: IconCheck,

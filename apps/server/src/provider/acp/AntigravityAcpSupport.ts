@@ -19,7 +19,7 @@ import type * as EffectAcpSchema from "effect-acp/schema";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import {
-  drainAntigravityStderr,
+  makeAntigravityStderrHandler,
   makeAntigravityStdoutTransform,
 } from "../antigravityAuthSupport.ts";
 import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
@@ -73,7 +73,9 @@ export const makeAntigravityAcpRuntime = Effect.fn("makeAntigravityAcpRuntime")(
       transformStdout: makeAntigravityStdoutTransform(
         input.onAuthorizationUrl ? { onAuthorizationUrl: input.onAuthorizationUrl } : {},
       ),
-      onStderr: drainAntigravityStderr,
+      onStderr: makeAntigravityStderrHandler(
+        input.onAuthorizationUrl ? { onAuthorizationUrl: input.onAuthorizationUrl } : {},
+      ),
       transformSessionUpdate: normalizeAntigravitySessionUpdate,
     }).pipe(
       Layer.provide(

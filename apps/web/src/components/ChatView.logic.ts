@@ -38,6 +38,7 @@ import {
 } from "../types";
 import { type ComposerImageAttachment, type DraftThreadState } from "../composerDraftStore";
 import * as Schema from "effect/Schema";
+import { shallow } from "zustand/vanilla/shallow";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentThreadDetails } from "../state/threads";
 import {
@@ -86,6 +87,19 @@ export function agentControlledBrowserCloseConfirmation(
   ].join("\n");
 }
 
+export function shouldRenderPreviewMiniPlayer(
+  miniPlayerTabId: string | null,
+  renderedRightPanelSurface: RightPanelSurface | null,
+): boolean {
+  return (
+    miniPlayerTabId !== null &&
+    !(
+      renderedRightPanelSurface?.kind === "preview" &&
+      renderedRightPanelSurface.resourceId === miniPlayerTabId
+    )
+  );
+}
+
 export function shouldOpenProactivePullRequest(
   previousTargetKey: string | null | undefined,
   targetKey: string | null,
@@ -106,6 +120,24 @@ export function shouldOpenProactiveTurnDiff(input: {
     input.turnCompleted &&
     input.settledTurnId === input.previousRunningTurnId
   );
+}
+
+export function resolveProactiveTurnDiffAction(input: {
+  checkpoint: Pick<TurnDiffSummary, "status" | "files"> | undefined;
+  isGitRepo: boolean | undefined;
+  activeSurfaceKind: RightPanelSurface["kind"] | null;
+}): "defer" | "ignore" | "open" {
+  if (input.activeSurfaceKind === "pull-request") return "ignore";
+  if (input.checkpoint === undefined || input.checkpoint.status === "missing") return "defer";
+  if (input.isGitRepo === undefined) return "defer";
+  if (
+    !input.isGitRepo ||
+    input.checkpoint.status !== "ready" ||
+    input.checkpoint.files.length === 0
+  ) {
+    return "ignore";
+  }
+  return "open";
 }
 
 export function codexArtifactTemplatePromptToAppend(
@@ -408,14 +440,17 @@ export function getAntigravitySendBlockReason(
   if (!provider.installed) {
     return "Install Antigravity in provider settings before sending.";
   }
-  if (provider.auth.status !== "authenticated") {
+  if (provider.auth.status === "unauthenticated") {
     return "Sign in to Antigravity in provider settings before sending.";
-  }
-  if (provider.models.length === 0) {
-    return "Refresh Antigravity models in provider settings before sending.";
   }
   const slug = model.trim();
   if (slug.length === 0) return "Choose an Antigravity model before sending.";
+  // A restart clears the account status and catalog. Session startup checks
+  // saved credentials and validates the model before sending the prompt.
+  if (provider.auth.status === "unknown") return null;
+  if (provider.models.length === 0) {
+    return "Refresh Antigravity models in provider settings before sending.";
+  }
   // A saved model that left the catalog is kept in the picker as unavailable
   // so the user sees what the thread used. The server rejects it at turn
   // start, so block here unless the provider is in an error state, where a
@@ -430,17 +465,24 @@ export function getAntigravitySendBlockReason(
   return null;
 }
 
-export function buildRevertTurnCountByUserMessageId(input: {
-  supportsConversationRollback: boolean;
-  timelineEntries: ReadonlyArray<TimelineEntry>;
-  turnDiffSummaryByAssistantMessageId: ReadonlyMap<MessageId, TurnDiffSummary>;
-  inferredCheckpointTurnCountByTurnId: Readonly<Record<string, number | undefined>>;
-}) {
+/**
+ * Maps each user message to the checkpoint turn count a revert should target.
+ * Returns `previous` when the result is unchanged: streaming text deltas
+ * rebuild `timelineEntries` per token, and the timeline row projection only
+ * reuses rows while this Map keeps its identity.
+ */
+export function buildRevertTurnCountByUserMessageId(
+  input: {
+    supportsConversationRollback: boolean;
+    timelineEntries: ReadonlyArray<TimelineEntry>;
+    turnDiffSummaryByAssistantMessageId: ReadonlyMap<MessageId, TurnDiffSummary>;
+    inferredCheckpointTurnCountByTurnId: Readonly<Record<string, number | undefined>>;
+  },
+  previous: Map<MessageId, number> | null = null,
+): Map<MessageId, number> {
   const byUserMessageId = new Map<MessageId, number>();
-  if (!input.supportsConversationRollback) {
-    return byUserMessageId;
-  }
-  for (let index = 0; index < input.timelineEntries.length; index += 1) {
+  const entryCount = input.supportsConversationRollback ? input.timelineEntries.length : 0;
+  for (let index = 0; index < entryCount; index += 1) {
     const entry = input.timelineEntries[index];
     if (!entry || entry.kind !== "message" || entry.message.role !== "user") {
       continue;
@@ -467,7 +509,7 @@ export function buildRevertTurnCountByUserMessageId(input: {
       break;
     }
   }
-  return byUserMessageId;
+  return previous !== null && shallow(previous, byUserMessageId) ? previous : byUserMessageId;
 }
 
 export function reconcileMountedTerminalThreadIds(input: {
@@ -753,22 +795,13 @@ export function threadHasStarted(thread: Thread | null | undefined): boolean {
   );
 }
 
-// `threadProvider` is the open branded driver kind carried by the session.
-// Unknown driver kinds degrade to `null` (i.e. "unlocked"), which is the safe
-// rollback / fork behavior — the routing layer is the right place to surface
-// "driver not installed" errors, not the lock state.
-//
-// `selectedProvider` takes the same open-string shape because the composer
-// now tracks the picker selection as a `ProviderInstanceId` (e.g.
-// `codex_personal`). Custom instance ids that don't directly match a
-// registered driver resolve to `null` here, which matches the existing
-// "unknown driver -> unlocked" semantics. Callers that want the lock to track
-// a custom instance's underlying driver kind should resolve the instance id
-// upstream and pass the correlated kind.
+// Imported history has no session until its first prompt. Resolve its instance
+// through the environment's provider catalog before locking to a driver.
 export function deriveLockedProvider(input: {
   thread: Thread | null | undefined;
   selectedProvider: string | null;
   threadProvider: string | null;
+  providers: ReadonlyArray<Pick<ServerProvider, "instanceId" | "driver">>;
 }): ProviderDriverKind | null {
   if (!threadHasStarted(input.thread)) {
     return null;
@@ -777,14 +810,18 @@ export function deriveLockedProvider(input: {
   if (sessionProvider && isProviderDriverKind(sessionProvider)) {
     return sessionProvider;
   }
+  // Preserve the existing lock while an instance is missing from the catalog;
+  // a started thread must not silently fall back to a different driver.
+  const threadProvider =
+    input.providers.find((provider) => provider.instanceId === input.threadProvider)?.driver ??
+    input.threadProvider;
+  const selectedProvider =
+    input.providers.find((provider) => provider.instanceId === input.selectedProvider)?.driver ??
+    input.selectedProvider;
   const narrowedThreadProvider =
-    input.threadProvider && isProviderDriverKind(input.threadProvider)
-      ? input.threadProvider
-      : null;
+    threadProvider && isProviderDriverKind(threadProvider) ? threadProvider : null;
   const narrowedSelectedProvider =
-    input.selectedProvider && isProviderDriverKind(input.selectedProvider)
-      ? input.selectedProvider
-      : null;
+    selectedProvider && isProviderDriverKind(selectedProvider) ? selectedProvider : null;
   return narrowedThreadProvider ?? narrowedSelectedProvider ?? null;
 }
 
@@ -882,6 +919,24 @@ export interface LocalDispatchSnapshot {
   latestTurnCompletedAt: string | null;
   sessionStatus: NonNullable<Thread["session"]>["status"] | null;
   sessionUpdatedAt: string | null;
+  latestTurnStartFailureId: string | null;
+}
+
+export function latestTurnStartFailureId(
+  activeThread: Thread | undefined,
+  latestUserMessageId: ChatMessage["id"] | null,
+): string | null {
+  if (latestUserMessageId === null) return null;
+  return (
+    activeThread?.activities.findLast((activity) => {
+      if (activity.kind !== "provider.turn.start.failed") return false;
+      const payload =
+        typeof activity.payload === "object" && activity.payload !== null
+          ? (activity.payload as { readonly requestId?: unknown })
+          : null;
+      return payload?.requestId === latestUserMessageId;
+    })?.id ?? null
+  );
 }
 
 export function createLocalDispatchSnapshot(
@@ -905,6 +960,7 @@ export function createLocalDispatchSnapshot(
     latestTurnCompletedAt: latestTurn?.completedAt ?? null,
     sessionStatus: session?.status ?? null,
     sessionUpdatedAt: session?.updatedAt ?? null,
+    latestTurnStartFailureId: latestTurnStartFailureId(activeThread, latestUserMessage?.id ?? null),
   };
 }
 
@@ -916,12 +972,20 @@ export function hasServerAcknowledgedLocalDispatch(input: {
   session: Thread["session"] | null;
   hasPendingApproval: boolean;
   hasPendingUserInput: boolean;
+  latestTurnStartFailureId?: string | null;
   threadError: string | null | undefined;
 }): boolean {
   if (!input.localDispatch) {
     return false;
   }
   if (input.hasPendingApproval || input.hasPendingUserInput || Boolean(input.threadError)) {
+    return true;
+  }
+  if (
+    input.latestTurnStartFailureId !== undefined &&
+    input.latestTurnStartFailureId !== null &&
+    input.latestTurnStartFailureId !== input.localDispatch.latestTurnStartFailureId
+  ) {
     return true;
   }
   if (input.phase === "connecting") {

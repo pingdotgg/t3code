@@ -1,4 +1,5 @@
-import { ChevronDownIcon, GitPullRequestIcon, RefreshCwIcon } from "lucide-react";
+import { RefreshIcon } from "~/components/ui/refresh-icon";
+import { ChevronDownIcon, GitPullRequestIcon } from "lucide-react";
 import * as Duration from "effect/Duration";
 import * as Option from "effect/Option";
 import { useEffect, useState, type ReactNode } from "react";
@@ -390,8 +391,7 @@ function GitFetchIntervalSettings() {
             </span>
           </div>
           <p className="max-w-2xl text-xs leading-relaxed text-muted-foreground">
-            Refresh remote branch status in the background. Set this to 0 seconds if Git credentials
-            or security keys should only be prompted by explicit Git actions.
+            Refresh remote branches in the background. Set to 0 to avoid automatic Git prompts.
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
@@ -488,7 +488,7 @@ function EmptySourceControlDiscovery({
         </EmptyHeader>
         <EmptyContent>
           <Button size="sm" variant="outline" onClick={onScan} disabled={isPending}>
-            <RefreshCwIcon className={cn("size-3.5", isPending && "animate-spin")} />
+            <RefreshIcon className="size-3.5" refreshing={isPending} />
             Scan
           </Button>
         </EmptyContent>
@@ -533,7 +533,7 @@ export function SourceControlSettingsPanel() {
             disabled={discovery.isPending}
             aria-label="Rescan server environment"
           >
-            <RefreshCwIcon className={cn(discovery.isPending && "animate-spin")} />
+            <RefreshIcon refreshing={discovery.isPending} />
           </Button>
         }
       />

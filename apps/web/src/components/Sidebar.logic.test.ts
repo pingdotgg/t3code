@@ -4,15 +4,14 @@ import {
   animatePinnedLayoutChanges,
   archiveSelectedThreadEntries,
   buildBulkTitleRegenerationContextMenuItem,
+  buildBulkUnpinContextMenuItem,
   buildMultiSelectThreadContextMenuItems,
   createThreadJumpHintVisibilityController,
   filterSidebarProjectScopeItems,
   getSidebarThreadIdsToPrewarm,
-  getVisibleSidebarThreadIds,
   resolveAdjacentThreadId,
   reduceSidebarProjectScopeMenuState,
   getFallbackThreadIdAfterDelete,
-  getVisibleThreadsForProject,
   getProjectSortTimestamp,
   hasUnseenCompletion,
   isContextMenuPointerDown,
@@ -26,8 +25,8 @@ import {
   resolveWorkingStartedAt,
   searchSidebarThreadsByTitle,
   formatWorkingDurationLabel,
-  shouldNavigateAfterProjectRemoval,
   shouldClearThreadSelectionOnMouseDown,
+  shouldRecedeSidebarThread,
   sortLogicalProjectsForSidebar,
   sortSettledThreadsForSidebar,
   pinOrderKeyBetween,
@@ -82,56 +81,6 @@ describe("animatePinnedLayoutChanges", () => {
   });
 });
 
-describe("shouldNavigateAfterProjectRemoval", () => {
-  const projectThreads = [{ environmentId: "environment-local", id: "thread-1" }];
-
-  it("navigates away from a draft route owned by the removed project", () => {
-    expect(
-      shouldNavigateAfterProjectRemoval({
-        routeTarget: { kind: "draft", draftId: "draft-1" as never },
-        projectThreads,
-        projectDraftId: "draft-1",
-      }),
-    ).toBe(true);
-  });
-
-  it("does not navigate away from a different draft route", () => {
-    expect(
-      shouldNavigateAfterProjectRemoval({
-        routeTarget: { kind: "draft", draftId: "draft-2" as never },
-        projectThreads,
-        projectDraftId: "draft-1",
-      }),
-    ).toBe(false);
-  });
-
-  it("navigates away from a server thread owned by the removed project", () => {
-    expect(
-      shouldNavigateAfterProjectRemoval({
-        routeTarget: {
-          kind: "server",
-          threadRef: {
-            environmentId: EnvironmentId.make("environment-local"),
-            threadId: ThreadId.make("thread-1"),
-          },
-        },
-        projectThreads,
-        projectDraftId: null,
-      }),
-    ).toBe(true);
-  });
-
-  it("does not navigate from an unrelated route", () => {
-    expect(
-      shouldNavigateAfterProjectRemoval({
-        routeTarget: null,
-        projectThreads,
-        projectDraftId: null,
-      }),
-    ).toBe(false);
-  });
-});
-
 describe("archiveSelectedThreadEntries", () => {
   const entries = [{ threadKey: "one" }, { threadKey: "two" }, { threadKey: "three" }] as const;
   const success = { _tag: "Success" } as const;
@@ -182,6 +131,19 @@ describe("archiveSelectedThreadEntries", () => {
       mutationFailure: null,
       followupFailures: [failure],
     });
+  });
+});
+
+describe("buildBulkUnpinContextMenuItem", () => {
+  it("counts only the pinned rows of a mixed selection", () => {
+    expect(buildBulkUnpinContextMenuItem({ pinnedCount: 2 })).toEqual({
+      id: "unpin",
+      label: "Unpin (2)",
+    });
+  });
+
+  it("omits the action when nothing selected is pinned", () => {
+    expect(buildBulkUnpinContextMenuItem({ pinnedCount: 0 })).toBeNull();
   });
 });
 
@@ -278,6 +240,51 @@ describe("hasUnseenCompletion", () => {
         session: null,
       }),
     ).toBe(false);
+  });
+});
+
+describe("shouldRecedeSidebarThread", () => {
+  it.each(["working", "monitoring"] as const)(
+    "recedes an inactive %s thread even when it is unread and woke",
+    (status) => {
+      expect(
+        shouldRecedeSidebarThread({
+          status,
+          isUnread: true,
+          isWoke: true,
+          isActive: false,
+          isSelected: false,
+        }),
+      ).toBe(true);
+    },
+  );
+
+  it.each(["ready", "approval", "input"] as const)(
+    "keeps an unread %s thread prominent",
+    (status) => {
+      expect(
+        shouldRecedeSidebarThread({
+          status,
+          isUnread: true,
+          isWoke: false,
+          isActive: false,
+          isSelected: false,
+        }),
+      ).toBe(false);
+    },
+  );
+
+  it("keeps active and selected working threads prominent", () => {
+    const input = {
+      status: "working" as const,
+      isUnread: true,
+      isWoke: true,
+      isActive: false,
+      isSelected: false,
+    };
+
+    expect(shouldRecedeSidebarThread({ ...input, isActive: true })).toBe(false);
+    expect(shouldRecedeSidebarThread({ ...input, isSelected: true })).toBe(false);
   });
 });
 
@@ -581,46 +588,6 @@ describe("resolveAdjacentThreadId", () => {
         direction: "previous",
       }),
     ).toBeNull();
-  });
-});
-
-describe("getVisibleSidebarThreadIds", () => {
-  it("returns only the rendered visible thread order across projects", () => {
-    expect(
-      getVisibleSidebarThreadIds([
-        {
-          renderedThreadIds: [
-            ThreadId.make("thread-12"),
-            ThreadId.make("thread-11"),
-            ThreadId.make("thread-10"),
-          ],
-        },
-        {
-          renderedThreadIds: [ThreadId.make("thread-8"), ThreadId.make("thread-6")],
-        },
-      ]),
-    ).toEqual([
-      ThreadId.make("thread-12"),
-      ThreadId.make("thread-11"),
-      ThreadId.make("thread-10"),
-      ThreadId.make("thread-8"),
-      ThreadId.make("thread-6"),
-    ]);
-  });
-
-  it("skips threads from collapsed projects whose thread panels are not shown", () => {
-    expect(
-      getVisibleSidebarThreadIds([
-        {
-          shouldShowThreadPanel: false,
-          renderedThreadIds: [ThreadId.make("thread-hidden-2"), ThreadId.make("thread-hidden-1")],
-        },
-        {
-          shouldShowThreadPanel: true,
-          renderedThreadIds: [ThreadId.make("thread-12"), ThreadId.make("thread-11")],
-        },
-      ]),
-    ).toEqual([ThreadId.make("thread-12"), ThreadId.make("thread-11")]);
   });
 });
 
@@ -1299,57 +1266,6 @@ describe("resolveProjectStatusIndicator", () => {
         },
       ]),
     ).toMatchObject({ label: "Plan Ready", dotClass: "bg-violet-500" });
-  });
-});
-
-describe("getVisibleThreadsForProject", () => {
-  it("includes the active thread even when it falls below the folded preview", () => {
-    const threads = Array.from({ length: 8 }, (_, index) =>
-      makeThread({
-        id: ThreadId.make(`thread-${index + 1}`),
-        title: `Thread ${index + 1}`,
-      }),
-    );
-
-    const result = getVisibleThreadsForProject({
-      threads,
-      activeThreadId: ThreadId.make("thread-8"),
-      isThreadListExpanded: false,
-      previewLimit: 6,
-    });
-
-    expect(result.hasHiddenThreads).toBe(true);
-    expect(result.visibleThreads.map((thread) => thread.id)).toEqual([
-      ThreadId.make("thread-1"),
-      ThreadId.make("thread-2"),
-      ThreadId.make("thread-3"),
-      ThreadId.make("thread-4"),
-      ThreadId.make("thread-5"),
-      ThreadId.make("thread-6"),
-      ThreadId.make("thread-8"),
-    ]);
-    expect(result.hiddenThreads.map((thread) => thread.id)).toEqual([ThreadId.make("thread-7")]);
-  });
-
-  it("returns all threads when the list is expanded", () => {
-    const threads = Array.from({ length: 8 }, (_, index) =>
-      makeThread({
-        id: ThreadId.make(`thread-${index + 1}`),
-      }),
-    );
-
-    const result = getVisibleThreadsForProject({
-      threads,
-      activeThreadId: ThreadId.make("thread-8"),
-      isThreadListExpanded: true,
-      previewLimit: 6,
-    });
-
-    expect(result.hasHiddenThreads).toBe(true);
-    expect(result.visibleThreads.map((thread) => thread.id)).toEqual(
-      threads.map((thread) => thread.id),
-    );
-    expect(result.hiddenThreads).toEqual([]);
   });
 });
 

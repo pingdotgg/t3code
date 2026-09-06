@@ -346,7 +346,7 @@ impl Collector {
         self.system.refresh_processes_specifics(
             ProcessesToUpdate::All,
             true,
-            process_refresh_kind(),
+            process_discovery_refresh_kind(),
         );
         self.cpu_baseline_refreshed_at = Some(Instant::now());
     }
@@ -361,7 +361,7 @@ impl Collector {
         self.system.refresh_processes_specifics(
             ProcessesToUpdate::All,
             true,
-            process_refresh_kind(),
+            process_discovery_refresh_kind(),
         );
         self.cpu_baseline_refreshed_at = Some(Instant::now());
 
@@ -397,15 +397,57 @@ impl Collector {
         roots.insert(config.root_pid);
         let tracked = select_tracked_pids(&rows, &roots);
         let tracked_process_count = tracked.len();
+        let process_details = if cfg!(target_os = "linux") && !tracked.is_empty() {
+            let monitor_pid = Pid::from_u32(std::process::id());
+            let mut detail_pids = tracked
+                .iter()
+                .copied()
+                .map(Pid::from_u32)
+                .collect::<Vec<_>>();
+            if !tracked.contains(&monitor_pid.as_u32()) {
+                detail_pids.push(monitor_pid);
+            }
+            // Detail fields need no baseline. Drop command data and OS handles after each sample.
+            let mut details = System::new();
+            details.refresh_processes_specifics(
+                ProcessesToUpdate::Some(&detail_pids),
+                true,
+                process_refresh_kind().without_cpu(),
+            );
+            // This process cannot be replaced during collection. Its start time
+            // exposes any boot-epoch shift between the two System instances.
+            let start_time_offset = self.system.process(monitor_pid).and_then(|process| {
+                details.process(monitor_pid).map(|detail| {
+                    i128::from(detail.start_time()) - i128::from(process.start_time())
+                })
+            });
+            Some((details, start_time_offset))
+        } else {
+            None
+        };
+        let sample_details = process_details
+            .as_ref()
+            .map_or(&self.system, |(details, _)| details);
+        let start_time_offset = process_details
+            .as_ref()
+            .map_or(Some(0), |(_, offset)| *offset);
         let mut processes = tracked
             .into_iter()
             .filter_map(|pid| {
                 let process = self.system.process(Pid::from_u32(pid))?;
-                let disk_usage = process.disk_usage();
-                let command = if process.cmd().is_empty() {
+                let details = sample_details.process(Pid::from_u32(pid))?;
+                if !matches_process_start_time(
+                    process.start_time(),
+                    details.start_time(),
+                    start_time_offset?,
+                ) {
+                    return None;
+                }
+                let disk_usage = details.disk_usage();
+                let command = if details.cmd().is_empty() {
                     process.name().to_string_lossy().into_owned()
                 } else {
-                    process
+                    details
                         .cmd()
                         .iter()
                         .map(|part| part.to_string_lossy())
@@ -429,14 +471,15 @@ impl Collector {
                     ),
                     cpu_percent: process.cpu_usage(),
                     cpu_time_ms: process.accumulated_cpu_time(),
-                    resident_bytes: process.memory(),
-                    virtual_bytes: process.virtual_memory(),
+                    resident_bytes: details.memory(),
+                    virtual_bytes: details.virtual_memory(),
                     io_read_bytes: disk_usage.total_read_bytes,
                     io_write_bytes: disk_usage.total_written_bytes,
                     io_semantics: io_semantics(),
                 })
             })
             .collect::<Vec<_>>();
+        drop(process_details);
         processes.sort_by_key(|process| process.pid);
         self.sequence = self.sequence.saturating_add(1);
 
@@ -459,6 +502,15 @@ impl Collector {
     }
 }
 
+// Keep CPU baselines separate. Even a metadata refresh resets Linux process times.
+fn process_discovery_refresh_kind() -> ProcessRefreshKind {
+    if cfg!(target_os = "linux") {
+        ProcessRefreshKind::nothing().with_cpu().without_tasks()
+    } else {
+        process_refresh_kind()
+    }
+}
+
 fn process_refresh_kind() -> ProcessRefreshKind {
     ProcessRefreshKind::nothing()
         .with_memory()
@@ -470,6 +522,10 @@ fn process_refresh_kind() -> ProcessRefreshKind {
 
 fn inaccessible_process_count(selected: usize, materialized: usize) -> usize {
     selected.saturating_sub(materialized)
+}
+
+fn matches_process_start_time(discovered: u64, detail: u64, epoch_offset: i128) -> bool {
+    i128::from(detail) - epoch_offset == i128::from(discovered)
 }
 
 fn remaining_cpu_measurement_delay(
@@ -887,6 +943,39 @@ mod tests {
         assert!(matches_external_identity(10_000, Some(10_999)));
         assert!(!matches_external_identity(10_000, Some(11_000)));
         assert!(!matches_external_identity(10_000, Some(9_999)));
+    }
+
+    #[test]
+    fn loads_details_when_an_existing_process_becomes_selected() {
+        let mut collector = Collector::new();
+        let mut config = CollectorConfig {
+            root_pid: u32::MAX,
+            sample_interval: None,
+            external_processes: HashMap::new(),
+        };
+        assert!(collector.sample(&config, None).processes.is_empty());
+
+        config.root_pid = std::process::id();
+        let snapshot = collector.sample(&config, None);
+        let process = snapshot
+            .processes
+            .iter()
+            .find(|process| process.pid == config.root_pid)
+            .expect("selected process");
+
+        assert!(!process.command.is_empty());
+        assert!(process.resident_bytes > 0);
+        assert!(process.cpu_percent.is_finite());
+    }
+
+    #[test]
+    fn accepts_clock_shifts_without_accepting_reused_process_starts() {
+        assert!(matches_process_start_time(10_000, 13_600, 3_600));
+        assert!(!matches_process_start_time(10_000, 13_601, 3_600));
+        assert!(matches_process_start_time(10_000, 6_400, -3_600));
+        assert!(!matches_process_start_time(10_000, 6_401, -3_600));
+        assert!(matches_process_start_time(10_000, 10_000, 0));
+        assert!(!matches_process_start_time(10_000, 10_001, 0));
     }
 
     #[test]

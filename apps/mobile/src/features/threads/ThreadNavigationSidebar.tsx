@@ -45,6 +45,7 @@ import { buildHomeListFilterMenu } from "../home/home-list-filter-menu";
 import {
   buildHomeListLayout,
   DEFAULT_GROUP_DISPLAY_STATE,
+  EMPTY_HOME_LIST_LAYOUT,
   homeListItemsAreEqual,
   nextGroupDisplayState,
   type HomeGroupDisplayAction,
@@ -269,47 +270,56 @@ function ThreadNavigationSidebarPane(
   );
   const scopedProjects = useMemo(
     () =>
-      selectedProjectRefs === null
-        ? projects
-        : projects.filter((project) =>
-            selectedProjectRefs.has(scopedProjectKey(project.environmentId, project.id)),
-          ),
-    [projects, selectedProjectRefs],
+      threadListV2Enabled
+        ? []
+        : selectedProjectRefs === null
+          ? projects
+          : projects.filter((project) =>
+              selectedProjectRefs.has(scopedProjectKey(project.environmentId, project.id)),
+            ),
+    [threadListV2Enabled, projects, selectedProjectRefs],
   );
   const scopedThreads = useMemo(
     () =>
-      selectedProjectRefs === null
-        ? threads
-        : threads.filter((thread) =>
-            selectedProjectRefs.has(scopedProjectKey(thread.environmentId, thread.projectId)),
-          ),
-    [selectedProjectRefs, threads],
+      threadListV2Enabled
+        ? []
+        : selectedProjectRefs === null
+          ? threads
+          : threads.filter((thread) =>
+              selectedProjectRefs.has(scopedProjectKey(thread.environmentId, thread.projectId)),
+            ),
+    [threadListV2Enabled, selectedProjectRefs, threads],
   );
   const scopedPendingTasks = useMemo(
     () =>
-      selectedProjectRefs === null
-        ? pendingTasks
-        : pendingTasks.filter((pendingTask) =>
-            selectedProjectRefs.has(
-              scopedProjectKey(pendingTask.message.environmentId, pendingTask.creation.projectId),
+      threadListV2Enabled
+        ? []
+        : selectedProjectRefs === null
+          ? pendingTasks
+          : pendingTasks.filter((pendingTask) =>
+              selectedProjectRefs.has(
+                scopedProjectKey(pendingTask.message.environmentId, pendingTask.creation.projectId),
+              ),
             ),
-          ),
-    [pendingTasks, selectedProjectRefs],
+    [threadListV2Enabled, pendingTasks, selectedProjectRefs],
   );
   const groups = useMemo(
     () =>
-      buildHomeThreadGroups({
-        projects: scopedProjects,
-        threads: scopedThreads,
-        pendingTasks: scopedPendingTasks,
-        environmentId: options.selectedEnvironmentId,
-        searchQuery: props.searchQuery,
-        matchedThreadKeys,
-        projectSortOrder: options.projectSortOrder,
-        threadSortOrder: options.threadSortOrder,
-        projectGroupingMode: options.projectGroupingMode,
-      }),
+      threadListV2Enabled
+        ? []
+        : buildHomeThreadGroups({
+            projects: scopedProjects,
+            threads: scopedThreads,
+            pendingTasks: scopedPendingTasks,
+            environmentId: options.selectedEnvironmentId,
+            searchQuery: props.searchQuery,
+            matchedThreadKeys,
+            projectSortOrder: options.projectSortOrder,
+            threadSortOrder: options.threadSortOrder,
+            projectGroupingMode: options.projectGroupingMode,
+          }),
     [
+      threadListV2Enabled,
       matchedThreadKeys,
       options,
       props.searchQuery,
@@ -334,12 +344,14 @@ function ThreadNavigationSidebarPane(
   const hasSearchQuery = props.searchQuery.trim().length > 0;
   const listLayout = useMemo(
     () =>
-      buildHomeListLayout({
-        groups,
-        displayStates: groupDisplayStates,
-        showAllThreads: hasSearchQuery,
-      }),
-    [groups, groupDisplayStates, hasSearchQuery],
+      threadListV2Enabled
+        ? EMPTY_HOME_LIST_LAYOUT
+        : buildHomeListLayout({
+            groups,
+            displayStates: groupDisplayStates,
+            showAllThreads: hasSearchQuery,
+          }),
+    [threadListV2Enabled, groups, groupDisplayStates, hasSearchQuery],
   );
   const projectCwdByKey = useMemo(() => {
     const map = new Map<string, string>();

@@ -1,4 +1,5 @@
 import { AntigravitySettings, ProviderDriverKind, ProviderSetupError } from "@t3tools/contracts";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -49,7 +50,7 @@ import {
 } from "../ProviderDriver.ts";
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
 import { withInstanceIdentity } from "./instanceIdentity.ts";
-import { discoverAntigravitySkills } from "./AntigravitySkills.ts";
+import { discoverAntigravitySkills, resolveAntigravityUserHome } from "./AntigravitySkills.ts";
 
 const DRIVER = ProviderDriverKind.make("antigravity");
 const decodeSettings = Schema.decodeSync(AntigravitySettings);
@@ -91,6 +92,7 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
       };
       const authConfigIssue = antigravityAuthConfigIssue(auth);
       const processEnvironment = mergeProviderInstanceEnvironment(environment);
+      const userHome = resolveAntigravityUserHome(yield* HostProcessPlatform, processEnvironment);
       const profileDirectory = resolveAntigravityProfileDirectory(
         serverConfig.stateDir,
         instanceId,
@@ -146,6 +148,7 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
           profileDirectory,
           baseEnv: processEnvironment,
           auth,
+          userHome,
         }).pipe(
           Effect.provideService(FileSystem.FileSystem, fileSystem),
           Effect.provideService(Path.Path, path),
@@ -233,6 +236,9 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
             if (event._tag === "EventStreamBarrier") {
               return Deferred.succeed(event.acknowledge, undefined).pipe(Effect.asVoid);
             }
+            if (event._tag === "ConfigOptionsUpdated") {
+              return provider.onConfigOptionsUpdated(event.configOptions);
+            }
             return event._tag === "AvailableCommandsUpdated"
               ? provider.onAvailableCommands(event.availableCommands)
               : Effect.void;
@@ -299,6 +305,7 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
         withProcess: authFlow.withProcess,
         defaultModel,
         onSessionStarted: provider.onSessionStarted,
+        onConfigOptionsUpdated: provider.onConfigOptionsUpdated,
         onAvailableCommands: provider.onAvailableCommands,
         onAuthRequired: provider.onAuthRequired,
         ...(loggers.native ? { nativeEventLogger: loggers.native } : {}),
@@ -332,7 +339,7 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
         },
         Effect.scoped,
         Effect.timeoutOrElse({
-          duration: "60 seconds",
+          duration: "90 seconds",
           orElse: () =>
             Effect.fail(
               new ProviderDriverError({
@@ -372,7 +379,7 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
         snapshotForCwd: (cwd) =>
           !enabled
             ? provider.snapshot.getSnapshot
-            : discoverAntigravitySkills({ cwd, profileDirectory }).pipe(
+            : discoverAntigravitySkills({ cwd, userHome }).pipe(
                 Effect.provideService(FileSystem.FileSystem, fileSystem),
                 Effect.provideService(Path.Path, path),
                 Effect.flatMap((skills) => provider.snapshotForCwd(cwd, skills)),

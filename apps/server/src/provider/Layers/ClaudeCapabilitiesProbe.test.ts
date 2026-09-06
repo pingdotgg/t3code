@@ -1,4 +1,11 @@
+// @effect-diagnostics nodeBuiltinImport:off - cleanup uses Node's retrying rm, which the FileSystem service does not expose.
+import * as ClaudeSdk from "@anthropic-ai/claude-agent-sdk";
+import { vi } from "vite-plus/test";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
+import * as TestClock from "effect/testing/TestClock";
 import { ClaudeSettings } from "@t3tools/contracts";
+import * as NodeFSP from "node:fs/promises";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -11,6 +18,8 @@ import {
   CLAUDE_CAPABILITIES_PROBE_SETTING_SOURCES,
   probeClaudeCapabilities,
 } from "./ClaudeProvider.ts";
+
+vi.mock("@anthropic-ai/claude-agent-sdk", { spy: true });
 
 const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
 
@@ -51,8 +60,25 @@ it.layer(NodeServices.layer)("Claude capability probe SDK boundary", (it) => {
       const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-probe-sdk-" });
       const executablePath = path.join(tempDir, "fake-claude.mjs");
       const invocationPath = path.join(tempDir, "invocation.json");
-      const workspaceCwd = path.join(tempDir, "workspace");
-      yield* fs.makeDirectory(workspaceCwd, { recursive: true });
+      // The probe aborts the SDK without awaiting the child's exit, and on
+      // Windows a directory that is still some process's cwd cannot be
+      // removed. Keep the workspace outside the scoped directory and let it
+      // go with a retrying removal once the child has gone.
+      const workspaceCwd = yield* fs.makeTempDirectory({ prefix: "t3-claude-probe-cwd-" });
+      // Node's own retry rather than an Effect schedule: it.effect runs on a
+      // TestClock, so a scheduled retry would wait for time nobody advances.
+      // If the child still holds the directory after that, an empty temp
+      // directory is left behind rather than failing the test for it.
+      yield* Effect.addFinalizer(() =>
+        Effect.promise(() =>
+          NodeFSP.rm(workspaceCwd, {
+            recursive: true,
+            force: true,
+            maxRetries: 20,
+            retryDelay: 250,
+          }).catch(() => undefined),
+        ),
+      );
 
       yield* fs.writeFileString(
         executablePath,
@@ -77,22 +103,31 @@ it.layer(NodeServices.layer)("Claude capability probe SDK boundary", (it) => {
           "const lines = createInterface({ input: process.stdin });",
           'lines.on("line", (line) => {',
           "  const message = JSON.parse(line);",
-          '  if (message.type !== "control_request" || message.request?.subtype !== "initialize") return;',
-          "  process.stdout.write(JSON.stringify({",
+          '  if (message.type !== "control_request") return;',
+          "  const reply = (response) => process.stdout.write(JSON.stringify({",
           '    type: "control_response",',
-          "    response: {",
-          '      subtype: "success",',
-          "      request_id: message.request_id,",
-          "      response: {",
-          '        commands: [{ name: "review", description: "Review changes", argumentHint: "[path]" }],',
-          "        agents: [],",
-          '        output_style: "default",',
-          '        available_output_styles: ["default"],',
-          "        models: [],",
-          '        account: { email: "dev@example.com", subscriptionType: "pro", tokenSource: "oauth" },',
-          "      },",
-          "    },",
+          '    response: { subtype: "success", request_id: message.request_id, response },',
           '  }) + "\\n");',
+          '  if (message.request?.subtype === "initialize") {',
+          "    reply({",
+          '      commands: [{ name: "review", description: "Review changes", argumentHint: "[path]" }],',
+          "      agents: [],",
+          '      output_style: "default",',
+          '      available_output_styles: ["default"],',
+          "      models: [],",
+          '      account: { email: "dev@example.com", subscriptionType: "pro", tokenSource: "oauth" },',
+          "    });",
+          "  }",
+          "  // The probe follows initialize with get_usage on the same process.",
+          '  if (message.request?.subtype === "get_usage") {',
+          "    reply({",
+          "      session: {},",
+          '      subscription_type: "pro",',
+          "      rate_limits_available: true,",
+          '      rate_limits: { five_hour: { utilization: 12, resets_at: "2026-07-18T14:39:00Z" } },',
+          "      behaviors: null,",
+          "    });",
+          "  }",
           "});",
           "setInterval(() => {}, 1_000);",
           "",
@@ -122,6 +157,10 @@ it.layer(NodeServices.layer)("Claude capability probe SDK boundary", (it) => {
             input: { hint: "[path]" },
           },
         ],
+        usage: {
+          rate_limits_available: true,
+          rate_limits: { five_hour: { utilization: 12, resets_at: "2026-07-18T14:39:00Z" } },
+        },
       });
 
       // @effect-diagnostics-next-line preferSchemaOverJson:off
@@ -149,3 +188,38 @@ it.layer(NodeServices.layer)("Claude capability probe SDK boundary", (it) => {
     }).pipe(Effect.scoped),
   );
 });
+
+it.effect("preserves initialized capabilities when optional usage times out", () =>
+  Effect.gen(function* () {
+    const usageStarted = yield* Deferred.make<void>();
+    let abortSignal: AbortSignal | undefined;
+    const query = vi.spyOn(ClaudeSdk, "query").mockImplementation(({ options }) => {
+      abortSignal = options?.abortController?.signal;
+      return {
+        initializationResult: async () => ({
+          account: { email: "dev@example.com", subscriptionType: "pro", tokenSource: "oauth" },
+          commands: [{ name: "review", description: "Review changes", argumentHint: "[path]" }],
+        }),
+        usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: () => {
+          Deferred.doneUnsafe(usageStarted, Effect.void);
+          return new Promise(() => {});
+        },
+      } as ReturnType<typeof ClaudeSdk.query>;
+    });
+    yield* Effect.addFinalizer(() => Effect.sync(() => query.mockRestore()));
+    const probe = yield* probeClaudeCapabilities(
+      decodeClaudeSettings({ binaryPath: "claude" }),
+    ).pipe(Effect.forkChild);
+    yield* Deferred.await(usageStarted);
+    yield* TestClock.adjust("4 seconds");
+    const capabilities = yield* Fiber.join(probe);
+    assert.equal(capabilities?.email, "dev@example.com");
+    assert.equal(capabilities?.subscriptionType, "pro");
+    assert.equal(capabilities?.tokenSource, "oauth");
+    assert.deepEqual(capabilities?.slashCommands, [
+      { name: "review", description: "Review changes", input: { hint: "[path]" } },
+    ]);
+    assert.equal(capabilities?.usage, undefined);
+    assert.equal(abortSignal?.aborted, true);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);

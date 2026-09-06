@@ -56,7 +56,7 @@ import { setPendingConnectionError } from "../state/use-remote-environment-regis
 import { useSelectedThreadDetail } from "../state/use-thread-detail";
 import { useThreadSelection } from "../state/use-thread-selection";
 import { enqueueThreadOutboxMessage } from "./thread-outbox";
-import { useThreadOutboxMessages } from "./use-thread-outbox";
+import { dispatchingQueuedMessageIdAtom, useThreadOutboxMessages } from "./use-thread-outbox";
 import { threadEnvironment } from "./threads";
 import { useAtomCommand } from "./use-atom-command";
 import {
@@ -107,6 +107,7 @@ export function useThreadComposerState() {
   const selectedThreadDetail = useSelectedThreadDetail();
   const composerDrafts = useAtomValue(composerDraftsAtom);
   const queuedMessagesByThreadKey = useThreadOutboxMessages();
+  const dispatchingQueuedMessageId = useAtomValue(dispatchingQueuedMessageIdAtom);
   const [feedbackSubmissionsByThreadKey, setFeedbackSubmissionsByThreadKey] = useState<
     Record<string, ReadonlyArray<CodexFeedbackSubmission>>
   >({});
@@ -125,21 +126,28 @@ export function useThreadComposerState() {
     () => (selectedThreadKey ? (queuedMessagesByThreadKey[selectedThreadKey] ?? []) : []),
     [queuedMessagesByThreadKey, selectedThreadKey],
   );
-  const selectedThreadFeed = useMemo(() => {
-    if (!selectedThreadDetail) {
-      return [];
-    }
+  const localFeedbackMessages = useMemo(() => {
     const submissions = selectedThreadKey
       ? (feedbackSubmissionsByThreadKey[selectedThreadKey] ?? [])
       : [];
-    return buildThreadFeed(selectedThreadDetail, {
-      localMessages: submissions.flatMap((submission) =>
-        submission.status === "interrupted"
-          ? []
-          : [codexFeedbackMessage(submission), codexFeedbackMessage(submission, "assistant")],
-      ),
-    });
-  }, [feedbackSubmissionsByThreadKey, selectedThreadDetail, selectedThreadKey]);
+    return submissions.flatMap((submission) =>
+      submission.status === "interrupted"
+        ? []
+        : [codexFeedbackMessage(submission), codexFeedbackMessage(submission, "assistant")],
+    );
+  }, [feedbackSubmissionsByThreadKey, selectedThreadKey]);
+  const selectedThreadMessages = selectedThreadDetail?.messages;
+  const selectedThreadActivities = selectedThreadDetail?.activities;
+  const selectedThreadFeed = useMemo(
+    () =>
+      selectedThreadMessages && selectedThreadActivities
+        ? buildThreadFeed(
+            { messages: selectedThreadMessages, activities: selectedThreadActivities },
+            { localMessages: localFeedbackMessages },
+          )
+        : [],
+    [localFeedbackMessages, selectedThreadActivities, selectedThreadMessages],
+  );
 
   const selectedDraft = selectedThreadKey ? composerDrafts[selectedThreadKey] : null;
   const draftMessage = selectedDraft?.text ?? "";
@@ -169,6 +177,48 @@ export function useThreadComposerState() {
       activeTurnId: selectedThread.session.activeTurnId ?? undefined,
     };
   }, [selectedThreadDetail, selectedThreadShell]);
+
+  const isCompacting = useMemo(() => {
+    const queuedMessage = selectedThreadQueuedMessages.findLast(
+      (message) =>
+        message.messageId === dispatchingQueuedMessageId &&
+        message.text.trim().toLowerCase() === "/compact" &&
+        message.attachments.length === 0,
+    );
+    const latestCompactMessage = selectedThreadDetail?.messages.findLast(
+      (message) =>
+        message.role === "user" &&
+        message.text.trim().toLowerCase() === "/compact" &&
+        !message.attachments?.length,
+    );
+    const compactRequestIsActive =
+      latestCompactMessage !== undefined &&
+      (latestCompactMessage.createdAt >
+        (selectedThread?.latestTurn?.requestedAt ?? latestCompactMessage.createdAt) ||
+        (selectedThread?.latestTurn?.state === "running" &&
+          latestCompactMessage.createdAt === selectedThread.latestTurn.requestedAt));
+    const compactionSettled = selectedThreadDetail?.activities.some((activity) => {
+      if (!["context-compaction", "provider.turn.start.failed"].includes(activity.kind))
+        return false;
+      const payload =
+        typeof activity.payload === "object" && activity.payload !== null
+          ? (activity.payload as { readonly requestId?: unknown })
+          : null;
+      return payload?.requestId === latestCompactMessage?.id;
+    });
+    return (
+      queuedMessage !== undefined ||
+      ((selectedThread?.session?.status === "starting" ||
+        selectedThread?.session?.status === "running") &&
+        compactRequestIsActive &&
+        !compactionSettled)
+    );
+  }, [
+    dispatchingQueuedMessageId,
+    selectedThread,
+    selectedThreadDetail,
+    selectedThreadQueuedMessages,
+  ]);
 
   const activeWorkStartedAt = useMemo(() => {
     const selectedThread = selectedThreadDetail ?? selectedThreadShell;
@@ -226,7 +276,7 @@ export function useThreadComposerState() {
     ) {
       Alert.alert(
         "Antigravity model unavailable",
-        "Open model settings to finish setup or choose another model.",
+        "Set up Antigravity on web or desktop, or choose another model.",
       );
       return null;
     }
@@ -526,6 +576,7 @@ export function useThreadComposerState() {
     selectedThreadFeed,
     selectedThreadQueueCount,
     activeWorkStartedAt,
+    isCompacting,
     draftMessage,
     draftAttachments,
     modelSelection,

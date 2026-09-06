@@ -23,7 +23,7 @@ import { relativeTime } from "../../lib/time";
 import { themeColorWithAlpha } from "../../lib/mobileTheme";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
-import { useThreadPr, type ThreadPr } from "../../state/use-thread-pr";
+import { useThreadPr, type ThreadPrPresentation } from "../../state/use-thread-pr";
 import type { HomeGroupDisplayAction } from "../home/homeListItems";
 import { ThreadSwipeable } from "../home/thread-swipe-actions";
 import { buildThreadTitleRegenerationMenuItems } from "./thread-title-regeneration-menu";
@@ -42,9 +42,15 @@ export type ThreadListVariant = "compact" | "sidebar";
 export const THREAD_LIST_COMPACT_INSET = HOME_HORIZONTAL_INSET;
 const SIDEBAR_ROW_RADIUS = 12;
 
-function pullRequestTintColor(state: ThreadPr["state"], colorScheme: "light" | "dark") {
+function pullRequestTintColor(
+  pr: Pick<ThreadPrPresentation, "state" | "isDraft">,
+  colorScheme: "light" | "dark",
+) {
   const dark = colorScheme === "dark";
-  switch (state) {
+  if (pr.state === "open" && pr.isDraft === true) {
+    return dark ? "#a1a1aa" : "#71717a";
+  }
+  switch (pr.state) {
     case "open":
       return dark ? "#34d399" : "#059669";
     case "merged":
@@ -291,8 +297,8 @@ export const PendingTaskListRow = memo(function PendingTaskListRow(props: {
   );
 
   const statusPill = (
-    <View className="rounded-full bg-adaptive-zinc-500-a12-a16 px-1.5 py-0.5">
-      <Text className="text-3xs font-t3-bold text-adaptive-zinc-600-300">Pending</Text>
+    <View className="rounded-full bg-subtle px-1.5 py-0.5">
+      <Text className="text-3xs font-t3-bold text-foreground-muted">Pending</Text>
     </View>
   );
 
@@ -548,9 +554,7 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
             <PullRequestIcon
               size={compact ? 13 : 11}
               color={
-                selected
-                  ? String(selectedForegroundColor)
-                  : pullRequestTintColor(pr.state, colorScheme)
+                selected ? String(selectedForegroundColor) : pullRequestTintColor(pr, colorScheme)
               }
             />
             <Text

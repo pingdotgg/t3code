@@ -34,6 +34,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.serverRefreshProviders]: AuthOrchestrationOperateScope,
   [WS_METHODS.serverUpdateProvider]: AuthOrchestrationOperateScope,
   [WS_METHODS.providerAuthStart]: AuthOrchestrationOperateScope,
+  [WS_METHODS.providerConsumeResetCredit]: AuthOrchestrationOperateScope,
   [WS_METHODS.providerAuthComplete]: AuthOrchestrationOperateScope,
   [WS_METHODS.providerAuthCancel]: AuthOrchestrationOperateScope,
   [WS_METHODS.providerAuthLogout]: AuthOrchestrationOperateScope,
@@ -52,6 +53,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.serverDiscoverSourceControl]: AuthOrchestrationReadScope,
   [WS_METHODS.serverGetTraceDiagnostics]: AuthOrchestrationReadScope,
   [WS_METHODS.serverGetProcessDiagnostics]: AuthOrchestrationReadScope,
+  [WS_METHODS.serverGetHostResources]: AuthOrchestrationReadScope,
   [WS_METHODS.serverGetProcessResourceHistory]: AuthOrchestrationReadScope,
   [WS_METHODS.serverGetResourceTelemetryHistory]: AuthOrchestrationReadScope,
   [WS_METHODS.serverRetryResourceTelemetry]: AuthOrchestrationOperateScope,
@@ -81,6 +83,7 @@ export const RPC_REQUIRED_SCOPES = {
   // Read scope like the reads it un-caches: refreshing is part of reading, and a read-only
   // client pressing refresh must not be told it may not look again.
   [WS_METHODS.pullRequestsInvalidate]: AuthOrchestrationReadScope,
+  [WS_METHODS.pullRequestsSubscribeRefreshes]: AuthOrchestrationReadScope,
   // The candidate list is a read like the detail beside it; asking somebody for a review is a
   // write like every other one.
   [WS_METHODS.pullRequestsReviewerCandidates]: AuthOrchestrationReadScope,
@@ -97,6 +100,8 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.projectsWriteFile]: AuthOrchestrationOperateScope,
   [WS_METHODS.shellOpenInEditor]: AuthOrchestrationOperateScope,
   [WS_METHODS.filesystemBrowse]: AuthOrchestrationReadScope,
+  [WS_METHODS.agentSessionsScan]: AuthOrchestrationReadScope,
+  [WS_METHODS.agentSessionsImport]: AuthOrchestrationOperateScope,
   [WS_METHODS.assetsCreateUrl]: AuthOrchestrationReadScope,
   [WS_METHODS.attachmentsCreateUploadUrl]: AuthOrchestrationOperateScope,
   [WS_METHODS.attachmentsDelete]: AuthOrchestrationOperateScope,

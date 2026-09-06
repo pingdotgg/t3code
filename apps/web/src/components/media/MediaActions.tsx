@@ -33,7 +33,7 @@ function mediaFileName(source: MediaActionSource): string {
 }
 
 /** Explicit byte operations get fresh capabilities without replacing a player's active source. */
-export function useMediaActions(source: MediaActionSource) {
+function useMediaActions(source: MediaActionSource) {
   const createAssetUrl = useAtomQueryRunner(assetEnvironment.createUrl, {
     reportFailure: false,
     refresh: true,

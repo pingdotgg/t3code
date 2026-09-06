@@ -37,45 +37,22 @@ describe("DesktopPreReadyPlatform", () => {
     registerSchemesMock.mockReset();
   });
 
-  it("reads an explicit Electron command-line switch value", () => {
-    const value = DesktopPreReadyPlatform.readCommandLineSwitchValue(
-      {
-        hasSwitch: (switchName) => switchName === "password-store",
-        getSwitchValue: (switchName) => {
-          assert.equal(switchName, "password-store");
-          return "basic";
-        },
-      },
-      "password-store",
+  it.effect("preserves an explicit Linux password-store switch", () => {
+    hasSwitchMock.mockImplementation((switchName) => switchName === "password-store");
+    getSwitchValueMock.mockReturnValue(" basic ");
+
+    return Effect.gen(function* () {
+      const options = yield* DesktopPreReadyPlatform.DesktopPreReadyElectronOptions;
+
+      assert.equal(options.linuxPasswordStoreCommandLine, "basic");
+      assert.isFalse(appendSwitchMock.mock.calls.some(([name]) => name === "password-store"));
+    }).pipe(
+      Effect.provide(
+        DesktopPreReadyPlatform.layer.pipe(
+          Layer.provide(Layer.succeed(HostProcessPlatform, "linux")),
+        ),
+      ),
     );
-
-    assert.equal(value, "basic");
-  });
-
-  it("treats valueless Electron command-line switches as absent", () => {
-    const value = DesktopPreReadyPlatform.readCommandLineSwitchValue(
-      {
-        hasSwitch: () => true,
-        getSwitchValue: () => "",
-      },
-      "password-store",
-    );
-
-    assert.isNull(value);
-  });
-
-  it("returns null for missing Electron command-line switches", () => {
-    const value = DesktopPreReadyPlatform.readCommandLineSwitchValue(
-      {
-        hasSwitch: () => false,
-        getSwitchValue: () => {
-          throw new Error("Unexpected switch value read.");
-        },
-      },
-      "password-store",
-    );
-
-    assert.isNull(value);
   });
 
   it.effect(

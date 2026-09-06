@@ -26,6 +26,7 @@ import {
 } from "@t3tools/contracts/settings";
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
 import {
+  filterSharedServerPatch,
   findSharedSettingsMismatches,
   pickSharedServerSettings,
   splitSharedServerPatch,
@@ -53,10 +54,13 @@ type UnifiedSettingsPatch = ServerSettingsPatch & ClientSettingsPatch;
 
 const clientSettingsListeners = new Set<() => void>();
 const clientSettingsHydrationListeners = new Set<() => void>();
+type ClientSettingsHydrationStatus = "pending" | "ready" | "failed" | "retrying";
 let clientSettingsSnapshot = DEFAULT_CLIENT_SETTINGS;
-let clientSettingsHydrated = false;
+let clientSettingsHydrationStatus: ClientSettingsHydrationStatus = "pending";
 let clientSettingsHydrationPromise: Promise<void> | null = null;
 let clientSettingsHydrationGeneration = 0;
+let clientSettingsPersistenceQueue: Promise<void> = Promise.resolve();
+let deferredClientSettingsPatchCount = 0;
 
 function emitClientSettingsChange() {
   for (const listener of clientSettingsListeners) {
@@ -79,36 +83,40 @@ function replaceClientSettingsSnapshot(settings: ClientSettings): void {
   emitClientSettingsChange();
 }
 
-function setClientSettingsHydrated(nextHydrated: boolean): void {
-  if (clientSettingsHydrated === nextHydrated) {
+function setClientSettingsHydrationStatus(nextStatus: ClientSettingsHydrationStatus): void {
+  if (clientSettingsHydrationStatus === nextStatus) {
     return;
   }
-  clientSettingsHydrated = nextHydrated;
+  clientSettingsHydrationStatus = nextStatus;
   emitClientSettingsHydrationChange();
 }
 
 function subscribeClientSettings(listener: () => void): () => void {
   clientSettingsListeners.add(listener);
-  void hydrateClientSettings();
+  void hydrateClientSettings().catch(() => undefined);
   return () => {
     clientSettingsListeners.delete(listener);
   };
 }
 
 function getClientSettingsHydratedSnapshot(): boolean {
-  return clientSettingsHydrated;
+  return clientSettingsHydrationStatus === "ready";
+}
+
+function getClientSettingsHydrationStatusSnapshot(): ClientSettingsHydrationStatus {
+  return clientSettingsHydrationStatus;
 }
 
 function subscribeClientSettingsHydration(listener: () => void): () => void {
   clientSettingsHydrationListeners.add(listener);
-  void hydrateClientSettings();
+  void hydrateClientSettings().catch(() => undefined);
   return () => {
     clientSettingsHydrationListeners.delete(listener);
   };
 }
 
 async function hydrateClientSettings(): Promise<void> {
-  if (clientSettingsHydrated) {
+  if (clientSettingsHydrationStatus === "ready") {
     return;
   }
   if (clientSettingsHydrationPromise) {
@@ -116,6 +124,11 @@ async function hydrateClientSettings(): Promise<void> {
   }
 
   const hydrationGeneration = clientSettingsHydrationGeneration;
+  setClientSettingsHydrationStatus(
+    clientSettingsHydrationStatus === "failed" || clientSettingsHydrationStatus === "retrying"
+      ? "retrying"
+      : "pending",
+  );
   const nextHydration = (async () => {
     try {
       const persistedSettings = await ensureLocalApi().persistence.getClientSettings();
@@ -125,15 +138,16 @@ async function hydrateClientSettings(): Promise<void> {
       if (persistedSettings) {
         replaceClientSettingsSnapshot({ ...DEFAULT_CLIENT_SETTINGS, ...persistedSettings });
       }
+      setClientSettingsHydrationStatus("ready");
     } catch (error) {
+      if (hydrationGeneration === clientSettingsHydrationGeneration) {
+        setClientSettingsHydrationStatus("failed");
+      }
       console.error(`${CLIENT_SETTINGS_PERSISTENCE_ERROR_SCOPE} hydrate failed`, {
         operation: "hydrate",
         ...safeErrorLogAttributes(error),
       });
-    } finally {
-      if (hydrationGeneration === clientSettingsHydrationGeneration) {
-        setClientSettingsHydrated(true);
-      }
+      throw error;
     }
   })();
 
@@ -147,16 +161,74 @@ async function hydrateClientSettings(): Promise<void> {
   return clientSettingsHydrationPromise;
 }
 
-function persistClientSettings(settings: ClientSettings): void {
-  replaceClientSettingsSnapshot(settings);
-  void ensureLocalApi()
-    .persistence.setClientSettings(settings)
-    .catch((error) => {
-      console.error(`${CLIENT_SETTINGS_PERSISTENCE_ERROR_SCOPE} persist failed`, {
-        operation: "persist",
-        ...safeErrorLogAttributes(error),
-      });
+const defaultClientSettingsPersistence = (settings: ClientSettings): Promise<void> =>
+  ensureLocalApi().persistence.setClientSettings(settings);
+
+function enqueueClientSettingsPersistence<A>(work: () => Promise<A>): Promise<A> {
+  const result = clientSettingsPersistenceQueue.then(work);
+  clientSettingsPersistenceQueue = result.then(
+    () => undefined,
+    () => undefined,
+  );
+  return result;
+}
+
+export function persistClientSettingsPatch(
+  patch: ClientSettingsPatch,
+  persist: (settings: ClientSettings) => Promise<void> = defaultClientSettingsPersistence,
+): void {
+  // Patches queued before hydration must publish before newer optimistic patches.
+  const deferPatch =
+    clientSettingsHydrationStatus !== "ready" || deferredClientSettingsPatchCount > 0;
+  if (deferPatch) {
+    deferredClientSettingsPatchCount += 1;
+  } else {
+    replaceClientSettingsSnapshot({ ...getClientSettingsSnapshot(), ...patch });
+  }
+  void enqueueClientSettingsPersistence(async () => {
+    if (deferPatch) {
+      try {
+        if (clientSettingsHydrationStatus !== "ready") {
+          await hydrateClientSettings();
+        }
+        replaceClientSettingsSnapshot({ ...getClientSettingsSnapshot(), ...patch });
+      } finally {
+        deferredClientSettingsPatchCount -= 1;
+      }
+    }
+    await persist(getClientSettingsSnapshot());
+  }).catch((error) => {
+    console.error(`${CLIENT_SETTINGS_PERSISTENCE_ERROR_SCOPE} persist failed`, {
+      operation: "persist",
+      ...safeErrorLogAttributes(error),
     });
+  });
+}
+
+/**
+ * Persists a client-settings update before publishing it to the in-memory
+ * snapshot. If another settings write lands while persistence is pending, the
+ * updater is reapplied to that newer snapshot and persisted again so neither
+ * change is lost.
+ */
+export async function persistClientSettingsUpdate(
+  update: (current: ClientSettings) => ClientSettings,
+  persist: (settings: ClientSettings) => Promise<void> = defaultClientSettingsPersistence,
+): Promise<ClientSettings> {
+  return enqueueClientSettingsPersistence(async () => {
+    if (clientSettingsHydrationStatus !== "ready") {
+      await hydrateClientSettings();
+    }
+    for (;;) {
+      const current = getClientSettingsSnapshot();
+      const next = update(current);
+      await persist(next);
+      if (getClientSettingsSnapshot() === current) {
+        replaceClientSettingsSnapshot(next);
+        return next;
+      }
+    }
+  });
 }
 
 // ── Key sets for routing patches ─────────────────────────────────────
@@ -194,7 +266,9 @@ export function getClientSettings(): ClientSettings {
 }
 
 /**
- * Resolves once client settings have been read from disk.
+ * Resolves after settings load or storage confirms no saved settings exist.
+ * Failed reads reject and remain retryable. They must not allow defaults to
+ * overwrite saved preferences.
  *
  * The pre-hydration snapshot is just the schema defaults, so imperative paths
  * that open a preview must await this or they bake the built-in viewport, zoom
@@ -209,6 +283,14 @@ export function useClientSettingsHydrated(): boolean {
     subscribeClientSettingsHydration,
     getClientSettingsHydratedSnapshot,
     () => false,
+  );
+}
+
+export function useClientSettingsHydrationStatus(): ClientSettingsHydrationStatus {
+  return useSyncExternalStore(
+    subscribeClientSettingsHydration,
+    getClientSettingsHydrationStatusSnapshot,
+    () => "pending",
   );
 }
 
@@ -329,18 +411,6 @@ export function usePrimarySettingsAvailable(): boolean {
   return primaryEnvironment !== null || !isHostedStaticApp();
 }
 
-/** Environments that can receive a shared settings write right now. */
-function useSharedSettingsSyncTargetIds(): ReadonlyArray<EnvironmentId> {
-  const { environments } = useEnvironments();
-  return useMemo(
-    () =>
-      environments
-        .filter(supportsSharedSettingsSync)
-        .map((environment) => environment.environmentId),
-    [environments],
-  );
-}
-
 /**
  * Returns an updater that routes each key to the correct backing store.
  *
@@ -355,7 +425,7 @@ function useUpdateSettingsTarget(environmentId: EnvironmentId | null) {
     serverEnvironment.updateSettings,
     "server settings update",
   );
-  const sharedSettingsSyncTargetIds = useSharedSettingsSyncTargetIds();
+  const { environments } = useEnvironments();
   const updateSettings = useCallback(
     (patch: UnifiedSettingsPatch) => {
       const { serverPatch, clientPatch } = splitPatch(patch);
@@ -363,11 +433,11 @@ function useUpdateSettingsTarget(environmentId: EnvironmentId | null) {
       if (Object.keys(serverPatch).length > 0) {
         const { sharedPatch, localPatch } = splitSharedServerPatch(serverPatch);
         // Dropping the write silently leaves the control looking saved.
-        const warnUnsaved = () =>
+        const warnUnsaved = (description = PRIMARY_SETTINGS_UNAVAILABLE_MESSAGE) =>
           toastManager.add({
             type: "warning",
             title: "Setting not saved",
-            description: PRIMARY_SETTINGS_UNAVAILABLE_MESSAGE,
+            description,
           });
         if (Object.keys(localPatch).length > 0) {
           if (environmentId) {
@@ -380,29 +450,38 @@ function useUpdateSettingsTarget(environmentId: EnvironmentId | null) {
           }
         }
         if (Object.keys(sharedPatch).length > 0) {
-          const targets = new Set(sharedSettingsSyncTargetIds);
+          const targets = new Set(
+            environments.filter(supportsSharedSettingsSync).map((target) => target.environmentId),
+          );
           if (environmentId) {
             targets.add(environmentId);
           }
-          if (targets.size === 0) {
-            warnUnsaved();
-          }
+          let wroteToTarget = false;
           for (const targetId of targets) {
+            const target = environments.find((candidate) => candidate.environmentId === targetId);
+            const targetPatch = filterSharedServerPatch(
+              sharedPatch,
+              target?.serverConfig?.environment.capabilities,
+            );
+            if (Object.keys(targetPatch).length === 0) continue;
+            wroteToTarget = true;
             void persistServerSettings({
               environmentId: targetId,
-              input: { patch: sharedPatch },
+              input: { patch: targetPatch },
             });
+          }
+          if (!wroteToTarget) {
+            warnUnsaved(
+              targets.size > 0 ? "Update older servers to save this setting." : undefined,
+            );
           }
         }
       }
       if (Object.keys(clientPatch).length > 0) {
-        persistClientSettings({
-          ...getClientSettingsSnapshot(),
-          ...clientPatch,
-        });
+        persistClientSettingsPatch(clientPatch);
       }
     },
-    [environmentId, persistServerSettings, sharedSettingsSyncTargetIds],
+    [environmentId, environments, persistServerSettings],
   );
 
   return updateSettings;
@@ -417,6 +496,7 @@ function useUpdateSettingsTarget(environmentId: EnvironmentId | null) {
 export function useSharedSettingsSync() {
   const primaryEnvironment = usePrimaryEnvironment();
   const primaryEnvironmentId = primaryEnvironment?.environmentId ?? null;
+  const primaryCapabilities = primaryEnvironment?.serverConfig?.environment.capabilities;
   // Read the loaded config, not `primaryServerSettingsAtom`: that atom falls
   // back to defaults while the primary is disconnected, and "apply to all"
   // must never push defaults over real values. Same for a primary too old to
@@ -436,28 +516,35 @@ export function useSharedSettingsSync() {
       findSharedSettingsMismatches({
         primaryEnvironmentId,
         primarySettings,
+        primaryCapabilities,
         environments: environments.map((environment) => ({
           environmentId: environment.environmentId,
           label: environment.label,
           syncEligible: supportsSharedSettingsSync(environment),
           settings: environment.serverConfig?.settings ?? null,
+          capabilities: environment.serverConfig?.environment.capabilities,
         })),
       }),
-    [environments, primaryEnvironmentId, primarySettings],
+    [environments, primaryEnvironmentId, primarySettings, primaryCapabilities],
   );
 
   const applyToAll = useCallback(() => {
     if (primarySettings === null) {
       return;
     }
-    const patch = pickSharedServerSettings(primarySettings);
+    const patch = pickSharedServerSettings(primarySettings, primaryCapabilities);
     for (const mismatch of mismatches) {
+      const target = environments.find(
+        (candidate) => candidate.environmentId === mismatch.environmentId,
+      );
       void persistServerSettings({
         environmentId: mismatch.environmentId,
-        input: { patch },
+        input: {
+          patch: filterSharedServerPatch(patch, target?.serverConfig?.environment.capabilities),
+        },
       });
     }
-  }, [mismatches, persistServerSettings, primarySettings]);
+  }, [environments, mismatches, persistServerSettings, primarySettings, primaryCapabilities]);
 
   return { mismatches, applyToAll };
 }
@@ -472,9 +559,24 @@ export function useUpdatePrimarySettings() {
 
 export function useUpdateClientSettings() {
   return useCallback((patch: ClientSettingsPatch) => {
-    persistClientSettings({
-      ...getClientSettingsSnapshot(),
-      ...patch,
-    });
+    persistClientSettingsPatch(patch);
   }, []);
+}
+
+export function __resetClientSettingsPersistenceForTests(): void {
+  clientSettingsHydrationGeneration += 1;
+  clientSettingsSnapshot = DEFAULT_CLIENT_SETTINGS;
+  clientSettingsHydrationStatus = "pending";
+  clientSettingsHydrationPromise = null;
+  clientSettingsPersistenceQueue = Promise.resolve();
+  deferredClientSettingsPatchCount = 0;
+  clientSettingsListeners.clear();
+  clientSettingsHydrationListeners.clear();
+}
+
+export function __setClientSettingsForTests(settings: ClientSettings): void {
+  clientSettingsHydrationGeneration += 1;
+  clientSettingsSnapshot = settings;
+  clientSettingsHydrationStatus = "ready";
+  clientSettingsHydrationPromise = null;
 }

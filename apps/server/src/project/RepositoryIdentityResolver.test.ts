@@ -1,3 +1,5 @@
+// @effect-diagnostics nodeBuiltinImport:off - realpathSync.native resolves Windows 8.3 short names, which the Effect realPath does not.
+import * as NodeFS from "node:fs";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import * as Duration from "effect/Duration";
@@ -131,9 +133,11 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
 
       const resolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
       const identity = yield* resolver.resolve(cwd);
+      // Native realpath, since git reports the long form of a directory the
+      // temp dir may name by its 8.3 short form on Windows.
       const resolvedIdentityRoot =
-        identity?.rootPath === undefined ? "" : yield* fileSystem.realPath(identity.rootPath);
-      const resolvedCwd = yield* fileSystem.realPath(cwd);
+        identity?.rootPath === undefined ? "" : NodeFS.realpathSync.native(identity.rootPath);
+      const resolvedCwd = NodeFS.realpathSync.native(cwd);
 
       expect(identity).not.toBeNull();
       expect(identity?.canonicalKey).toBe("github.com/t3tools/t3code");
@@ -161,8 +165,8 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
       const resolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
       const identity = yield* resolver.resolve(nestedWorkspace);
       const resolvedIdentityRoot =
-        identity?.rootPath === undefined ? "" : yield* fileSystem.realPath(identity.rootPath);
-      const resolvedRepoRoot = yield* fileSystem.realPath(repoRoot);
+        identity?.rootPath === undefined ? "" : NodeFS.realpathSync.native(identity.rootPath);
+      const resolvedRepoRoot = NodeFS.realpathSync.native(repoRoot);
 
       expect(identity).not.toBeNull();
       expect(identity?.canonicalKey).toBe("github.com/t3tools/t3code");

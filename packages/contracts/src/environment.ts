@@ -94,6 +94,8 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   threadSettlement: Schema.optionalKey(Schema.Boolean),
   /** Server evaluates merge and inactivity settlement without a client. */
   threadAutoSettlement: Schema.optionalKey(Schema.Boolean),
+  /** Server persists the opt-in for continuing interrupted threads after restarts. */
+  threadRestartContinuation: Schema.optionalKey(Schema.Boolean),
   /** Server understands thread.snooze / thread.unsnooze commands. Same
       version-skew contract as threadSettlement. */
   threadSnooze: Schema.optionalKey(Schema.Boolean),
@@ -102,6 +104,11 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
       client reconnecting to one must drop published themes rather than keep
       showing a set nothing will ever update. */
   environmentThemes: Schema.optionalKey(Schema.Boolean),
+  /** Server streams quota from configured usage-limit sources. Same
+      version-skew contract as environmentThemes. */
+  usageLimitSources: Schema.optionalKey(Schema.Boolean),
+  /** Server persists custom model rates and applies them to usage summaries. */
+  usagePriceOverrides: Schema.optionalKey(Schema.Boolean),
   /** Server understands thread.pin / thread.unpin commands. Same
       version-skew contract as threadSettlement. */
   threadPinning: Schema.optionalKey(Schema.Boolean),

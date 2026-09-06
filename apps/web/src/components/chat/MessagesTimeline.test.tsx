@@ -1,9 +1,12 @@
 import { CheckpointRef, EnvironmentId, MessageId, TurnId } from "@t3tools/contracts";
 import { codexFeedbackMessage } from "@t3tools/client-runtime/state/threads";
-import { createRef, type ReactNode, type Ref } from "react";
+import { act, createRef, useLayoutEffect, type ReactNode, type Ref } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { create, type ReactTestRenderer } from "react-test-renderer";
 import { beforeAll, describe, expect, it, vi } from "vite-plus/test";
 import type { LegendListRef, MaintainScrollAtEndOptions } from "@legendapp/list/react";
+import { shouldUseRestingComposerLayout } from "../composerFooterLayout";
+import { useComposerFocusState } from "./useComposerFocusState";
 
 vi.mock("@legendapp/list/react", async () => {
   const legendListTestId = "legend-list";
@@ -122,6 +125,10 @@ vi.mock("@pierre/diffs/react", () => {
   return { FileDiff: MockFileDiff };
 });
 
+vi.mock("../DiffWorkerPoolProvider", () => ({
+  DiffWorkerPoolProvider: ({ children }: { children?: ReactNode }) => children,
+}));
+
 function matchMedia() {
   return {
     matches: false,
@@ -233,6 +240,94 @@ function buildAssistantTimelineEntry(text: string) {
 }
 
 describe("MessagesTimeline", () => {
+  it.each([
+    { toolLifecycleStatus: "inProgress", isAtEnd: true },
+    { toolLifecycleStatus: "inProgress", isAtEnd: false },
+    { toolLifecycleStatus: "completed", isAtEnd: true },
+    { toolLifecycleStatus: "completed", isAtEnd: false },
+  ] as const)(
+    "restores the composer after closing $toolLifecycleStatus tool output only at the end: $isAtEnd",
+    async ({ toolLifecycleStatus, isAtEnd }) => {
+      const frames = new Map<number, FrameRequestCallback>();
+      let nextFrame = 0;
+      vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+        frames.set(++nextFrame, callback);
+        return nextFrame;
+      });
+      vi.stubGlobal("cancelAnimationFrame", (frame: number) => frames.delete(frame));
+      vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+      const flushFrame = () =>
+        act(() => {
+          const callbacks = [...frames.values()];
+          frames.clear();
+          callbacks.forEach((callback) => callback(0));
+        });
+      const props = buildProps();
+      let timelineIsAtEnd = isAtEnd;
+      props.listRef.current = {
+        getState: () => ({ isAtEnd: timelineIsAtEnd }),
+        getScrollableNode: () => null,
+      } as unknown as LegendListRef;
+      let isResting = true;
+      function ThreadProbe() {
+        const composer = useComposerFocusState(false);
+        useLayoutEffect(() => {
+          isResting = shouldUseRestingComposerLayout({
+            isExistingThread: true,
+            isMobileViewport: false,
+            isFocused: composer.isComposerFocused,
+            isScrollCollapsed: composer.isComposerScrollCollapsed,
+            hasExpandedChrome: false,
+            collapseOnBlur: true,
+            timelineOverflows: true,
+          });
+        });
+        return (
+          <MessagesTimeline
+            {...props}
+            isWorking={toolLifecycleStatus === "inProgress"}
+            onToolOutputCollapsedAtEnd={composer.restoreAfterTimelineReachedEnd}
+            timelineEntries={[
+              {
+                id: "running-tool",
+                kind: "work",
+                createdAt: MESSAGE_CREATED_AT,
+                entry: {
+                  id: "running-tool",
+                  createdAt: MESSAGE_CREATED_AT,
+                  label: "Run command",
+                  tone: "tool",
+                  toolLifecycleStatus,
+                  detail: "Command output",
+                },
+              },
+            ]}
+          />
+        );
+      }
+      let renderer: ReactTestRenderer | undefined;
+      try {
+        await act(() => {
+          renderer = create(<ThreadProbe />);
+        });
+        const toggle = renderer!.root.findByProps({ "aria-expanded": false });
+        await act(() => toggle.props.onClick());
+        await flushFrame();
+        await flushFrame();
+        expect(isResting).toBe(true);
+
+        timelineIsAtEnd = false;
+        await act(() => toggle.props.onClick());
+        await flushFrame();
+        timelineIsAtEnd = isAtEnd;
+        await flushFrame();
+        expect(isResting).toBe(!isAtEnd);
+      } finally {
+        await act(() => renderer?.unmount());
+      }
+    },
+  );
+
   it("renders a feedback command and its pending response as normal thread messages", () => {
     const submission = {
       id: MessageId.make("feedback-command"),
@@ -375,9 +470,8 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("sticky top-2 z-10");
     expect(markup).not.toContain("self-start");
     expect(markup).toContain("whitespace-nowrap");
-    expect(markup).toContain("!size-[22px]");
     expect(markup).toContain("size-3");
-    expect(markup).toContain('aria-label="Collapse all folders"');
+    expect(markup).not.toContain('aria-label="Collapse all folders"');
     expect(markup).toContain('aria-label="Open diff"');
     expect(markup).toContain("1 changed file");
   });
@@ -974,7 +1068,7 @@ describe("MessagesTimeline", () => {
             entry: {
               id: "work-1",
               createdAt: "2026-03-17T19:12:28.000Z",
-              label: "Context compacted",
+              label: "Compacted context 899K → 19K tokens",
               tone: "info",
             },
           },
@@ -982,7 +1076,7 @@ describe("MessagesTimeline", () => {
       />,
     );
 
-    expect(markup).toContain("Context compacted");
+    expect(markup).toContain("Compacted context 899K → 19K tokens");
   });
 
   it("summarizes changed files in one line", () => {
@@ -1131,7 +1225,7 @@ describe("MessagesTimeline", () => {
               label: "Ran command",
               tone: "tool",
               itemType: "command_execution",
-              toolLifecycleStatus: "completed",
+              toolLifecycleStatus: "failed",
             },
           },
         ]}
@@ -1199,7 +1293,7 @@ describe("MessagesTimeline", () => {
     expect(markup).not.toContain('aria-label="Hidden work includes a failure"');
   });
 
-  it("shows the animated one-line label for a live tool group", () => {
+  it("shows the one-line label for a live tool group", () => {
     const turnId = TurnId.make("turn-live");
     const markup = renderToStaticMarkup(
       <MessagesTimeline
@@ -1236,7 +1330,6 @@ describe("MessagesTimeline", () => {
 
     expect(markup).toContain("Working for");
     expect(markup).toContain("Running pnpm");
-    expect(markup).toContain("live-activity-focus");
   });
 
   it("scopes a live row failure to the tool named by the row", () => {
@@ -1354,7 +1447,6 @@ describe("MessagesTimeline", () => {
 
     expect(markup).toContain("Running pnpm");
     expect(markup).toContain("lucide-terminal");
-    expect(markup).toContain("live-activity-focus");
     expect(markup).not.toContain("Ran pnpm");
     expect(markup).not.toContain("Thinking");
     expect(markup).not.toContain('data-timeline-row-kind="thinking"');
@@ -1471,7 +1563,7 @@ describe("MessagesTimeline", () => {
     );
 
     expect(markup).toContain('aria-label="Received 1 update and used 1 tool, tool call failed"');
-    // Ordinary tool failures render muted, not red.
+    // Ordinary tool failures do not use destructive row styling.
     expect(markup).not.toContain("text-destructive");
   });
 

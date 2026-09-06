@@ -22,15 +22,10 @@ export { EMBER_THEME, GROVE_THEME, IRIS_THEME, OCEAN_THEME, T3_CHAT_THEME, THEME
 export type { ThemeAppearance, ThemeColorRole, ThemeColors, ThemeDefinition, ThemeVariants };
 
 export const T3_CHAT_THEME_ID = "t3-chat" as const;
-export const T3_CHAT_THEME_LABEL = "T3 Chat";
-export const GROVE_THEME_ID = "grove" as const;
-export const GROVE_THEME_LABEL = "Grove";
+const GROVE_THEME_ID = "grove" as const;
 export const OCEAN_THEME_ID = "ocean" as const;
-export const OCEAN_THEME_LABEL = "Ocean";
-export const EMBER_THEME_ID = "ember" as const;
-export const EMBER_THEME_LABEL = "Ember";
-export const IRIS_THEME_ID = "iris" as const;
-export const IRIS_THEME_LABEL = "Iris";
+const EMBER_THEME_ID = "ember" as const;
+const IRIS_THEME_ID = "iris" as const;
 export const THEME_FILE_VERSION = 1 as const;
 export const CUSTOM_THEMES_STORAGE_KEY = "t3code:themes:v1";
 export const THEME_FOLLOW_SYSTEM_STORAGE_KEY = "t3code:theme-follow-system";
@@ -475,12 +470,6 @@ type ThemeRgbColor = {
   b: number;
 };
 
-type ThemeHslColor = {
-  h: number;
-  s: number;
-  l: number;
-};
-
 type ThemeOklch = { L: number; C: number; h: number };
 type ParsedThemeColor = { color: ThemeOklch; alpha: number };
 
@@ -599,48 +588,6 @@ function canonicalizeThemeDefinition(theme: ThemeDefinition): ThemeDefinition {
         }
       : {}),
   };
-}
-
-function themeRgbToHsl(color: ThemeRgbColor): ThemeHslColor {
-  const red = color.r / 255;
-  const green = color.g / 255;
-  const blue = color.b / 255;
-  const max = Math.max(red, green, blue);
-  const min = Math.min(red, green, blue);
-  const delta = max - min;
-  const lightness = (max + min) / 2;
-
-  if (delta === 0) return { h: 0, s: 0, l: lightness };
-
-  const saturation = delta / (1 - Math.abs(2 * lightness - 1));
-  let hue = 0;
-  if (max === red) hue = ((green - blue) / delta) % 6;
-  else if (max === green) hue = (blue - red) / delta + 2;
-  else hue = (red - green) / delta + 4;
-
-  return { h: (hue * 60 + 360) % 360, s: saturation, l: lightness };
-}
-
-function themeHslToRgb(color: ThemeHslColor): ThemeRgbColor {
-  const hue = ((color.h % 360) + 360) % 360;
-  const chroma = (1 - Math.abs(2 * color.l - 1)) * color.s;
-  const hueSector = hue / 60;
-  const secondary = chroma * (1 - Math.abs((hueSector % 2) - 1));
-  const match = color.l - chroma / 2;
-  const [red, green, blue] =
-    hueSector < 1
-      ? [chroma, secondary, 0]
-      : hueSector < 2
-        ? [secondary, chroma, 0]
-        : hueSector < 3
-          ? [0, chroma, secondary]
-          : hueSector < 4
-            ? [0, secondary, chroma]
-            : hueSector < 5
-              ? [secondary, 0, chroma]
-              : [chroma, 0, secondary];
-
-  return { r: (red + match) * 255, g: (green + match) * 255, b: (blue + match) * 255 };
 }
 
 function mixThemeRgbColors(
@@ -1044,205 +991,6 @@ function standardMutedThemeText(
       ? STANDARD_DARK_MUTED_CONTRAST
       : STANDARD_LIGHT_MUTED_CONTRAST;
   return readableThemeText(background, foreground, 1, target);
-}
-
-function managedThemeBackground(value: string, appearance: ThemeAppearance): ThemeRgbColor {
-  const selected = parseThemeRgbColor(
-    value,
-    appearance === "dark" ? { r: 24, g: 15, b: 27 } : { r: 250, g: 245, b: 250 },
-  );
-  const hsl = themeRgbToHsl(selected);
-  return themeHslToRgb({
-    h: hsl.h,
-    // A background tint should support the selected mode, not turn the whole
-    // app into a high-saturation surface.
-    s: Math.min(hsl.s, appearance === "dark" ? 0.3 : 0.2),
-    l:
-      appearance === "dark"
-        ? Math.min(0.13, Math.max(0.07, hsl.l))
-        : Math.min(0.985, Math.max(0.94, hsl.l)),
-  });
-}
-
-function managedThemeAccent(
-  value: string,
-  appearance: ThemeAppearance,
-  background: ThemeRgbColor,
-): ThemeRgbColor {
-  const selected = parseThemeRgbColor(value, { r: 168, g: 67, b: 112 });
-  const hsl = themeRgbToHsl(selected);
-  const preferredLightness =
-    appearance === "dark"
-      ? Math.min(0.72, Math.max(0.42, hsl.l))
-      : Math.min(0.58, Math.max(0.35, hsl.l));
-  const lightnessRange: readonly [number, number] =
-    appearance === "dark" ? [0.42, 0.82] : [0.22, 0.58];
-  const saturation = Math.min(hsl.s, 0.82);
-  const candidates = Array.from({ length: 61 }, (_, index) => {
-    const lightness =
-      lightnessRange[0] + ((lightnessRange[1] - lightnessRange[0]) * index) / (61 - 1);
-    const color = themeHslToRgb({ h: hsl.h, s: saturation, l: lightness });
-    return { color, lightness, contrast: themeContrastRatio(color, background) };
-  });
-  // Leave a little room for browser color conversion at render time.
-  const readableCandidates = candidates.filter((candidate) => candidate.contrast >= 4.7);
-  const pool = readableCandidates.length > 0 ? readableCandidates : candidates;
-
-  return pool.reduce((best, candidate) => {
-    const distance = Math.abs(candidate.lightness - preferredLightness);
-    const bestDistance = Math.abs(best.lightness - preferredLightness);
-    return distance < bestDistance ||
-      (distance === bestDistance && candidate.contrast > best.contrast)
-      ? candidate
-      : best;
-  }).color;
-}
-
-/**
- * Creates the guided palette used by the basic theme editor. The two user
- * colors control the mood, while dependent roles are generated together so
- * text, surfaces, message actions, code, and terminal UI stay coherent.
- */
-export function createManagedThemeColors(
-  appearance: ThemeAppearance,
-  backgroundValue: string,
-  accentValue: string,
-  options?: {
-    /** Use the seeds exactly as given instead of nudging them into the
-     * readability envelope. Derived foregrounds still adapt for contrast. */
-    exactSeeds?: boolean;
-  },
-): ThemeColors {
-  const defaults = getDefaultThemeColors(appearance);
-  const canvas = options?.exactSeeds
-    ? parseThemeRgbColor(
-        backgroundValue,
-        appearance === "dark" ? { r: 24, g: 15, b: 27 } : { r: 250, g: 245, b: 250 },
-      )
-    : managedThemeBackground(backgroundValue, appearance);
-  const accent = options?.exactSeeds
-    ? parseThemeRgbColor(accentValue, { r: 168, g: 67, b: 112 })
-    : managedThemeAccent(accentValue, appearance, canvas);
-  const text = readableThemeForeground(canvas);
-  const textMuted = standardMutedThemeText(canvas, text);
-  // The top bar is part of the main panel, not a separate chrome layer: it
-  // shares the canvas, and its controls sit on the panel's own surfaces.
-  const chrome = canvas;
-  const sidebar = mixThemeRgbColors(canvas, accent, 0.08);
-  const surfaceRaised = mixThemeRgbColors(canvas, text, appearance === "dark" ? 0.12 : 0.035);
-  const surfaceOverlay = mixThemeRgbColors(canvas, text, appearance === "dark" ? 0.18 : 0.06);
-  const secondary = mixThemeRgbColors(canvas, accent, appearance === "dark" ? 0.2 : 0.08);
-  const muted = mixThemeRgbColors(canvas, accent, appearance === "dark" ? 0.13 : 0.06);
-  const mutedForeground = readableThemeText(muted, text, 1, 4.6);
-  const placeholder = readableThemeText(surfaceRaised, text, 1, 4.6);
-  const accentSurface = mixThemeRgbColors(canvas, accent, appearance === "dark" ? 0.3 : 0.14);
-  const messageSurface = mixThemeRgbColors(canvas, accent, appearance === "dark" ? 0.36 : 0.18);
-  const toolbarControl = mixThemeRgbColors(chrome, accent, appearance === "dark" ? 0.2 : 0.08);
-  const toolbarBorder = mixThemeRgbColors(chrome, accent, appearance === "dark" ? 0.35 : 0.14);
-  const accentForeground = readableThemeForeground(accent);
-  // Code and terminal are large surfaces: they keep the canvas hue instead of
-  // drifting toward the foreground grey. Code sits just above the canvas —
-  // a whisper of the text tint — and the terminal sits on the canvas itself.
-  const codeBackground = mixThemeRgbColors(canvas, text, appearance === "dark" ? 0.06 : 0.025);
-  const terminalBackground = canvas;
-  const messageActionHover = mixThemeRgbColors(
-    accent,
-    accentForeground === THEME_LIGHT_FOREGROUND || accentForeground === THEME_WHITE_FOREGROUND
-      ? THEME_BLACK_FOREGROUND
-      : THEME_WHITE_FOREGROUND,
-    0.12,
-  );
-
-  // The update family follows the accent instead of inheriting the default
-  // palette's brand color, so generated themes carry their own identity in
-  // update pills and banners. Error and warning stay semantic defaults.
-  const updateSurface = mixThemeRgbColors(canvas, accent, appearance === "dark" ? 0.32 : 0.16);
-  const updateForeground = mixThemeRgbColors(
-    accent,
-    appearance === "dark" ? THEME_WHITE_FOREGROUND : THEME_BLACK_FOREGROUND,
-    0.35,
-  );
-
-  return {
-    ...defaults,
-    ...standardStatusColors(canvas),
-    update: themeRgbToThemeColor(accent),
-    updateForeground: themeRgbToThemeColor(updateForeground),
-    updateSurface: themeRgbToThemeColor(updateSurface),
-    canvas: themeRgbToThemeColor(canvas),
-    chrome: themeRgbToThemeColor(chrome),
-    toolbar: themeRgbToThemeColor(chrome),
-    toolbarForeground: themeRgbToThemeColor(text),
-    toolbarBorder: themeRgbToThemeColor(toolbarBorder),
-    toolbarControl: themeRgbToThemeColor(toolbarControl),
-    toolbarControlForeground: themeRgbToThemeColor(text),
-    toolbarControlHover: themeRgbToThemeColor(accentSurface),
-    surface: themeRgbToThemeColor(canvas),
-    surfaceRaised: themeRgbToThemeColor(surfaceRaised),
-    surfaceOverlay: themeRgbToThemeColor(surfaceOverlay),
-    text: themeRgbToThemeColor(text),
-    textMuted: themeRgbToThemeColor(textMuted),
-    // Borders blend through the accent before lightening so control chrome
-    // carries the theme hue like the hand-tuned palettes (#5c345b, #e0d3e1)
-    // instead of flattening to grey.
-    border: themeRgbToThemeColor(
-      mixThemeRgbColors(
-        mixThemeRgbColors(canvas, accent, appearance === "dark" ? 0.22 : 0.1),
-        text,
-        0.1,
-      ),
-    ),
-    input: themeRgbToThemeColor(
-      mixThemeRgbColors(
-        mixThemeRgbColors(canvas, accent, appearance === "dark" ? 0.3 : 0.14),
-        text,
-        appearance === "dark" ? 0.14 : 0.13,
-      ),
-    ),
-    focus: themeRgbToThemeColor(accent),
-    accent: themeRgbToThemeColor(accent),
-    accentForeground: themeRgbToThemeColor(accentForeground),
-    secondary: themeRgbToThemeColor(secondary),
-    secondaryForeground: themeRgbToThemeColor(readableThemeForeground(secondary)),
-    muted: themeRgbToThemeColor(muted),
-    mutedForeground: themeRgbToThemeColor(mutedForeground),
-    placeholder: themeRgbToThemeColor(placeholder),
-    secondaryLabel: themeRgbToThemeColor(textMuted),
-    iconMuted: themeRgbToThemeColor(textMuted),
-    accentSurface: themeRgbToThemeColor(accentSurface),
-    accentSurfaceForeground: themeRgbToThemeColor(readableThemeForeground(accentSurface)),
-    messageSurface: themeRgbToThemeColor(messageSurface),
-    messageForeground: themeRgbToThemeColor(readableThemeForeground(messageSurface)),
-    messageAction: themeRgbToThemeColor(accent),
-    messageActionForeground: themeRgbToThemeColor(accentForeground),
-    messageActionHover: themeRgbToThemeColor(messageActionHover),
-    codeBackground: themeRgbToThemeColor(codeBackground),
-    codeForeground: themeRgbToThemeColor(readableThemeForeground(codeBackground)),
-    sidebar: themeRgbToThemeColor(sidebar),
-    sidebarForeground: themeRgbToThemeColor(readableThemeForeground(sidebar)),
-    sidebarMutedForeground: themeRgbToThemeColor(standardMutedThemeText(sidebar, text)),
-    sidebarControlSurface: themeRgbToThemeColor(
-      mixThemeRgbColors(sidebar, text, appearance === "dark" ? 0.16 : 0.08),
-    ),
-    sidebarRowHover: themeRgbToThemeColor(mixThemeRgbColors(sidebar, accent, 0.12)),
-    sidebarRowActive: themeRgbToThemeColor(mixThemeRgbColors(sidebar, accent, 0.2)),
-    sidebarRowSelected: themeRgbToThemeColor(mixThemeRgbColors(sidebar, accent, 0.24)),
-    sidebarBorder: themeRgbToThemeColor(
-      mixThemeRgbColors(sidebar, text, appearance === "dark" ? 0.35 : 0.12),
-    ),
-    terminalBackground: themeRgbToThemeColor(terminalBackground),
-    terminalForeground: themeRgbToThemeColor(readableThemeForeground(terminalBackground)),
-    terminalCursor: themeRgbToThemeColor(accent),
-    terminalSelection: themeRgbToThemeColor(
-      mixThemeRgbColors(canvas, accent, appearance === "dark" ? 0.35 : 0.18),
-    ),
-    terminalScrollbar: themeRgbToThemeColor(
-      mixThemeRgbColors(canvas, text, appearance === "dark" ? 0.42 : 0.22),
-    ),
-    terminalScrollbarHover: themeRgbToThemeColor(
-      mixThemeRgbColors(canvas, text, appearance === "dark" ? 0.55 : 0.32),
-    ),
-  };
 }
 
 /** Theme-file defaults follow the flagship palette for the requested mode. */

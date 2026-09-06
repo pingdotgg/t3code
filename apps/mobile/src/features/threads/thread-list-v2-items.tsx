@@ -23,7 +23,6 @@ import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import { useThreadPr } from "../../state/use-thread-pr";
 import { ThreadSwipeable } from "../home/thread-swipe-actions";
-import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { buildThreadTitleRegenerationMenuItems } from "./thread-title-regeneration-menu";
 import {
   resolveThreadListV2SnoozeMenuSelection,
@@ -53,10 +52,10 @@ const MONO_FONT = Platform.select({
 const STATUS_LABEL_BY_STATUS: Partial<
   Record<ThreadListV2Status, { label: string; className: string }>
 > = {
-  approval: { label: "Approval", className: "text-adaptive-amber-700-300" },
-  input: { label: "Input", className: "text-adaptive-indigo-600-300" },
-  working: { label: "Working", className: "text-adaptive-sky-600-400" },
-  failed: { label: "Failed", className: "text-adaptive-red-700-300" },
+  approval: { label: "Approval", className: "text-warning-foreground" },
+  input: { label: "Input", className: "text-foreground-secondary" },
+  working: { label: "Working", className: "text-foreground-secondary" },
+  failed: { label: "Failed", className: "text-danger-foreground" },
 };
 
 function threadTimeLabel(thread: EnvironmentThreadShell): string {
@@ -107,9 +106,6 @@ export const ThreadListV2SectionDivider = memo(function ThreadListV2SectionDivid
   );
 });
 
-const SNOOZE_ACCENT_LIGHT = "#2563eb";
-const SNOOZE_ACCENT_DARK = "#60a5fa";
-
 export const ThreadListV2SnoozedShelfHeader = memo(function ThreadListV2SnoozedShelfHeader(props: {
   readonly count: number;
   readonly disabled?: boolean;
@@ -117,7 +113,6 @@ export const ThreadListV2SnoozedShelfHeader = memo(function ThreadListV2SnoozedS
   readonly onToggle: () => void;
   readonly pane?: "screen" | "sidebar";
 }) {
-  const { themeAppearance: colorScheme } = useAppearancePreferences();
   return (
     <Pressable
       accessibilityHint={
@@ -134,14 +129,14 @@ export const ThreadListV2SnoozedShelfHeader = memo(function ThreadListV2SnoozedS
       onPress={props.onToggle}
       style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}
     >
-      <Text className="text-xs font-t3-medium text-adaptive-blue-600-400">
+      <Text className="text-xs font-t3-medium text-foreground-secondary">
         {props.expanded ? "Snoozed" : `Snoozed (${props.count})`}
       </Text>
-      <View className="h-px flex-1 bg-adaptive-blue-500-a20-blue-400-a15" />
+      <View className="h-px flex-1 bg-primary/20" />
       <SymbolView
         name="chevron.down"
         size={10}
-        tintColor={colorScheme === "dark" ? SNOOZE_ACCENT_DARK : SNOOZE_ACCENT_LIGHT}
+        tintColorClassName="accent-icon-muted"
         type="monochrome"
         style={{ transform: [{ rotate: props.expanded ? "180deg" : "0deg" }] }}
       />
@@ -737,7 +732,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
           <Text
             className={cn(
               "flex-1 text-xs",
-              selected ? "text-user-bubble-foreground-muted" : "text-adaptive-red-600-a80-400-a80",
+              selected ? "text-user-bubble-foreground-muted" : "text-danger-foreground",
             )}
             numberOfLines={1}
           >
@@ -746,49 +741,54 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         ) : thread.branch || props.environmentLabel ? (
           /* "branch · machine" share one truncating line. The machine sits
              last so a tight fit cuts the repetitive label, not the branch —
-             and machine-only fills the row for non-git projects. */
-          <Text
-            className={cn(
-              "flex-1 text-xs",
-              selected ? "text-user-bubble-foreground-muted" : "text-foreground-muted",
-            )}
-            numberOfLines={1}
-          >
-            {thread.branch ? (
-              <Text
-                className={cn(
-                  "text-xs",
-                  selected ? "text-user-bubble-foreground-muted" : "text-foreground-muted",
-                )}
-                style={{ fontFamily: MONO_FONT }}
-              >
-                {thread.branch}
-              </Text>
+             and machine-only fills the row for non-git projects. The glyph
+             hugs the label (it cannot live inside the Text without breaking
+             truncation), and the wrapper takes the slack so the trailers
+             stay pinned right. */
+          <View className="min-w-0 flex-1 flex-row items-center gap-1">
+            <Text
+              className={cn(
+                "shrink text-xs",
+                selected ? "text-user-bubble-foreground-muted" : "text-foreground-muted",
+              )}
+              numberOfLines={1}
+            >
+              {thread.branch ? (
+                <Text
+                  className={cn(
+                    "text-xs",
+                    selected ? "text-user-bubble-foreground-muted" : "text-foreground-muted",
+                  )}
+                  style={{ fontFamily: MONO_FONT }}
+                >
+                  {thread.branch}
+                </Text>
+              ) : null}
+              {thread.branch && props.environmentLabel ? "  ·  " : null}
+              {props.environmentLabel ? (
+                <Text
+                  className={cn(
+                    "text-xs",
+                    selected ? "text-user-bubble-foreground-muted" : "text-foreground-tertiary",
+                  )}
+                >
+                  {props.environmentLabel}
+                </Text>
+              ) : null}
+            </Text>
+            {props.environmentLabel && props.environmentMachine ? (
+              <EnvironmentMachineSymbol
+                kind={props.environmentMachine}
+                size={11}
+                tintColorClassName={
+                  selected ? "accent-user-bubble-foreground-muted" : "accent-foreground-tertiary"
+                }
+              />
             ) : null}
-            {thread.branch && props.environmentLabel ? "  ·  " : null}
-            {props.environmentLabel ? (
-              <Text
-                className={cn(
-                  "text-xs",
-                  selected ? "text-user-bubble-foreground-muted" : "text-foreground-tertiary",
-                )}
-              >
-                {props.environmentLabel}
-              </Text>
-            ) : null}
-          </Text>
+          </View>
         ) : (
           <View className="flex-1" />
         )}
-        {status !== "failed" && props.environmentLabel && props.environmentMachine ? (
-          <EnvironmentMachineSymbol
-            kind={props.environmentMachine}
-            size={11}
-            tintColorClassName={
-              selected ? "accent-user-bubble-foreground-muted" : "accent-foreground-tertiary"
-            }
-          />
-        ) : null}
         {pr ? (
           <Text
             accessibilityLabel={pr.accessibilityLabel}
@@ -914,7 +914,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
               selected
                 ? "text-user-bubble-foreground-muted"
                 : snoozedRow
-                  ? "text-adaptive-blue-600-400"
+                  ? "text-foreground-secondary"
                   : "text-foreground-tertiary",
             )}
             style={{ fontFamily: MONO_FONT }}
