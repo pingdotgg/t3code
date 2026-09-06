@@ -264,6 +264,23 @@ it.layer(testLayer)("Antigravity provider snapshots", (it) => {
     ),
   );
 
+  it.effect("publishes the configured sign-in method before any account is checked", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const provider = yield* makeAntigravityProvider(decodeSettings({ enabled: true }), {
+          stampIdentity: (snapshot) => Effect.succeed({ ...snapshot, instanceId, driver }),
+          probe: Effect.succeed(initializeResult),
+          supportsTextGeneration: Effect.succeed(true),
+          auth: { type: "gemini-api-key", label: "Gemini API key" },
+        });
+        expect((yield* provider.snapshot.getSnapshot).auth).toEqual({
+          status: "unknown",
+          type: "gemini-api-key",
+        });
+      }),
+    ),
+  );
+
   it.effect("treats initialize as installation proof, not account or model discovery", () =>
     Effect.scoped(
       Effect.gen(function* () {

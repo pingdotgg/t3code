@@ -138,7 +138,7 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
     expect(AgentAwarenessRelay.eventThreadId(event)).toBe(threadId);
   });
 
-  it("does not publish start intents, streaming content, or non-awareness activity events", () => {
+  it("does not publish imported, start-intent, streaming, or non-awareness events", () => {
     const now = "2026-05-25T00:00:00.000Z";
     const base = {
       sequence: 1,
@@ -147,6 +147,7 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
       aggregateKind: "thread",
       aggregateId: "thread-1" as ThreadId,
       occurredAt: now,
+      metadata: {},
     };
 
     expect(
@@ -202,6 +203,36 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
         },
       } as unknown as OrchestrationEvent),
     ).toBe(false);
+    expect(
+      AgentAwarenessRelay.shouldPublishAgentAwarenessEvent({
+        ...base,
+        type: "thread.created",
+        metadata: { historyImport: true },
+        payload: { threadId: "thread-1" as ThreadId },
+      } as unknown as OrchestrationEvent),
+    ).toBe(false);
+    expect(
+      AgentAwarenessRelay.shouldPublishAgentAwarenessEvent({
+        ...base,
+        type: "thread.settled",
+        metadata: { historyImport: true },
+        payload: { threadId: "thread-1" as ThreadId },
+      } as unknown as OrchestrationEvent),
+    ).toBe(false);
+    expect(
+      AgentAwarenessRelay.shouldPublishAgentAwarenessEvent({
+        ...base,
+        type: "thread.created",
+        payload: { threadId: "thread-1" as ThreadId },
+      } as unknown as OrchestrationEvent),
+    ).toBe(true);
+    expect(
+      AgentAwarenessRelay.shouldPublishAgentAwarenessEvent({
+        ...base,
+        type: "thread.settled",
+        payload: { threadId: "thread-1" as ThreadId },
+      } as unknown as OrchestrationEvent),
+    ).toBe(true);
   });
 
   it("deduplicates awareness state updates whose only change is their event timestamp", () => {
@@ -400,16 +431,31 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
     }),
   );
 
-  it.effect("keeps the orchestration listener armed until relay config is installed", () =>
+  it.effect("keeps the listener armed and skips imported thread work", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const events = yield* Queue.unbounded<OrchestrationEvent>();
         const threadShellRequested = yield* Deferred.make<void>();
+        const releaseThreadShell = yield* Deferred.make<void>();
+        const threadShellRequests: Array<ThreadId> = [];
+        let fetchCallCount = 0;
         const secrets = makeMemorySecretStore();
         const now = "2026-05-25T00:00:00.000Z";
         const projectId = "project-1" as ProjectId;
         const threadId = "thread-1" as ThreadId;
+        const importedThreadId = "import:codex:session-1" as ThreadId;
         const environmentId = "env-1" as EnvironmentId;
+
+        const originalFetch = globalThis.fetch;
+        globalThis.fetch = (() => {
+          fetchCallCount += 1;
+          return Promise.resolve(Response.json({ ok: true, deliveries: [] }));
+        }) as unknown as typeof fetch;
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            globalThis.fetch = originalFetch;
+          }),
+        );
 
         const project = {
           id: projectId,
@@ -473,15 +519,18 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
           getShellSnapshot: () =>
             Effect.succeed({
               snapshotSequence: 1,
-              projects: [project],
-              threads: [thread],
+              projects: [],
+              threads: [],
               updatedAt: now,
             } satisfies OrchestrationShellSnapshot),
-          getThreadShellById: () =>
-            Deferred.succeed(threadShellRequested, undefined).pipe(
-              Effect.ignore,
-              Effect.as(Option.some(thread)),
-            ),
+          getThreadShellById: (requestedThreadId: ThreadId) =>
+            Effect.gen(function* () {
+              threadShellRequests.push(requestedThreadId);
+              if (requestedThreadId !== threadId) return Option.none();
+              yield* Deferred.succeed(threadShellRequested, undefined);
+              yield* Deferred.await(releaseThreadShell);
+              return Option.some(thread);
+            }),
           getProjectShellById: () => Effect.succeed(Option.some(project)),
         } as unknown as ProjectionSnapshotQueryShape;
 
@@ -511,17 +560,40 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
         yield* Effect.gen(function* () {
           const relay = yield* AgentAwarenessRelay.AgentAwarenessRelay;
           yield* relay.start();
-          yield* secrets.setString(RELAY_URL_SECRET, "http://127.0.0.1:1");
+          yield* secrets.setString(RELAY_URL_SECRET, "https://relay.example.test");
           yield* secrets.setString(RELAY_ENVIRONMENT_CREDENTIAL_SECRET, "relay-credential");
           yield* secrets.setString(PUBLISH_AGENT_ACTIVITY_SECRET, "true");
           yield* Queue.offer(events, {
-            type: "thread.activity-appended",
+            type: "thread.created",
             sequence: 1,
+            eventId: "evt-import-created",
+            commandId: CommandId.make("cmd-import-created"),
+            aggregateKind: "thread",
+            aggregateId: importedThreadId,
+            metadata: { historyImport: true },
+            payload: { threadId: importedThreadId },
+            occurredAt: now,
+          } as unknown as OrchestrationEvent);
+          yield* Queue.offer(events, {
+            type: "thread.settled",
+            sequence: 2,
+            eventId: "evt-import-settled",
+            commandId: CommandId.make("cmd-import-settled"),
+            aggregateKind: "thread",
+            aggregateId: importedThreadId,
+            metadata: { historyImport: true },
+            payload: { threadId: importedThreadId },
+            occurredAt: now,
+          } as unknown as OrchestrationEvent);
+          yield* Queue.offer(events, {
+            type: "thread.activity-appended",
+            sequence: 3,
             eventId: "evt-1",
             commandId: CommandId.make("cmd-1"),
             aggregateKind: "thread",
             aggregateId: threadId,
             actor: { kind: "server" },
+            metadata: {},
             payload: {
               threadId,
               activity: {
@@ -532,6 +604,9 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
           } as unknown as OrchestrationEvent);
 
           yield* Deferred.await(threadShellRequested).pipe(Effect.timeout("2 seconds"));
+          expect(threadShellRequests).toEqual([threadId]);
+          expect(fetchCallCount).toBe(0);
+          yield* Deferred.succeed(releaseThreadShell, undefined);
         }).pipe(
           Effect.provide(
             AgentAwarenessRelay.layer.pipe(
@@ -692,6 +767,7 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
             aggregateKind: "thread",
             aggregateId: threadId,
             actor: { kind: "server" },
+            metadata: {},
             payload: {
               threadId,
               activity: {
