@@ -15,9 +15,9 @@ labels:
   - vouch:trusted
 requires:
   - Check
+maxBudgetPerRun: 2
 maxBudgetPerPR: 10
 conclusion: failure
-maxBudgetPerRun: 2
 ---
 
 # UI consistency review
