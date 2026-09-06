@@ -13,6 +13,7 @@ import {
 } from "@t3tools/contracts";
 
 import {
+  agentSpawnSummary,
   buildPendingUserInputAnswers,
   buildThreadFeed,
   derivePendingApprovals,
@@ -24,6 +25,7 @@ import {
   workEntryRowLabel,
   type ThreadFeedActivity,
   type ThreadFeedEntry,
+  type WorkLogEntry,
 } from "./threadActivity";
 
 describe("Codex feedback pseudo-messages", () => {
@@ -2303,10 +2305,12 @@ describe("buildThreadFeed", () => {
         new Set(),
         latestTurn.startedAt,
       );
+      // The shimmering row is the turn's live slot; once it stops shimmering
+      // the slot belongs to "Thinking" and the group keeps its own identity.
       expect(rows.slice(0, 3).map((entry) => [entry.id, entry.type])).toEqual([
         ["work-toggle:work-group:activity-1", "work-toggle"],
         ["activity-2", "activity-group"],
-        ["work-live:work-group:activity-3", "work-toggle"],
+        [shimmer ? "live-activity-row" : "work-live:work-group:activity-3", "work-toggle"],
       ]);
       expect(rows.slice(0, 3).map((entry) => entry.type === "work-toggle" && entry.live)).toEqual([
         false,
@@ -2381,7 +2385,7 @@ describe("buildThreadFeed", () => {
 
     const rows = deriveThreadFeedPresentation(feed, latestTurn, new Set(), new Set(), "now");
     expect(rows.map((entry) => entry.type)).toEqual(["message", "thinking"]);
-    expect(rows[1]).toMatchObject({ id: "thinking", createdAt: "now", turnId });
+    expect(rows[1]).toMatchObject({ id: "live-activity-row", createdAt: "now", turnId });
     // The row identity is stable across re-derivations so the list can reuse it.
     expect(deriveThreadFeedPresentation(feed, latestTurn, new Set(), new Set(), "now")[1]).toBe(
       rows[1],
@@ -2392,6 +2396,79 @@ describe("buildThreadFeed", () => {
         (entry) => entry.type,
       ),
     ).toEqual(["message"]);
+  });
+
+  it("keeps one live slot while calls fail and restart", () => {
+    // Recorded from a Claude session whose Bash was broken: every call went
+    // inProgress → failed within two seconds. Each transition used to insert
+    // or remove a Thinking row under the group; now the same row id holds
+    // the live call and then "Thinking", so the list updates it in place.
+    const turnId = TurnId.make("turn-failing-calls");
+    const latestTurn = {
+      turnId,
+      state: "running" as const,
+      requestedAt: "2026-04-01T00:00:00.000Z",
+      startedAt: "2026-04-01T00:00:00.000Z",
+      completedAt: null,
+      assistantMessageId: null,
+    };
+    const call = (n: number, status: "inProgress" | "failed") =>
+      makeActivity({
+        id: EventId.make(`call-${n}-${status}`),
+        kind: status === "failed" ? "tool.completed" : "tool.updated",
+        tone: "tool",
+        summary: "Command run",
+        createdAt: `2026-04-01T00:00:${String(n * 2 + (status === "failed" ? 1 : 0)).padStart(2, "0")}.000Z`,
+        turnId,
+        payload: {
+          itemType: "command_execution",
+          toolCallId: `call-${n}`,
+          title: "Command run",
+          status,
+          detail: `Bash: ls ${n}`,
+        },
+      });
+    const liveIds = (activities: ReadonlyArray<ReturnType<typeof makeActivity>>) =>
+      deriveThreadFeedPresentation(
+        buildThreadFeed(
+          makeThread({
+            id: ThreadId.make("thread-failing-calls"),
+            projectId: ProjectId.make("project-1"),
+            title: "Failing calls",
+            latestTurn,
+            activities,
+          }),
+        ),
+        latestTurn,
+        new Set(),
+        new Set(),
+        latestTurn.startedAt,
+      ).map((row) => `${row.type}:${row.id}`);
+
+    expect(liveIds([call(1, "inProgress")])).toEqual(["work-toggle:live-activity-row"]);
+    expect(liveIds([call(1, "inProgress"), call(1, "failed")])).toEqual([
+      "work-toggle:work-live:work-group:tool:turn-failing-calls:call-1",
+      "thinking:live-activity-row",
+    ]);
+    expect(liveIds([call(1, "inProgress"), call(1, "failed"), call(2, "inProgress")])).toEqual([
+      "work-toggle:live-activity-row",
+    ]);
+    // A call whose end was never reported, in a run before an error row,
+    // keeps its own identity: only the trailing run can hold the live slot.
+    const errorRow = makeActivity({
+      id: EventId.make("runtime-error"),
+      kind: "runtime.error",
+      tone: "error",
+      summary: "Provider error",
+      createdAt: "2026-04-01T00:00:02.500Z",
+      turnId,
+      payload: { message: "boom" },
+    });
+    expect(liveIds([call(1, "inProgress"), errorRow, call(2, "inProgress")])).toEqual([
+      "work-toggle:work-live:work-group:tool:turn-failing-calls:call-1",
+      "activity-group:runtime-error",
+      "work-toggle:live-activity-row",
+    ]);
   });
 
   it("hands a settled tool run off to Thinking once assistant text streams after it", () => {
@@ -2813,19 +2890,22 @@ describe("quiet timeline: nested agents", () => {
         }),
       ).flatMap((entry) => (entry.type === "activity-group" ? entry.activities : []));
 
+    // The batch anchors on the first task.started: a fixed id and timestamp,
+    // unlike progress ticks (which the server rewrites in place).
     const running = rowsFor([]);
     expect(running.map((row) => [row.id, row.summary])).toEqual([
-      ["a-progress", "Kicked off 2 subagents · 2 working"],
+      ["a-start", "Kicked off 2 subagents · 2 working"],
       ["shell-1", "Run tests"],
     ]);
     expect(running[0]).toMatchObject({
+      createdAt: "2026-04-01T00:00:01.000Z",
       lifecycleStatus: "inProgress",
       workEntry: { agentSpawn: { agentTaskIds: ["a", "b"] } },
     });
 
     const oneDone = rowsFor([agent("a-done", "task.completed", "a", "completed", 7)]);
     expect(oneDone[0]).toMatchObject({
-      id: "a-progress",
+      id: "a-start",
       summary: "Kicked off 2 subagents · 1 working",
       lifecycleStatus: "inProgress",
     });
@@ -2835,12 +2915,200 @@ describe("quiet timeline: nested agents", () => {
       agent("b-failed", "task.updated", "b", "failed", 8, { error: "boom" }),
     ]);
     expect(allDone[0]).toMatchObject({
-      id: "a-progress",
+      id: "a-start",
       summary: "Ran 2 subagents · 1 failed",
       lifecycleStatus: "failed",
       status: "failure",
     });
     expect(allDone).toHaveLength(2);
+  });
+
+  it("folds the tool call that launched an agent into its spawn card", () => {
+    const turnId = TurnId.make("turn-agent-tool");
+    const at = (seconds: number) => `2026-04-01T00:00:${String(seconds).padStart(2, "0")}.000Z`;
+    const feed = buildThreadFeed(
+      makeThread({
+        id: ThreadId.make("thread-agent-tool"),
+        projectId: ProjectId.make("project-1"),
+        title: "Agent tool",
+        activities: [
+          makeActivity({
+            id: EventId.make("agent-call-updated"),
+            kind: "tool.updated",
+            tone: "tool",
+            summary: "Subagent task",
+            createdAt: at(1),
+            turnId,
+            payload: {
+              itemType: "collab_agent_tool_call",
+              toolCallId: "toolu_agent",
+              status: "inProgress",
+              title: "Subagent task",
+              detail: "Locate code",
+              data: { toolName: "Agent" },
+            },
+          }),
+          makeActivity({
+            id: EventId.make("agent-started"),
+            kind: "task.started",
+            summary: "Locate code",
+            createdAt: at(2),
+            turnId,
+            payload: {
+              taskId: "a1",
+              agentKind: "agent",
+              taskType: "local_agent",
+              title: "Locate code",
+              toolUseId: "toolu_agent",
+            },
+          }),
+          makeActivity({
+            id: EventId.make("agent-done"),
+            kind: "task.completed",
+            summary: "Locate code",
+            createdAt: at(3),
+            turnId,
+            payload: {
+              taskId: "a1",
+              agentKind: "agent",
+              taskType: "local_agent",
+              title: "Locate code",
+              toolUseId: "toolu_agent",
+              status: "completed",
+            },
+          }),
+          makeActivity({
+            id: EventId.make("agent-call-completed"),
+            kind: "tool.completed",
+            tone: "tool",
+            summary: "Subagent task",
+            createdAt: at(4),
+            turnId,
+            payload: {
+              itemType: "collab_agent_tool_call",
+              toolCallId: "toolu_agent",
+              status: "completed",
+              title: "Subagent task",
+              detail: "Locate code",
+              data: { toolName: "Agent" },
+            },
+          }),
+        ],
+      }),
+    );
+    const rows = feed.flatMap((entry) =>
+      entry.type === "activity-group" ? entry.activities.map((row) => row.id) : [],
+    );
+    expect(rows).toEqual(["agent-started"]);
+    expect(
+      deriveThreadFeedPresentation(feed, null, new Set([turnId])).map((row) => row.type),
+    ).toEqual(["turn-fold", "agent-spawn"]);
+  });
+
+  it("presents a spawn batch as one card whose status line follows the newest member activity", () => {
+    const turnId = TurnId.make("turn-spawn-card");
+    const latestTurn = {
+      turnId,
+      state: "running" as const,
+      requestedAt: "2026-04-01T00:00:00.000Z",
+      startedAt: "2026-04-01T00:00:00.000Z",
+      completedAt: null,
+      assistantMessageId: null,
+    };
+    const agent = (
+      id: string,
+      kind: "task.started" | "task.progress" | "task.completed",
+      taskId: string,
+      seconds: number,
+      extra: Record<string, unknown> = {},
+    ) =>
+      makeActivity({
+        id: EventId.make(id),
+        kind,
+        summary: `Agent ${taskId}`,
+        createdAt: `2026-04-01T00:00:${String(seconds).padStart(2, "0")}.000Z`,
+        turnId,
+        payload: {
+          taskId,
+          agentKind: "agent",
+          taskType: "local_agent",
+          title: `Agent ${taskId}`,
+          ...extra,
+        },
+      });
+    const presentFor = (activities: ReadonlyArray<ReturnType<typeof makeActivity>>) =>
+      deriveThreadFeedPresentation(
+        buildThreadFeed(
+          makeThread({
+            id: ThreadId.make("thread-spawn-card"),
+            projectId: ProjectId.make("project-1"),
+            title: "Spawn card",
+            latestTurn,
+            activities,
+          }),
+        ),
+        latestTurn,
+        new Set(),
+        new Set(),
+        latestTurn.startedAt,
+      );
+
+    // A working card is the live activity; no Thinking row sits under it.
+    const single = presentFor([agent("a-start", "task.started", "a", 1)]);
+    expect(single.map((row) => row.type)).toEqual(["agent-spawn"]);
+    expect(single[0]).toMatchObject({
+      id: `agent-spawn:${turnId}`,
+      summary: { title: "Agent a", status: "Working", tone: "working" },
+    });
+
+    // The server upserts the progress row with a new createdAt each tick;
+    // the card keeps its identity and only the status line changes.
+    const tick = (seconds: number, detail: string) =>
+      presentFor([
+        agent("a-start", "task.started", "a", 1),
+        agent("task-progress:a", "task.progress", "a", seconds, { detail }),
+      ]);
+    expect(tick(2, "Reading a.ts")[0]).toMatchObject({
+      id: `agent-spawn:${turnId}`,
+      createdAt: "2026-04-01T00:00:01.000Z",
+      summary: { title: "Agent a", status: "Reading a.ts", tone: "working" },
+    });
+    expect(tick(3, "Reading b.ts")[0]).toMatchObject({
+      id: `agent-spawn:${turnId}`,
+      createdAt: "2026-04-01T00:00:01.000Z",
+      summary: { status: "Reading b.ts" },
+    });
+
+    const batch = presentFor([
+      agent("a-start", "task.started", "a", 1),
+      agent("b-start", "task.started", "b", 2),
+      agent("task-progress:b", "task.progress", "b", 3, { detail: "Grepping" }),
+      agent("a-done", "task.completed", "a", 4, { status: "completed" }),
+    ]);
+    expect(batch[0]).toMatchObject({
+      id: `agent-spawn:${turnId}`,
+      summary: {
+        title: "2 subagents",
+        status: "Grepping",
+        tone: "working",
+        members: [
+          { title: "Agent a", status: "completed", tone: "completed" },
+          { title: "Agent b", status: "working", tone: "working", detail: "Grepping" },
+        ],
+      },
+    });
+
+    const settled = presentFor([
+      agent("a-start", "task.started", "a", 1),
+      agent("b-start", "task.started", "b", 2),
+      agent("a-done", "task.completed", "a", 4, { status: "completed" }),
+      agent("b-done", "task.completed", "b", 5, { status: "failed", error: "boom" }),
+    ]);
+    expect(settled[0]).toMatchObject({
+      type: "agent-spawn",
+      summary: { title: "2 subagents", status: "1 failed", tone: "failed" },
+    });
+    expect(settled.map((row) => row.type)).toEqual(["agent-spawn", "thinking"]);
   });
 
   it.each(["cancelled", "failed", "interrupted", "idle"] as const)(
@@ -2988,6 +3256,55 @@ describe("quiet timeline: nested agents", () => {
     expect(rows[0]?.getFullDetail()).toBe("Reviewer 0 · completed\nReviewer 1 · completed");
   });
 
+  it("summarizes a spawn card from the newest member report and the batch outcome", () => {
+    type Member = NonNullable<WorkLogEntry["agentSpawn"]>["agents"][number];
+    const member = (title: string, status: Member["status"], detail: string, seconds: number) =>
+      ({
+        title,
+        status,
+        detail,
+        updatedAt: `2026-04-01T00:00:${String(seconds).padStart(2, "0")}.000Z`,
+      }) satisfies Member;
+    const direct = (agents: ReadonlyArray<Member>) => ({
+      workflowId: null,
+      agentTaskIds: agents.map((_, index) => `a${index}`),
+      agents,
+    });
+
+    // The newest report wins regardless of member order.
+    expect(
+      agentSpawnSummary(
+        direct([
+          member("Agent 0", "inProgress", "Reading b.ts", 5),
+          member("Agent 1", "inProgress", "Reading a.ts", 2),
+        ]),
+        "inProgress",
+      ),
+    ).toMatchObject({ title: "2 subagents", status: "Reading b.ts", tone: "working" });
+
+    // A declined request is a failed batch, not a completed one.
+    expect(
+      agentSpawnSummary(direct([member("Agent 0", "declined", "", 1)]), "declined"),
+    ).toMatchObject({ status: "failed", tone: "failed" });
+
+    // A coordinator that failed on its own reports the failure even when every
+    // member succeeded; before any member reports, the card has a neutral title.
+    const workflow = (agents: ReadonlyArray<Member>) => ({
+      workflowId: "wf",
+      agentTaskIds: ["wf", ...agents.map((_, index) => `wf:wf:${index}`)],
+      agents: [member("review", "failed", "", 9), ...agents],
+    });
+    expect(
+      agentSpawnSummary(workflow([member("Reviewer", "completed", "", 3)]), "failed"),
+    ).toMatchObject({ title: "Reviewer", status: "failed", tone: "failed" });
+    expect(
+      agentSpawnSummary(
+        { workflowId: "wf", agentTaskIds: ["wf"], agents: [member("review", undefined, "", 1)] },
+        "inProgress",
+      ),
+    ).toMatchObject({ title: "Subagents", status: "Working", tone: "working", members: [] });
+  });
+
   it("treats a Codex child's idle turn end as a finished batch member", () => {
     const turnId = TurnId.make("turn-codex");
     const child = (
@@ -3063,7 +3380,12 @@ describe("quiet timeline: nested agents", () => {
     expect(ids).toContain("nested-done");
     expect(ids).not.toContain("shell-done");
     expect(deriveThreadFeedPresentation(feed, null, new Set())).toMatchObject([
-      { type: "activity-group", id: "nested-done" },
+      {
+        type: "agent-spawn",
+        id: "agent-spawn:n-1",
+        activity: { id: "nested-done" },
+        summary: { title: "Task completed", status: "completed", tone: "completed" },
+      },
     ]);
   });
 });
