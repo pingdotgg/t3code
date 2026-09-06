@@ -41,6 +41,7 @@ export function AssistantCitationChip({
     open: boolean;
     sourceAnchor?: AssistantCitationSourceAnchor | undefined;
     onOpenChange: (open: boolean) => void;
+    onCancel: () => void;
     onSave: (comment: string) => boolean;
     onSaveAndSend?: (comment: string) => boolean;
   };
@@ -50,7 +51,7 @@ export function AssistantCitationChip({
   const commentOpen = commentEditor?.open ?? false;
   const sourceAnchor = commentEditor?.sourceAnchor;
   const onSourceUnavailable = useEffectEvent(() => {
-    if (sourceAnchor) commentEditor?.onOpenChange(false);
+    if (sourceAnchor) commentEditor?.onCancel();
   });
   useEffect(() => {
     if (!commentOpen) return;
@@ -128,7 +129,13 @@ export function AssistantCitationChip({
         </Tooltip>
       )}
       {commentEditor ? (
-        <Popover open={commentEditor.open} onOpenChange={commentEditor.onOpenChange}>
+        <Popover
+          open={commentEditor.open}
+          onOpenChange={(open) => {
+            if (open) commentEditor.onOpenChange(true);
+            else commentEditor.onCancel();
+          }}
+        >
           <PopoverTrigger
             aria-label={citation.comment ? "Edit citation comment" : "Add comment to citation"}
             className={CITATION_ACTION_BUTTON_CLASS_NAME}
@@ -168,7 +175,7 @@ export function AssistantCitationChip({
                       },
                     }
                   : {})}
-                onCancel={() => commentEditor.onOpenChange(false)}
+                onCancel={commentEditor.onCancel}
               />
             </PopoverPopup>
           ) : null}

@@ -1678,9 +1678,39 @@ function ComposerPromptEditorInner({
           open ? { nodeKey } : current?.nodeKey === nodeKey ? null : current,
         );
       },
+      onCancel: (nodeKey: NodeKey) => {
+        if (openCitationComment?.nodeKey !== nodeKey) return;
+        const insertion = openCitationComment.insertion;
+        if (insertion && editor.isEditable()) {
+          editor.update(
+            () => {
+              const node = $getNodeByKey(nodeKey);
+              if (!(node instanceof ComposerCitationNode) || !node.isAttached()) return;
+              // Restore the original draft, including spacing added by Cite. If
+              // the draft changed meanwhile, remove only the pending citation.
+              if ($getRoot().getTextContent() === insertion.value) {
+                $setComposerEditorPrompt(
+                  insertion.previousValue,
+                  terminalContexts,
+                  skillMetadataRef.current,
+                );
+                $setSelectionAtComposerOffset(
+                  collapseExpandedComposerCursor(insertion.previousValue, insertion.citationStart),
+                );
+              } else {
+                node.selectPrevious();
+                node.remove();
+              }
+            },
+            { discrete: true, tag: HISTORY_PUSH_TAG },
+          );
+          editor.getRootElement()?.focus({ preventScroll: true });
+        }
+        setOpenCitationComment(null);
+      },
       onSubmitAndSend: onCitationSubmitAndSend ?? (() => {}),
     }),
-    [onCitationSubmitAndSend, openCitationComment],
+    [editor, onCitationSubmitAndSend, openCitationComment, terminalContexts],
   );
   const terminalContextActions = useMemo(
     () => ({ onRemoveTerminalContext }),

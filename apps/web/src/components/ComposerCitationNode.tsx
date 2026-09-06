@@ -42,13 +42,15 @@ export type ComposerCitationCommentRequest = {
 export type ComposerCitationCommentTarget = {
   nodeKey: NodeKey;
   sourceAnchor?: AssistantCitationSourceAnchor;
+  insertion?: ComposerCitationCommentRequest;
 };
 
 export const ComposerCitationCommentContext = createContext<{
   openComment: ComposerCitationCommentTarget | null;
   onOpenChange: (nodeKey: NodeKey, open: boolean) => void;
+  onCancel: (nodeKey: NodeKey) => void;
   onSubmitAndSend: () => void;
-}>({ openComment: null, onOpenChange: () => {}, onSubmitAndSend: () => {} });
+}>({ openComment: null, onOpenChange: () => {}, onCancel: () => {}, onSubmitAndSend: () => {} });
 
 /** Consume a cite action once its controlled prompt has been committed to the editor. */
 export function $consumeComposerCitationCommentRequest(requestRef: {
@@ -68,7 +70,7 @@ export function $consumeComposerCitationCommentRequest(requestRef: {
   let offset = 0;
   for (const node of paragraph.getChildren()) {
     if (offset === request.citationStart && node instanceof ComposerCitationNode) {
-      return { nodeKey: node.getKey(), sourceAnchor: request.sourceAnchor };
+      return { nodeKey: node.getKey(), sourceAnchor: request.sourceAnchor, insertion: request };
     }
     offset += node.getTextContentSize();
   }
@@ -127,6 +129,7 @@ function ComposerCitationDecorator(props: { citation: AssistantCitation; nodeKey
             if (open && !editor.isEditable()) return;
             commentContext.onOpenChange(props.nodeKey, open);
           },
+          onCancel: () => commentContext.onCancel(props.nodeKey),
           onSave: onSaveComment,
           onSaveAndSend: (comment) => {
             if (!onSaveComment(comment)) return false;

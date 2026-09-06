@@ -1,11 +1,22 @@
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
-import { $copyNode, $getRoot, $isElementNode, PASTE_COMMAND, type LexicalEditor } from "lexical";
-import { act, createRef } from "react";
+import { EnvironmentId, MessageId, ThreadId, type AssistantCitation } from "@t3tools/contracts";
+import { serializeAssistantCitation } from "@t3tools/shared/assistantCitations";
+import {
+  $copyNode,
+  $createTextNode,
+  $getRoot,
+  $isElementNode,
+  PASTE_COMMAND,
+  type LexicalEditor,
+} from "lexical";
+import { act, createRef, use, type ContextType } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { collapseExpandedComposerCursor } from "../composer-logic";
 import { ComposerPromptEditor, type ComposerPromptEditorHandle } from "./ComposerPromptEditor";
+import { ComposerCitationCommentContext, ComposerCitationNode } from "./ComposerCitationNode";
+import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
 
 vi.mock("./chat/FileTagChip", () => ({
   FILE_TAG_CHIP_CLASS_NAME: "",
@@ -17,11 +28,13 @@ vi.mock("./chat/ComposerPendingTerminalContexts", () => ({
 vi.mock("./chat/AssistantCitationChip", () => ({ AssistantCitationChip: () => null }));
 
 let lexicalEditor: LexicalEditor;
+let citationComments: ContextType<typeof ComposerCitationCommentContext>;
 // Keep the real composer, registered nodes, updates, and snapshot API. Only the
 // DOM view is omitted so Lexical runs headlessly in this component test.
 vi.mock("@lexical/react/LexicalPlainTextPlugin", () => ({
   PlainTextPlugin: function HeadlessEditor() {
     [lexicalEditor] = useLexicalComposerContext();
+    citationComments = use(ComposerCitationCommentContext);
     return null;
   },
 }));
@@ -180,5 +193,88 @@ describe("composer mention serialization", () => {
     expect(event.defaultPrevented).toBe(true);
     expect(editorRef.current?.readSnapshot().value).toBe("[README.md](README.md) ");
     expect(lexicalEditor.getEditorState().read(() => $firstMention().isInline())).toBe(true);
+  });
+});
+
+describe("composer citation cancellation", () => {
+  const citation: AssistantCitation = {
+    version: 1,
+    environmentId: EnvironmentId.make("local"),
+    threadId: ThreadId.make("thread-1"),
+    messageId: MessageId.make("message-1"),
+    text: "Selected assistant text",
+    start: 0,
+    end: 23,
+    prefix: "",
+    suffix: "",
+  };
+  const source = serializeAssistantCitation(citation);
+  const savedSource = serializeAssistantCitation({ ...citation, comment: "Saved comment" });
+  const sourceAnchor: AssistantCitationSourceAnchor = {
+    source: { nodeType: 1 } as HTMLElement,
+    range: { collapsed: false } as Range,
+    viewport: { nodeType: 1 } as HTMLElement,
+  };
+
+  async function cite(previousValue: string) {
+    await renderPrompt(previousValue);
+    const prefix = previousValue ? `${previousValue} ` : "";
+    const value = `${prefix}${source} `;
+    await act(() => {
+      editorRef.current?.requestCitationComment({
+        previousValue,
+        value,
+        citationStart: prefix.length,
+        sourceAnchor,
+      });
+    });
+    await renderPrompt(value);
+    const target = citationComments.openComment;
+    expect(target).not.toBeNull();
+    return target!.nodeKey;
+  }
+
+  it.each(["", "Keep my draft.", `@README.md\n  雪 👋 ${savedSource}`])(
+    "restores the original draft when a new citation is cancelled: %s",
+    async (previousValue) => {
+      const nodeKey = await cite(previousValue);
+      await act(() => citationComments.onCancel(nodeKey));
+      expect(editorRef.current?.readSnapshot().value).toBe(previousValue);
+      expect(citationComments.openComment).toBeNull();
+    },
+  );
+
+  it("preserves edits made to the draft after inserting the citation", async () => {
+    const previousValue = `Keep ${savedSource}`;
+    const nodeKey = await cite(previousValue);
+    await act(() => {
+      lexicalEditor.update(
+        () => {
+          const paragraph = $getRoot().getFirstChildOrThrow();
+          if (!$isElementNode(paragraph)) throw new Error("Expected composer paragraph");
+          paragraph.append($createTextNode("Typed meanwhile"));
+        },
+        { discrete: true },
+      );
+    });
+    await act(() => citationComments.onCancel(nodeKey));
+    expect(editorRef.current?.readSnapshot().value).toBe(`${previousValue}  Typed meanwhile`);
+    expect(citationComments.openComment).toBeNull();
+  });
+
+  it("keeps a saved citation and its comment when cancelling a comment edit", async () => {
+    const value = `Keep ${savedSource} and this draft.`;
+    await renderPrompt(value);
+    const nodeKey = lexicalEditor.getEditorState().read(() => {
+      const paragraph = $getRoot().getFirstChildOrThrow();
+      if (!$isElementNode(paragraph)) throw new Error("Expected composer paragraph");
+      const node = paragraph.getChildren().find((child) => child instanceof ComposerCitationNode);
+      if (!node) throw new Error("Expected saved citation");
+      return node.getKey();
+    });
+    await act(() => citationComments.onOpenChange(nodeKey, true));
+    await act(() => citationComments.onCancel(nodeKey));
+    expect(editorRef.current?.readSnapshot().value).toBe(value);
+    expect(citationComments.openComment).toBeNull();
   });
 });
