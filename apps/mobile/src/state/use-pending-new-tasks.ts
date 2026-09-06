@@ -20,9 +20,6 @@ export function usePendingNewTasks(): ReadonlyArray<PendingNewTask> {
       buildPendingNewTasks({
         queuedMessages: flattenQueuedThreadMessages(queuedMessagesByThreadKey),
         drafts,
-        // Stamped when the inputs change, not per render, so a draft keeps one
-        // sort position while the user is not typing in it.
-        now: new Date().toISOString(),
       }),
     [queuedMessagesByThreadKey, drafts],
   );
