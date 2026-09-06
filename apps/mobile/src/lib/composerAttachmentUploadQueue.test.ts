@@ -230,6 +230,24 @@ describe("draft upload scope and offline submission", () => {
     );
   });
 
+  it("reads an id-keyed new-task draft's environment from its project stamp", () => {
+    const stamped = {
+      project: {
+        environmentId,
+        projectId: "project" as never,
+        createdAt: "2026-09-05T00:00:00.000Z",
+      },
+    };
+    expect(composerDraftEnvironmentId("new-task:abc123-def456", [], stamped)).toBe(environmentId);
+    // An id-keyed draft that lost its stamp belongs to nobody: uploads must
+    // not start and sign-out must not sweep it into some other environment.
+    expect(composerDraftEnvironmentId("new-task:abc123-def456", [])).toBeNull();
+    // The stamp wins over a legacy-looking key when both are present.
+    expect(composerDraftEnvironmentId("new-task:environment-2:project", [], stamped)).toBe(
+      environmentId,
+    );
+  });
+
   it("allows offline queuing while a connected composer waits for upload or retry", () => {
     const key = composerAttachmentUploadKey(environmentId, "file");
     const input = {

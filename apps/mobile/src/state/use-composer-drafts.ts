@@ -313,7 +313,13 @@ export function decodePersistedComposerState(value: unknown): {
         Object.entries(parsed.signedOutDrafts ?? {}).map(([id, saved]) => [
           id,
           {
-            drafts: saved.drafts,
+            // Archived drafts come back through restoreCloudComposerDrafts
+            // without another decode, so they get the same key migration.
+            drafts: Object.fromEntries(
+              Object.entries(saved.drafts).map(([key, draft]) =>
+                migrateLegacyNewTaskDraft(key, draft, now),
+              ),
+            ),
             queuedMessages: saved.queuedMessages.map(decodeQueuedThreadMessage),
           },
         ]),
@@ -706,7 +712,7 @@ export async function archiveCloudComposerDrafts(
   const remaining = { ...current };
   const savedDrafts = { ...cloud.signedOut[owner]?.drafts };
   for (const [key, draft] of Object.entries(current)) {
-    const environmentId = composerDraftEnvironmentId(key, queued);
+    const environmentId = composerDraftEnvironmentId(key, queued, draft);
     if (environmentId !== null && environmentIds.has(environmentId)) {
       savedDrafts[key] = draft;
       delete remaining[key];

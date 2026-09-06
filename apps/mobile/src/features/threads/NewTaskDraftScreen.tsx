@@ -83,6 +83,7 @@ import {
   restoreComposerDraftSnapshot,
   scheduleUnusedComposerAttachmentCleanup,
   type ComposerDraft,
+  waitForComposerDraftsLoaded,
 } from "../../state/use-composer-drafts";
 import { useEnvironmentServerConfig, useProjects } from "../../state/entities";
 import {
@@ -424,21 +425,41 @@ export function NewTaskDraftScreen(props: {
 
   const { beginEditingPendingTask, cancelEditingPendingTask, editingPendingTask, openDraft } = flow;
   // A Draft row opens its own draft; a fresh New Task never reuses one.
-  // Attempt each id once so a draft that was discarded while this screen is
-  // mounted does not keep bouncing to the picker.
+  // Drafts hydrate from disk and projects arrive with the shell snapshot, so
+  // on a cold launch the draft or its project can be missing for a moment;
+  // wait for hydration and retry while projects load. Attempt each id once
+  // after that so a draft discarded mid-session does not keep bouncing to
+  // the picker.
   const attemptedDraftIdRef = useRef<string | null>(null);
   useEffect(() => {
     if (!props.draftId || props.pendingTaskId) {
       return;
     }
-    if (attemptedDraftIdRef.current === props.draftId) {
+    const draftId = props.draftId;
+    if (attemptedDraftIdRef.current === draftId) {
       return;
     }
-    attemptedDraftIdRef.current = props.draftId;
-    if (!openDraft(props.draftId)) {
+    let cancelled = false;
+    void waitForComposerDraftsLoaded().then(() => {
+      if (cancelled || attemptedDraftIdRef.current === draftId) {
+        return;
+      }
+      if (openDraft(draftId)) {
+        attemptedDraftIdRef.current = draftId;
+        return;
+      }
+      if (getComposerDraftSnapshot(draftId).project !== undefined && projects.length === 0) {
+        // The draft exists; its project has not arrived yet. Retry on the
+        // next projects change instead of giving up.
+        return;
+      }
+      attemptedDraftIdRef.current = draftId;
       navigation.dispatch(StackActions.replace("NewTask"));
-    }
-  }, [navigation, openDraft, props.draftId, props.pendingTaskId]);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [navigation, openDraft, projects, props.draftId, props.pendingTaskId]);
 
   const attemptedPendingTaskIdRef = useRef<string | null>(null);
   useEffect(() => {

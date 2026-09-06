@@ -662,16 +662,30 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     [carryDraftContentTo],
   );
 
-  const openDraft = useCallback((draftKey: string): boolean => {
-    const draft = appAtomRegistry.get(composerDraftsAtom)[draftKey];
-    if (!isNewTaskDraftKey(draftKey) || !draft?.project) {
-      return false;
-    }
-    setActiveDraftKey(draftKey);
-    setSelectedEnvironmentId(draft.project.environmentId);
-    setSelectedProjectKey(scopedProjectKey(draft.project.environmentId, draft.project.projectId));
-    return true;
-  }, []);
+  const openDraft = useCallback(
+    (draftKey: string): boolean => {
+      const draft = appAtomRegistry.get(composerDraftsAtom)[draftKey];
+      const stamp = draft?.project;
+      if (!isNewTaskDraftKey(draftKey) || !stamp) {
+        return false;
+      }
+      // The stamped project must be loaded: selectedProject falls back to
+      // the environment's first project otherwise, and the draft would be
+      // sent somewhere the user never chose.
+      const projectLoaded = projects.some(
+        (project) =>
+          project.environmentId === stamp.environmentId && project.id === stamp.projectId,
+      );
+      if (!projectLoaded) {
+        return false;
+      }
+      setActiveDraftKey(draftKey);
+      setSelectedEnvironmentId(stamp.environmentId);
+      setSelectedProjectKey(scopedProjectKey(stamp.environmentId, stamp.projectId));
+      return true;
+    },
+    [projects],
+  );
 
   const selectEnvironment = useCallback(
     (environmentId: EnvironmentId) => {
