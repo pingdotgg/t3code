@@ -1,13 +1,18 @@
 import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 import { GlassContainer, GlassView } from "expo-glass-effect";
-import { type ReactNode, useEffect, useState } from "react";
-import { ActivityIndicator, Pressable, Text as SystemText, View } from "react-native";
+import { type ReactNode, useEffect, useRef, useState } from "react";
+import {
+  ActivityIndicator,
+  type LayoutChangeEvent,
+  Pressable,
+  Text as SystemText,
+  View,
+} from "react-native";
 import Animated, {
   Easing,
   FadeIn,
   FadeOut,
-  LinearTransition,
   ReduceMotion,
   useAnimatedStyle,
   useSharedValue,
@@ -35,12 +40,6 @@ const CONTROL_TIMING = {
   reduceMotion: ReduceMotion.System,
 } as const;
 const CONTROL_SEPARATION = (16 + CONTROL_HEIGHT) / 2;
-// The label swaps between syncing, compacting, and working while the capsule
-// stays mounted, so the capsule animates to the new label's width and the
-// labels cross-fade instead of the pill snapping between sizes.
-const CAPSULE_LAYOUT = LinearTransition.duration(CONTROL_TIMING.duration)
-  .easing(CONTROL_TIMING.easing)
-  .reduceMotion(ReduceMotion.System);
 const LABEL_ENTERING = FadeIn.duration(180).reduceMotion(ReduceMotion.System);
 const LABEL_EXITING = FadeOut.duration(120).reduceMotion(ReduceMotion.System);
 
@@ -126,14 +125,45 @@ export function FloatingWorkingControl(props: {
     separationProgress.value = withTiming(props.showScrollToEnd ? 1 : 0, CONTROL_TIMING);
   }, [props.showScrollToEnd, separationProgress]);
 
-  const timerStyle = useAnimatedStyle(() => ({
-    transform: [{ translateX: CONTROL_SEPARATION * (1 - separationProgress.value) }],
-  }));
   const arrowTransformStyle = useAnimatedStyle(() => ({
     transform: [{ translateX: -CONTROL_SEPARATION * (1 - separationProgress.value) }],
   }));
   const arrowContentStyle = useAnimatedStyle(() => ({
     opacity: separationProgress.value,
+  }));
+
+  // The label swaps between connection, syncing, compacting, and working while
+  // the capsule stays mounted. A layout transition on the capsule would move
+  // its left edge, and children laid out from that edge slide with it, so the
+  // pill reads as shifting sideways. Instead the labels hang off a fixed
+  // midpoint anchor and the capsule animates its width to the measured label,
+  // shrinking and growing symmetrically under text that stays put.
+  const capsuleWidth = useSharedValue<number | null>(null);
+  const measuredWidthRef = useRef<number | null>(null);
+  const handleLabelLayout = (event: LayoutChangeEvent) => {
+    const width = event.nativeEvent.layout.width;
+    if (width === measuredWidthRef.current) {
+      return;
+    }
+    const first = measuredWidthRef.current === null;
+    measuredWidthRef.current = width;
+    capsuleWidth.value = first ? width : withTiming(width, CONTROL_TIMING);
+  };
+  // Forget the width while no label is shown so the next one appears at its
+  // own size instead of animating from the previous label's.
+  const hasStatus = props.status !== null;
+  useEffect(() => {
+    if (!hasStatus) {
+      measuredWidthRef.current = null;
+      capsuleWidth.value = null;
+    }
+  }, [capsuleWidth, hasStatus]);
+  // Hidden until the first measurement lands so the capsule never paints at
+  // zero width around a clipped label.
+  const capsuleStyle = useAnimatedStyle(() => ({
+    width: capsuleWidth.value ?? undefined,
+    opacity: capsuleWidth.value === null ? 0 : 1,
+    transform: [{ translateX: CONTROL_SEPARATION * (1 - separationProgress.value) }],
   }));
 
   if (props.status === null && !props.showScrollToEnd) {
@@ -143,6 +173,15 @@ export function FloatingWorkingControl(props: {
   // Only the connection label is a button (tap to reconnect); the others
   // pass touches through to the feed like before.
   const statusInteractive = props.status?.kind === "connection";
+  // A zero-width anchor at the capsule's midpoint. Labels are centered on it
+  // and never clipped, so an incoming wider label sits at its final position
+  // while the capsule catches up underneath.
+  const statusLabel =
+    props.status !== null ? (
+      <View pointerEvents="box-none" className="absolute inset-y-0 left-1/2 w-0 overflow-visible">
+        <FloatingStatusLabel status={props.status} onLayout={handleLabelLayout} />
+      </View>
+    ) : null;
 
   return (
     <Animated.View
@@ -162,12 +201,11 @@ export function FloatingWorkingControl(props: {
             colorScheme={props.colorScheme}
             glassEffectStyle="regular"
             isInteractive={statusInteractive}
-            pointerEvents={statusInteractive ? "auto" : "none"}
-            className="h-11 justify-center overflow-hidden rounded-full"
-            style={timerStyle}
-            layout={CAPSULE_LAYOUT}
+            pointerEvents={statusInteractive ? "box-none" : "none"}
+            className="h-11 rounded-full"
+            style={capsuleStyle}
           >
-            <FloatingStatusLabel status={props.status} />
+            {statusLabel}
           </AnimatedGlassView>
 
           <AnimatedGlassView
@@ -188,12 +226,11 @@ export function FloatingWorkingControl(props: {
       ) : props.status !== null ? (
         <View pointerEvents="box-none" className="flex-row items-center gap-4">
           <Animated.View
-            pointerEvents={statusInteractive ? "auto" : "none"}
-            className="h-11 justify-center rounded-full border border-border bg-card shadow-md shadow-black/10"
-            style={timerStyle}
-            layout={CAPSULE_LAYOUT}
+            pointerEvents={statusInteractive ? "box-none" : "none"}
+            className="h-11 rounded-full border border-border bg-card shadow-md shadow-black/10"
+            style={capsuleStyle}
           >
-            <FloatingStatusLabel status={props.status} />
+            {statusLabel}
           </Animated.View>
 
           <Animated.View
@@ -234,9 +271,9 @@ export function FloatingWorkingControl(props: {
   );
 }
 
-function CompactingLabel() {
+function CompactingLabel(props: { readonly onLayout: (event: LayoutChangeEvent) => void }) {
   return (
-    <StatusLabelRow accessibilityLabel="Compacting" className="gap-1.5">
+    <StatusLabelRow accessibilityLabel="Compacting" className="gap-1.5" onLayout={props.onLayout}>
       <SymbolView
         name="arrow.down.right.and.arrow.up.left"
         size={13}
@@ -248,19 +285,27 @@ function CompactingLabel() {
   );
 }
 
-function FloatingStatusLabel(props: { readonly status: FloatingWorkingStatus }) {
+function FloatingStatusLabel(props: {
+  readonly status: FloatingWorkingStatus;
+  readonly onLayout: (event: LayoutChangeEvent) => void;
+}) {
   // Keyed by kind so a swap mounts a fresh row and the two cross-fade while
-  // the capsule's layout transition carries the width change.
+  // the capsule animates to the new row's measured width.
   if (props.status.kind === "syncing") {
     return (
-      <StatusLabelRow key="syncing" accessibilityLabel={props.status.label} className="gap-2">
+      <StatusLabelRow
+        key="syncing"
+        accessibilityLabel={props.status.label}
+        className="gap-2"
+        onLayout={props.onLayout}
+      >
         <ActivityIndicator size="small" colorClassName="accent-icon-muted" />
         <Text className="font-t3-medium text-xs text-foreground">{props.status.label}</Text>
       </StatusLabelRow>
     );
   }
   if (props.status.kind === "compacting") {
-    return <CompactingLabel key="compacting" />;
+    return <CompactingLabel key="compacting" onLayout={props.onLayout} />;
   }
   if (props.status.kind === "connection") {
     return (
@@ -269,6 +314,7 @@ function FloatingStatusLabel(props: { readonly status: FloatingWorkingStatus }) 
         accessibilityLabel={props.status.label}
         accessibilityRole="button"
         className="gap-2"
+        onLayout={props.onLayout}
         onPress={props.status.onPress}
       >
         {props.status.tone === "reconnecting" ? (
@@ -282,19 +328,35 @@ function FloatingStatusLabel(props: { readonly status: FloatingWorkingStatus }) 
       </StatusLabelRow>
     );
   }
-  return <WorkingDuration key="working" startedAt={props.status.startedAt} />;
+  return (
+    <WorkingDuration key="working" startedAt={props.status.startedAt} onLayout={props.onLayout} />
+  );
 }
 
+// Each row is absolutely centered on the capsule's midpoint anchor, so an
+// exiting row fading out never shifts the incoming one.
 function StatusLabelRow(props: {
   readonly accessibilityLabel: string;
   readonly accessibilityRole?: "button";
   readonly className?: string;
   readonly children: ReactNode;
+  readonly onLayout: (event: LayoutChangeEvent) => void;
   readonly onPress?: () => void;
 }) {
   const rowClassName = `h-11 flex-row items-center px-4 ${props.className ?? ""}`;
+  const [width, setWidth] = useState<number | null>(null);
+  const handleLayout = (event: LayoutChangeEvent) => {
+    setWidth(event.nativeEvent.layout.width);
+    props.onLayout(event);
+  };
   return (
-    <Animated.View entering={LABEL_ENTERING} exiting={LABEL_EXITING}>
+    <Animated.View
+      className="absolute top-0"
+      style={{ left: width === null ? undefined : -width / 2, opacity: width === null ? 0 : 1 }}
+      entering={LABEL_ENTERING}
+      exiting={LABEL_EXITING}
+      onLayout={handleLayout}
+    >
       {props.onPress ? (
         <Pressable
           accessibilityLabel={props.accessibilityLabel}
@@ -313,7 +375,10 @@ function StatusLabelRow(props: {
   );
 }
 
-function WorkingDuration(props: { readonly startedAt: string }) {
+function WorkingDuration(props: {
+  readonly startedAt: string;
+  readonly onLayout: (event: LayoutChangeEvent) => void;
+}) {
   const [nowMs, setNowMs] = useState(() => Date.now());
 
   useEffect(() => {
@@ -326,7 +391,7 @@ function WorkingDuration(props: { readonly startedAt: string }) {
   const label = `Working for ${duration}`;
 
   return (
-    <StatusLabelRow accessibilityLabel={label}>
+    <StatusLabelRow accessibilityLabel={label} onLayout={props.onLayout}>
       <Text className="font-t3-medium text-xs text-foreground">Working for </Text>
       <SystemText
         className="text-xs text-foreground"
