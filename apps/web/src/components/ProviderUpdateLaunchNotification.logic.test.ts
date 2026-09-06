@@ -1132,6 +1132,28 @@ describe("remote environment provider update notice", () => {
     ).toMatchObject({ status: "running" });
   });
 
+  it("reports progress from a sibling instance of the same driver", () => {
+    expect(
+      buildRemoteProviderUpdateNotice({
+        ...base,
+        providers: [
+          provider({ driver: driver("codex") }),
+          provider({
+            driver: driver("codex"),
+            instanceId: instanceId("codex_work"),
+            updateState: {
+              status: "queued",
+              startedAt: checkedAt,
+              finishedAt: null,
+              message: null,
+              output: null,
+            },
+          }),
+        ],
+      }),
+    ).toMatchObject({ status: "running" });
+  });
+
   it("keeps a retry visible after a failed or unchanged update, failure first", () => {
     const settledState = (status: "failed" | "unchanged", message: string) => ({
       status,

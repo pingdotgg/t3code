@@ -821,10 +821,15 @@ export function buildRemoteProviderUpdateNotice(input: {
     return null;
   }
 
+  // Progress and outcome come from every instance of a candidate driver: the
+  // deduped representative may be idle while a sibling instance is mid-update.
+  const driverProviders = input.providers.filter((provider) =>
+    candidates.some((candidate) => candidate.driver === provider.driver),
+  );
   // A real failure outranks an update that ran but changed nothing.
   const settled =
-    candidates.find((candidate) => candidate.updateState?.status === "failed") ??
-    candidates.find((candidate) => candidate.updateState?.status === "unchanged");
+    driverProviders.find((provider) => provider.updateState?.status === "failed") ??
+    driverProviders.find((provider) => provider.updateState?.status === "unchanged");
   const providerName = PROVIDER_DISPLAY_NAMES[first.driver] ?? first.driver;
   return {
     dismissalKey,
@@ -832,7 +837,7 @@ export function buildRemoteProviderUpdateNotice(input: {
       candidates.length > 1
         ? `${formatProviderList(candidates)} updates are available on ${input.environmentLabel}`
         : `${providerName} ${formatVersion(first.versionAdvisory.latestVersion)} is available on ${input.environmentLabel}`,
-    status: candidates.some(isProviderUpdateActive) ? "running" : settled ? "failed" : "idle",
+    status: driverProviders.some(isProviderUpdateActive) ? "running" : settled ? "failed" : "idle",
     failureMessage: settled?.updateState?.message ?? null,
     candidates,
   };
