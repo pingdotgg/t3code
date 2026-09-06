@@ -78,6 +78,7 @@ import {
   composerImageMatchesReattachMarker,
   composerImageNeedsReattach,
   composerTargetKey,
+  hydrateComposerImageBlobs,
   hydrateImagesFromPersisted,
   useComposerDraftStore,
   useComposerThreadDraft,
@@ -2274,6 +2275,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
   const expandComposerImagePreview = useCallback(
     async (imageId: string) => {
+      await hydrateComposerImageBlobs();
       const readImages = () =>
         getComposerDraft(composerDraftTarget)?.images ?? composerImagesRef.current;
       const image = readImages().find((entry) => entry.id === imageId);

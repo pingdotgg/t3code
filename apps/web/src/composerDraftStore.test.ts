@@ -2917,6 +2917,50 @@ describe("composer draft v10 image blobs", () => {
     expect(new Uint8Array(await restored!.file!.arrayBuffer())).toEqual(expectedBytes);
   });
 
+  it("persist rehydrate restores File bytes via deferred blob hydration", async () => {
+    const bytes = new Uint8Array([3, 1, 4, 1, 5]);
+    const thumbnailDataUrl = "data:image/jpeg;base64,chip";
+    await getComposerImageBlobStore().put(
+      "img-rehydrate",
+      new Blob([bytes], { type: "image/png" }),
+    );
+
+    vi.useFakeTimers();
+    try {
+      useComposerDraftStore.getState().setPrompt(threadRef, "rehydrate image");
+      useComposerDraftStore.setState((state) => ({
+        draftsByThreadKey: {
+          ...state.draftsByThreadKey,
+          [threadKey]: {
+            ...state.draftsByThreadKey[threadKey]!,
+            persistedAttachments: [
+              {
+                id: "img-rehydrate",
+                name: "photo.png",
+                mimeType: "image/png",
+                sizeBytes: bytes.byteLength,
+                thumbnailDataUrl,
+              },
+            ],
+          },
+        },
+      }));
+      await vi.advanceTimersByTimeAsync(300);
+      resetComposerDraftStore();
+      await useComposerDraftStore.persist.rehydrate();
+      await hydrateComposerImageBlobs();
+    } finally {
+      vi.useRealTimers();
+      await useComposerDraftStore.persist.clearStorage();
+    }
+
+    const restored = draftFor(threadId, TEST_ENVIRONMENT_ID)?.images[0];
+    expect(restored?.previewUrl).toBe(thumbnailDataUrl);
+    expect(restored?.blobHydration).toBeUndefined();
+    expect(restored?.file).toBeInstanceOf(File);
+    expect(new Uint8Array(await restored!.file!.arrayBuffer())).toEqual(bytes);
+  });
+
   it("blob hydrate restores File bytes from the memory blob store", async () => {
     const bytes = new Uint8Array([9, 8, 7, 6, 5]);
     const thumbnailDataUrl = "data:image/jpeg;base64,thumb";

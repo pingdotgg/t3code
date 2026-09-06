@@ -2610,6 +2610,12 @@ function toHydratedDraftThreadState(
   };
 }
 
+// Must be initialized before `create()`: persist rehydrates synchronously from
+// localStorage during store construction, and the post-rehydrate callback
+// used to call `hydrateComposerImageBlobs` while this binding was still in
+// the temporal dead zone (images stayed `blobHydration: "pending"` forever).
+let composerImageBlobHydration: Promise<void> | null = null;
+
 const composerDraftStore = create<ComposerDraftStoreState>()(
   persist(
     (setBase, get) => {
@@ -4140,7 +4146,11 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
         if (error) {
           return;
         }
-        void hydrateComposerImageBlobs();
+        // Persist's getItem is sync, so rehydrate can finish inside `create()`.
+        // Yield so blob hydration runs after the module finishes initializing.
+        queueMicrotask(() => {
+          void hydrateComposerImageBlobs();
+        });
       },
       merge: (persistedState, currentState) => {
         const normalizedPersisted =
@@ -4171,8 +4181,6 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
 );
 
 export const useComposerDraftStore = composerDraftStore;
-
-let composerImageBlobHydration: Promise<void> | null = null;
 
 async function hydrateComposerImageBlobsOnce(): Promise<void> {
   const blobStore = getComposerImageBlobStore();
