@@ -19,7 +19,7 @@ function makeNativeSnapshot(
   processes: ResourceMonitorSnapshotEvent["processes"],
 ): ResourceMonitorSnapshotEvent {
   return {
-    version: 2,
+    version: 3,
     type: "snapshot",
     sequence: 1,
     sampledAtUnixMs: DateTime.toEpochMillis(DateTime.makeUnsafe("2026-05-05T10:00:00.000Z")),

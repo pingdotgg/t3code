@@ -14,6 +14,7 @@ import {
 } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Data from "effect/Data";
+import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -220,6 +221,10 @@ interface CreateManagerOptions {
     readonly childCommand: string | null;
     readonly processIds: ReadonlyArray<number>;
   }>;
+  processTable?: Effect.Effect<
+    ReadonlyArray<{ readonly pid: number; readonly ppid: number; readonly name: string }>,
+    never
+  >;
   subprocessPollIntervalMs?: number;
   processKillGraceMs?: number;
   maxRetainedInactiveSessions?: number;
@@ -265,6 +270,7 @@ const createManager = (
         ...(options.subprocessInspector !== undefined
           ? { subprocessInspector: options.subprocessInspector }
           : {}),
+        ...(options.processTable !== undefined ? { processTable: options.processTable } : {}),
         ...(options.subprocessPollIntervalMs !== undefined
           ? { subprocessPollIntervalMs: options.subprocessPollIntervalMs }
           : {}),
@@ -1189,6 +1195,96 @@ it.layer(
       const activityEvents = (yield* getEvents).filter((event) => event.type === "activity");
       expect(activityEvents.length).toBeGreaterThan(0);
       expect(activityEvents.every((event) => event.hasRunningSubprocess === true)).toBe(true);
+    }),
+  );
+
+  it("calculates snapshot failure backoff and success reset delays", () => {
+    assert.equal(TerminalManager.subprocessSnapshotPollDelayMs(1_000, 0), 1_000);
+    assert.equal(TerminalManager.subprocessSnapshotPollDelayMs(1_000, 1), 2_000);
+    assert.equal(TerminalManager.subprocessSnapshotPollDelayMs(1_000, 2), 4_000);
+    assert.equal(TerminalManager.subprocessSnapshotPollDelayMs(1_000, 30), 60_000);
+  });
+
+  it.effect("uses process snapshots from the resource monitor", () =>
+    Effect.gen(function* () {
+      let snapshotCalls = 0;
+      const { manager, getEvents } = yield* createManager(5, {
+        subprocessPollIntervalMs: 20,
+        processTable: Effect.sync(() => {
+          snapshotCalls += 1;
+          return [{ pid: 100, ppid: 9000, name: "ping.exe" }];
+        }),
+      }).pipe(Effect.provide(withHostPlatform("win32")));
+
+      yield* manager.open(openInput());
+      yield* waitFor(
+        Effect.map(getEvents, (events) =>
+          events.some(
+            (event) =>
+              event.type === "activity" && event.hasRunningSubprocess && event.label === "ping",
+          ),
+        ),
+        "1200 millis",
+      );
+      expect(snapshotCalls).toBeGreaterThan(0);
+    }),
+  );
+
+  it.effect("backs off the spawned fallback when the resource monitor snapshot fails", () =>
+    Effect.gen(function* () {
+      const fallbackCalls: Array<number> = [];
+      const processRunner: ProcessRunner.ProcessRunner["Service"] = {
+        run: () =>
+          Clock.currentTimeMillis.pipe(
+            Effect.map((now) => {
+              fallbackCalls.push(now);
+              return {
+                stdout: "  100  9000 vim",
+                stderr: "",
+                code: ChildProcessSpawner.ExitCode(0),
+                timedOut: false,
+                stdoutTruncated: false,
+                stderrInvalidUtf8: false,
+                stdoutInvalidUtf8: false,
+                stderrTruncated: false,
+              };
+            }),
+          ),
+      };
+
+      const { manager, getEvents } = yield* createManager(5, {
+        subprocessPollIntervalMs: 20,
+        processTable: Effect.fail("sidecar unavailable").pipe(
+          Effect.mapError((cause) => cause as never),
+        ),
+      }).pipe(
+        Effect.provideService(ProcessRunner.ProcessRunner, processRunner),
+        Effect.provide(withHostPlatform("linux")),
+      );
+
+      yield* manager.open(openInput());
+      // The fallback data is still applied while the sidecar is down.
+      yield* waitFor(
+        Effect.map(getEvents, (events) =>
+          events.some(
+            (event) =>
+              event.type === "activity" &&
+              event.hasRunningSubprocess === true &&
+              event.label === "vim",
+          ),
+        ),
+        "1200 millis",
+      );
+
+      yield* waitFor(
+        Effect.sync(() => fallbackCalls.length >= 4),
+        "2000 millis",
+      );
+      // Four snapshots at the 20 ms base cadence would span ~60 ms. Backoff
+      // (40 + 80 + 160 ms) stretches the same four snapshots past 150 ms, so
+      // a stalled sidecar no longer hot-loops the spawned fallback.
+      const spanMs = fallbackCalls[3]! - fallbackCalls[0]!;
+      expect(spanMs).toBeGreaterThan(150);
     }),
   );
 
