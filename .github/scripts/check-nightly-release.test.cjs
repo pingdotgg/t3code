@@ -99,3 +99,45 @@ for (const status of ["behind", "diverged"]) {
     assert.equal(await shouldReleaseNightly(options), false);
   });
 }
+
+const { resolveLatestNightlyCommit } = require("./check-nightly-release.cjs");
+
+function nightlyCommitFixture({ releases, commitSha = "abc123" }) {
+  const refs = [];
+  const { options } = fixture({ releases });
+  options.github.rest.repos.getCommit = async ({ ref }) => {
+    refs.push(ref);
+    return { data: { sha: commitSha } };
+  };
+  return { options, refs };
+}
+
+test("stable releases resolve the commit of the newest published nightly", async () => {
+  const { options, refs } = nightlyCommitFixture({
+    releases: [
+      nightly(10, { tag_name: "v1.0.1-nightly.20260905.100" }),
+      nightly(1, { tag_name: "v1.0.1-nightly.20260905.123" }),
+      nightly(0, { tag_name: "v1.0.0" }),
+      nightly(0, { draft: true, tag_name: "v1.0.1-nightly.20260905.999" }),
+    ],
+    commitSha: "deadbeef",
+  });
+  assert.deepEqual(await resolveLatestNightlyCommit(options), {
+    tag: "v1.0.1-nightly.20260905.123",
+    sha: "deadbeef",
+    version: "1.0.1",
+  });
+  assert.deepEqual(refs, ["v1.0.1-nightly.20260905.123"]);
+});
+
+test("stable releases derive the version from legacy nightly tags", async () => {
+  const { options } = nightlyCommitFixture({
+    releases: [nightly(1, { tag_name: "nightly-v0.9.0-nightly.20260905.5" })],
+  });
+  assert.equal((await resolveLatestNightlyCommit(options)).version, "0.9.0");
+});
+
+test("stable releases fail without a published nightly", async () => {
+  const { options } = nightlyCommitFixture({ releases: [nightly(0, { tag_name: "v1.0.0" })] });
+  await assert.rejects(resolveLatestNightlyCommit(options), /No published nightly/);
+});
