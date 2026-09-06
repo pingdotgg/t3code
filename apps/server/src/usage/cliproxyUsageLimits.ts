@@ -124,7 +124,9 @@ export function cliproxyAccountToUsageLimits(
     if (!window || window.known === false) continue;
     const resetsAt = isoFromHub(window.reset_at);
     windows.push({
-      id: spec.id,
+      // Codex names its five-hour window by position, so a hub row and a
+      // native row for the same account pool together.
+      id: spec.key === "five_hour" && account.provider === "codex" ? "primary" : spec.id,
       kind: spec.kind,
       label: spec.label,
       windowDurationMins: spec.windowDurationMins,
