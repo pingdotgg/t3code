@@ -1,5 +1,7 @@
 {
   "$schema": "https://unpkg.com/knip@6/schema.json",
+  // Exported types are part of our contracts even before they have consumers.
+  "rules": { "types": "off", "nsTypes": "off" },
   // These executables are supplied by the OS or installed separately from npm.
   "ignoreBinaries": ["eas", "file", "mkfifo", "pkill", "pkg-config", "plutil", "sips"],
   "workspaces": {
@@ -9,6 +11,10 @@
       "entry": [".github/scripts/thread-transfer-report.cjs"],
       "vite": { "entry": [".github/**/*.test.cjs"] },
       "vitest": { "entry": [".github/**/*.test.cjs"] },
+    },
+    "scripts": {
+      // Knip loads its preprocessor through a CLI option, not a source import.
+      "entry": ["knip-schemas.ts"],
     },
     "apps/server": {
       // Vite+ pack entries and the launcher used by installed background services.

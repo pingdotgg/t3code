@@ -21,6 +21,7 @@ import {
   isPendingUserInputOptionSelected,
   setPendingUserInputCustomAnswer,
   togglePendingUserInputOptionSelection,
+  workEntryRowLabel,
   type ThreadFeedActivity,
   type ThreadFeedEntry,
 } from "./threadActivity";
@@ -702,6 +703,95 @@ describe("buildThreadFeed", () => {
     const [row] = group.activities;
     expect(row?.workEntry.detail).toBe(command);
     expect(row?.getFullDetail()).toBe(`${command}\n\n${command}`);
+    // Opening it would only repeat the command the row already shows.
+    expect(row?.canExpand).toBe(false);
+  });
+
+  it.each([
+    {
+      name: "a task summary that is its own detail",
+      activity: {
+        kind: "task.completed" as const,
+        tone: "info" as const,
+        summary: "Task completed",
+        payload: {
+          taskId: "bh2p996o4",
+          status: "completed",
+          title: "Check CI on the new head",
+          summary: "Check CI on the new head",
+          detail: "Check CI on the new head",
+          agentKind: "background",
+          taskType: "local_bash",
+        },
+      },
+      label: "Check CI on the new head",
+      canExpand: false,
+    },
+    {
+      name: "a runtime warning with only its message",
+      activity: {
+        kind: "runtime.warning" as const,
+        tone: "info" as const,
+        summary: "Bash is unusable in this environment",
+        payload: { detail: "Bash is unusable in this environment" },
+      },
+      label: "Bash is unusable in this environment",
+      canExpand: false,
+    },
+    {
+      name: "a multi-line task report",
+      activity: {
+        kind: "task.completed" as const,
+        tone: "info" as const,
+        summary: "Task completed",
+        payload: {
+          taskId: "bpxcizf97",
+          status: "completed",
+          title: "Audit the PR",
+          detail: "**Tooling note:** Bash is unusable.\n\n# Audit\n\nNo blockers.",
+          agentKind: "background",
+          taskType: "local_bash",
+        },
+      },
+      label: "**Tooling note:** Bash is unusable. # Audit No blockers.",
+      canExpand: true,
+    },
+    {
+      name: "a command whose output differs from the command",
+      activity: {
+        kind: "tool.completed" as const,
+        tone: "tool" as const,
+        summary: "Command run",
+        payload: {
+          itemType: "command_execution",
+          title: "Command run",
+          detail: "Bash: printf hello",
+          data: { toolName: "Bash", command: "printf hello", rawOutput: { content: "hello" } },
+        },
+      },
+      label: "printf hello",
+      canExpand: true,
+    },
+  ])("only lets $name expand when the body adds something: $canExpand", (input) => {
+    const thread = makeThread({
+      id: ThreadId.make("thread-expand-rule"),
+      projectId: ProjectId.make("project-1"),
+      title: "Expand rule",
+      activities: [
+        makeActivity({
+          id: EventId.make("expand-rule"),
+          createdAt: "2026-09-01T00:00:00.000Z",
+          ...input.activity,
+        }),
+      ],
+    });
+
+    const [group] = buildThreadFeed(thread);
+    expect(group?.type).toBe("activity-group");
+    if (group?.type !== "activity-group") return;
+    const [row] = group.activities;
+    expect(workEntryRowLabel(row!.workEntry)).toBe(input.label);
+    expect(row?.canExpand).toBe(input.canExpand);
   });
 
   it("drops a truncated Claude echo of a long command", () => {
@@ -1566,7 +1656,8 @@ describe("buildThreadFeed", () => {
           summaryToolIcon: "browser",
           hasFailure,
           live: true,
-          shimmer: false,
+          // A successful trailing call keeps shining; a failure hands off to "Thinking".
+          shimmer: !hasFailure,
         },
         {
           type: "activity-group",
@@ -1580,6 +1671,7 @@ describe("buildThreadFeed", () => {
             },
           ],
         },
+        ...(hasFailure ? [{ type: "thinking", turnId }] : []),
       ]);
       const terminalGroup = terminalRows[1];
       if (terminalGroup?.type !== "activity-group") return;
@@ -2128,7 +2220,7 @@ describe("buildThreadFeed", () => {
       (
         [
           { lifecycleStatus: "inProgress", summary: "Running pnpm", shimmer: true },
-          { lifecycleStatus: "completed", summary: "Running pnpm", shimmer: false },
+          { lifecycleStatus: "completed", summary: "Running pnpm", shimmer: true },
           { lifecycleStatus: "failed", summary: "Failed pnpm", shimmer: false },
           { lifecycleStatus: "declined", summary: "Declined pnpm", shimmer: false },
           { lifecycleStatus: "stopped", summary: "Stopped pnpm", shimmer: false },
@@ -2228,8 +2320,12 @@ describe("buildThreadFeed", () => {
         shimmer,
       });
       expect(rows[0]).toMatchObject({ live: false, shimmer: false });
+      // Exactly one live activity: the shimmering call, or "Thinking" once it fails.
+      expect(rows.filter((entry) => entry.type === "thinking")).toHaveLength(shimmer ? 0 : 1);
+      expect(rows.at(-1)?.type).toBe(shimmer ? "work-toggle" : "thinking");
 
       const stoppedRows = deriveThreadFeedPresentation(feed, latestTurn, new Set());
+      expect(stoppedRows.some((entry) => entry.type === "thinking")).toBe(false);
       expect(stoppedRows.filter((entry) => entry.type === "work-toggle")).toMatchObject([
         { live: false, shimmer: false },
         {
@@ -2252,6 +2348,109 @@ describe("buildThreadFeed", () => {
       ]);
     },
   );
+
+  it("shows one Thinking row while a turn works without live tool activity", () => {
+    const turnId = TurnId.make("turn-thinking");
+    const latestTurn = {
+      turnId,
+      state: "running" as const,
+      requestedAt: "2026-04-01T00:00:00.000Z",
+      startedAt: "2026-04-01T00:00:00.000Z",
+      completedAt: null,
+      assistantMessageId: null,
+    };
+    const feed = buildThreadFeed(
+      makeThread({
+        id: ThreadId.make("thread-thinking"),
+        projectId: ProjectId.make("project-1"),
+        title: "Thinking",
+        latestTurn,
+        messages: [
+          {
+            id: MessageId.make("user-1"),
+            role: "user",
+            text: "hello",
+            turnId,
+            streaming: false,
+            createdAt: "2026-04-01T00:00:00.000Z",
+            updatedAt: "2026-04-01T00:00:00.000Z",
+          },
+        ],
+      }),
+    );
+
+    const rows = deriveThreadFeedPresentation(feed, latestTurn, new Set(), new Set(), "now");
+    expect(rows.map((entry) => entry.type)).toEqual(["message", "thinking"]);
+    expect(rows[1]).toMatchObject({ id: "thinking", createdAt: "now", turnId });
+    // The row identity is stable across re-derivations so the list can reuse it.
+    expect(deriveThreadFeedPresentation(feed, latestTurn, new Set(), new Set(), "now")[1]).toBe(
+      rows[1],
+    );
+    // Idle threads show no live activity.
+    expect(
+      deriveThreadFeedPresentation(feed, latestTurn, new Set(), new Set(), null).map(
+        (entry) => entry.type,
+      ),
+    ).toEqual(["message"]);
+  });
+
+  it("hands a settled tool run off to Thinking once assistant text streams after it", () => {
+    const turnId = TurnId.make("turn-streaming-tail");
+    const latestTurn = {
+      turnId,
+      state: "running" as const,
+      requestedAt: "2026-04-01T00:00:00.000Z",
+      startedAt: "2026-04-01T00:00:00.000Z",
+      completedAt: null,
+      assistantMessageId: null,
+    };
+    const feed = buildThreadFeed(
+      makeThread({
+        id: ThreadId.make("thread-streaming-tail"),
+        projectId: ProjectId.make("project-1"),
+        title: "Streaming tail",
+        latestTurn,
+        messages: [
+          {
+            id: MessageId.make("assistant-1"),
+            role: "assistant",
+            text: "Here is what I found",
+            turnId,
+            streaming: true,
+            createdAt: "2026-04-01T00:00:05.000Z",
+            updatedAt: "2026-04-01T00:00:06.000Z",
+          },
+        ],
+        activities: [
+          makeActivity({
+            id: EventId.make("read-completed"),
+            kind: "tool.completed",
+            tone: "tool",
+            summary: "Read file",
+            createdAt: "2026-04-01T00:00:02.000Z",
+            turnId,
+            payload: {
+              itemType: "file_read",
+              toolCallId: "read-1",
+              title: "Read file",
+              status: "completed",
+              detail: "src/index.ts",
+            },
+          }),
+        ],
+      }),
+    );
+
+    const rows = deriveThreadFeedPresentation(
+      feed,
+      latestTurn,
+      new Set(),
+      new Set(),
+      latestTurn.startedAt,
+    );
+    expect(rows.map((entry) => entry.type)).toEqual(["work-toggle", "message", "thinking"]);
+    expect(rows[0]).toMatchObject({ live: false, shimmer: false });
+  });
 
   it("preserves serialized shell wrappers with non-matching boundary quotes", () => {
     const turnId = TurnId.make("turn-serialized-shell-wrapper");
@@ -2546,15 +2745,103 @@ describe("quiet timeline: nested agents", () => {
       const rows = buildThreadFeed(thread).flatMap((entry) =>
         entry.type === "activity-group" ? entry.activities : [],
       );
+      // The agent folds into its spawn batch, which stays live after a resume.
       expect(rows).toMatchObject([
         {
           lifecycleStatus: "inProgress",
-          summary: "Reviewer",
-          workEntry: { label: resumeKind === "task.progress" ? "Review resumed" : "Review" },
+          summary: "Kicked off 1 subagent · 1 working",
+          workEntry: { agentSpawn: { workflowId: null, agentTaskIds: ["agent-1"] } },
         },
       ]);
     },
   );
+
+  it("folds a turn's direct spawns into one batch row that tracks their states", () => {
+    const turnId = TurnId.make("turn-spawn");
+    const agent = (
+      id: string,
+      kind: "task.started" | "task.progress" | "task.completed" | "task.updated",
+      taskId: string,
+      status: string,
+      seconds: number,
+      extra: Record<string, unknown> = {},
+    ) =>
+      makeActivity({
+        id: EventId.make(id),
+        kind,
+        summary: `${taskId} ${status}`,
+        createdAt: `2026-04-01T00:00:${String(seconds).padStart(2, "0")}.000Z`,
+        turnId,
+        payload: {
+          taskId,
+          agentKind: "agent",
+          taskType: "local_agent",
+          title: `Agent ${taskId}`,
+          status,
+          ...extra,
+        },
+      });
+    const shell = makeActivity({
+      id: EventId.make("shell-1"),
+      kind: "task.completed",
+      summary: "Task completed",
+      createdAt: "2026-04-01T00:00:05.000Z",
+      turnId,
+      payload: {
+        taskId: "sh-1",
+        agentKind: "background",
+        taskType: "local_bash",
+        status: "completed",
+        title: "Run tests",
+        detail: "Run tests",
+      },
+    });
+    const activities = [
+      agent("a-start", "task.started", "a", "running", 1),
+      agent("b-start", "task.started", "b", "running", 2),
+      agent("a-progress", "task.progress", "a", "running", 3, { detail: "Reading files" }),
+      shell,
+      agent("b-progress", "task.progress", "b", "running", 6, { detail: "Grepping" }),
+    ];
+    const rowsFor = (extraActivities: ReadonlyArray<ReturnType<typeof makeActivity>>) =>
+      buildThreadFeed(
+        makeThread({
+          id: ThreadId.make("thread-spawn"),
+          projectId: ProjectId.make("project-1"),
+          title: "Spawns",
+          activities: [...activities, ...extraActivities],
+        }),
+      ).flatMap((entry) => (entry.type === "activity-group" ? entry.activities : []));
+
+    const running = rowsFor([]);
+    expect(running.map((row) => [row.id, row.summary])).toEqual([
+      ["a-progress", "Kicked off 2 subagents · 2 working"],
+      ["shell-1", "Run tests"],
+    ]);
+    expect(running[0]).toMatchObject({
+      lifecycleStatus: "inProgress",
+      workEntry: { agentSpawn: { agentTaskIds: ["a", "b"] } },
+    });
+
+    const oneDone = rowsFor([agent("a-done", "task.completed", "a", "completed", 7)]);
+    expect(oneDone[0]).toMatchObject({
+      id: "a-progress",
+      summary: "Kicked off 2 subagents · 1 working",
+      lifecycleStatus: "inProgress",
+    });
+
+    const allDone = rowsFor([
+      agent("a-done", "task.completed", "a", "completed", 7),
+      agent("b-failed", "task.updated", "b", "failed", 8, { error: "boom" }),
+    ]);
+    expect(allDone[0]).toMatchObject({
+      id: "a-progress",
+      summary: "Ran 2 subagents · 1 failed",
+      lifecycleStatus: "failed",
+      status: "failure",
+    });
+    expect(allDone).toHaveLength(2);
+  });
 
   it.each(["cancelled", "failed", "interrupted", "idle"] as const)(
     "replaces Antigravity batch progress with %s",
@@ -2603,18 +2890,145 @@ describe("quiet timeline: nested agents", () => {
       const rows = buildThreadFeed(thread).flatMap((entry) =>
         entry.type === "activity-group" ? entry.activities : [],
       );
+      // Turn-less batches never share a spawn group, so each keeps its own row.
       expect(rows).toHaveLength(2);
       expect(rows[0]).toMatchObject({
         lifecycleStatus: status === "failed" ? "failed" : "stopped",
-        detail,
-        workEntry: { taskId: "trajectory:4", toolTitle: "Antigravity subagent batch" },
+        summary: `Ran 1 subagent · ${status === "failed" ? "1 failed" : "1 stopped"}`,
+        workEntry: {
+          taskId: "trajectory:4",
+          toolTitle: "Antigravity subagent batch",
+          agentSpawn: { agents: [{ detail }] },
+        },
       });
+      expect(rows[0]?.getFullDetail()).toContain(detail);
       expect(rows[1]).toMatchObject({
         lifecycleStatus: "inProgress",
+        summary: "Kicked off 1 subagent · 1 working",
         workEntry: { taskId: "trajectory:5" },
       });
     },
   );
+
+  it("folds bypassed Claude workflow members into the coordinator's batch and settles them with it", () => {
+    const turnId = TurnId.make("turn-workflow");
+    const at = (seconds: number) => `2026-04-01T00:00:${String(seconds).padStart(2, "0")}.000Z`;
+    const thread = makeThread({
+      id: ThreadId.make("thread-workflow"),
+      projectId: ProjectId.make("project-1"),
+      title: "Workflow",
+      activities: [
+        makeActivity({
+          id: EventId.make("wf-progress"),
+          kind: "task.progress",
+          summary: "Workflow running",
+          createdAt: at(1),
+          turnId,
+          payload: {
+            taskId: "wf-1",
+            taskType: "local_workflow",
+            workflowName: "review",
+            agentKind: "agent",
+            title: "review",
+            status: "running",
+          },
+        }),
+        // Members are synthesized with timelineBypass and never render alone.
+        ...[0, 1].map((index) =>
+          makeActivity({
+            id: EventId.make(`member-${index}`),
+            kind: "task.progress",
+            summary: `Agent ${index}`,
+            createdAt: at(2 + index),
+            turnId,
+            payload: {
+              taskId: `wf-1:wf:${index}`,
+              agentKind: "agent",
+              title: `Reviewer ${index}`,
+              description: `Reviewer ${index}`,
+              status: index === 0 ? "completed" : "running",
+              parentAgentId: "wf-1",
+              timelineBypass: true,
+            },
+          }),
+        ),
+        makeActivity({
+          id: EventId.make("wf-done"),
+          kind: "task.completed",
+          summary: "Task completed",
+          createdAt: at(10),
+          turnId,
+          payload: {
+            taskId: "wf-1",
+            taskType: "local_workflow",
+            workflowName: "review",
+            agentKind: "agent",
+            status: "completed",
+            title: "review",
+          },
+        }),
+      ],
+    });
+    const rows = buildThreadFeed(thread).flatMap((entry) =>
+      entry.type === "activity-group" ? entry.activities : [],
+    );
+    expect(rows).toHaveLength(1);
+    // The member that never reported its own end settles with the coordinator.
+    expect(rows[0]).toMatchObject({
+      id: "wf-progress",
+      summary: "Ran 2 subagents · completed",
+      lifecycleStatus: "completed",
+      workEntry: {
+        agentSpawn: {
+          workflowId: "wf-1",
+          agentTaskIds: ["wf-1", "wf-1:wf:0", "wf-1:wf:1"],
+        },
+      },
+    });
+    expect(rows[0]?.getFullDetail()).toBe("Reviewer 0 · completed\nReviewer 1 · completed");
+  });
+
+  it("treats a Codex child's idle turn end as a finished batch member", () => {
+    const turnId = TurnId.make("turn-codex");
+    const child = (
+      id: string,
+      kind: "task.started" | "task.updated",
+      status: string,
+      seconds: number,
+    ) =>
+      makeActivity({
+        id: EventId.make(id),
+        kind,
+        summary: `${status}`,
+        createdAt: `2026-04-01T00:00:${String(seconds).padStart(2, "0")}.000Z`,
+        turnId,
+        payload: {
+          taskId: "child-1",
+          agentKind: "agent",
+          title: "math_one",
+          status,
+          timelineBypass: true,
+        },
+      });
+    const thread = makeThread({
+      id: ThreadId.make("thread-codex"),
+      projectId: ProjectId.make("project-1"),
+      title: "Codex children",
+      activities: [
+        child("c-start", "task.started", "running", 1),
+        child("c-running", "task.updated", "running", 2),
+        child("c-idle", "task.updated", "idle", 5),
+      ],
+    });
+    const rows = buildThreadFeed(thread).flatMap((entry) =>
+      entry.type === "activity-group" ? entry.activities : [],
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      summary: "Ran 1 subagent · completed",
+      lifecycleStatus: "completed",
+    });
+  });
 
   it("keeps a nested agent's terminal row but hides its background work", () => {
     const thread = makeThread({
