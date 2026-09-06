@@ -7,6 +7,7 @@ import { cn } from "~/lib/utils";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import { ScrollArea } from "~/components/ui/scroll-area";
+import { SidebarQuestionIndicators } from "~/components/sidebar/SidebarQuestionIndicators";
 import { Separator } from "~/components/ui/separator";
 import {
   Sheet,
@@ -692,24 +693,31 @@ function SidebarSeparator({ className, ...props }: React.ComponentProps<typeof S
 function SidebarContent({
   className,
   fixedHeader,
+  onPendingQuestionNavigate,
   ...props
 }: React.ComponentProps<"div"> & {
   fixedHeader?: React.ReactNode;
+  onPendingQuestionNavigate?: React.ComponentProps<typeof SidebarQuestionIndicators>["onNavigate"];
 }) {
   return (
     <>
       {fixedHeader ? <div className="w-full shrink-0">{fixedHeader}</div> : null}
-      <ScrollArea hideScrollbars scrollFade className="h-auto min-h-0 flex-1">
-        <div
-          className={cn(
-            "flex w-full min-w-0 flex-col gap-2 group-data-[collapsible=icon]:overflow-hidden",
-            className,
-          )}
-          data-sidebar="content"
-          data-slot="sidebar-content"
-          {...props}
-        />
-      </ScrollArea>
+      <div className="relative flex min-h-0 flex-1 flex-col">
+        {onPendingQuestionNavigate ? (
+          <SidebarQuestionIndicators onNavigate={onPendingQuestionNavigate} />
+        ) : null}
+        <ScrollArea hideScrollbars scrollFade className="h-auto min-h-0 flex-1">
+          <div
+            className={cn(
+              "flex w-full min-w-0 flex-col gap-2 group-data-[collapsible=icon]:overflow-hidden",
+              className,
+            )}
+            data-sidebar="content"
+            data-slot="sidebar-content"
+            {...props}
+          />
+        </ScrollArea>
+      </div>
     </>
   );
 }
