@@ -40,8 +40,10 @@ const CONTROL_TIMING = {
   reduceMotion: ReduceMotion.System,
 } as const;
 const CONTROL_SEPARATION = (16 + CONTROL_HEIGHT) / 2;
-const LABEL_ENTERING = FadeIn.duration(180).reduceMotion(ReduceMotion.System);
-const LABEL_EXITING = FadeOut.duration(120).reduceMotion(ReduceMotion.System);
+// Both rows share the same centered anchor, so the outgoing one clears fast and
+// the incoming one waits for it to be mostly gone before it starts to show.
+const LABEL_ENTERING = FadeIn.duration(160).delay(80).reduceMotion(ReduceMotion.System);
+const LABEL_EXITING = FadeOut.duration(100).reduceMotion(ReduceMotion.System);
 
 // Expo reapplies glass after native layout and window reattachment, when UIKit
 // can otherwise leave the label visible but lose the material behind it.
@@ -173,12 +175,16 @@ export function FloatingWorkingControl(props: {
   // Only the connection label is a button (tap to reconnect); the others
   // pass touches through to the feed like before.
   const statusInteractive = props.status?.kind === "connection";
-  // A zero-width anchor at the capsule's midpoint. Labels are centered on it
-  // and never clipped, so an incoming wider label sits at its final position
-  // while the capsule catches up underneath.
+  // A zero-width anchor at the capsule's midpoint. Yoga centers an absolute
+  // child with no insets on the parent's justify-content, so every label row
+  // lands centered on the anchor without measuring itself, and the capsule
+  // clips whatever the label overhangs while it catches up.
   const statusLabel =
     props.status !== null ? (
-      <View pointerEvents="box-none" className="absolute inset-y-0 left-1/2 w-0 overflow-visible">
+      <View
+        pointerEvents="box-none"
+        className="absolute inset-y-0 left-1/2 w-0 flex-row items-center justify-center"
+      >
         <FloatingStatusLabel status={props.status} onLayout={handleLabelLayout} />
       </View>
     ) : null;
@@ -201,7 +207,7 @@ export function FloatingWorkingControl(props: {
               view only fills it, since it does not follow animated layout props. */}
           <Animated.View
             pointerEvents={statusInteractive ? "box-none" : "none"}
-            className="h-11"
+            className="h-11 overflow-hidden rounded-full"
             style={capsuleStyle}
           >
             <UniwindGlassView
@@ -233,7 +239,7 @@ export function FloatingWorkingControl(props: {
         <View pointerEvents="box-none" className="flex-row items-center gap-4">
           <Animated.View
             pointerEvents={statusInteractive ? "box-none" : "none"}
-            className="h-11 rounded-full border border-border bg-card shadow-md shadow-black/10"
+            className="h-11 overflow-hidden rounded-full border border-border bg-card shadow-md shadow-black/10"
             style={capsuleStyle}
           >
             {statusLabel}
@@ -350,18 +356,12 @@ function StatusLabelRow(props: {
   readonly onPress?: () => void;
 }) {
   const rowClassName = `h-11 flex-row items-center px-4 ${props.className ?? ""}`;
-  const [width, setWidth] = useState<number | null>(null);
-  const handleLayout = (event: LayoutChangeEvent) => {
-    setWidth(event.nativeEvent.layout.width);
-    props.onLayout(event);
-  };
   return (
     <Animated.View
-      className="absolute top-0"
-      style={{ left: width === null ? undefined : -width / 2, opacity: width === null ? 0 : 1 }}
+      className="absolute"
       entering={LABEL_ENTERING}
       exiting={LABEL_EXITING}
-      onLayout={handleLayout}
+      onLayout={props.onLayout}
     >
       {props.onPress ? (
         <Pressable
