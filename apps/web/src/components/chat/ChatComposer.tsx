@@ -4577,9 +4577,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     stashInFlightRef.current.add(snapshotKey);
 
     const stashTarget = composerDraftTarget;
-    const flightSource = composerSurfaceRef.current
-      ?.querySelector('[data-testid="composer-editor"]')
-      ?.getBoundingClientRect();
+    const flightEditor = composerSurfaceRef.current?.querySelector<HTMLElement>(
+      '[data-testid="composer-editor"]',
+    );
+    const flightSource = flightEditor?.getBoundingClientRect();
+    // Keep the flight copy aligned with text, excluding the editor's button gutter.
+    const flightTextWidth = flightEditor
+      ? flightEditor.clientWidth - parseFloat(getComputedStyle(flightEditor).paddingRight)
+      : 0;
     const entryId = randomUUID();
     try {
       // Persist the text-only entry *first*, then clear. Ordering matters in
@@ -4655,7 +4660,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           text: prompt || `${images.length + files.length} saved attachments`,
           x: flightSource.x,
           y: flightSource.y,
-          width: flightSource.width,
+          width: flightTextWidth,
           height: flightSource.height,
         });
       } else {
@@ -6909,7 +6914,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               <div
                 className={cn(
                   "relative",
-                  !isComposerResting && "pr-28",
                   isComposerResting && "flex min-w-0 items-center gap-1",
                   isComposerResting &&
                     ((settings.contextWindowMeterEnabled && activeContextWindow) ||
@@ -7007,12 +7011,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     skills={selectedProviderSkills}
                     containerClassName={cn(isComposerResting && "min-w-0 flex-1")}
                     className={cn(
+                      !isComposerResting && "pr-28",
                       showMobilePendingAnswerActions && "max-sm:pb-12",
                       isComposerResting &&
                         "my-0 max-h-8 min-h-8 overflow-hidden py-0 whitespace-pre! leading-8",
                       isComposerApprovalState && "min-h-10",
                     )}
                     placeholderClassName={cn(
+                      !isComposerResting && "pr-28",
                       isComposerResting &&
                         "flex items-center overflow-hidden whitespace-nowrap leading-8",
                     )}
