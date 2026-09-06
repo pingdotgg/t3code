@@ -27,6 +27,7 @@ import { useThreadPr, type ThreadPrPresentation } from "../../state/use-thread-p
 import type { HomeGroupDisplayAction } from "../home/homeListItems";
 import { ThreadSwipeable } from "../home/thread-swipe-actions";
 import { buildThreadTitleRegenerationMenuItems } from "./thread-title-regeneration-menu";
+import { QueuedMessageIcon } from "./queued-message-icon";
 import { resolveThreadStatus } from "./threadPresentation";
 import { ThreadSearchMatchExcerpt } from "./thread-search-match";
 
@@ -477,19 +478,21 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
 
   const { thread, onSelectThread, onArchiveThread, onDeleteThread, onRegenerateThreadTitle } =
     props;
-  const status = resolveThreadStatus(thread, { hasQueuedMessages: props.hasQueuedMessages });
+  const status = resolveThreadStatus(thread);
   const pr = useThreadPr(thread);
   const timestamp = relativeTime(
     thread.latestUserMessageAt ?? thread.updatedAt ?? thread.createdAt,
   );
-  const threadAccessibilityLabel = pr ? `${thread.title}, ${pr.accessibilityLabel}` : thread.title;
-  // The pill has room for one word, so what happens next goes in the
-  // subtitle, matching the pending-task row above it.
-  const subtitleParts = [
-    status?.kind === "queued" ? "Sends on reconnect" : null,
-    props.environmentLabel,
-    thread.branch,
-  ].filter((part): part is string => Boolean(part));
+  const threadAccessibilityLabel = [
+    thread.title,
+    pr?.accessibilityLabel,
+    props.hasQueuedMessages ? "messages queued to send" : null,
+  ]
+    .filter(Boolean)
+    .join(", ");
+  const subtitleParts = [props.environmentLabel, thread.branch].filter((part): part is string =>
+    Boolean(part),
+  );
 
   const backgroundColor = compact ? screenColor : drawerColor;
   const effectivePressedBackground = selected
@@ -617,6 +620,7 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
                 {thread.title}
               </Text>
               <View className="flex-row items-center gap-2">
+                {props.hasQueuedMessages ? <QueuedMessageIcon selected={selected} /> : null}
                 {statusPill}
                 <Text className="text-base tabular-nums text-foreground-tertiary">{timestamp}</Text>
                 <SymbolView
@@ -676,6 +680,7 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
               {thread.title}
             </Text>
             <View className="flex-row items-center gap-2">
+              {props.hasQueuedMessages ? <QueuedMessageIcon selected={selected} /> : null}
               {statusPill}
               <Text
                 className={cn(

@@ -164,27 +164,6 @@ describe("resolveThreadListV2Status", () => {
       "ready",
     );
   });
-
-  it("reports a queued outbox message on an otherwise idle thread, below live states", () => {
-    const idle = makeThread({ id: ThreadId.make("t"), title: "t" });
-    expect(resolveThreadListV2Status(idle, { hasQueuedMessages: true })).toBe("queued");
-    expect(resolveThreadListV2Status(idle, { hasQueuedMessages: false })).toBe("ready");
-    const working = makeThread({
-      id: ThreadId.make("w"),
-      title: "w",
-      session: {
-        threadId: ThreadId.make("w"),
-        status: "running",
-        providerName: "Codex",
-        providerInstanceId: ProviderInstanceId.make("codex"),
-        runtimeMode: "full-access",
-        activeTurnId: null,
-        lastError: null,
-        updatedAt: NOW,
-      },
-    });
-    expect(resolveThreadListV2Status(working, { hasQueuedMessages: true })).toBe("working");
-  });
 });
 
 describe("queued messages keep a settled thread active", () => {

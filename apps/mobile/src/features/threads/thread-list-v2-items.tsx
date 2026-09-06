@@ -31,6 +31,7 @@ import {
   resolveThreadListV2SwipeActions,
   type ThreadListV2Status,
 } from "./threadListV2";
+import { QueuedMessageIcon } from "./queued-message-icon";
 import { ThreadSearchMatchExcerpt } from "./thread-search-match";
 
 /**
@@ -56,9 +57,6 @@ const STATUS_LABEL_BY_STATUS: Partial<
   input: { label: "Input", className: "text-foreground-secondary" },
   working: { label: "Working", className: "text-foreground-secondary" },
   failed: { label: "Failed", className: "text-danger-foreground" },
-  // Same wording as a queued pending task and uncolored for the same reason:
-  // nothing is asked of the user; the message leaves once the server is back.
-  queued: { label: "Sends on reconnect", className: "text-foreground-tertiary" },
 };
 
 function threadTimeLabel(thread: EnvironmentThreadShell): string {
@@ -436,9 +434,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const sidebarPane = props.pane === "sidebar";
   const selected = props.selected === true;
 
-  const status = resolveThreadListV2Status(thread, {
-    hasQueuedMessages: props.hasQueuedMessages,
-  });
+  const status = resolveThreadListV2Status(thread);
   const statusLabel = STATUS_LABEL_BY_STATUS[status];
   // Settled rows label by the same stamp they sort by, so order and label
   // can't disagree. updatedAt is always present, so the resolver never
@@ -716,6 +712,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         >
           {props.projectTitle ?? props.project?.title ?? ""}
         </Text>
+        {props.hasQueuedMessages ? <QueuedMessageIcon selected={selected} /> : null}
         {pinnedRow ? (
           <SymbolView
             name="pin"
@@ -837,7 +834,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     variant === "card" ? (
       <Pressable
         accessibilityHint={swipeAccessibilityHint}
-        accessibilityLabel={thread.title}
+        accessibilityLabel={
+          props.hasQueuedMessages ? `${thread.title}, messages queued to send` : thread.title
+        }
         accessibilityRole="button"
         accessibilityState={{ selected }}
         onPress={() => {
@@ -877,7 +876,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     ) : (
       <Pressable
         accessibilityHint={swipeAccessibilityHint}
-        accessibilityLabel={thread.title}
+        accessibilityLabel={
+          props.hasQueuedMessages ? `${thread.title}, messages queued to send` : thread.title
+        }
         accessibilityRole="button"
         accessibilityState={{ selected }}
         className={sidebarPane ? undefined : "bg-screen"}
@@ -934,6 +935,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
               />
             ) : null}
           </View>
+          {props.hasQueuedMessages ? <QueuedMessageIcon selected={selected} /> : null}
           <Text
             className={cn(
               "text-sm tabular-nums",

@@ -33,7 +33,7 @@ export { snoozeWakeLabel };
  * (approval), "in motion" (working), and "broken" (failed). Ready is the
  * unlabeled resting state.
  */
-export type ThreadListV2Status = "approval" | "input" | "working" | "failed" | "queued" | "ready";
+export type ThreadListV2Status = "approval" | "input" | "working" | "failed" | "ready";
 export type ThreadListV2SwipeAction = "archive" | "settle" | "unsettle" | "snooze" | "unsnooze";
 
 export function resolveThreadListV2SnoozeMenuSelection(input: {
@@ -131,15 +131,8 @@ export function resolveThreadListV2Enabled(input: {
   return input.legacyPreference !== true;
 }
 
-/**
- * `hasQueuedMessages` is the thread's outbox: a turn written on this device
- * that has not reached the server yet. It ranks below everything the agent
- * is asking for or doing (those are live), but above a bare "ready", so the
- * row says the thread is not done even though the server thinks it is idle.
- */
 export function resolveThreadListV2Status(
   thread: Pick<EnvironmentThreadShell, "hasPendingApprovals" | "hasPendingUserInput" | "session">,
-  options?: { readonly hasQueuedMessages?: boolean },
 ): ThreadListV2Status {
   if (thread.hasPendingApprovals) {
     return "approval";
@@ -152,9 +145,6 @@ export function resolveThreadListV2Status(
   }
   if (thread.session?.status === "error") {
     return "failed";
-  }
-  if (options?.hasQueuedMessages) {
-    return "queued";
   }
   return "ready";
 }
