@@ -4,7 +4,7 @@ type BrowserViewportHandler = (setting: PreviewViewportSetting) => Promise<void>
 
 export const BROWSER_VIEWPORT_COMMIT_TIMEOUT_MS = 15_000;
 
-export class BrowserViewportCommitTimeoutError extends Error {
+class BrowserViewportCommitTimeoutError extends Error {
   override readonly name = "BrowserViewportCommitTimeoutError";
 
   constructor(readonly tabId: string) {

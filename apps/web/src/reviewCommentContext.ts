@@ -180,12 +180,6 @@ export function parseReviewCommentMessageSegments(
   return segments;
 }
 
-export function hasReviewCommentMessageSegments(value: string): boolean {
-  return parseReviewCommentMessageSegments(value).some(
-    (segment) => segment.kind === "review-comment",
-  );
-}
-
 export function formatReviewCommentFence(language: string, contents: string): string {
   const longestBacktickRun = Math.max(
     0,

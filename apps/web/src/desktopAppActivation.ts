@@ -44,7 +44,7 @@ function failure(
   return { version: 1, requestId, ok: false, code, message };
 }
 
-export function desktopPlatformToEnvironmentOs(
+function desktopPlatformToEnvironmentOs(
   platform: DesktopAppActivationRequest["platform"],
 ): ExecutionEnvironmentPlatformOs {
   return platform === "win32" ? "windows" : platform;

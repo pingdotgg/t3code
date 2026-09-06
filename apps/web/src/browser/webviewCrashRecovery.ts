@@ -1,6 +1,6 @@
 export const WEBVIEW_CRASH_RECOVERY_WINDOW_MS = 30_000;
-export const WEBVIEW_CRASH_RECOVERY_MAX_ATTEMPTS = 3;
-export const WEBVIEW_CRASH_RECOVERY_BASE_DELAY_MS = 250;
+const WEBVIEW_CRASH_RECOVERY_MAX_ATTEMPTS = 3;
+const WEBVIEW_CRASH_RECOVERY_BASE_DELAY_MS = 250;
 
 export interface WebviewCrashRecoveryState {
   readonly attempts: number;
