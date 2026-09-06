@@ -33,7 +33,7 @@ const PROVIDER_UPDATE_ACTION_TOAST_MESSAGE = "Install the update now or review p
  * move on their own, so this mostly bounds how stale a Homebrew "latest" can
  * get; the npm registry check keeps its own cache.
  */
-export const MAINTENANCE_CAPABILITIES_CACHE_TTL = Duration.hours(1);
+const MAINTENANCE_CAPABILITIES_CACHE_TTL = Duration.hours(1);
 
 const compactEnv = (input: Record<string, Option.Option<string>>): NodeJS.ProcessEnv =>
   Object.fromEntries(
@@ -348,7 +348,7 @@ const runHomebrew = Effect.fn("runHomebrew")(function* (
  * owns that path; anything unproven stays manual-only so T3 Code never runs
  * a package manager against an install it did not create.
  */
-export const resolvePackageManagedProviderMaintenance = Effect.fn(
+const resolvePackageManagedProviderMaintenance = Effect.fn(
   "resolvePackageManagedProviderMaintenance",
 )(function* (
   definition: PackageManagedProviderMaintenanceDefinition,
