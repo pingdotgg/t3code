@@ -420,8 +420,6 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
       ]);
 
       const shellSnapshot = yield* snapshotQuery.getShellSnapshot();
-      const commandSnapshot = yield* snapshotQuery.getCommandReadModel();
-      assert.equal(commandSnapshot.threads[0]?.activeOrderKey, "hq");
       assert.equal(shellSnapshot.snapshotSequence, 5);
       assert.deepEqual(shellSnapshot.projects, [
         {
@@ -519,6 +517,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
       }
 
       const commandSnapshot = yield* snapshotQuery.getCommandReadModel();
+      assert.equal(commandSnapshot.threads[0]?.activeOrderKey, "hq");
       assert.deepEqual(commandSnapshot.threads[0]?.branchPullRequest, branchPullRequest);
       const threadShell = yield* snapshotQuery.getThreadShellById(ThreadId.make("thread-1"));
       assert.equal(threadShell._tag, "Some");
