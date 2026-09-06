@@ -1,3 +1,4 @@
+import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { scopedThreadKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
@@ -36,7 +37,6 @@ import {
   PanelRightIcon,
   PencilIcon,
   PlayIcon,
-  RefreshCwIcon,
   RotateCcwIcon,
   TriangleAlertIcon,
 } from "lucide-react";
@@ -627,6 +627,14 @@ export function PullRequestDetailPanel({
         : {
             ...resolvedCoreDetail,
             ...sharedSummary,
+            closedAt:
+              sharedSummary.closedAt === undefined
+                ? resolvedCoreDetail.closedAt
+                : sharedSummary.closedAt,
+            mergedAt:
+              sharedSummary.mergedAt === undefined
+                ? resolvedCoreDetail.mergedAt
+                : sharedSummary.mergedAt,
             // A summary may come from an older server that does not report draft state. Keep the
             // detail's required value instead of making the complete detail shape partial.
             isDraft: sharedSummary.isDraft ?? resolvedCoreDetail.isDraft,
@@ -728,10 +736,16 @@ export function PullRequestDetailPanel({
   // invalidation goes first so the re-reads miss that cache; if it fails, the reads still run
   // and at worst answer from it.
   const invalidate = useAtomCommand(pullRequestEnvironment.invalidate, { reportFailure: false });
+  const [isInvalidating, setIsInvalidating] = useState(false);
   const refreshFromHost = useCallback(async () => {
-    await invalidate({ environmentId, input: { reference } });
-    refreshDetail();
-    setRefreshToken((token) => token + 1);
+    setIsInvalidating(true);
+    try {
+      await invalidate({ environmentId, input: { reference } });
+      refreshDetail();
+      setRefreshToken((token) => token + 1);
+    } finally {
+      setIsInvalidating(false);
+    }
   }, [environmentId, invalidate, reference, refreshDetail]);
   // A refresh asked for by the page: the detail, and through the token below, the diff with it.
   const appliedForcedToken = useRef(forcedRefreshToken);
@@ -1670,8 +1684,14 @@ export function PullRequestDetailPanel({
                   <MoreHorizontalIcon className="size-4" />
                 </MenuTrigger>
                 <MenuPopup align="end" side="bottom" className="min-w-72">
-                  <MenuItem disabled={detailQuery.isPending} onClick={() => void refreshFromHost()}>
-                    <RefreshCwIcon className="size-3.5" />
+                  <MenuItem
+                    disabled={isInvalidating || detailQuery.isPending}
+                    onClick={() => void refreshFromHost()}
+                  >
+                    <RefreshIcon
+                      className="size-3.5"
+                      refreshing={isInvalidating || detailQuery.isPending}
+                    />
                     Refresh
                   </MenuItem>
                   <MenuItem disabled={handoff !== null} onClick={askAboutPullRequest}>
@@ -2315,6 +2335,7 @@ export function PullRequestDetailPanel({
         {detailQuery.error && !detail ? (
           <PullRequestsUnavailableState
             error={detailQuery.error}
+            refreshing={detailQuery.isPending}
             onRetry={refreshDetail}
             {...(unavailableGitHubUrl ? { gitHubUrl: unavailableGitHubUrl } : {})}
           />

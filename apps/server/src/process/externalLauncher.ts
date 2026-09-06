@@ -45,7 +45,6 @@ export {
   ExternalLauncherEditorSpawnError,
   ExternalLauncherUnknownEditorError,
   ExternalLauncherUnsupportedEditorError,
-  isExternalLauncherError,
 } from "@t3tools/contracts";
 export type { LaunchEditorInput };
 interface EditorLaunch {

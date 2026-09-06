@@ -432,6 +432,10 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
 
   const homebrew = homebrewOwnershipFromCommandPath(context.realCommandPath);
   if (homebrew) {
+    // Mise shims resolve to the version manager, not the provider.
+    if (homebrew.kind === "formula" && homebrew.name.toLowerCase() === "mise") {
+      return manual;
+    }
     const brewPath = yield* resolveCommandPath("brew", { env: context.env }).pipe(
       Effect.catchTags({ CommandResolutionError: () => Effect.succeed(null) }),
     );
