@@ -262,7 +262,7 @@ const COMPOSER_RESTING_CONTROLS_ARRIVAL_DRIFT_PX = 4;
 function useComposerRestingTransition(
   isCollapsed: boolean,
   isResting: boolean,
-  isStashing: boolean,
+  stashFlightKey: number | null,
   stashDestinationRef: React.RefObject<HTMLButtonElement | null>,
   restingControlsRef: React.RefObject<HTMLDivElement | null>,
   onOverlayHeightChange: (height: number) => void,
@@ -271,7 +271,8 @@ function useComposerRestingTransition(
   const isCollapsedRef = useRef(isCollapsed);
   const previousCollapsedRef = useRef(isCollapsed);
   const previousRestingRef = useRef(isResting);
-  const previousStashingRef = useRef(isStashing);
+  const isStashing = stashFlightKey !== null;
+  const previousStashFlightKeyRef = useRef(stashFlightKey);
   const isStashSettlingRef = useRef(false);
   const isStashingRef = useRef(isStashing);
   isStashingRef.current = isStashing;
@@ -661,8 +662,8 @@ function useComposerRestingTransition(
   useLayoutEffect(() => {
     const requestId = transitionLayoutRequestRef.current + 1;
     transitionLayoutRequestRef.current = requestId;
-    const stashStarted = !previousStashingRef.current && isStashing;
-    previousStashingRef.current = isStashing;
+    const stashStarted = isStashing && previousStashFlightKeyRef.current !== stashFlightKey;
+    previousStashFlightKeyRef.current = stashFlightKey;
     const stateChanged = previousCollapsedRef.current !== isCollapsed || stashStarted;
     if (stateChanged || !isStashing) isStashSettlingRef.current = stashStarted;
     // A non-Git context strip enters or leaves flow through ChatView state in
@@ -677,7 +678,7 @@ function useComposerRestingTransition(
         transitionLayoutRequestRef.current += 1;
       }
     };
-  }, [isCollapsed, isStashing, transitionToCurrentGeometry]);
+  }, [isCollapsed, isStashing, stashFlightKey, transitionToCurrentGeometry]);
 
   // The resting flag can change while the collapsed layout stays the same,
   // for example when an unfocused thread crosses the phone breakpoint. The
@@ -3895,7 +3896,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   } = useComposerRestingTransition(
     composerControlsInStrip,
     isComposerResting,
-    activeStashFlight !== null,
+    activeStashFlight?.key ?? null,
     stashDestinationRef,
     restingComposerControlsRef,
     onComposerOverlayHeightChange,
