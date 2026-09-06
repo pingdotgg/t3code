@@ -178,24 +178,28 @@ describe("applyThreadDetailEvent", () => {
   describe("thread.settled / thread.unsettled", () => {
     it("sets the settled override and timestamp", () => {
       const settledAt = "2026-04-01T05:00:00.000Z";
-      const result = applyThreadDetailEvent(baseThread, {
-        ...baseEventFields,
-        sequence: 5,
-        occurredAt: settledAt,
-        aggregateKind: "thread",
-        aggregateId: ThreadId.make("thread-1"),
-        type: "thread.settled",
-        payload: {
-          threadId: ThreadId.make("thread-1"),
-          settledAt,
-          updatedAt: settledAt,
+      const result = applyThreadDetailEvent(
+        { ...baseThread, activeOrderKey: "m" },
+        {
+          ...baseEventFields,
+          sequence: 5,
+          occurredAt: settledAt,
+          aggregateKind: "thread",
+          aggregateId: ThreadId.make("thread-1"),
+          type: "thread.settled",
+          payload: {
+            threadId: ThreadId.make("thread-1"),
+            settledAt,
+            updatedAt: settledAt,
+          },
         },
-      });
+      );
 
       expect(result.kind).toBe("updated");
       if (result.kind === "updated") {
         expect(result.thread.settledOverride).toBe("settled");
         expect(result.thread.settledAt).toBe(settledAt);
+        expect(result.thread.activeOrderKey).toBeNull();
       }
     });
 
@@ -234,23 +238,27 @@ describe("applyThreadDetailEvent", () => {
   describe("thread.pinned / thread.unpinned", () => {
     it("sets pinnedAt", () => {
       const pinnedAt = "2026-04-01T05:00:00.000Z";
-      const result = applyThreadDetailEvent(baseThread, {
-        ...baseEventFields,
-        sequence: 5,
-        occurredAt: pinnedAt,
-        aggregateKind: "thread",
-        aggregateId: ThreadId.make("thread-1"),
-        type: "thread.pinned",
-        payload: {
-          threadId: ThreadId.make("thread-1"),
-          pinnedAt,
-          updatedAt: pinnedAt,
+      const result = applyThreadDetailEvent(
+        { ...baseThread, activeOrderKey: "m" },
+        {
+          ...baseEventFields,
+          sequence: 5,
+          occurredAt: pinnedAt,
+          aggregateKind: "thread",
+          aggregateId: ThreadId.make("thread-1"),
+          type: "thread.pinned",
+          payload: {
+            threadId: ThreadId.make("thread-1"),
+            pinnedAt,
+            updatedAt: pinnedAt,
+          },
         },
-      });
+      );
 
       expect(result.kind).toBe("updated");
       if (result.kind === "updated") {
         expect(result.thread.pinnedAt).toBe(pinnedAt);
+        expect(result.thread.activeOrderKey).toBe("m");
       }
     });
 
@@ -281,26 +289,57 @@ describe("applyThreadDetailEvent", () => {
   });
 
   describe("thread.meta-updated", () => {
+    it.each(["f", null] as const)(
+      "updates the active key to %s without activity",
+      (activeOrderKey) => {
+        const result = applyThreadDetailEvent(
+          { ...baseThread, activeOrderKey: "m" },
+          {
+            ...baseEventFields,
+            sequence: 5,
+            occurredAt: "2026-04-01T05:00:00.000Z",
+            aggregateKind: "thread",
+            aggregateId: baseThread.id,
+            type: "thread.meta-updated",
+            payload: {
+              threadId: baseThread.id,
+              activeOrderKey,
+              updatedAt: baseThread.updatedAt,
+            },
+          },
+        );
+        expect(result.kind).toBe("updated");
+        if (result.kind === "updated") {
+          expect(result.thread.activeOrderKey).toBe(activeOrderKey);
+          expect(result.thread.updatedAt).toBe(baseThread.updatedAt);
+        }
+      },
+    );
+
     it("patches title and branch", () => {
-      const result = applyThreadDetailEvent(baseThread, {
-        ...baseEventFields,
-        sequence: 5,
-        occurredAt: "2026-04-01T05:00:00.000Z",
-        aggregateKind: "thread",
-        aggregateId: ThreadId.make("thread-1"),
-        type: "thread.meta-updated",
-        payload: {
-          threadId: ThreadId.make("thread-1"),
-          title: "Updated Title",
-          branch: "feature/demo",
-          updatedAt: "2026-04-01T05:00:00.000Z",
+      const result = applyThreadDetailEvent(
+        { ...baseThread, activeOrderKey: "m" },
+        {
+          ...baseEventFields,
+          sequence: 5,
+          occurredAt: "2026-04-01T05:00:00.000Z",
+          aggregateKind: "thread",
+          aggregateId: ThreadId.make("thread-1"),
+          type: "thread.meta-updated",
+          payload: {
+            threadId: ThreadId.make("thread-1"),
+            title: "Updated Title",
+            branch: "feature/demo",
+            updatedAt: "2026-04-01T05:00:00.000Z",
+          },
         },
-      });
+      );
 
       expect(result.kind).toBe("updated");
       if (result.kind === "updated") {
         expect(result.thread.title).toBe("Updated Title");
         expect(result.thread.branch).toBe("feature/demo");
+        expect(result.thread.activeOrderKey).toBe("m");
         // Model selection should be unchanged since it wasn't in the payload
         expect(result.thread.modelSelection).toEqual(baseThread.modelSelection);
       }
