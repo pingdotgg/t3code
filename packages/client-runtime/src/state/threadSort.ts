@@ -209,7 +209,7 @@ export function pinOrderKeyBetween(before: string | null, after: string | null):
     drop lands next to keyless threads, so single-key insertion has nothing
     to anchor on). Two base-26 digits give 675 slots — far beyond any real
     pinned section — with monotonicity enforced as a belt-and-braces. */
-export function generateSpreadPinOrderKeys(count: number): string[] {
+function generateSpreadPinOrderKeys(count: number): string[] {
   const space = PIN_ORDER_DIGITS.length * PIN_ORDER_DIGITS.length;
   const step = space / (count + 1);
   const keys: string[] = [];

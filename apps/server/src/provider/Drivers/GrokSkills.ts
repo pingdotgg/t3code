@@ -91,10 +91,6 @@ function decodeGrokInspectSkills(stdout: string): ReadonlyArray<ServerProviderSk
   return [...skillsByName.values()].sort((left, right) => left.name.localeCompare(right.name));
 }
 
-export function parseGrokInspectSkills(stdout: string): ReadonlyArray<ServerProviderSkill> {
-  return decodeGrokInspectSkills(stdout) ?? [];
-}
-
 /**
  * Run `grok inspect --json` and map the reported catalog onto provider
  * skills. Callers that need best-effort discovery can recover this effect to

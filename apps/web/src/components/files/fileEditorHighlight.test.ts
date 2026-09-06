@@ -64,6 +64,7 @@ let renderer: FileRenderer;
 let tokenizer: Tokenizer;
 let file: FileContents;
 let document: TextDocument<unknown>;
+const animationFrames = new Set<ReturnType<typeof setImmediate>>();
 
 function nextResponse(): Promise<HeldResponse> {
   const response = responses.shift();
@@ -147,10 +148,18 @@ beforeEach(async () => {
   responses = [];
   responseWaiters = [];
   terminationPromises = [];
-  vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) =>
-    setImmediate(() => callback(0)),
-  );
-  vi.stubGlobal("cancelAnimationFrame", clearImmediate);
+  vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+    const frame = setImmediate(() => {
+      animationFrames.delete(frame);
+      callback(0);
+    });
+    animationFrames.add(frame);
+    return frame;
+  });
+  vi.stubGlobal("cancelAnimationFrame", (frame: ReturnType<typeof setImmediate>) => {
+    animationFrames.delete(frame);
+    clearImmediate(frame);
+  });
   vi.stubGlobal("window", { matchMedia: () => ({ matches: true }) });
   pool = new WorkerPoolManager(
     // Adapt browser transport only; Pierre's real worker produces each response.
@@ -176,15 +185,41 @@ beforeEach(async () => {
   renderContents();
 });
 
-afterEach(async () => {
+async function cleanUpFixture() {
   tokenizer?.cleanUp();
   renderer?.cleanUp();
   pool?.terminate();
   await Promise.all(terminationPromises);
+  // Pool termination can queue a final broadcast after its workers have exited.
+  for (const frame of animationFrames) clearImmediate(frame);
+  animationFrames.clear();
   vi.unstubAllGlobals();
-});
+}
+
+afterEach(cleanUpFixture);
 
 describe("editable file highlighting", () => {
+  it("cleans up an already terminated worker pool", async () => {
+    (await nextResponse()).deliver();
+    expect(pool.getStats().totalWorkers).toBe(1);
+    pool.terminate();
+    await Promise.all(terminationPromises);
+    expect(pool.getStats().totalWorkers).toBe(0);
+
+    const animationFrame = globalThis.requestAnimationFrame;
+    const cancelFrame = globalThis.cancelAnimationFrame;
+    const window = globalThis.window;
+    try {
+      await cleanUpFixture();
+      // Deliver the real Immediate queue after cleanup has removed the browser globals.
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    } finally {
+      vi.stubGlobal("requestAnimationFrame", animationFrame);
+      vi.stubGlobal("cancelAnimationFrame", cancelFrame);
+      vi.stubGlobal("window", window);
+    }
+  });
+
   it("still accepts an asynchronous highlight when the file has not changed", async () => {
     expect(renderContents()).not.toContain('style="color:');
     (await nextResponse()).deliver();

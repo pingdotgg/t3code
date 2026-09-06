@@ -61,7 +61,10 @@ const makeSpawnerLayer = (commands: Array<string>) =>
     ChildProcessSpawner.make((command) =>
       Effect.sync(() => {
         commands.push(ChildProcess.isStandardCommand(command) ? command.command : "piped-command");
-        return makeHandle();
+        // The pinned Windows executable rejects --version but accepts the version subcommand.
+        return makeHandle(
+          ChildProcess.isStandardCommand(command) && command.args.includes("--version") ? 1 : 0,
+        );
       }),
     ),
   );
