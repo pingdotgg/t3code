@@ -65,7 +65,7 @@ const appendDpopChallengeOnUnauthorized = (error: EnvironmentAuthInvalidError) =
     return yield* error;
   });
 
-export const currentEnvironmentTraceId = Effect.currentParentSpan.pipe(
+const currentEnvironmentTraceId = Effect.currentParentSpan.pipe(
   Effect.map((span) => span.traceId),
   Effect.orElseSucceed(() => "unavailable"),
 );

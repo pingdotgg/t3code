@@ -179,6 +179,7 @@ const makeIdentity = Effect.gen(function* () {
   });
 });
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const serverConfig = yield* ServerConfig.ServerConfig;
