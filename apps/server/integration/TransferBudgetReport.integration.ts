@@ -50,7 +50,9 @@ interface ProviderTransferBudget {
 // orders of magnitude. The CI report preserves exact values for review.
 const TRANSFER_BUDGET = {
   totalWireBytes: 15_500,
-  threadSnapshotWireBytes: 7_500,
+  // The fixture's 161 creation ordinals add 3,474 decoded bytes and 612/616
+  // gzip bytes for Codex/Claude. Reserve 650 bytes; other caps stay fixed.
+  threadSnapshotWireBytes: 7_500 + 650,
   measuredTurnWebSocketWireBytes: 8_000,
   measuredTurnWebSocketDecodedBytes: 68_000,
   measuredTurnWebSocketMessages: 21,

@@ -46,6 +46,96 @@ const baseThread: OrchestrationThread = {
 };
 
 describe("applyThreadDetailEvent", () => {
+  it("keeps a running turn's initiating anchor through a late checkpoint and session refresh", () => {
+    const before = "2026-09-06T12:00:00.000Z";
+    const after = "2026-09-06T01:00:00.000Z";
+    const turnId = TurnId.make("active-turn");
+    const latestTurn = {
+      turnId,
+      createdSequence: 2,
+      state: "running" as const,
+      requestedAt: before,
+      startedAt: before,
+      completedAt: null,
+      assistantMessageId: null,
+    };
+    const session = {
+      threadId: baseThread.id,
+      status: "running" as const,
+      activeTurnId: turnId,
+      providerName: "codex" as const,
+      runtimeMode: "full-access" as const,
+      lastError: null,
+      updatedAt: before,
+    };
+    let thread: OrchestrationThread = {
+      ...baseThread,
+      latestTurn,
+      session,
+      messages: [
+        {
+          id: MessageId.make("initiating-prompt"),
+          role: "user",
+          turnId: null,
+          text: "Start",
+          streaming: false,
+          createdSequence: 2,
+          createdAt: before,
+          updatedAt: before,
+        },
+        {
+          id: MessageId.make("queued-prompt"),
+          role: "user",
+          turnId: null,
+          text: "Next",
+          streaming: false,
+          createdSequence: 5,
+          createdAt: after,
+          updatedAt: after,
+        },
+      ],
+    };
+    const events: OrchestrationEvent[] = [
+      {
+        ...baseEventFields,
+        sequence: 6,
+        occurredAt: after,
+        aggregateKind: "thread",
+        aggregateId: thread.id,
+        type: "thread.turn-diff-completed",
+        payload: {
+          threadId: thread.id,
+          turnId: TurnId.make("older-turn"),
+          checkpointTurnCount: 1,
+          checkpointRef: CheckpointRef.make("refs/checkpoints/older"),
+          status: "ready",
+          files: [],
+          assistantMessageId: null,
+          completedAt: after,
+        },
+      },
+      {
+        ...baseEventFields,
+        sequence: 7,
+        occurredAt: after,
+        aggregateKind: "thread",
+        aggregateId: thread.id,
+        type: "thread.session-set",
+        payload: {
+          threadId: thread.id,
+          session: { ...session, updatedAt: after },
+        },
+      },
+    ];
+    for (const event of events) {
+      const result = applyThreadDetailEvent(thread, event);
+      expect(result.kind).toBe("updated");
+      if (result.kind === "updated") thread = result.thread;
+      expect(thread.latestTurn).toBe(latestTurn);
+    }
+    expect(thread.checkpoints.map((entry) => entry.turnId)).toEqual(["older-turn"]);
+  });
+
   it("preserves creation keys through streaming, completion and a clock-safe revert", () => {
     let thread = baseThread;
     const turnId = TurnId.make("clock-turn");

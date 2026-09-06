@@ -394,6 +394,7 @@ import {
   cloneComposerImageForRetry,
   deriveLockedProvider,
   readFileAsDataUrl,
+  readLocalMessageSequenceForSend,
   resolveFileAttachmentUrl,
   reconcileMountedTerminalThreadIds,
   resolveBackgroundDraftWorkspaceOptions,
@@ -6501,7 +6502,7 @@ export default function ChatView(props: ChatViewProps) {
           id: newMessageId(),
           command: trimmed,
           createdAt: new Date().toISOString(),
-          createdSequence: nextLocalMessageSequence(activeThread),
+          createdSequence: readLocalMessageSequenceForSend(activeThread),
         },
         clearDraft: () => {
           promptRef.current = "";
@@ -6841,12 +6842,15 @@ export default function ChatView(props: ChatViewProps) {
     } else {
       scrollToEnd();
     }
+    const messageCreatedSequence = isServerThread
+      ? readLocalMessageSequenceForSend(activeThread)
+      : nextLocalMessageSequence(activeThread);
     setOptimisticUserMessages((existing) => [
       ...existing,
       {
         id: messageIdForSend,
         role: "user",
-        createdSequence: nextLocalMessageSequence(activeThread),
+        createdSequence: messageCreatedSequence,
         text: outgoingMessageText,
         ...(optimisticAttachments.length > 0 ? { attachments: optimisticAttachments } : {}),
         turnId: null,

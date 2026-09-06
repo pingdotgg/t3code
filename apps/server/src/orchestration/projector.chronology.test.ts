@@ -148,6 +148,28 @@ function checkpoint(turnId: string, count: number, at: string): InputEvent {
 
 describe("projector chronology across clock corrections", () => {
   it.effect(
+    "keeps the running turn anchored when a late checkpoint arrives after a queued prompt",
+    () =>
+      Effect.gen(function* () {
+        const thread = yield* replay([
+          message("initiating-prompt", before, "user"),
+          session("active-turn", "running", before),
+          message("active-answer", before, "assistant", "active-turn"),
+          message("queued-prompt", after, "user"),
+          checkpoint("older-turn", 1, after),
+          session("active-turn", "running", after),
+        ]);
+        expect(thread.latestTurn).toMatchObject({
+          turnId: "active-turn",
+          createdSequence: 2,
+          requestedAt: before,
+          state: "running",
+        });
+        expect(thread.checkpoints.map((entry) => entry.turnId)).toEqual(["older-turn"]);
+      }),
+  );
+
+  it.effect(
     "associates an early assistant turn once and keeps its anchor on repeated sessions",
     () =>
       Effect.gen(function* () {

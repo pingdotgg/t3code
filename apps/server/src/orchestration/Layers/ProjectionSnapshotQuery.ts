@@ -3281,7 +3281,14 @@ pending_approval_requests AS (
               : decodeThreadDetailPageCursor(window.beforeCursor);
           let cursor = decodedCursor?.threadId === threadId ? decodedCursor : null;
           if (cursor !== null && cursor.beforeSequence === undefined) {
-            const boundary = yield* resolveLegacyTurnCursor(cursor);
+            const boundary = yield* resolveLegacyTurnCursor(cursor).pipe(
+              Effect.mapError(
+                toPersistenceSqlOrDecodeError(
+                  "ProjectionSnapshotQuery.getThreadDetailSnapshot:resolveLegacyTurnCursor:query",
+                  "ProjectionSnapshotQuery.getThreadDetailSnapshot:resolveLegacyTurnCursor:decodeRow",
+                ),
+              ),
+            );
             cursor = Option.isSome(boundary)
               ? { ...cursor, beforeSequence: boundary.value.anchorSequence }
               : null;

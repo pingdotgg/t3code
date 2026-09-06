@@ -2318,6 +2318,30 @@ projectionSnapshotLayer("ProjectionSnapshotQuery windowed thread detail", (it) =
     }),
   );
 
+  it.effect("reports legacy cursor row decoding with query-specific context", () =>
+    Effect.gen(function* () {
+      yield* seedFanOutThread();
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`UPDATE projection_turns SET created_sequence = -1 WHERE turn_id = 'turn-4'`;
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const error = yield* snapshotQuery
+        .getThreadDetailSnapshot(threadW, {
+          turnLimit: 2,
+          beforeCursor: encodeThreadDetailPageCursor({
+            threadId: threadW,
+            beforeAnchorAt: "2026-03-01T00:03:00.000Z",
+            beforeTurnId: "turn-4",
+          }),
+        })
+        .pipe(Effect.flip);
+      assert.equal(error._tag, "PersistenceDecodeError");
+      assert.equal(
+        error.operation,
+        "ProjectionSnapshotQuery.getThreadDetailSnapshot:resolveLegacyTurnCursor:decodeRow",
+      );
+    }),
+  );
+
   it.effect("selects a bounded turn page through the creation-sequence index", () =>
     Effect.gen(function* () {
       yield* seedFanOutThread();

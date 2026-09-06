@@ -1,4 +1,9 @@
-import type { OrchestrationEvent, OrchestrationReadModel, ThreadId } from "@t3tools/contracts";
+import type {
+  OrchestrationEvent,
+  OrchestrationReadModel,
+  ThreadId,
+  TurnId,
+} from "@t3tools/contracts";
 import {
   isImportedAgentSessionMessageId,
   OrchestrationCheckpointSummary,
@@ -41,6 +46,14 @@ import {
 type ThreadPatch = Partial<Omit<OrchestrationThread, "id" | "projectId">>;
 const MAX_THREAD_MESSAGES = 2_000;
 const MAX_THREAD_CHECKPOINTS = 500;
+
+function turnCreatedSequence(thread: OrchestrationThread, turnId: TurnId, sequence: number) {
+  if (thread.latestTurn?.turnId === turnId) return thread.latestTurn.createdSequence;
+  return (
+    thread.messages.find((message) => message.role === "assistant" && message.turnId === turnId)
+      ?.createdSequence ?? sequence
+  );
+}
 
 // Async questions can stay open while the agent produces more activity.
 // Match the database snapshot's pending-question retention.
@@ -632,23 +645,14 @@ export function projectEvent(
                 ? {
                     turnId: session.activeTurnId,
                     createdSequence:
-                      thread.session?.activeTurnId === session.activeTurnId &&
-                      thread.latestTurn?.turnId === session.activeTurnId
-                        ? thread.latestTurn.createdSequence
+                      thread.session?.activeTurnId === session.activeTurnId
+                        ? turnCreatedSequence(thread, session.activeTurnId, event.sequence)
                         : (thread.messages.findLast(
                             (message) =>
                               message.role === "user" &&
                               !isImportedAgentSessionMessageId(message.id),
                           )?.createdSequence ??
-                          (thread.latestTurn?.turnId === session.activeTurnId
-                            ? thread.latestTurn.createdSequence
-                            : undefined) ??
-                          thread.messages.find(
-                            (message) =>
-                              message.role === "assistant" &&
-                              message.turnId === session.activeTurnId,
-                          )?.createdSequence ??
-                          event.sequence),
+                          turnCreatedSequence(thread, session.activeTurnId, event.sequence)),
                     state: "running",
                     requestedAt:
                       thread.latestTurn?.turnId === session.activeTurnId
@@ -765,38 +769,37 @@ export function projectEvent(
         // checkpoint, but don't settle a turn its session is still running.
         const turnStillRunning =
           thread.session?.status === "running" && thread.session.activeTurnId === payload.turnId;
+        // A delayed checkpoint must not discard the active turn's initiating anchor.
+        const latestTurnStillRunning =
+          thread.session?.status === "running" &&
+          thread.latestTurn?.turnId === thread.session.activeTurnId;
 
         return {
           ...nextBase,
           threads: updateThread(nextBase.threads, payload.threadId, {
             checkpoints,
-            latestTurn: turnStillRunning
-              ? thread.latestTurn
-              : {
-                  turnId: payload.turnId,
-                  createdSequence:
-                    thread.latestTurn?.turnId === payload.turnId
-                      ? thread.latestTurn.createdSequence
-                      : (thread.messages.find(
-                          (message) =>
-                            message.role === "assistant" && message.turnId === payload.turnId,
-                        )?.createdSequence ?? event.sequence),
-                  state:
-                    thread.latestTurn?.turnId === payload.turnId &&
-                    thread.latestTurn.state === "interrupted"
-                      ? "interrupted"
-                      : checkpointStatusToLatestTurnState(payload.status),
-                  requestedAt:
-                    thread.latestTurn?.turnId === payload.turnId
-                      ? thread.latestTurn.requestedAt
-                      : payload.completedAt,
-                  startedAt:
-                    thread.latestTurn?.turnId === payload.turnId
-                      ? (thread.latestTurn.startedAt ?? payload.completedAt)
-                      : payload.completedAt,
-                  completedAt: payload.completedAt,
-                  assistantMessageId: payload.assistantMessageId,
-                },
+            latestTurn:
+              turnStillRunning || latestTurnStillRunning
+                ? thread.latestTurn
+                : {
+                    turnId: payload.turnId,
+                    createdSequence: turnCreatedSequence(thread, payload.turnId, event.sequence),
+                    state:
+                      thread.latestTurn?.turnId === payload.turnId &&
+                      thread.latestTurn.state === "interrupted"
+                        ? "interrupted"
+                        : checkpointStatusToLatestTurnState(payload.status),
+                    requestedAt:
+                      thread.latestTurn?.turnId === payload.turnId
+                        ? thread.latestTurn.requestedAt
+                        : payload.completedAt,
+                    startedAt:
+                      thread.latestTurn?.turnId === payload.turnId
+                        ? (thread.latestTurn.startedAt ?? payload.completedAt)
+                        : payload.completedAt,
+                    completedAt: payload.completedAt,
+                    assistantMessageId: payload.assistantMessageId,
+                  },
             updatedAt: event.occurredAt,
           }),
         };
