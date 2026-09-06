@@ -192,6 +192,28 @@ describe("decodeMergeRequestDetailJson", () => {
     expect(armed({})).toBeUndefined();
   });
 
+  it("keeps the squash choice stored with auto-merge", () => {
+    expect(
+      expectSuccess(
+        decodeMergeRequestDetailJson(
+          detailJson({ auto_merge_enabled: true, squash_on_merge: true }),
+        ),
+      ),
+    ).toMatchObject({ autoMergeEnabled: true, autoMergeMethod: "squash" });
+
+    expect(
+      expectSuccess(
+        decodeMergeRequestDetailJson(
+          detailJson({
+            auto_merge_enabled: true,
+            squash: true,
+            squash_on_merge: false,
+          }),
+        ),
+      ).autoMergeMethod,
+    ).toBeUndefined();
+  });
+
   it("keeps a divergence GitLab did not count apart from a divergence of none", () => {
     const behind = (entry: Record<string, unknown>) =>
       expectSuccess(decodeMergeRequestDetailJson(detailJson(entry))).divergedCommits;

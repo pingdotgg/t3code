@@ -18,7 +18,7 @@ type Loader = {
 };
 const defaultSqliteClientLoaders = {
   bun: () => import("@effect/sql-sqlite-bun/SqliteClient"),
-  node: () => import("../NodeSqliteClient.ts"),
+  node: () => import("@t3tools/shared/nodeSqliteClient"),
 } satisfies Record<string, () => Promise<Loader>>;
 
 const makeRuntimeSqliteLayer = Effect.fn("makeRuntimeSqliteLayer")(function* (

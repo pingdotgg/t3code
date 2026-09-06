@@ -1,4 +1,4 @@
-import type { ProjectId } from "@t3tools/contracts";
+import type { OrchestrationThreadShell, ProjectId } from "@t3tools/contracts";
 import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
 import * as Arr from "effect/Array";
 import * as Order from "effect/Order";
@@ -17,6 +17,36 @@ export function toSortableTimestamp(iso: string | undefined): number | null {
   if (!iso) return null;
   const ms = Date.parse(iso);
   return Number.isFinite(ms) ? ms : null;
+}
+
+export type SettledThreadTimestampInput = Pick<
+  OrchestrationThreadShell,
+  "settledAt" | "latestUserMessageAt" | "latestTurn" | "updatedAt"
+>;
+
+/** The timestamp a settled row sorts and labels by on every client: settledAt
+    when stamped, otherwise the latest message or turn stamp, then updatedAt. */
+export function resolveSettledThreadTimestamp(thread: SettledThreadTimestampInput): string | null {
+  if (thread.settledAt != null && toSortableTimestamp(thread.settledAt) !== null) {
+    return thread.settledAt;
+  }
+
+  let latest: string | null = null;
+  let latestMs = Number.NEGATIVE_INFINITY;
+  for (const candidate of [
+    thread.latestUserMessageAt,
+    thread.latestTurn?.requestedAt,
+    thread.latestTurn?.startedAt,
+    thread.latestTurn?.completedAt,
+  ]) {
+    const parsed = toSortableTimestamp(candidate ?? undefined);
+    if (candidate != null && parsed !== null && parsed > latestMs) {
+      latest = candidate;
+      latestMs = parsed;
+    }
+  }
+  if (latest !== null) return latest;
+  return toSortableTimestamp(thread.updatedAt) === null ? null : thread.updatedAt;
 }
 
 function getFirstSortableTimestamp(...values: Array<string | null | undefined>): number | null {
@@ -179,7 +209,7 @@ export function pinOrderKeyBetween(before: string | null, after: string | null):
     drop lands next to keyless threads, so single-key insertion has nothing
     to anchor on). Two base-26 digits give 675 slots — far beyond any real
     pinned section — with monotonicity enforced as a belt-and-braces. */
-export function generateSpreadPinOrderKeys(count: number): string[] {
+function generateSpreadPinOrderKeys(count: number): string[] {
   const space = PIN_ORDER_DIGITS.length * PIN_ORDER_DIGITS.length;
   const step = space / (count + 1);
   const keys: string[] = [];

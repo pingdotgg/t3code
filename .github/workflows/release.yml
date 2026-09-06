@@ -6,8 +6,8 @@ on:
       - "v*.*.*"
       - "!v*-nightly.*"
   schedule:
-    # Off minute zero: GitHub delays scheduled runs most at the top of the hour.
-    - cron: "38 */3 * * *"
+    # Avoid minute zero, when GitHub scheduled jobs are busiest.
+    - cron: "8,38 * * * *"
   workflow_dispatch:
     inputs:
       channel:
@@ -28,7 +28,7 @@ on:
 # own group so a nightly never blocks them. Running publishers are never
 # canceled, and queue: max keeps every pending run instead of the default
 # newest-wins single slot, so a queued stable tag can never be silently
-# dropped. Queued nightlies with no new commits skip via check_changes.
+# dropped. Automatic nightlies recheck the release gap after leaving the queue.
 concurrency:
   group: release-${{ (github.event_name == 'schedule' || inputs.channel == 'nightly') && 'nightly' || 'stable' }}
   cancel-in-progress: false
@@ -40,41 +40,25 @@ permissions:
 
 jobs:
   check_changes:
-    name: Check for changes since last nightly
+    name: Check automatic nightly release
     if: github.event_name == 'schedule'
     runs-on: blacksmith-8vcpu-ubuntu-2404
+    timeout-minutes: 5
     outputs:
-      has_changes: ${{ steps.check.outputs.has_changes }}
+      has_changes: ${{ steps.check.outputs.result }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
         with:
-          fetch-depth: 0
-          sparse-checkout: |
-            /*
-            !/.repos/
-          sparse-checkout-cone-mode: false
+          sparse-checkout: .github/scripts
 
       - id: check
-        name: Compare HEAD to last nightly tag
-        run: |
-          last_nightly_tag=$(git tag --list 'v*-nightly.*' 'nightly-v*' --sort=-creatordate | head -n 1)
-          if [[ -z "$last_nightly_tag" ]]; then
-            echo "No previous nightly tag found. Proceeding with release."
-            echo "has_changes=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          last_nightly_sha=$(git rev-parse "$last_nightly_tag^{commit}")
-          head_sha=$(git rev-parse HEAD)
-
-          if [[ "$last_nightly_sha" == "$head_sha" ]]; then
-            echo "No changes on main since last nightly release ($last_nightly_tag). Skipping."
-            echo "has_changes=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "Changes detected on main since $last_nightly_tag ($last_nightly_sha → $head_sha). Proceeding."
-            echo "has_changes=true" >> "$GITHUB_OUTPUT"
-          fi
+        name: Check release gap and new commits
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const { shouldReleaseNightly } = require('./.github/scripts/check-nightly-release.cjs');
+            return await shouldReleaseNightly({ github, context, core });
 
   preflight:
     name: Preflight
@@ -111,6 +95,8 @@ jobs:
           node-version-file: package.json
           cache: true
           run-install: true
+        env:
+          pnpm_config_cache_dir: ${{ runner.temp }}/pnpm-metadata
 
       - id: release_meta
         name: Resolve release version
@@ -174,6 +160,14 @@ jobs:
             --current-tag "${{ steps.release_meta.outputs.tag }}" \
             --github-output
 
+      # Share only the verification results, not the large registry metadata cache.
+      - name: Upload dependency verification
+        continue-on-error: true
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-dependency-verification
+          path: ${{ runner.temp }}/pnpm-metadata/lockfile-verified.jsonl
+
   quality:
     name: Release quality checks
     needs: [preflight]
@@ -206,6 +200,11 @@ jobs:
       - name: Typecheck
         run: vp run typecheck
 
+      - uses: ./.github/actions/setup-apt-mirrors
+
+      - name: Install browser secret helper build libraries
+        run: sudo apt-get update && sudo apt-get install -y libsecret-1-dev pkg-config
+
       - name: Test
         run: vp run test
 
@@ -213,7 +212,7 @@ jobs:
     name: Resolve T3 Connect public config
     # Consumes only the commit SHA, not preflight's resolved version, so it runs
     # alongside preflight instead of after it. The condition mirrors preflight's:
-    # check_changes is skipped on non-schedule events (skipped is neither failure
+    # check_changes is skipped on manual and tag releases (skipped is neither failure
     # nor success, so success() would be wrong here).
     needs: [check_changes]
     if: |
@@ -446,7 +445,18 @@ jobs:
           path: ${{ steps.package_cache_path.outputs.path }}
           key: windows-release-packages-v1-${{ matrix.arch }}-${{ hashFiles('pnpm-lock.yaml') }}
 
+      # pnpm checks the lockfile and policy before reusing this result. A missing
+      # artifact leaves the cache empty, so installation runs the checks again.
+      - name: Download dependency verification
+        continue-on-error: true
+        uses: actions/download-artifact@v8
+        with:
+          name: release-dependency-verification
+          path: ${{ runner.temp }}/pnpm-metadata
+
       - name: Install desktop dependencies
+        env:
+          pnpm_config_cache_dir: ${{ runner.temp }}/pnpm-metadata
         run: vp install --filter=@t3tools/desktop... --filter=t3... --filter=@t3tools/scripts...
 
       - name: Cache resource monitor
@@ -495,7 +505,7 @@ jobs:
           $setupExe = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\setup.exe"
           $proc = Start-Process -FilePath $setupExe `
             -ArgumentList "modify", "--installPath", "`"$installPath`"", "--add", `
-            "Microsoft.VisualStudio.Component.VC.Tools.x86.x64.Spectre", "--quiet", "--norestart" `
+            "Microsoft.VisualStudio.Component.VC.Runtimes.x86.x64.Spectre", "--quiet", "--norestart" `
             -Wait -PassThru -NoNewWindow
           if ($null -eq $proc -or $proc.ExitCode -ne 0) {
             $code = if ($null -ne $proc) { $proc.ExitCode } else { 1 }
@@ -503,12 +513,16 @@ jobs:
             exit $code
           }
 
-      - name: Install ImageMagick
+      - uses: ./.github/actions/setup-apt-mirrors
+        if: matrix.platform == 'linux'
+
+      - name: Install Linux desktop build libraries
         if: matrix.platform == 'linux'
         shell: bash
         run: |
+          sudo apt-get update
+          sudo apt-get install -y libsecret-1-dev pkg-config
           if ! command -v magick >/dev/null 2>&1 && ! command -v convert >/dev/null 2>&1; then
-              sudo apt-get update
               sudo apt-get install -y imagemagick
           fi
 
@@ -583,6 +597,7 @@ jobs:
       - name: Build desktop artifact
         shell: bash
         env:
+          pnpm_config_cache_dir: ${{ runner.temp }}/pnpm-metadata
           T3CODE_DESKTOP_REUSE_RESOURCE_MONITOR: ${{ steps.resource_monitor_cache.outputs.cache-hit == 'true' }}
           CSC_LINK: ${{ secrets.CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
@@ -850,35 +865,6 @@ jobs:
               rm -f "$x64_manifest"
             fi
           done
-
-      # - name: Merge Windows updater manifests
-      #   run: |
-      #     shopt -s nullglob
-      #     found_windows_manifest=false
-      #     for x64_manifest in release-assets/*-win-x64.yml; do
-      #       if [[ "$(basename "$x64_manifest")" == builder-debug-* ]]; then
-      #         continue
-      #       fi
-
-      #       arm64_manifest="${x64_manifest/-x64.yml/-arm64.yml}"
-      #       output_manifest="${x64_manifest/-win-x64.yml/.yml}"
-      #       if [[ ! -f "$arm64_manifest" ]]; then
-      #         echo "Missing matching arm64 Windows manifest for $x64_manifest" >&2
-      #         exit 1
-      #       fi
-
-      #       found_windows_manifest=true
-      #       node scripts/merge-update-manifests.ts --platform win \
-      #         "$arm64_manifest" \
-      #         "$x64_manifest" \
-      #         "$output_manifest"
-      #       rm -f "$arm64_manifest" "$x64_manifest"
-      #     done
-
-      #     if [[ "$found_windows_manifest" != true ]]; then
-      #       echo "No Windows updater manifests found to merge." >&2
-      #       exit 1
-      #     fi
 
       - name: Publish release
         if: needs.preflight.outputs.previous_tag != ''

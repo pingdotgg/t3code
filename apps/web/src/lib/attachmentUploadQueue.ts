@@ -333,7 +333,7 @@ async function runUpload(job: UploadJob): Promise<void> {
 }
 
 function pumpUploads(): void {
-  for (let index = 0; index < queue.length; ) {
+  for (let index = 0; index < queue.length;) {
     const job = queue[index]!;
     const active = activeUploadsByEnvironment.get(job.environmentId) ?? 0;
     if (active >= MAX_UPLOADS_PER_ENVIRONMENT) {
@@ -445,7 +445,7 @@ export function startAttachmentUpload(input: {
  * persisted draft upload survives cancellation (an environment switch cancels
  * the old job, and the draft still references that server copy).
  */
-export function cancelAttachmentUpload(imageId: string): void {
+function cancelAttachmentUpload(imageId: string): void {
   const job = jobsByImageId.get(imageId);
   if (!job) {
     return;

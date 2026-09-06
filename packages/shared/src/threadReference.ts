@@ -8,10 +8,12 @@ export interface ThreadReferenceCopyTarget {
 
 export function resolveThreadReferenceCopyTarget(input: {
   readonly threadId: string;
+  /** Undefined means no PR panel; null means its URL is not available yet. */
+  readonly openPanelPullRequestUrl?: string | null | undefined;
   readonly linkedPullRequestUrl?: string | null;
-  readonly detectedPullRequestUrl?: string | null;
-}): ThreadReferenceCopyTarget {
-  const pullRequestUrl = input.linkedPullRequestUrl ?? input.detectedPullRequestUrl;
+}): ThreadReferenceCopyTarget | null {
+  if (input.openPanelPullRequestUrl === null) return null;
+  const pullRequestUrl = input.openPanelPullRequestUrl ?? input.linkedPullRequestUrl;
   return pullRequestUrl
     ? {
         kind: "pull-request",

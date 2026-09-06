@@ -5,8 +5,10 @@ import * as NodeZlib from "node:zlib";
 import * as NodeSocket from "@effect/platform-node/NodeSocket";
 import { WsRpcGroup } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
 import { RpcClient, RpcSerialization } from "effect/unstable/rpc";
 import * as Socket from "effect/unstable/socket/Socket";
 
@@ -101,6 +103,8 @@ export interface WebSocketTransferRecorder {
   ) => globalThis.WebSocket;
   readonly totals: () => WebSocketTransferTotals;
   readonly negotiatedExtensions: () => string;
+  /** Resolves once the upgrade completes, so totals taken after it exclude the upgrade response. */
+  readonly awaitOpen: Effect.Effect<void>;
 }
 
 interface NodeWebSocketWithTransport extends NodeSocket.NodeWS.WebSocket {
@@ -118,8 +122,15 @@ function rawDataBytes(data: NodeSocket.NodeWS.RawData): number {
 
 export function makeWebSocketTransferRecorder(): WebSocketTransferRecorder {
   let socket: NodeWebSocketWithTransport | null = null;
+  // Held separately from the WebSocket so wire totals survive a close, which
+  // is when a reconnect measurement reads them.
+  let transport: NodeWebSocketWithTransport["_socket"] | null = null;
   let decodedBytes = 0;
   let messages = 0;
+  let resolveOpen: () => void = () => {};
+  const opened = new Promise<void>((resolve) => {
+    resolveOpen = resolve;
+  });
 
   return {
     connect: (url, protocols, cookie) => {
@@ -128,6 +139,10 @@ export function makeWebSocketTransferRecorder(): WebSocketTransferRecorder {
         perMessageDeflate: true,
       }) as NodeWebSocketWithTransport;
       socket = nextSocket;
+      nextSocket.once("open", () => {
+        transport = nextSocket._socket ?? null;
+        resolveOpen();
+      });
       nextSocket.on("message", (data) => {
         const bytes = rawDataBytes(data);
         decodedBytes += bytes;
@@ -136,11 +151,17 @@ export function makeWebSocketTransferRecorder(): WebSocketTransferRecorder {
       return nextSocket as unknown as globalThis.WebSocket;
     },
     totals: () => ({
-      wireBytes: socket?._socket?.bytesRead ?? 0,
+      wireBytes: transport?.bytesRead ?? socket?._socket?.bytesRead ?? 0,
       decodedBytes,
       messages,
     }),
     negotiatedExtensions: () => socket?.extensions ?? "",
+    awaitOpen: Effect.promise(() => opened).pipe(
+      Effect.timeoutOrElse({
+        duration: "10 seconds",
+        orElse: () => Effect.die(new Error("Timed out waiting for the WebSocket to open")),
+      }),
+    ),
   };
 }
 
@@ -175,3 +196,40 @@ export function countingWsRpcProtocolLayer(input: {
 
 export const makeCountingWsRpcClient = RpcClient.make(WsRpcGroup);
 export type CountingWsRpcClient = Effect.Success<typeof makeCountingWsRpcClient>;
+
+export interface MeasuredWsClient {
+  readonly client: CountingWsRpcClient;
+  readonly recorder: WebSocketTransferRecorder;
+  /** Fork subscription consumers here so they stop before the socket closes. */
+  readonly scope: Scope.Scope;
+  /** Closes the socket now. The enclosing scope closes it otherwise. */
+  readonly close: Effect.Effect<void>;
+}
+
+/**
+ * Opens one WebSocket RPC client on a child of the current scope. Several
+ * clients can share one test scope and still disconnect independently, which
+ * a reconnect measurement needs.
+ */
+export const openMeasuredWsClient = Effect.fn("TransferBudget.openMeasuredWsClient")(
+  function* (input: { readonly url: string; readonly cookie: string }) {
+    const recorder = makeWebSocketTransferRecorder();
+    const parent = yield* Effect.scope;
+    const scope = yield* Scope.fork(parent);
+    const protocol = yield* Layer.buildWithScope(
+      countingWsRpcProtocolLayer({ url: input.url, cookie: input.cookie, recorder }),
+      scope,
+    );
+    const client = yield* makeCountingWsRpcClient.pipe(
+      Effect.provide(protocol),
+      Scope.provide(scope),
+    );
+    yield* recorder.awaitOpen;
+    return {
+      client,
+      recorder,
+      scope,
+      close: Scope.close(scope, Exit.void),
+    } satisfies MeasuredWsClient;
+  },
+);

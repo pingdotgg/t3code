@@ -2,6 +2,7 @@ import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Schema from "effect/Schema";
+import { CommandId, ProjectId, ThreadId } from "./baseSchemas.ts";
 
 import {
   DEFAULT_PROVIDER_INTERACTION_MODE,
@@ -837,6 +838,47 @@ it.effect("accepts an internal title regeneration completion", () =>
   }),
 );
 
+it.effect("accepts pull request synchronization only as an internal command", () =>
+  Effect.gen(function* () {
+    const pullRequest = {
+      projectId: ProjectId.make("project-1"),
+      repository: "pingdotgg/t3code",
+      number: 42,
+      url: "https://github.com/pingdotgg/t3code/pull/42",
+    };
+    const command = {
+      type: "thread.pull-request.sync" as const,
+      commandId: CommandId.make("cmd-pull-request-sync"),
+      threadId: ThreadId.make("thread-1"),
+      projectId: pullRequest.projectId,
+      snapshotSequence: 12,
+      expected: {
+        workspaceRoot: "/workspace/project",
+        branch: "feature",
+        worktreePath: null,
+        linkedPullRequest: null,
+        branchPullRequest: null,
+      },
+      branchPullRequest: pullRequest,
+      linkedPullRequest: pullRequest,
+    };
+
+    assert.deepStrictEqual(yield* decodeOrchestrationCommand(command), command);
+    assert.ok(yield* decodeClientOrchestrationCommand(command).pipe(Effect.flip));
+
+    const cleared = { ...command, branchPullRequest: null };
+    assert.deepStrictEqual(yield* decodeOrchestrationCommand(cleared), cleared);
+
+    const metadata = yield* decodeClientOrchestrationCommand({
+      type: "thread.meta.update",
+      commandId: "cmd-forged-branch-pull-request",
+      threadId: "thread-1",
+      branchPullRequest: pullRequest,
+    });
+    assert.isFalse("branchPullRequest" in metadata);
+  }),
+);
+
 it.effect("rejects an explicit title combined with title regeneration", () =>
   Effect.gen(function* () {
     const result = yield* Effect.exit(
@@ -1102,6 +1144,51 @@ it.effect("project favicon overrides accept only supported image files", () =>
       }),
     );
     assert.strictEqual(invalid._tag, "Failure");
+  }),
+);
+
+it.effect("project icon overrides accept Lucide icons, colors, and emoji", () =>
+  Effect.gen(function* () {
+    const lucide = yield* decodeOrchestrationCommand({
+      type: "project.meta.update",
+      commandId: "cmd-project-lucide-icon",
+      projectId: "project-1",
+      projectIcon: { kind: "lucide", name: "alarm-clock", color: "violet" },
+    });
+    assert.strictEqual(lucide.type, "project.meta.update");
+
+    const emoji = yield* decodeOrchestrationCommand({
+      type: "project.meta.update",
+      commandId: "cmd-project-emoji-icon",
+      projectId: "project-1",
+      projectIcon: { kind: "emoji", emoji: "👩🏽‍💻" },
+    });
+    assert.strictEqual(emoji.type, "project.meta.update");
+
+    const invalid = yield* Effect.exit(
+      decodeOrchestrationCommand({
+        type: "project.meta.update",
+        commandId: "cmd-project-invalid-icon",
+        projectId: "project-1",
+        projectIcon: { kind: "lucide", name: "Alarm Clock", color: "ultraviolet" },
+      }),
+    );
+    assert.strictEqual(invalid._tag, "Failure");
+  }),
+);
+
+it.effect("rejects thread history imports without messages", () =>
+  Effect.gen(function* () {
+    const result = yield* Effect.exit(
+      decodeOrchestrationCommand({
+        type: "thread.history.import",
+        commandId: "command-empty-history",
+        threadId: "thread-1",
+        messages: [],
+      }),
+    );
+
+    assert.strictEqual(result._tag, "Failure");
   }),
 );
 

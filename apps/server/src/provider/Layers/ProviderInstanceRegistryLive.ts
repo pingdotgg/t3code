@@ -412,24 +412,6 @@ export const makeProviderInstanceRegistry = <R>(input: {
   });
 
 /**
- * Assemble a `ProviderInstanceRegistry` Layer bound to a fixed set of
- * drivers and a pre-resolved `ProviderInstanceConfigMap`. Used by tests
- * that want explicit control over the registry's source-of-truth without
- * wiring up the settings watcher.
- *
- * Only exposes the public registry tag — hot-reload consumers should use
- * `ProviderInstanceRegistryMutableLayer` (below) or the hydration layer.
- */
-export const ProviderInstanceRegistryLayer = <R>(input: {
-  readonly drivers: ReadonlyArray<AnyProviderDriver<R>>;
-  readonly configMap: ProviderInstanceConfigMap;
-}): Layer.Layer<ProviderInstanceRegistry, never, R> =>
-  Layer.effect(
-    ProviderInstanceRegistry,
-    makeProviderInstanceRegistry(input).pipe(Effect.map((built) => built.registry)),
-  ) as Layer.Layer<ProviderInstanceRegistry, never, R>;
-
-/**
  * Layer variant that also exposes the mutator tag. Consumed by
  * `ProviderInstanceRegistryHydrationLive` to reconcile on settings
  * changes. Tests that exercise the mutator directly can pair this Layer

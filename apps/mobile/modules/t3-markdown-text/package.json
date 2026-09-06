@@ -4,7 +4,9 @@
   "private": true,
   "source": "./index.ts",
   "files": [
+    "android",
     "assets",
+    "expo-module.config.json",
     "ios",
     "src",
     "index.ts",
@@ -19,6 +21,7 @@
   "exports": {
     ".": "./index.ts",
     "./file-icons": "./src/markdownFileIcons.ts",
+    "./link-icons": "./src/markdownLinkIcons.ts",
     "./links": "./src/markdownLinks.ts",
     "./markdown": "./src/nativeMarkdownText.ts",
     "./primitive": "./src/MarkdownTextPrimitive.tsx",
@@ -26,6 +29,9 @@
     "./types": "./src/SelectableMarkdownText.types.ts"
   },
   "peerDependencies": {
+    "@t3tools/client-runtime": "*",
+    "@t3tools/shared": "*",
+    "expo": "*",
     "expo-asset": "*",
     "expo-clipboard": "*",
     "expo-haptics": "*",

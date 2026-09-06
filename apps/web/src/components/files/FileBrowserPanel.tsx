@@ -1,3 +1,4 @@
+import { RefreshIcon } from "~/components/ui/refresh-icon";
 import type {
   ContextMenuItem as TreeContextMenuItem,
   ContextMenuOpenContext as TreeContextMenuOpenContext,
@@ -5,7 +6,7 @@ import type {
 import type { EnvironmentId, ProjectEntry } from "@t3tools/contracts";
 import { FileTree, useFileTree, useFileTreeSearch, useFileTreeSelector } from "@pierre/trees/react";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
-import { ChevronsDownUpIcon, ChevronsUpDownIcon, RotateCw } from "lucide-react";
+import { ChevronsDownUpIcon, ChevronsUpDownIcon } from "lucide-react";
 import { useEffect, useMemo, useRef } from "react";
 
 import { Button } from "~/components/ui/button";
@@ -16,12 +17,13 @@ import { useComposerHandleContext } from "~/composerHandleContext";
 import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { useTheme } from "~/hooks/useTheme";
 import { useWorkspaceMutationRefresh } from "~/hooks/useWorkspaceMutationRefresh";
-import { cn } from "~/lib/utils";
 import { readLocalApi } from "~/localApi";
 import { T3_PIERRE_ICONS } from "~/pierre-icons";
+import { PIERRE_TREE_UNSAFE_CSS, pierreTreeStyle } from "~/pierre-tree-theme";
 
 import { createFileTreeDragMentionController } from "./fileTreeDragMention";
 import { areAllDirectoriesExpanded, setAllDirectoriesExpanded } from "./fileTreeExpansion";
+import { buildFileTreePathUpdates } from "./fileTreePathReconciliation";
 import { useProjectEntriesQuery } from "./projectFilesQueryState";
 
 interface FileBrowserPanelProps {
@@ -36,18 +38,6 @@ interface FileBrowserPanelProps {
   onRefreshSelectedFile?: () => void;
   workspaceMutationId: string | null;
 }
-
-const TREE_UNSAFE_CSS = `
-  :host {
-    --trees-bg-override: transparent;
-    --trees-selected-bg-override: color-mix(in srgb, currentColor 12%, transparent);
-    --trees-hover-bg-override: color-mix(in srgb, currentColor 7%, transparent);
-    --trees-border-color-override: color-mix(in srgb, currentColor 14%, transparent);
-    --trees-font-family-override: var(--font-sans);
-    --trees-font-size-override: 12px;
-  }
-  button[data-type='item'] { border-radius: 5px; }
-`;
 
 function treePath(entry: ProjectEntry): string {
   return entry.kind === "directory" ? `${entry.path}/` : entry.path;
@@ -67,7 +57,7 @@ function RefreshFilesButton(props: { isPending: boolean; onRefresh: () => void }
           />
         }
       >
-        <RotateCw className={cn(props.isPending && "animate-spin")} />
+        <RefreshIcon refreshing={props.isPending} />
       </TooltipTrigger>
       <TooltipPopup>{props.isPending ? "Refreshing…" : "Refresh files"}</TooltipPopup>
     </Tooltip>
@@ -126,7 +116,7 @@ export default function FileBrowserPanel({
     () => entries.filter((entry) => entry.kind === "directory").map(treePath),
     [entries],
   );
-  const previousTreePathsRef = useRef<readonly string[]>([]);
+  const previousTreePathsRef = useRef<readonly string[] | null>(null);
   const syncingSelectionRef = useRef(false);
   const treeSelectionPathRef = useRef<string | null>(null);
   const handledRevealRef = useRef<{ path: string; revealId: number } | null>(null);
@@ -254,7 +244,7 @@ export default function FileBrowserPanel({
     },
     paths: [],
     search: false,
-    unsafeCSS: TREE_UNSAFE_CSS,
+    unsafeCSS: PIERRE_TREE_UNSAFE_CSS,
   });
   const search = useFileTreeSearch(model);
   const allDirectoriesExpanded = useFileTreeSelector(model, (currentModel) =>
@@ -281,11 +271,18 @@ export default function FileBrowserPanel({
   });
 
   useEffect(() => {
+    if (entriesQuery.data === null) return;
     if (previousTreePathsRef.current === treePaths) return;
     entryKindsRef.current = entryKinds;
+    const previousTreePaths = previousTreePathsRef.current;
     previousTreePathsRef.current = treePaths;
-    model.resetPaths(treePaths);
-  }, [entryKinds, model, treePaths]);
+    if (previousTreePaths === null) {
+      model.resetPaths(treePaths);
+      return;
+    }
+    const updates = buildFileTreePathUpdates(previousTreePaths, treePaths);
+    if (updates.length > 0) model.batch(updates);
+  }, [entriesQuery.data, entryKinds, model, treePaths]);
 
   useEffect(() => {
     if (!selectedPath) {
@@ -376,7 +373,7 @@ export default function FileBrowserPanel({
       data-file-browser-panel={`${environmentId}:${cwd}`}
     >
       <div
-        className="flex h-10 min-h-10 shrink-0 items-center gap-1 border-b border-border/60 bg-background px-2 in-data-[preview-panel-mode=inline]:mb-3 in-data-[preview-panel-mode=inline]:h-7 in-data-[preview-panel-mode=inline]:min-h-7 in-data-[preview-panel-mode=inline]:border-b-transparent"
+        className="flex h-10 min-h-10 shrink-0 items-center gap-1 border-b border-border/60 bg-background px-2 in-data-[preview-panel-mode=inline]:mb-1 in-data-[preview-panel-mode=inline]:h-9 in-data-[preview-panel-mode=inline]:min-h-9 in-data-[preview-panel-mode=inline]:border-b-transparent"
         data-surface-subheader
       >
         <RefreshFilesButton isPending={entriesQuery.isPending} onRefresh={handleRefresh} />
@@ -421,10 +418,7 @@ export default function FileBrowserPanel({
           model={model}
           aria-label={`${projectName} files`}
           className="min-h-0 flex-1 overflow-hidden"
-          style={{
-            colorScheme: resolvedTheme,
-            ["--trees-fg-override" as string]: "var(--contrast-foreground)",
-          }}
+          style={pierreTreeStyle(resolvedTheme)}
         />
       )}
     </div>

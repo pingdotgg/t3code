@@ -4,6 +4,7 @@ import { Atom } from "effect/unstable/reactivity";
 import { useEffect, useRef } from "react";
 
 import { prepareTurnAttachments } from "../lib/attachmentUpload";
+import { isFileBackedComposerAttachment } from "../lib/composerImages";
 import {
   composerAttachmentUploadKey,
   composerDraftEnvironmentId,
@@ -60,10 +61,9 @@ export function useComposerAttachmentUploadWorker() {
     const queue = createComposerAttachmentUploadQueue({
       onChange: (states) => appAtomRegistry.set(composerAttachmentUploadsAtom, states),
       upload: async ({ environmentId, attachment }, signal, onProgress) => {
-        const release =
-          attachment.type === "file"
-            ? retainComposerAttachmentFileForPreview(attachment)
-            : undefined;
+        const release = isFileBackedComposerAttachment(attachment)
+          ? retainComposerAttachmentFileForPreview(attachment)
+          : undefined;
         try {
           const result = await prepareTurnAttachments({
             environmentId,

@@ -2,47 +2,55 @@
 
 ## Using T3 Code
 
-- [Install and first run](./user/install.md)
+- [Install T3 Code](./user/install.md)
+- [Messages and context](./user/composer.md)
+- [Working with threads](./user/thread-sidebar.md)
 - [Permission modes](./user/permission-modes.md)
+- [Terminal history](./user/terminal.md)
+- [Source control](./user/source-control.md)
+- [Project settings](./user/project-settings.md)
+- [Appearance and themes](./user/appearance.md)
 - [Keyboard shortcuts](./user/keybindings.md)
-- [Organizing threads](./user/thread-sidebar.md)
-- [Review usage](./user/usage.md)
-- [Customize a project icon](./user/project-settings.md)
-- [Mobile appearance](./user/mobile-appearance.md)
-- [Environment themes](./user/environment-theme.md)
+- [Import browser sessions](./user/browser-import.md)
+- [Usage and limits](./user/usage.md)
+- [Product usage data](./user/telemetry.md)
 - [Remote access](./user/remote-access.md)
-- [Keeping app and server in sync](./user/updating.md)
-- [Source control integrations](./user/source-control.md)
-- [Background service (Linux)](./user/background-service.md)
-- Providers: [Codex](./user/providers-codex.md) · [Claude](./user/providers-claude.md) · [OpenCode](./user/providers-opencode.md)
-
-Mobile app: [apps/mobile/README.md](../apps/mobile/README.md)
+- [Running in the background](./user/background-service.md)
+- [Updating T3 Code](./user/updating.md)
+- Provider guides: [Codex](./user/providers-codex.md) · [Claude](./user/providers-claude.md) · [OpenCode](./user/providers-opencode.md) · [Antigravity](./user/providers-antigravity.md)
 
 ---
 
 ## Working on T3 Code
 
-Everything below is for maintainers. Setup lives in the [root README](../README.md);
-policy in [CONTRIBUTING.md](../CONTRIBUTING.md); agent rules in [AGENTS.md](../AGENTS.md).
+Start with the [development runbook](./operations/development.md) and
+[contribution policy](../CONTRIBUTING.md).
+
+Internal notes preserve architectural decisions, constraints, and implementation traps that the
+source alone does not explain. Most code changes do not need an internal documentation update. Follow the
+[documentation rules](../AGENTS.md#documentation) before adding one.
 
 - [Architecture overview](./internals/overview.md)
-- [Workspace layout](./internals/workspace-layout.md)
 - [Glossary](./internals/glossary.md)
-- [Scripts](./internals/scripts.md)
 - [Connection runtime](./internals/connection-runtime.md)
-- [Voice input](./internals/voice-input.md)
 - [Providers](./internals/providers.md)
+- [Model classification](./internals/model-manifest.md)
 - [Remote environments](./internals/remote.md)
 - [Server updates](./internals/server-updates.md)
 - [Resource telemetry](./internals/resource-telemetry.md)
 - [Product analytics](./internals/product-analytics.md)
 - [Environment auth](./internals/environment-auth.md)
 - [T3 Connect](./internals/t3-connect.md)
-- [CI gates](./internals/ci.md)
-- [Engineering work artifacts](./internals/work-artifacts.md)
+- [Assistant citations](./internals/assistant-citations.md)
+- [Mobile navigation](./internals/mobile-navigation.md)
+- [Mobile development lifecycle](./internals/mobile-development.md)
+- [Terminal runtime](./internals/terminal-runtime.md)
+- [Voice input](./internals/voice-input.md)
 
 ### Runbooks
 
+- [Development and local builds](./operations/development.md)
+- [T3 Connect setup](./operations/connect-setup.md)
 - [Release](./operations/release.md)
 - [Observability](./operations/observability.md)
 - [Relay observability](./operations/relay-observability.md)

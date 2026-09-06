@@ -1,10 +1,10 @@
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import type { AssetResource, EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { useMemo } from "react";
 
-import { useAssetUrl } from "../../state/assets";
-import { resolveWorkspaceFilePath } from "./filePath";
+import { useAssetUrlState, useRefreshAssetUrl } from "../../state/assets";
+import { isAbsolutePath, isVideoPreviewFile, resolveWorkspaceFilePath } from "./filePath";
 
-export function useWorkspaceFileAssetUrl(props: {
+export function useWorkspaceFileAssetUrlState(props: {
   readonly cwd: string | null;
   readonly environmentId: EnvironmentId | null;
   readonly relativePath: string | null;
@@ -18,14 +18,24 @@ export function useWorkspaceFileAssetUrl(props: {
     [props.cwd, props.relativePath],
   );
 
-  return useAssetUrl(
-    props.environmentId,
-    absolutePath !== null && props.threadId !== null
-      ? {
-          _tag: "workspace-file",
-          threadId: props.threadId,
-          path: absolutePath,
-        }
-      : null,
+  // Videos stream from an exact-file URL, and so does anything outside the
+  // workspace, where no workspace-scoped URL can exist.
+  const relativePath = props.relativePath;
+  const resource = useMemo<AssetResource | null>(
+    () =>
+      absolutePath !== null && relativePath !== null && props.threadId !== null
+        ? {
+            _tag:
+              isVideoPreviewFile(absolutePath) || isAbsolutePath(relativePath)
+                ? "media-file"
+                : "workspace-file",
+            threadId: props.threadId,
+            path: absolutePath,
+          }
+        : null,
+    [absolutePath, relativePath, props.threadId],
   );
+  const state = useAssetUrlState(props.environmentId, resource);
+  const refresh = useRefreshAssetUrl(props.environmentId, resource);
+  return { ...state, resource, refresh };
 }

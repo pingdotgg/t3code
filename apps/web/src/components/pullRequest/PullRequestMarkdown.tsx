@@ -1,5 +1,5 @@
 import { ExternalLinkIcon, PaperclipIcon, PlayIcon } from "lucide-react";
-import type { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import { createContext, useContext, useMemo } from "react";
 import type { Options as ReactMarkdownOptions } from "react-markdown";
 
@@ -14,20 +14,21 @@ export const PullRequestMarkdownContext = createContext<string | null>(null);
  * A pull request body, rendered with the app's markdown renderer plus a card for each upload
  * embedded in it, which that renderer drops on the floor.
  *
- * The card links out instead of playing in place. GitHub serves the file as uploaded — Mac
- * recordings are `video/quicktime`, which no Chromium decodes — and the desktop window's
- * `media-src` allows only `'self'`, the app scheme and `blob:`, so a remote source is refused
- * before a byte is fetched. Opening the host works for every format.
+ * These upload URLs do not identify the media format. The card links to GitHub, where the
+ * original upload can be opened or downloaded even when its codec cannot play in the client.
  */
 export function PullRequestMarkdown({
   text,
   cwd,
   environmentId,
+  threadRef,
   className,
 }: {
   text: string;
   cwd: string;
   environmentId: EnvironmentId;
+  /** Thread the body is shown beside, so its links can open in that thread's in-app browser. */
+  threadRef?: ScopedThreadRef | null;
   className?: string;
 }) {
   const segments = splitPullRequestBody(text);
@@ -45,6 +46,7 @@ export function PullRequestMarkdown({
               key={segment.id}
               text={segment.text}
               cwd={cwd}
+              threadRef={threadRef ?? undefined}
               environmentId={environmentId}
               extraRemarkPlugins={extraRemarkPlugins}
             />
