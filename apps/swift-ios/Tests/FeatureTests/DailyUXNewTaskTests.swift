@@ -618,7 +618,7 @@ struct DailyUXNewTaskTests {
 
         #expect(
             DailyUXCreationContext.projects(in: snapshot).map(\.id)
-                == ["active-project", "passive-project"]
+                == ["active-project", "passive-project", "offline-project"]
         )
         let passiveProviders = DailyUXCreationContext.providers(
             for: passiveProject,
@@ -1269,9 +1269,7 @@ struct DailyUXNewTaskTests {
             ),
         ]
 
-        // Reconnecting stays excluded: HTTP fallback still serves work while
-        // the socket re-establishes, matching the sidebar's reconnecting
-        // treatment.
+        // A reconnecting environment can still serve work through HTTP.
         #expect(
             DailyUXCreationContext.unreachableEnvironments(in: environments).map(\.id)
                 == ["disconnected"]
@@ -1292,13 +1290,13 @@ struct DailyUXNewTaskTests {
 
         #expect(
             DailyUXCreationContext.projects(in: snapshot).map(\.environmentID)
-                == ["reconnecting", "connecting", "connected", "unknown"]
+                == ["disconnected", "reconnecting", "connecting", "connected", "unknown"]
         )
         #expect(
             DailyUXCreationContext.projectEnvironmentValidationMessage(
                 projectID: "disconnected-project",
                 in: snapshot
-            ) == "Environment is unreachable."
+            ) == nil
         )
         #expect(
             DailyUXCreationContext.projectEnvironmentValidationMessage(

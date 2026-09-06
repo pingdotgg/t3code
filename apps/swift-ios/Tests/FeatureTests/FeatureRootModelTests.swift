@@ -338,6 +338,78 @@ struct FeatureRootModelTests {
     }
 
     @Test
+    func offlineQueuedTaskKeepsItsProjectAvailableInNewTask() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("t3-offline-picker-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = FeatureOutboxStore(fileURL: directory.appendingPathComponent("outbox.json"))
+        let project = FeatureProject(
+            id: "project-1", environmentID: "environment-1", name: "Native", path: "/native",
+            repositoryIdentity: .init(canonicalKey: "github.com/example/native")
+        )
+        let otherProject = FeatureProject(
+            id: "project-2", environmentID: "environment-2", name: "Native", path: "/other/native",
+            repositoryIdentity: .init(canonicalKey: "github.com/example/native")
+        )
+        let client = FeatureClientStub()
+        client.snapshot = FeatureSnapshot(
+            connection: .init(state: .connected),
+            environments: [
+                .init(
+                    id: "environment-1", name: "Studio", endpoint: "https://studio.example",
+                    isActive: true, connectionState: .connected
+                ),
+                .init(
+                    id: "environment-2", name: "Laptop", endpoint: "https://laptop.example",
+                    connectionState: .connected
+                ),
+            ],
+            projects: [project, otherProject]
+        )
+        let model = FeatureRootModel(client: client, outboxStore: store)
+        await model.reload()
+        let selected = try #require(DailyUXCreationContext.initialProject(
+            in: model.snapshot, requestedProjectID: project.id
+        ))
+        let draftKey = FeatureComposerDraftStore.newTaskKey(project: selected, in: model.snapshot)
+        let projectGroups = DailyUXCreationContext.projectGroups(in: model.snapshot)
+
+        client.snapshot.connection.state = .disconnected
+        client.snapshot.environments[0].connectionState = .disconnected
+        client.startTaskError = URLError(.notConnectedToInternet)
+        await model.reload()
+        let retained = try #require(DailyUXCreationContext.projects(in: model.snapshot).first {
+            $0.id == selected.id
+        })
+
+        #expect(DailyUXCreationContext.projectGroups(in: model.snapshot) == projectGroups)
+        #expect(DailyUXCreationContext.initialProject(
+            in: model.snapshot, requestedProjectID: selected.id
+        )?.id == project.id)
+        #expect(FeatureComposerDraftStore.newTaskKey(project: retained, in: model.snapshot) == draftKey)
+        #expect(DailyUXCreationContext.projectEnvironmentValidationMessage(
+            projectID: selected.id, in: model.snapshot
+        ) == nil)
+
+        let thread = try #require(await model.startTask(NewTaskRequest(
+            projectID: project.id,
+            prompt: "Keep this task until the computer reconnects",
+            selection: nil,
+            runtimeMode: .fullAccess,
+            interactionMode: .standard
+        )))
+        let queued = try await store.submissions()
+
+        #expect(queued.count == 1)
+        #expect(queued.first?.threadID == thread.id)
+        #expect(queued.first?.creation?.projectID == project.id)
+        #expect(
+            DailyUXCreationContext.projects(in: model.snapshot).contains { $0.id == project.id },
+            "New Task must retain the project that its durable outbox can queue while offline."
+        )
+    }
+
+    @Test
     func cancellingAnOfflineTaskRemovesItsDurableSubmission() async throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("t3-root-cancel-queued-\(UUID().uuidString)", isDirectory: true)

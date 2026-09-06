@@ -251,16 +251,14 @@ struct NewTaskProjectPickerPresentation: Equatable {
 enum DailyUXCreationContext {
     static func projects(in snapshot: FeatureSnapshot) -> [FeatureProject] {
         guard !snapshot.environments.isEmpty else { return snapshot.projects }
+        // Cached projects can queue tasks offline. A connection change must not
+        // remove the selected project or its draft while the user is typing.
         let availableEnvironmentIDs = Set(
-            snapshot.environments.filter { canCreateTask(in: $0) }.map(\.id)
+            snapshot.environments.filter(\.isEnabled).map(\.id)
         )
         return snapshot.projects.filter {
             availableEnvironmentIDs.contains($0.environmentID)
         }
-    }
-
-    static func canCreateTask(in environment: FeatureEnvironment) -> Bool {
-        environment.isEnabled && environment.connectionState != .disconnected
     }
 
     static func projectEnvironmentValidationMessage(
@@ -271,8 +269,7 @@ enum DailyUXCreationContext {
               let environment = snapshot.environments.first(where: {
                   $0.id == project.environmentID
               }) else { return nil }
-        guard environment.isEnabled else { return "Environment is off." }
-        return canCreateTask(in: environment) ? nil : "Environment is unreachable."
+        return environment.isEnabled ? nil : "Environment is off."
     }
 
     static func unreachableEnvironments(in snapshot: FeatureSnapshot) -> [FeatureEnvironment] {

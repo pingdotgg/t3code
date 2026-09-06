@@ -206,6 +206,8 @@ public struct NewThreadView: View {
                     environments: model.snapshot.environments,
                     recentGroupIDs: recentProjectGroupIDs,
                     selectionID: selectedProjectGroup?.id,
+                    retryState: unreachableRetry,
+                    onRetry: retryUnreachableEnvironments,
                     onSelect: { group in
                         if selectProjectGroup(group) {
                             activePicker = nil
@@ -1374,6 +1376,8 @@ private struct NewTaskProjectPicker: View {
     let environments: [FeatureEnvironment]
     let recentGroupIDs: [String]
     let selectionID: String?
+    let retryState: NewTaskRetryState
+    let onRetry: () -> Void
     let onSelect: (DailyUXProjectGroup) -> Void
 
     @State private var query = ""
@@ -1444,6 +1448,11 @@ private struct NewTaskProjectPicker: View {
                         .accessibilityIdentifier(
                             "new-task-unreachable-environments-notice"
                         )
+
+                        Button(retryState.buttonTitle, action: onRetry)
+                            .disabled(retryState.isInProgress)
+                            .accessibilityHint("Refresh environment status")
+                            .accessibilityIdentifier("new-task-project-picker-retry")
                     }
                 }
             }
