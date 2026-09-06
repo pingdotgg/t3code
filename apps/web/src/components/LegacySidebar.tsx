@@ -96,7 +96,10 @@ import { useThreadRunningTerminalIds } from "../state/terminalSessions";
 import { useThreadDiscoveredPorts } from "../portDiscoveryState";
 import { openDiscoveredPort } from "./preview/openDiscoveredPort";
 import { useAtomCommand } from "../state/use-atom-command";
-import { useOrchestrationCommand } from "../state/use-orchestration-command";
+import {
+  ORCHESTRATION_OPERATE_DENIED_MESSAGE,
+  useOrchestrationCommand,
+} from "../state/use-orchestration-command";
 import { previewEnvironment } from "../state/preview";
 import { readEnvironmentScope, useEnvironmentScope } from "../state/session";
 import {
@@ -363,7 +366,7 @@ function checkTaskPermission(environmentId: EnvironmentId): boolean {
     stackedThreadToast({
       type: "error",
       title: "Action unavailable",
-      description: "This connection cannot change threads or projects.",
+      description: ORCHESTRATION_OPERATE_DENIED_MESSAGE,
     }),
   );
   return false;

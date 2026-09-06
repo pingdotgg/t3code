@@ -15,6 +15,9 @@ import { useCallback } from "react";
 import { readEnvironmentScope } from "./session";
 import { useAtomCommand } from "./use-atom-command";
 
+export const ORCHESTRATION_OPERATE_DENIED_MESSAGE =
+  "This connection cannot change threads or projects.";
+
 /** Recheck the target grant for every step of a thread or project mutation. */
 export function useOrchestrationCommand<W extends { readonly environmentId: EnvironmentId }, A, E>(
   command: AtomCommand<W, A, E>,
@@ -28,7 +31,7 @@ export function useOrchestrationCommand<W extends { readonly environmentId: Envi
           Cause.fail(
             new EnvironmentAuthorizationError({
               requiredScope: AuthOrchestrationOperateScope,
-              message: "This connection cannot change threads or projects.",
+              message: ORCHESTRATION_OPERATE_DENIED_MESSAGE,
             }),
           ),
         );
