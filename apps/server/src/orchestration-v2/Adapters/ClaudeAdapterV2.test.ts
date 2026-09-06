@@ -45,6 +45,7 @@ import { formatClaudeResumeCompactionQuestion } from "@t3tools/shared/claudeComp
 
 import { attachmentRelativePath } from "../../attachmentStore.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import { ProjectScriptToolkit } from "../../mcp/toolkits/project_script/tools.ts";
 import { OrchestratorToolkit } from "../../mcp/toolkits/orchestrator/tools.ts";
 import { TerminalToolkit } from "../../mcp/toolkits/terminal/tools.ts";
 import type { EventNdjsonLogger } from "../../provider/Layers/EventNdjsonLogger.ts";
@@ -583,6 +584,7 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
   it("matches the read-only allowlist to the orchestrator toolkit annotations", () => {
     const readOnlyToolNames = [
       ...Object.values(OrchestratorToolkit.tools),
+      ...Object.values(ProjectScriptToolkit.tools),
       ...Object.values(TerminalToolkit.tools),
     ]
       .filter((tool) => Context.get(tool.annotations, Tool.Readonly))

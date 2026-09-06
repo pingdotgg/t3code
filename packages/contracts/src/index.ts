@@ -11,6 +11,7 @@ export * from "./remoteAccess.ts";
 export * from "./ipc.ts";
 export * from "./terminal.ts";
 export * from "./terminalMcp.ts";
+export * from "./projectScriptMcp.ts";
 export * from "./provider.ts";
 export * from "./providerInstance.ts";
 export * from "./providerSetup.ts";
