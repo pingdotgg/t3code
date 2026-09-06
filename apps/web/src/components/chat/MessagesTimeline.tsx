@@ -12,6 +12,8 @@ import {
   type ToolActivityIcon,
 } from "@t3tools/contracts";
 import { parseScopedThreadKey } from "@t3tools/client-runtime/environment";
+import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
+import { Link } from "@tanstack/react-router";
 import { canForkProjectedAssistantItem } from "@t3tools/client-runtime/state/thread-workflows";
 import { CHAT_TIMELINE_ANCHOR_OFFSET } from "./timelineScrollAnchoring";
 import {
@@ -1538,7 +1540,8 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
   const unknownAttachments = (row.message.attachments ?? []).filter(
     (attachment) => !isImageAttachment(attachment) && !isFileAttachment(attachment),
   );
-  const displayedUserMessage = deriveDisplayedUserMessageState(row.message.text);
+  const userMessage = resolveUserMessagePresentation(row.message);
+  const displayedUserMessage = deriveDisplayedUserMessageState(userMessage.text);
   const terminalContexts = displayedUserMessage.contexts;
   const previewAnnotations: ParsedPreviewAnnotation[] = [];
   let visibleText = displayedUserMessage.visibleText;
@@ -1559,7 +1562,27 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
 
   return (
     <div className="group flex flex-col items-end gap-1">
-      {row.message.createdBy === "agent" ? (
+      {userMessage.isAutomation ? (
+        <p
+          className="me-1 text-[11px] text-muted-foreground/70"
+          data-user-message-attribution="automation"
+        >
+          {userMessage.scheduledTaskId ? (
+            <Link
+              to="/settings/scheduled-tasks"
+              search={{
+                environmentId: ctx.activeThreadEnvironmentId,
+                taskId: userMessage.scheduledTaskId,
+              }}
+              className="rounded-sm hover:text-muted-foreground hover:underline focus-visible:outline-2 focus-visible:outline-ring"
+            >
+              Sent by automation
+            </Link>
+          ) : (
+            "Sent by automation"
+          )}
+        </p>
+      ) : row.message.createdBy === "agent" ? (
         <p
           className="me-1 text-[11px] text-muted-foreground/70"
           data-user-message-attribution="agent"
@@ -2133,13 +2156,6 @@ function v2EventPresentation(item: OrchestrationV2TurnItem): {
       return {
         label: "Approval requested",
         detail: item.prompt ?? item.requestKind,
-        tone: item.status === "failed" ? "danger" : "warning",
-        icon: MessageCircleIcon,
-      };
-    case "user_input_request":
-      return {
-        label: "Input requested",
-        detail: item.questions.map((question) => question.question).join("\n"),
         tone: item.status === "failed" ? "danger" : "warning",
         icon: MessageCircleIcon,
       };
