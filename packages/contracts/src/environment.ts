@@ -21,13 +21,14 @@ export const ExecutionEnvironmentPlatformArch = Schema.Literals(["arm64", "x64",
 export type ExecutionEnvironmentPlatformArch = typeof ExecutionEnvironmentPlatformArch.Type;
 
 /**
- * The curated set of machine shapes an environment can wear as its icon.
+ * The curated set of machine shapes and OS identities an environment can wear as its icon.
  * Servers detect one from the hardware they run on (`platform.machine`), and
  * the `environmentIcon` server setting lets a user pick one instead.
  */
 export const ENVIRONMENT_MACHINE_KINDS = [
   "server",
   "cloud",
+  "linux",
   "desktop",
   "laptop",
   "mac-mini",

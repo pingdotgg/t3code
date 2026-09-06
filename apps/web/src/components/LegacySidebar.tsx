@@ -2,10 +2,8 @@ import {
   ArchiveIcon,
   ArrowUpDownIcon,
   ChevronRightIcon,
-  CloudIcon,
   FolderPlusIcon,
   Globe2Icon,
-  LaptopIcon,
   LoaderIcon,
   SearchIcon,
   SquarePenIcon,
@@ -24,7 +22,6 @@ import {
 } from "./ThreadStatusIndicators";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
 import { ProjectFavicon } from "./ProjectFavicon";
-import { getEnvironmentIcon } from "./Icons";
 import { useAtomValue } from "@effect/atom-react";
 import { autoAnimate } from "@formkit/auto-animate";
 import React, { useCallback, useEffect, memo, useMemo, useRef, useState } from "react";
@@ -1153,11 +1150,11 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     isManualProjectSorting,
     dragHandleProps,
   } = props;
-  const EnvironmentIcon = getEnvironmentIcon({
-    isPrimary: false,
-    isWsl: project.allRemoteMembersAreWsl,
-    remoteIcon: project.allRemoteMembersAreDesktopLocal ? LaptopIcon : CloudIcon,
-  });
+  const environmentMachine = project.allRemoteMembersAreWsl
+    ? "linux"
+    : project.allRemoteMembersAreDesktopLocal
+      ? "laptop"
+      : "cloud";
   const threadSortOrder = useClientSettings<SidebarThreadSortOrder>(
     (settings) => settings.sidebarThreadSortOrder,
   );
@@ -2399,7 +2396,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
                 />
               }
             >
-              <EnvironmentIcon className="size-3" />
+              <EnvironmentMachineIcon kind={environmentMachine} className="size-3" />
             </TooltipTrigger>
             <TooltipPopup side="top">
               {project.allRemoteMembersAreDesktopLocal

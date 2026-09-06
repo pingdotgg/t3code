@@ -46,6 +46,7 @@ export function MacStudioIcon(props: SVGProps<SVGSVGElement>) {
 const ICON_BY_KIND: Record<EnvironmentMachineKind, FunctionComponent<LucideProps>> = {
   server: ServerIcon,
   cloud: CloudIcon,
+  linux: LinuxIcon,
   desktop: MonitorIcon,
   laptop: LaptopIcon,
   "mac-mini": MacMiniIcon,
@@ -55,6 +56,7 @@ const ICON_BY_KIND: Record<EnvironmentMachineKind, FunctionComponent<LucideProps
 export const ENVIRONMENT_MACHINE_KIND_LABELS: Record<EnvironmentMachineKind, string> = {
   server: "Server",
   cloud: "Cloud VM",
+  linux: "Linux/WSL",
   desktop: "Desktop",
   laptop: "Laptop",
   "mac-mini": "Mac mini",
@@ -69,9 +71,8 @@ export function environmentMachineIcon(
 
 export function EnvironmentMachineIcon({
   kind,
-  wsl = false,
   ...props
-}: LucideProps & { readonly kind: EnvironmentMachineKind; readonly wsl?: boolean }) {
-  const Icon = wsl ? LinuxIcon : ICON_BY_KIND[kind];
+}: LucideProps & { readonly kind: EnvironmentMachineKind }) {
+  const Icon = ICON_BY_KIND[kind];
   return <Icon {...props} />;
 }

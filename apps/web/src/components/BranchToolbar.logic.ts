@@ -12,7 +12,6 @@ export interface EnvironmentOption {
   label: string;
   isPrimary: boolean;
   machine: EnvironmentMachineKind;
-  isWsl: boolean;
 }
 
 export const EnvMode = Schema.Literals(["local", "worktree"]);
