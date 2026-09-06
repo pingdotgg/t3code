@@ -92,7 +92,7 @@ function AccountAvatar({
  * is one, else a two-letter chip. The address itself is revealed on demand in
  * the segment's popover.
  */
-export function AccountName({
+function AccountName({
   account,
   className,
 }: {
@@ -480,7 +480,7 @@ export function UsageLimitsPooled({
 }
 
 /** Sources and providers that could not be read, so a missing bar is not mistaken for a full one. */
-export function LimitNotices({ notices }: { readonly notices: readonly string[] }) {
+function LimitNotices({ notices }: { readonly notices: readonly string[] }) {
   if (notices.length === 0) return null;
   return (
     <ul className="flex flex-col gap-1 text-xs text-muted-foreground">
