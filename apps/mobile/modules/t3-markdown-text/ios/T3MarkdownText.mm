@@ -64,12 +64,11 @@ static void T3MarkdownTextApplyAttachments(
     if (isSymbol) {
       image = [UIImage systemImageNamed:[imageUri substringFromIndex:3]];
     }
+    UIColor *foregroundColor = [attributedString attribute:NSForegroundColorAttributeName
+                                                   atIndex:attachmentRange.location
+                                            effectiveRange:nil];
     if (image != nil && (isSymbol || attachmentRange.tintWithForeground)) {
-      UIColor *foregroundColor =
-          [attributedString attribute:NSForegroundColorAttributeName
-                              atIndex:attachmentRange.location
-                       effectiveRange:nil] ?: UIColor.labelColor;
-      image = [image imageWithTintColor:foregroundColor
+      image = [image imageWithTintColor:foregroundColor ?: UIColor.labelColor
                           renderingMode:UIImageRenderingModeAlwaysOriginal];
     }
     attachment.image = image ?: [[UIImage alloc] init];
@@ -82,8 +81,15 @@ static void T3MarkdownTextApplyAttachments(
     const NSRange range = NSMakeRange(
         attachmentRange.location,
         MIN(attachmentRange.length, attributedString.length - attachmentRange.location));
-    NSAttributedString *attachmentString =
-        [NSAttributedString attributedStringWithAttachment:attachment];
+    NSMutableAttributedString *attachmentString =
+        [[NSAttributedString attributedStringWithAttachment:attachment] mutableCopy];
+    // Keep the run color on the attachment so a later re-apply (after the image
+    // loads asynchronously) still tints with the link color, not labelColor.
+    if (foregroundColor != nil) {
+      [attachmentString addAttribute:NSForegroundColorAttributeName
+                               value:foregroundColor
+                               range:NSMakeRange(0, attachmentString.length)];
+    }
     [attributedString replaceCharactersInRange:range withAttributedString:attachmentString];
   }
 }
