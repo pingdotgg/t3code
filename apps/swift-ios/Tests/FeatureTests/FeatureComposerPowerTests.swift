@@ -6,6 +6,60 @@ import UniformTypeIdentifiers
 
 @Suite("Composer power features")
 struct FeatureComposerPowerTests {
+    @Test
+    func changingServiceTierPreservesAnUnlistedSavedReasoningValue() throws {
+        let control = try #require(FeatureComposerTraitsControl.resolve(
+            explicit: .init(
+                providerID: "codex", modelID: "gpt-5.6-sol",
+                options: [.init(id: "reasoningEffort", value: .string("future-effort"))]
+            ),
+            inherited: nil,
+            providers: [Self.solProvider],
+            materializesDefaultSelection: true
+        ))
+
+        let selected = control.selection(choosing: "priority", in: "serviceTier")
+
+        #expect(control.sections.first { $0.id == "reasoningEffort" }?.currentChoiceID == "future-effort")
+        #expect(control.triggerLabel == "future-effort")
+        #expect(selected.options.first { $0.id == "reasoningEffort" }?.value == .string("future-effort"))
+    }
+
+    @Test
+    func changingServiceTierPreservesOptionsWithoutDeclaredDefaults() throws {
+        let provider = FeatureProvider(
+            id: "codex", name: "Codex", driver: "codex",
+            models: [.init(
+                id: "test-model", name: "Test model", isDefault: true,
+                options: [
+                    .init(
+                        id: "reasoningEffort", label: "Reasoning", kind: .select,
+                        choices: [.init(id: "low", label: "Low"), .init(id: "high", label: "High")]
+                    ),
+                    .init(id: "fastMode", label: "Fast mode", kind: .boolean),
+                    .init(
+                        id: "serviceTier", label: "Service tier", kind: .select,
+                        choices: [
+                            .init(id: "default", label: "Standard", isDefault: true),
+                            .init(id: "priority", label: "Fast"),
+                        ]
+                    ),
+                ]
+            )]
+        )
+        let control = try #require(FeatureComposerTraitsControl.resolve(
+            explicit: .init(providerID: "codex", modelID: "test-model"),
+            inherited: nil, providers: [provider], materializesDefaultSelection: true
+        ))
+
+        let selected = control.selection(choosing: "priority", in: "serviceTier")
+
+        #expect(control.sections.first { $0.id == "reasoningEffort" }?.currentChoiceID == nil)
+        #expect(control.sections.first { $0.id == "fastMode" }?.currentChoiceID == nil)
+        #expect(!selected.options.contains { $0.id == "reasoningEffort" })
+        #expect(!selected.options.contains { $0.id == "fastMode" })
+    }
+
     @Test func workspaceSkillsStayInTheirWorkspace() {
         var provider = FeatureProvider(id: "claude", name: "Claude", skills: [.init(name: "global")])
         provider.workspaceSnapshots = [

@@ -1288,13 +1288,8 @@ enum DailyUXModelOptions {
         for model: FeatureModel,
         selections: [FeatureModelOptionSelection]
     ) -> String? {
-        guard let descriptor = model.options.first(where: { descriptor in
-            let searchable = "\(descriptor.id) \(descriptor.label)".lowercased()
-            return searchable.contains("reason")
-                || searchable.contains("effort")
-                || searchable.contains("thinking")
-                || searchable.contains("thought")
-        }), let value = value(for: descriptor, in: selections) else {
+        guard let descriptor = reasoningDescriptor(for: model),
+              let value = value(for: descriptor, in: selections) else {
             return nil
         }
 

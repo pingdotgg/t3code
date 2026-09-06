@@ -15,7 +15,7 @@ struct FeatureComposerTraitsControl: Equatable {
         let id: String
         let label: String
         let choices: [Choice]
-        let currentChoiceID: String
+        let currentChoiceID: String?
     }
 
     let sections: [Section]
@@ -63,10 +63,8 @@ struct FeatureComposerTraitsControl: Equatable {
         )
     }
 
-    /// A traits choice writes through the same selection binding as the model
-    /// picker. The effective values of every visible descriptor are materialized
-    /// at the same time, matching Electron and preventing neighboring defaults
-    /// from disappearing on the next turn.
+    /// The shared model-selection policy adds declared defaults. A traits choice
+    /// changes only its own option, preserving saved values and unset options.
     func selection(choosing choiceID: String, in descriptorID: String) -> FeatureSelection {
         guard let section = sections.first(where: { $0.id == descriptorID }),
               let choice = section.choices.first(where: { $0.id == choiceID }) else {
@@ -74,16 +72,6 @@ struct FeatureComposerTraitsControl: Equatable {
         }
 
         var next = resolvedSelection
-        for section in sections {
-            guard let current = section.choices.first(where: {
-                $0.id == section.currentChoiceID
-            }) else { continue }
-            next.options = DailyUXModelOptions.updating(
-                next.options,
-                id: section.id,
-                value: current.value
-            )
-        }
         next.options = DailyUXModelOptions.updating(
             next.options,
             id: descriptorID,
@@ -116,7 +104,6 @@ struct FeatureComposerTraitsControl: Equatable {
                 },
                 currentChoiceID: currentSelectChoiceID(
                     for: descriptor,
-                    among: supportedChoices,
                     selections: selections
                 )
             )
@@ -141,43 +128,35 @@ struct FeatureComposerTraitsControl: Equatable {
                         value: .boolean(false)
                     ),
                 ],
-                currentChoiceID: current ? "on" : "off"
+                currentChoiceID: current.map { $0 ? "on" : "off" }
             )
         }
     }
 
     private static func currentSelectChoiceID(
         for descriptor: FeatureModelOptionDescriptor,
-        among choices: [FeatureModelOptionChoice],
         selections: [FeatureModelOptionSelection]
-    ) -> String {
-        if case .string(let selected)? = selections.first(where: {
-            $0.id == descriptor.id
-        })?.value,
-           choices.contains(where: { $0.id == selected })
-               || (descriptor.promptInjectedValues ?? []).contains(selected) {
+    ) -> String? {
+        if case .string(let selected)? = DailyUXModelOptions.value(
+            for: descriptor,
+            in: selections
+        ) {
             return selected
         }
-        if case .string(let defaultID) = descriptor.defaultValue,
-           choices.contains(where: { $0.id == defaultID }) {
-            return defaultID
-        }
-        return choices.first(where: \.isDefault)?.id ?? choices[0].id
+        return nil
     }
 
     private static func currentBooleanValue(
         for descriptor: FeatureModelOptionDescriptor,
         selections: [FeatureModelOptionSelection]
-    ) -> Bool {
-        if case .boolean(let selected)? = selections.first(where: {
-            $0.id == descriptor.id
-        })?.value {
+    ) -> Bool? {
+        if case .boolean(let selected)? = DailyUXModelOptions.value(
+            for: descriptor,
+            in: selections
+        ) {
             return selected
         }
-        if case .boolean(let defaultValue) = descriptor.defaultValue {
-            return defaultValue
-        }
-        return false
+        return nil
     }
 
     /// Mirrors Electron's compact TraitsPicker display. Fast mode is a bolt when
@@ -201,7 +180,8 @@ struct FeatureComposerTraitsControl: Equatable {
             })
 
             if descriptor.id == "fastMode", descriptor.kind == .boolean {
-                fastModeEnabled = current?.value == .boolean(true)
+                guard let current else { continue }
+                fastModeEnabled = current.value == .boolean(true)
                 fastModeFallbackLabel = fastModeEnabled ? "Fast" : "Normal"
                 continue
             }
@@ -221,7 +201,7 @@ struct FeatureComposerTraitsControl: Equatable {
             case .select:
                 let label = current?.label ?? descriptor.choices.first(where: {
                     $0.id == section.currentChoiceID
-                })?.label
+                })?.label ?? section.currentChoiceID
                 if let label {
                     labels.append(label)
                 }
@@ -234,6 +214,6 @@ struct FeatureComposerTraitsControl: Equatable {
         if labels.isEmpty, let fastModeFallbackLabel {
             return (fastModeFallbackLabel, false)
         }
-        return (labels.joined(separator: " · "), fastModeEnabled)
+        return (labels.isEmpty ? "Provider default" : labels.joined(separator: " · "), fastModeEnabled)
     }
 }
