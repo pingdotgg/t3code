@@ -293,9 +293,13 @@ export const PendingTaskListRow = memo(function PendingTaskListRow(props: {
   const { pendingTask, onSelectPendingTask, onDeletePendingTask } = props;
   const isDraft = pendingTask.kind === "draft";
   const timestamp = isDraft ? null : relativeTime(pendingTask.createdAt);
-  const subtitleParts = [props.environmentLabel, pendingTask.branch].filter(
-    (part): part is string => Boolean(part),
-  );
+  // The pill only has room for one word, so what happens next goes in the
+  // subtitle: a queued task sends itself, a draft waits for the user.
+  const subtitleParts = [
+    isDraft ? null : "Sends on reconnect",
+    props.environmentLabel,
+    pendingTask.branch,
+  ].filter((part): part is string => Boolean(part));
 
   const handleMenuAction = useCallback(
     ({ nativeEvent }: { readonly nativeEvent: { readonly event: string } }) => {
@@ -345,7 +349,7 @@ export const PendingTaskListRow = memo(function PendingTaskListRow(props: {
 
   const accessibilityHint = isDraft
     ? "Opens the draft in the new task composer"
-    : "Opens the queued task for editing";
+    : "Sends when the environment reconnects. Opens the task for editing";
 
   const rowContent = compact ? (
     <Pressable

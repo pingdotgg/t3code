@@ -193,9 +193,9 @@ const DRAFT_TASK_MENU_ACTIONS: MenuAction[] = [
 /**
  * Unsent work, in the same idiom as an active v2 row: it is work the user
  * wrote, so it reads like the thread it will become. The status slot says
- * what happens next. "Queued" stays uncolored because nothing is asked of
- * the user; the environment is simply not reachable yet. "Draft" takes the
- * amber the web sidebar uses for drafts, because this one waits on the user.
+ * what happens next, not where the item sits: "Sends on reconnect" stays
+ * uncolored because nothing is asked of the user; "Draft" takes the amber the
+ * web sidebar uses for drafts, because this one waits on the user.
  */
 export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props: {
   readonly pendingTask: PendingNewTask;
@@ -251,7 +251,7 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
             <Text className="text-xs text-adaptive-amber-700-300">Draft</Text>
           </View>
         ) : (
-          <Text className="text-xs text-foreground-tertiary">Queued</Text>
+          <Text className="text-xs text-foreground-tertiary">Sends on reconnect</Text>
         )}
       </View>
       {/* One line, unlike the two an active row allows: a queued title is
@@ -299,7 +299,7 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
           accessibilityHint={
             isDraft
               ? "Opens the draft in the new task composer"
-              : "Opens the queued task for editing"
+              : "Sends when the environment reconnects. Opens the task for editing"
           }
           accessibilityLabel={pendingTask.title}
           accessibilityRole="button"
