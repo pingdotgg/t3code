@@ -340,7 +340,7 @@ function findTaskListMarkerOffset(markdown: string, listItemStart: number): numb
  * message's overflow. Widen the gutter to fit the widest marker, including a
  * negative marker's minus sign.
  */
-export function orderedListGutterStyle(
+function orderedListGutterStyle(
   itemCount: number,
   start: unknown,
 ): { "--list-gutter": string } | undefined {
