@@ -28,6 +28,7 @@ import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { useUsage, type EnvironmentUsageStatus } from "../../state/usage";
 import { SettingsSection } from "../settings/components/SettingsSection";
 import { UsageDailyChart } from "./UsageDailyChart";
+import { toggleUsageEnvironment } from "./usageEnvironmentSelection";
 import { useRefreshLimits } from "./UsageLimitsSection";
 import { UsageLimitsSection } from "./UsageLimitsPooled";
 import { ControlPillMenu } from "../../components/ControlPill";
@@ -169,14 +170,7 @@ export function UsageRouteScreen() {
         return;
       }
       const id = EnvironmentId.make(value);
-      setSelectedEnvironmentIds((selected) => {
-        const next = new Set(
-          selected ?? environments.map((environment) => environment.environmentId),
-        );
-        if (next.has(id)) next.delete(id);
-        else next.add(id);
-        return next.size === environments.length ? null : next;
-      });
+      setSelectedEnvironmentIds((selected) => toggleUsageEnvironment(selected, environments, id));
     },
     [environments],
   );
