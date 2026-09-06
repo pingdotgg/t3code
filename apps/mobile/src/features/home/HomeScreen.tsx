@@ -642,6 +642,7 @@ export function HomeScreen(props: HomeScreenProps) {
   const threadMovePlanners = useMemo(() => {
     const sectionPlanner = (section: "pinned" | "active") =>
       createThreadMovePlanner({
+        allThreads: props.threads,
         section,
         reorderableEnvironmentIds: new Set(
           [...serverConfigs].flatMap(([id, config]) =>

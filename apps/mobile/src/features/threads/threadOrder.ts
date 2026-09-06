@@ -37,12 +37,16 @@ function rowOrder(row: OrderRow, section: PendingThreadOrder["section"]) {
  * are supported. Menu availability and execution use this same planner. */
 export function createThreadMovePlanner(input: {
   readonly ordered: readonly OrderRow[];
+  readonly allThreads?: readonly OrderRow[];
   readonly section: PendingThreadOrder["section"];
   readonly reorderableEnvironmentIds: ReadonlySet<EnvironmentId>;
 }) {
   const orderedIds = input.ordered.map(rowId);
   const keysById = new Map(
-    input.ordered.map((row) => [rowId(row), rowOrder(row, input.section).key]),
+    (input.allThreads ?? input.ordered).map((row) => [
+      rowId(row),
+      rowOrder(row, input.section).key,
+    ]),
   );
   const writableIds = new Set(
     input.ordered

@@ -492,6 +492,7 @@ export function useThreadListActions(): {
         ),
       });
       const assignments = createThreadMovePlanner({
+        allThreads: shells,
         ordered,
         section,
         reorderableEnvironmentIds: new Set([...configs.keys()].filter(supportsReorder)),

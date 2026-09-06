@@ -471,6 +471,7 @@ function ThreadNavigationSidebarPane(
   const threadMovePlanners = useMemo(() => {
     const sectionPlanner = (section: "pinned" | "active") =>
       createThreadMovePlanner({
+        allThreads: threads,
         section,
         reorderableEnvironmentIds: new Set(
           [...serverConfigs].flatMap(([id, config]) =>

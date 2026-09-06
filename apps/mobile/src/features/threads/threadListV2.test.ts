@@ -1191,6 +1191,31 @@ describe("mobile move availability", () => {
     },
   );
 
+  it.each(["active", "pinned"] as const)(
+    "reserves snoozed %s keys when moving visible rows",
+    (section) => {
+      const ordered = rows(section, ["bb", "dd", "ff"]);
+      const input = { ordered, section, reorderableEnvironmentIds: new Set([environmentId]) };
+      const collision = createThreadMovePlanner(input)(`${environmentId}:move-0`, "down")![0]!
+        .orderKey;
+      const hidden = {
+        ...ordered[0]!,
+        id: ThreadId.make("snoozed"),
+        snoozedAt: NOW,
+        snoozedUntil: "2099-01-01T00:00:00.000Z",
+        pinOrderKey: section === "pinned" ? collision : null,
+        activeOrderKey: section === "active" ? collision : null,
+      };
+      const assignments = createThreadMovePlanner({ ...input, allThreads: [...ordered, hidden] })(
+        `${environmentId}:move-0`,
+        "down",
+      );
+      expect(assignments).toHaveLength(1);
+      expect(assignments![0]!.orderKey).not.toBe(collision);
+      expect(assignments![0]!.orderKey > "dd" && assignments![0]!.orderKey < "ff").toBe(true);
+    },
+  );
+
   it("allows an independent keyed move despite an unsupported keyless row elsewhere", () => {
     const ordered = rows("active", [null, null, "bb", "dd", "ff"]);
     const plan = createThreadMovePlanner({
