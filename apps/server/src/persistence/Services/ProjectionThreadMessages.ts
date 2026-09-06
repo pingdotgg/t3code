@@ -51,6 +51,14 @@ export const GetProjectionThreadMessageInput = Schema.Struct({
 });
 export type GetProjectionThreadMessageInput = typeof GetProjectionThreadMessageInput.Type;
 
+export const HasProjectionThreadAssistantMessageInput = Schema.Struct({
+  threadId: ThreadId,
+  turnId: TurnId,
+  streamingOnly: Schema.Boolean,
+});
+export type HasProjectionThreadAssistantMessageInput =
+  typeof HasProjectionThreadAssistantMessageInput.Type;
+
 export const DeleteProjectionThreadMessagesInput = Schema.Struct({
   threadId: ThreadId,
 });
@@ -80,6 +88,13 @@ export interface ProjectionThreadMessageRepositoryShape {
   readonly getByMessageId: (
     input: GetProjectionThreadMessageInput,
   ) => Effect.Effect<Option.Option<ProjectionThreadMessage>, ProjectionRepositoryError>;
+
+  /**
+   * Check for an assistant message in a turn without hydrating message text.
+   */
+  readonly hasAssistantMessageForTurn: (
+    input: HasProjectionThreadAssistantMessageInput,
+  ) => Effect.Effect<boolean, ProjectionRepositoryError>;
 
   /**
    * List projected thread messages for a thread.
