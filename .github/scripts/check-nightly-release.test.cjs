@@ -11,7 +11,7 @@ const nightly = (hoursAgo, overrides = {}) => ({
   ...overrides,
 });
 
-function fixture({ releases = [nightly(7)], comparisonStatus = "ahead", activeStatus } = {}) {
+function fixture({ releases = [nightly(7)], comparisonStatus = "ahead" } = {}) {
   const calls = [];
   return {
     calls,
@@ -21,12 +21,6 @@ function fixture({ releases = [nightly(7)], comparisonStatus = "ahead", activeSt
       core: { info() {} },
       github: {
         rest: {
-          actions: {
-            async listWorkflowRuns(params) {
-              calls.push(params);
-              return { data: { total_count: params.status === activeStatus ? 1 : 0 } };
-            },
-          },
           repos: {
             listReleases() {},
             async compareCommitsWithBasehead(params) {
@@ -91,27 +85,7 @@ test("compares against the published tag, including legacy nightly tags", async 
   assert.equal(calls[0].basehead, `${tag}...new`);
 });
 
-for (const status of ["in_progress", "queued", "waiting", "pending", "requested"]) {
-  test(`skips dispatch when a release is ${status}`, async () => {
-    const { options } = fixture({ activeStatus: status });
-    options.github.paginate = async () => assert.fail("Must stop before checking releases");
-    assert.equal(await shouldReleaseNightly({ ...options, checkActiveRuns: true }), false);
-  });
-}
-
-test("dispatches when no release is active and new commits are due", async () => {
-  const { options } = fixture();
-  assert.equal(await shouldReleaseNightly({ ...options, checkActiveRuns: true }), true);
-});
-
-test("rechecks publication after a manual run finishes ahead of an automatic run", async () => {
-  const { options } = fixture();
-  assert.equal(await shouldReleaseNightly({ ...options, checkActiveRuns: true }), true);
-  options.github.paginate = async () => [nightly(0)];
-  assert.equal(await shouldReleaseNightly(options), false);
-});
-
-test("fails instead of dispatching when GitHub cannot supply release state", async () => {
+test("fails instead of releasing when GitHub cannot supply release state", async () => {
   const { options } = fixture();
   options.github.paginate = async () => {
     throw new Error("GitHub unavailable");

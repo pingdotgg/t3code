@@ -5,6 +5,9 @@ on:
     tags:
       - "v*.*.*"
       - "!v*-nightly.*"
+  schedule:
+    # Avoid minute zero, when GitHub scheduled jobs are busiest.
+    - cron: "8,38 * * * *"
   workflow_dispatch:
     inputs:
       channel:
@@ -15,11 +18,6 @@ on:
         options:
           - stable
           - nightly
-      automatic:
-        description: "Apply scheduled nightly checks before releasing"
-        required: false
-        default: false
-        type: boolean
       version:
         description: "Release version (for example 1.2.3 or v1.2.3)"
         required: false
@@ -32,7 +30,7 @@ on:
 # newest-wins single slot, so a queued stable tag can never be silently
 # dropped. Automatic nightlies recheck the release gap after leaving the queue.
 concurrency:
-  group: release-${{ (inputs.channel == 'nightly') && 'nightly' || 'stable' }}
+  group: release-${{ (github.event_name == 'schedule' || inputs.channel == 'nightly') && 'nightly' || 'stable' }}
   cancel-in-progress: false
   queue: max
 
@@ -43,7 +41,7 @@ permissions:
 jobs:
   check_changes:
     name: Check automatic nightly release
-    if: inputs.channel == 'nightly' && inputs.automatic
+    if: github.event_name == 'schedule'
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 5
     outputs:
@@ -67,7 +65,7 @@ jobs:
     needs: [check_changes]
     if: |
       !failure() && !cancelled() &&
-      (!(inputs.channel == 'nightly' && inputs.automatic) || needs.check_changes.outputs.has_changes == 'true')
+      (github.event_name != 'schedule' || needs.check_changes.outputs.has_changes == 'true')
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 10
     outputs:
@@ -110,7 +108,7 @@ jobs:
           NIGHTLY_SHA: ${{ github.sha }}
           NIGHTLY_RUN_NUMBER: ${{ github.run_number }}
         run: |
-          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" && "${DISPATCH_CHANNEL:-stable}" == "nightly" ]]; then
+          if [[ "${GITHUB_EVENT_NAME}" == "schedule" || ( "${GITHUB_EVENT_NAME}" == "workflow_dispatch" && "${DISPATCH_CHANNEL:-stable}" == "nightly" ) ]]; then
             nightly_date="$(date -u -d "$NIGHTLY_DATE" +%Y%m%d)"
 
             node scripts/resolve-nightly-release.ts \
@@ -219,7 +217,7 @@ jobs:
     needs: [check_changes]
     if: |
       !failure() && !cancelled() &&
-      (!(inputs.channel == 'nightly' && inputs.automatic) || needs.check_changes.outputs.has_changes == 'true')
+      (github.event_name != 'schedule' || needs.check_changes.outputs.has_changes == 'true')
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 5
     environment:
@@ -319,7 +317,7 @@ jobs:
     needs: [check_changes]
     if: |
       !failure() && !cancelled() &&
-      (!(inputs.channel == 'nightly' && inputs.automatic) || needs.check_changes.outputs.has_changes == 'true')
+      (github.event_name != 'schedule' || needs.check_changes.outputs.has_changes == 'true')
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 15
     steps:

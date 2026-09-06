@@ -1,29 +1,7 @@
 const MINIMUM_RELEASE_GAP_MS = 6 * 60 * 60 * 1000;
 
-// The scheduler checks active runs before dispatch. The release workflow checks
-// the gap again under its nightly concurrency lock, in case a manual run won it.
-async function shouldReleaseNightly({
-  github,
-  context,
-  core,
-  checkActiveRuns = false,
-  now = Date.now(),
-}) {
-  if (checkActiveRuns) {
-    for (const status of ["in_progress", "queued", "waiting", "pending", "requested"]) {
-      const { data } = await github.rest.actions.listWorkflowRuns({
-        ...context.repo,
-        workflow_id: "release.yml",
-        status,
-        per_page: 1,
-      });
-      if (data.total_count > 0) {
-        core.info(`A release is ${status}. Skipping this check.`);
-        return false;
-      }
-    }
-  }
-
+// Runs after the workflow acquires the nightly concurrency lock.
+async function shouldReleaseNightly({ github, context, core, now = Date.now() }) {
   const releases = await github.paginate(github.rest.repos.listReleases, {
     ...context.repo,
     per_page: 100,
