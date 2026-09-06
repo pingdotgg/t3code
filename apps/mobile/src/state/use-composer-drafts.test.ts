@@ -145,6 +145,7 @@ vi.mock("../features/sharing/incoming-share-storage", () => ({
   loadIncomingShareDrafts: incomingShareStorageMocks.load,
 }));
 
+import type { DraftComposerAttachment } from "../lib/composerImages";
 import { appAtomRegistry } from "./atom-registry";
 import { threadOutboxManager } from "./thread-outbox";
 import {
@@ -1431,6 +1432,48 @@ describe("mobile composer drafts", () => {
     };
 
     expect(copyComposerDraftContentState(drafts, sourceKey, targetKey)).toBe(drafts);
+  });
+
+  it("drops another environment's upload stamp when carrying attachments across machines", () => {
+    const sourceKey = "new-task:environment-1:project-1";
+    const targetKey = "new-task:environment-2:project-2";
+    const uploadedElsewhere: DraftComposerAttachment = {
+      id: "image-1",
+      type: "image",
+      name: "screen.png",
+      mimeType: "image/png",
+      sizeBytes: 1,
+      previewUri: "file:///drafts/screen.png",
+      fileUri: "file:///drafts/screen.png",
+      uploadedAttachmentId: "upload-1",
+      uploadEnvironmentId: EnvironmentId.make("environment-1"),
+    };
+    const uploadedOnTarget: DraftComposerAttachment = {
+      ...uploadedElsewhere,
+      id: "image-2",
+      uploadedAttachmentId: "upload-2",
+      uploadEnvironmentId: EnvironmentId.make("environment-2"),
+    };
+
+    const next = copyComposerDraftContentState(
+      { [sourceKey]: { text: "Ship it", attachments: [uploadedElsewhere, uploadedOnTarget] } },
+      sourceKey,
+      targetKey,
+    );
+
+    expect(next[targetKey]?.attachments).toEqual([
+      {
+        id: "image-1",
+        type: "image",
+        name: "screen.png",
+        mimeType: "image/png",
+        sizeBytes: 1,
+        previewUri: "file:///drafts/screen.png",
+        fileUri: "file:///drafts/screen.png",
+      },
+      uploadedOnTarget,
+    ]);
+    expect(next[sourceKey]?.attachments).toEqual([uploadedElsewhere, uploadedOnTarget]);
   });
 
   it("merges shared content into a project draft without duplicating retries", () => {
