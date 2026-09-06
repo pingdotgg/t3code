@@ -4,7 +4,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
-import { discoverAntigravitySkills } from "./AntigravitySkills.ts";
+import { discoverAntigravitySkills, resolveAntigravityUserHome } from "./AntigravitySkills.ts";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 
 const writeSkill = Effect.fn("writeSkill")(function* (directory: string, contents: string) {
@@ -24,20 +24,57 @@ const makeWorkspace = Effect.fn("makeWorkspace")(function* () {
   });
   return {
     cwd: path.join(temporaryDirectory, "workspace"),
-    profileDirectory: path.join(temporaryDirectory, "profile"),
+    userHome: path.join(temporaryDirectory, "home"),
   };
 });
 
 it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
+  it.effect("does not read user skills from a nested project or from ~/.agents", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const input = yield* makeWorkspace();
+      const nested = { ...input, cwd: path.join(input.userHome, "AI", "Projects", "Something") };
+      const skillPath = yield* writeSkill(
+        path.join(input.userHome, ".gemini", "config", "skills", "review"),
+        "---\nname: review\ndescription: Review changes.\n---\n",
+      );
+      yield* writeSkill(
+        path.join(input.userHome, ".agents", "skills", "ignored"),
+        "---\nname: ignored\n---\n",
+      );
+
+      assert.deepEqual(yield* discoverAntigravitySkills(nested), [
+        {
+          name: "review",
+          description: "Review changes.",
+          path: skillPath,
+          scope: "user",
+          enabled: true,
+        },
+      ]);
+      // A project rooted at the home directory sees ~/.agents/skills as its own.
+      assert.deepEqual(
+        (yield* discoverAntigravitySkills({ ...input, cwd: input.userHome })).map((skill) => [
+          skill.name,
+          skill.scope,
+        ]),
+        [
+          ["ignored", "project"],
+          ["review", "user"],
+        ],
+      );
+    }),
+  );
+
   it.effect("reads skill names, descriptions and paths from the current native roots", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const input = yield* makeWorkspace();
       const roots = [
-        { directory: path.join(input.profileDirectory, "config", "skills"), scope: "user" },
+        { directory: path.join(input.userHome, ".gemini", "config", "skills"), scope: "user" },
         { directory: path.join(input.cwd, ".gemini", "skills"), scope: "project" },
         {
-          directory: path.join(input.profileDirectory, "antigravity-cli", "skills"),
+          directory: path.join(input.userHome, ".gemini", "antigravity-cli", "skills"),
           scope: "user",
         },
         { directory: path.join(input.cwd, ".agents", "skills"), scope: "project" },
@@ -91,9 +128,9 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
       const path = yield* Path.Path;
       const input = yield* makeWorkspace();
       const roots = [
-        path.join(input.profileDirectory, "config", "skills"),
+        path.join(input.userHome, ".gemini", "config", "skills"),
         path.join(input.cwd, ".gemini", "skills"),
-        path.join(input.profileDirectory, "antigravity-cli", "skills"),
+        path.join(input.userHome, ".gemini", "antigravity-cli", "skills"),
         path.join(input.cwd, ".agents", "skills"),
         path.join(input.cwd, ".agent", "skills"),
       ];
@@ -218,7 +255,7 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
       const input = yield* makeWorkspace();
       const root = path.join(input.cwd, ".agents", "skills");
       yield* writeSkill(
-        path.join(input.profileDirectory, "config", "skills", "review"),
+        path.join(input.userHome, ".gemini", "config", "skills", "review"),
         "---\nname: [invalid\n---\n",
       );
       const nativeOrder = [" space-copy", "!-copy", "ø-copy", "a-copy"];
@@ -247,7 +284,7 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
         const fileSystem = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         const input = yield* makeWorkspace();
-        const sourceDirectory = path.join(input.profileDirectory, "shared-review");
+        const sourceDirectory = path.join(input.userHome, "shared-review");
         yield* writeSkill(sourceDirectory, "---\nname: review\n---\n");
         const root = path.join(input.cwd, ".agents", "skills");
         const linkedDirectory = path.join(root, "review");
@@ -303,4 +340,21 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
       }
     }),
   );
+});
+
+it("resolves the home the agent expands ~ against", () => {
+  assert.equal(
+    resolveAntigravityUserHome("linux", { HOME: "/home/user", USERPROFILE: "C:\\Users\\user" }),
+    "/home/user",
+  );
+  assert.equal(
+    resolveAntigravityUserHome("win32", { HOME: "/home/user", USERPROFILE: "C:\\Users\\user" }),
+    "C:\\Users\\user",
+  );
+  assert.equal(
+    resolveAntigravityUserHome("win32", { HOMEDRIVE: "D:", HOMEPATH: "\\Users\\alice" }),
+    "D:\\Users\\alice",
+  );
+  assert.equal(resolveAntigravityUserHome("darwin", { HOME: "/Users/a b " }), "/Users/a b ");
+  assert.equal(resolveAntigravityUserHome("darwin", { HOME: "" }).length > 0, true);
 });
