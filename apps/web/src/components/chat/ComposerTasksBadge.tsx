@@ -1,4 +1,8 @@
 import { ListTodoIcon } from "lucide-react";
+// Motion state updates animate only the decorative completion fill:
+// https://motion.dev/docs/react-animation
+// https://motion.dev/docs/react-use-reduced-motion
+import { motion, useReducedMotion } from "motion/react";
 import { memo, type ComponentProps } from "react";
 
 import { formatDuration } from "../../session-logic";
@@ -41,6 +45,7 @@ function TaskSegments({
   readonly className?: string;
   readonly steps: readonly ComposerTaskStep[];
 }) {
+  const reduceMotion = useReducedMotion();
   if (steps.length <= 1 || steps.length > MAX_TASK_SEGMENTS) return null;
 
   return (
@@ -49,14 +54,18 @@ function TaskSegments({
         <span
           key={key}
           className={cn(
-            "h-[3px] min-w-0 flex-1 rounded-full",
-            step.status === "completed"
-              ? "bg-success"
-              : step.status === "inProgress"
-                ? "bg-primary"
-                : "bg-muted-foreground/25",
+            "relative h-[3px] min-w-0 flex-1 overflow-hidden rounded-full",
+            step.status === "inProgress" ? "bg-primary" : "bg-muted-foreground/25",
           )}
-        />
+        >
+          <motion.span
+            className="absolute inset-0 origin-left bg-success"
+            // History opens at its real state; only subsequent progress changes animate.
+            initial={false}
+            animate={{ scaleX: step.status === "completed" ? 1 : 0 }}
+            transition={{ type: "tween", duration: reduceMotion ? 0 : 0.18, ease: "easeOut" }}
+          />
+        </span>
       ))}
     </span>
   );
