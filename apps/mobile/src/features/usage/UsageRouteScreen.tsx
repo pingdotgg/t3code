@@ -1,5 +1,10 @@
+import { EnvironmentId, USAGE_CONTRACT_VERSION } from "@t3tools/contracts";
 import { useNavigation } from "@react-navigation/native";
-import type { DailyTotals, MergedUsage } from "@t3tools/shared/usageMerge";
+import {
+  isCompatibleUsageContractVersion,
+  type DailyTotals,
+  type MergedUsage,
+} from "@t3tools/shared/usageMerge";
 import {
   enumerateDays,
   enumerateHourStarts,
@@ -11,8 +16,9 @@ import {
   formatUsd,
   makeWindow,
 } from "@t3tools/shared/usageFormat";
-import { useMemo, useRef, useState } from "react";
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Platform, Pressable, RefreshControl, ScrollView, View } from "react-native";
+import Animated, { Easing, FadeIn, LinearTransition, ReduceMotion } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
@@ -22,7 +28,11 @@ import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { useUsage, type EnvironmentUsageStatus } from "../../state/usage";
 import { SettingsSection } from "../settings/components/SettingsSection";
 import { UsageDailyChart } from "./UsageDailyChart";
-import { UsageLimitsSection, useRefreshLimits } from "./UsageLimitsSection";
+import { toggleUsageEnvironment } from "./usageEnvironmentSelection";
+import { useRefreshLimits } from "./UsageLimitsSection";
+import { UsageLimitsSection } from "./UsageLimitsPooled";
+import { ControlPillMenu } from "../../components/ControlPill";
+import { SymbolView } from "../../components/AppSymbol";
 import type { UsageChartMetric } from "./usageChartData";
 import { PROVIDER_LABEL, useProviderColors } from "./usageProviders";
 
@@ -64,8 +74,13 @@ export function UsageRouteScreen() {
   const [metric, setMetric] = useState<UsageChartMetric>("cost");
   const { days: windowDays, window } = windowSelection;
   const isPast24Hours = windowDays === 1;
-  const { merged, environments, isPending, isPartial, refresh } = useUsage(window);
-  const limits = useRefreshLimits();
+  const [selectedEnvironmentIds, setSelectedEnvironmentIds] =
+    useState<ReadonlySet<EnvironmentId> | null>(null);
+  const { merged, environments, selectedEnvironments, isPending, refresh } = useUsage(
+    window,
+    selectedEnvironmentIds,
+  );
+  const limits = useRefreshLimits(selectedEnvironmentIds);
 
   const days = useMemo(
     () => enumerateDays(window.sinceDay, window.untilDay),
@@ -119,18 +134,104 @@ export function UsageRouteScreen() {
     });
   };
 
+  const showEnvironmentFilter = environments.length > 0 || selectedEnvironmentIds !== null;
+  const hasLoadingEnvironments = selectedEnvironments.some(isUsageLoading);
+  const filterAccessibilityLabel = hasLoadingEnvironments
+    ? "Filter usage environments, some environments are loading"
+    : "Filter usage environments";
+  const filterIcon =
+    selectedEnvironmentIds === null
+      ? "line.3.horizontal.decrease"
+      : "line.3.horizontal.decrease.circle.fill";
+  const environmentActions = useMemo(
+    () => [
+      {
+        id: "all",
+        title: "All environments",
+        subtitle: undefined,
+        state: selectedEnvironmentIds === null ? ("on" as const) : ("off" as const),
+      },
+      ...environments.map((environment) => ({
+        id: environment.environmentId,
+        title: environment.label,
+        subtitle: usageEnvironmentStatus(environment),
+        state:
+          selectedEnvironmentIds === null || selectedEnvironmentIds.has(environment.environmentId)
+            ? ("on" as const)
+            : ("off" as const),
+      })),
+    ],
+    [environments, selectedEnvironmentIds],
+  );
+  const selectEnvironment = useCallback(
+    (value: string) => {
+      if (value === "all") {
+        setSelectedEnvironmentIds(null);
+        return;
+      }
+      const id = EnvironmentId.make(value);
+      setSelectedEnvironmentIds((selected) => toggleUsageEnvironment(selected, environments, id));
+    },
+    [environments],
+  );
+  const environmentFilter = useMemo(
+    () =>
+      showEnvironmentFilter ? (
+        <ControlPillMenu
+          accessible
+          accessibilityRole="button"
+          accessibilityLabel={filterAccessibilityLabel}
+          title="Environments"
+          actions={environmentActions}
+          onPressAction={({ nativeEvent }) => selectEnvironment(nativeEvent.event)}
+        >
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={filterAccessibilityLabel}
+            className={cn(
+              "items-center justify-center rounded-full",
+              Platform.OS === "ios" ? "size-[28px]" : "size-[44px]",
+            )}
+          >
+            <SymbolView name={filterIcon} size={22} tintColorClassName="accent-icon" />
+            {hasLoadingEnvironments ? (
+              <View
+                pointerEvents="none"
+                className="absolute -right-[2px] -top-[2px] size-[9px] rounded-full bg-amber-500"
+              />
+            ) : null}
+          </Pressable>
+        </ControlPillMenu>
+      ) : null,
+    [
+      showEnvironmentFilter,
+      environmentActions,
+      selectEnvironment,
+      filterAccessibilityLabel,
+      filterIcon,
+      hasLoadingEnvironments,
+    ],
+  );
+
+  useLayoutEffect(() => {
+    if (Platform.OS === "ios") {
+      navigation.setOptions({ headerRight: () => environmentFilter });
+    }
+  }, [navigation, environmentFilter]);
+
   return (
     <View collapsable={false} className="flex-1 bg-sheet">
       {Platform.OS === "android" ? (
         <>
           <NativeStackScreenOptions options={{ headerShown: false }} />
-          <AndroidScreenHeader title="Usage" onBack={() => navigation.goBack()} />
+          <AndroidScreenHeader
+            title="Usage"
+            onBack={() => navigation.goBack()}
+            trailing={environmentFilter}
+          />
         </>
       ) : null}
       <ScrollView
-        // Remount at each tab's native top. Scrolling to y: 0 ignores iOS's
-        // automatic header inset and hides the tab bar under the header.
-        key={tab}
         contentInsetAdjustmentBehavior="automatic"
         showsVerticalScrollIndicator={false}
         className="flex-1"
@@ -145,60 +246,73 @@ export function UsageRouteScreen() {
       >
         <SegmentedControl options={TAB_OPTIONS} selected={tab} onSelect={setTab} role="tab" />
 
-        {showingLimits ? (
-          <UsageLimitsSection now={limits.now} failedLabels={limits.failedLabels} />
-        ) : (
-          <>
-            {/* Period and metric together: neither applies to Limits, and
-                both change every number below, so they share one bar. */}
-            <View className="flex-row items-center gap-3">
-              <SegmentedControl
-                options={WINDOW_OPTIONS}
-                selected={windowDays}
-                onSelect={selectWindow}
-                size="compact"
-                className="flex-1"
-              />
-              <SegmentedControl
-                options={METRIC_OPTIONS}
-                selected={metric}
-                onSelect={setMetric}
-                size="compact"
-                className="w-36"
-              />
-            </View>
-            <UsageCoverageNotice
-              environments={environments}
-              merged={merged}
-              isPartial={isPartial}
+        <Animated.View
+          key={tab}
+          entering={FadeIn.duration(160).reduceMotion(ReduceMotion.System)}
+          className="gap-6"
+        >
+          {showingLimits ? (
+            <UsageLimitsSection
+              now={limits.now}
+              failedLabels={limits.failedLabels}
+              selectedEnvironmentIds={selectedEnvironmentIds}
             />
-            {isPending ? (
-              <Text className="py-16 text-center text-base text-foreground-muted">
-                Scanning provider transcripts…
-              </Text>
-            ) : environments.length === 0 ? (
-              <Text className="py-16 text-center text-base text-foreground-muted">
-                Connect an environment to see usage.
-              </Text>
-            ) : (
-              <>
-                <ChartCard
-                  merged={merged}
-                  days={chartDays}
-                  daily={chartTotals}
-                  metric={metric}
-                  sinceDay={window.sinceDay}
-                  untilDay={window.untilDay}
-                  isPast24Hours={isPast24Hours}
-                  timeZone={window.timeZone}
+          ) : (
+            <>
+              {/* Period and metric together: neither applies to Limits, and
+                both change every number below, so they share one bar. */}
+              <View className="flex-row items-center gap-3">
+                <SegmentedControl
+                  options={WINDOW_OPTIONS}
+                  selected={windowDays}
+                  onSelect={selectWindow}
+                  size="compact"
+                  className="flex-1"
                 />
-                <ProviderSection merged={merged} metric={metric} />
-                <TotalsSection merged={merged} isPast24Hours={isPast24Hours} />
-                <ModelsSection merged={merged} />
-              </>
-            )}
-          </>
-        )}
+                <SegmentedControl
+                  options={METRIC_OPTIONS}
+                  selected={metric}
+                  onSelect={setMetric}
+                  size="compact"
+                  className="w-36"
+                />
+              </View>
+              {merged.duplicateSources.length > 0 ? (
+                <Text className="text-sm text-foreground-muted">
+                  Counted once across environments sharing a transcript directory:{" "}
+                  {merged.duplicateSources.join(", ")}
+                </Text>
+              ) : null}
+              {isPending ? (
+                <Text className="py-16 text-center text-base text-foreground-muted">
+                  Scanning provider transcripts…
+                </Text>
+              ) : selectedEnvironments.length === 0 ? (
+                <Text className="py-16 text-center text-base text-foreground-muted">
+                  {environments.length === 0
+                    ? "Connect an environment to see usage."
+                    : "Select an environment to see usage."}
+                </Text>
+              ) : (
+                <>
+                  <ChartCard
+                    merged={merged}
+                    days={chartDays}
+                    daily={chartTotals}
+                    metric={metric}
+                    sinceDay={window.sinceDay}
+                    untilDay={window.untilDay}
+                    isPast24Hours={isPast24Hours}
+                    timeZone={window.timeZone}
+                  />
+                  <ProviderSection merged={merged} metric={metric} />
+                  <TotalsSection merged={merged} isPast24Hours={isPast24Hours} />
+                  <ModelsSection merged={merged} />
+                </>
+              )}
+            </>
+          )}
+        </Animated.View>
       </ScrollView>
     </View>
   );
@@ -221,25 +335,42 @@ function SegmentedControl<Value extends number | string>(props: {
   const compact = props.size === "compact";
   return (
     <View
-      accessibilityRole={props.role === "tab" ? "tablist" : undefined}
+      accessible={false}
       className={cn(
         "flex-row overflow-hidden rounded-full border-continuous bg-card",
         props.className,
       )}
     >
+      <Animated.View
+        pointerEvents="none"
+        layout={LinearTransition.duration(200)
+          .easing(Easing.out(Easing.cubic))
+          .reduceMotion(ReduceMotion.System)}
+        className="absolute bottom-0 top-0 rounded-full bg-subtle-strong"
+        style={{
+          width: `${100 / props.options.length}%`,
+          start: `${
+            (Math.max(
+              0,
+              props.options.findIndex((option) => option.value === props.selected),
+            ) *
+              100) /
+            props.options.length
+          }%`,
+        }}
+      />
       {props.options.map((option) => {
         const active = option.value === props.selected;
         return (
           <Pressable
             key={String(option.value)}
-            accessibilityRole={props.role ?? "button"}
-            accessibilityLabel={option.accessibilityLabel}
+            accessibilityRole={Platform.OS === "ios" ? "button" : (props.role ?? "button")}
+            accessibilityLabel={option.accessibilityLabel ?? option.label}
             accessibilityState={{ selected: active }}
             onPress={() => props.onSelect(option.value)}
             className={cn(
               "flex-1 items-center justify-center rounded-full",
               compact ? "h-9" : "h-11",
-              active && "bg-subtle-strong",
             )}
           >
             <Text
@@ -491,48 +622,22 @@ function ModelsSection(props: { readonly merged: MergedUsage }) {
  * one that failed, or one whose transcripts another environment already
  * reported.
  */
-function UsageCoverageNotice(props: {
-  readonly environments: readonly EnvironmentUsageStatus[];
-  readonly merged: MergedUsage;
-  readonly isPartial: boolean;
-}) {
-  const failed = props.environments.filter((environment) => environment.error !== null);
-  const stale = props.environments.filter((environment) =>
-    props.merged.staleEnvironments.includes(environment.environmentId),
-  );
-  const duplicateSources = props.merged.duplicateSources;
-  if (
-    failed.length === 0 &&
-    stale.length === 0 &&
-    duplicateSources.length === 0 &&
-    !props.isPartial
-  ) {
-    return null;
-  }
+function isUsageLoading(environment: EnvironmentUsageStatus) {
+  return environment.isPending || (environment.summary === null && environment.error === null);
+}
 
-  return (
-    <View className="gap-1 rounded-[16px] border-continuous bg-card px-4 py-3">
-      {props.isPartial ? (
-        <Text className="text-sm text-foreground-muted">
-          Some environments are still reporting. Totals are partial.
-        </Text>
-      ) : null}
-      {failed.map((environment) => (
-        <Text key={environment.environmentId} className="text-sm text-foreground-muted">
-          {environment.label} could not report usage.
-        </Text>
-      ))}
-      {stale.map((environment) => (
-        <Text key={environment.environmentId} className="text-sm text-foreground-muted">
-          {environment.label} runs an older server version and is excluded from totals.
-        </Text>
-      ))}
-      {duplicateSources.length > 0 ? (
-        <Text className="text-sm text-foreground-muted">
-          Counted once across environments sharing a transcript directory:{" "}
-          {duplicateSources.join(", ")}
-        </Text>
-      ) : null}
-    </View>
-  );
+function usageEnvironmentStatus(environment: EnvironmentUsageStatus): string {
+  if (
+    environment.summary &&
+    !isCompatibleUsageContractVersion(environment.summary.contractVersion, USAGE_CONTRACT_VERSION)
+  ) {
+    return "Older server · excluded from usage totals";
+  }
+  if (!environment.isConnected)
+    return environment.summary ? "Disconnected · showing saved usage" : "Waiting for connection…";
+  if (environment.error)
+    return environment.summary ? "Usage unavailable · showing saved totals" : "Usage unavailable";
+  if (isUsageLoading(environment))
+    return environment.summary ? "Updating usage…" : "Loading usage…";
+  return "Usage up to date";
 }
