@@ -43,6 +43,13 @@ export function resolveEnvironmentProjectMatch(
   // `|| null` (not `??`): a pending-task placeholder project can have an empty
   // workspaceRoot, and an "" basename would match nothing meaningful.
   const workspaceBasename = selectedProject?.workspaceRoot.split("/").at(-1) || null;
+  // The weaker signals only apply where identity is unknown on at least one
+  // side; two known, different repositories never match on a shared basename
+  // or title (mirrors the environment list filter in the new-task flow).
+  const isKnownMismatch = (project: EnvironmentProject) => {
+    const projectKey = project.repositoryIdentity?.canonicalKey ?? null;
+    return repositoryKey !== null && projectKey !== null && projectKey !== repositoryKey;
+  };
   return (
     (repositoryKey !== null
       ? projectsOnTarget.find(
@@ -51,11 +58,15 @@ export function resolveEnvironmentProjectMatch(
       : undefined) ??
     (workspaceBasename !== null
       ? projectsOnTarget.find(
-          (project) => project.workspaceRoot.split("/").at(-1) === workspaceBasename,
+          (project) =>
+            !isKnownMismatch(project) &&
+            project.workspaceRoot.split("/").at(-1) === workspaceBasename,
         )
       : undefined) ??
     (selectedProject !== null
-      ? projectsOnTarget.find((project) => project.title === selectedProject.title)
+      ? projectsOnTarget.find(
+          (project) => !isKnownMismatch(project) && project.title === selectedProject.title,
+        )
       : undefined) ??
     projectsOnTarget[0] ??
     null
