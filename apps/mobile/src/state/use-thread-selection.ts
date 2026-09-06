@@ -1,3 +1,4 @@
+import { useAtomValue } from "@effect/atom-react";
 import { useRoute, type RouteProp } from "@react-navigation/native";
 import { useMemo, useRef } from "react";
 import {
@@ -10,12 +11,20 @@ import {
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import * as Option from "effect/Option";
 
+import { scopedThreadKey } from "../lib/scopedEntities";
 import { useProject, useThreadShell } from "../state/entities";
 import { useEnvironmentThread } from "../state/threads";
+import {
+  pendingThreadCreationOutcomesAtom,
+  pendingThreadCreationShell,
+  type PendingThreadCreationOutcome,
+} from "./pending-thread-creation";
+import type { QueuedThreadMessage } from "./thread-outbox-model";
 import {
   useRemoteEnvironmentRuntime,
   useSavedRemoteConnection,
 } from "./use-remote-environment-registry";
+import { useThreadOutboxMessages } from "./use-thread-outbox";
 type ThreadSelectionRouteParams = {
   readonly environmentId?: string | string[];
   readonly threadId?: string | string[];
@@ -96,9 +105,39 @@ function useResolvedThreadSelection(params: ThreadSelectionRouteParams | undefin
   }
   const selectedThreadRef = routeThreadRef ?? lastRouteThreadRef.current;
   const selectedThreadShell = useThreadShell(selectedThreadRef);
+  const selectedThreadKey =
+    selectedThreadRef === null
+      ? null
+      : scopedThreadKey(selectedThreadRef.environmentId, selectedThreadRef.threadId);
+  const queuedMessagesByThreadKey = useThreadOutboxMessages();
+  const creationOutcome = useAtomValue(pendingThreadCreationOutcomesAtom);
+  // A creation the outbox still holds or just delivered: the thread screen
+  // opened before the server made the thread, so present a stand-in shell.
+  const pendingCreation = useMemo<{
+    readonly message: QueuedThreadMessage;
+    readonly outcome: PendingThreadCreationOutcome | null;
+  } | null>(() => {
+    if (selectedThreadKey === null) {
+      return null;
+    }
+    const queued = queuedMessagesByThreadKey[selectedThreadKey]?.find(
+      (message) => message.creation !== undefined,
+    );
+    const outcome = creationOutcome[selectedThreadKey] ?? null;
+    const message = queued ?? outcome?.message ?? null;
+    return message === null ? null : { message, outcome };
+  }, [creationOutcome, queuedMessagesByThreadKey, selectedThreadKey]);
+  // Until the creation is delivered the server has no thread to subscribe
+  // to; subscribing anyway would retry "not found" for the whole setup.
+  const selectedThreadDetailRef =
+    selectedThreadShell !== null ||
+    pendingCreation === null ||
+    pendingCreation.outcome?.kind === "delivered"
+      ? selectedThreadRef
+      : null;
   const selectedThreadDetailState = useEnvironmentThread(
-    selectedThreadRef?.environmentId ?? null,
-    selectedThreadRef?.threadId ?? null,
+    selectedThreadDetailRef?.environmentId ?? null,
+    selectedThreadDetailRef?.threadId ?? null,
   );
   const selectedThreadDetail = Option.getOrNull(selectedThreadDetailState.data);
   const selectedThread = useMemo(
@@ -106,9 +145,14 @@ function useResolvedThreadSelection(params: ThreadSelectionRouteParams | undefin
       selectedThreadShell ??
       (selectedThreadRef !== null && selectedThreadDetail !== null
         ? threadDetailToShell(selectedThreadRef.environmentId, selectedThreadDetail)
-        : null),
-    [selectedThreadDetail, selectedThreadRef, selectedThreadShell],
+        : pendingCreation !== null
+          ? pendingThreadCreationShell(pendingCreation.message)
+          : null),
+    [pendingCreation, selectedThreadDetail, selectedThreadRef, selectedThreadShell],
   );
+  // The stand-in outlives the queue entry only until the real shell shows up.
+  const selectedThreadCreation =
+    selectedThreadShell === null && selectedThreadDetail === null ? pendingCreation : null;
   const selectedProjectRef = useMemo<ScopedProjectRef | null>(
     () =>
       selectedThread === null
@@ -128,6 +172,8 @@ function useResolvedThreadSelection(params: ThreadSelectionRouteParams | undefin
     () => ({
       selectedThreadRef,
       selectedThread,
+      selectedThreadCreation,
+      selectedThreadDetailState,
       selectedThreadProject,
       selectedEnvironmentConnection,
       selectedEnvironmentRuntime,
@@ -136,6 +182,8 @@ function useResolvedThreadSelection(params: ThreadSelectionRouteParams | undefin
       selectedEnvironmentConnection,
       selectedEnvironmentRuntime,
       selectedThread,
+      selectedThreadCreation,
+      selectedThreadDetailState,
       selectedThreadProject,
       selectedThreadRef,
     ],

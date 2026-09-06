@@ -1,5 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Alert } from "react-native";
 
 import {
@@ -36,6 +36,7 @@ import { buildThreadFeed } from "../lib/threadActivity";
 import { acknowledgedThreadMessagesAtom } from "./acknowledged-thread-messages";
 import { appendPendingThreadMessages } from "../features/threads/pending-thread-feed";
 import { appAtomRegistry } from "../state/atom-registry";
+import { pendingThreadCreationMessage } from "./pending-thread-creation";
 import {
   appendComposerDraftAttachments,
   appendComposerDraftText,
@@ -101,7 +102,11 @@ export function useThreadDraftForThread(input: {
 }
 
 export function useThreadComposerState() {
-  const { selectedThread: selectedThreadShell, selectedEnvironmentRuntime } = useThreadSelection();
+  const {
+    selectedThread: selectedThreadShell,
+    selectedThreadCreation,
+    selectedEnvironmentRuntime,
+  } = useThreadSelection();
   const selectedThreadDetail = useSelectedThreadDetail();
   const composerDrafts = useAtomValue(composerDraftsAtom);
   const acknowledgedMessages = useAtomValue(acknowledgedThreadMessagesAtom);
@@ -121,8 +126,15 @@ export function useThreadComposerState() {
   const selectedThreadKey = selectedThreadShell
     ? scopedThreadKey(selectedThreadShell.environmentId, selectedThreadShell.id)
     : null;
+  // The creation entry is the thread itself (rendered as the first message),
+  // not a follow-up waiting behind it.
   const selectedThreadQueuedMessages = useMemo(
-    () => (selectedThreadKey ? (queuedMessagesByThreadKey[selectedThreadKey] ?? []) : []),
+    () =>
+      selectedThreadKey
+        ? (queuedMessagesByThreadKey[selectedThreadKey] ?? []).filter(
+            (message) => message.creation === undefined,
+          )
+        : [],
     [queuedMessagesByThreadKey, selectedThreadKey],
   );
   const feedbackSubmissions = useMemo(
@@ -141,6 +153,12 @@ export function useThreadComposerState() {
   );
   const selectedThreadMessages = selectedThreadDetail?.messages;
   const selectedThreadActivities = selectedThreadDetail?.activities;
+  // A thread the server has not created yet only has the queued prompt; the
+  // stand-in shell is the "detail" until the real snapshot lands.
+  const pendingCreationMessage = selectedThreadCreation?.message ?? null;
+  // Read inside the send callback, which must not be rebuilt per keystroke.
+  const selectedThreadCreationRef = useRef(selectedThreadCreation);
+  selectedThreadCreationRef.current = selectedThreadCreation;
   const selectedThreadFeed = useMemo(() => {
     const feed =
       selectedThreadMessages && selectedThreadActivities
@@ -148,7 +166,12 @@ export function useThreadComposerState() {
             messages: selectedThreadMessages,
             activities: selectedThreadActivities,
           })
-        : [];
+        : pendingCreationMessage !== null
+          ? buildThreadFeed({
+              messages: [pendingThreadCreationMessage(pendingCreationMessage)],
+              activities: [],
+            })
+          : [];
     const pendingAcknowledgments = acknowledgedMessages.filter(
       (message) =>
         scopedThreadKey(message.environmentId, message.threadId) === selectedThreadKey &&
@@ -161,6 +184,7 @@ export function useThreadComposerState() {
   }, [
     selectedThreadActivities,
     selectedThreadMessages,
+    pendingCreationMessage,
     selectedThreadKey,
     selectedThreadQueuedMessages,
     acknowledgedMessages,
@@ -263,6 +287,13 @@ export function useThreadComposerState() {
 
   const onSendMessage = useCallback(async () => {
     if (!selectedThreadShell) {
+      return null;
+    }
+    // The server has not created this thread yet. Queuing a follow-up against
+    // its id would strand the message: if the creation is rejected the thread
+    // never appears and the drain drops the orphan. The composer disables its
+    // send button too; this guard also covers the editor's submit key.
+    if (selectedThreadCreationRef.current !== null) {
       return null;
     }
 
