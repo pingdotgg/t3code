@@ -52,6 +52,11 @@
       --color-switch-inactive-track: rgba(0, 0, 0, 0.08);
       --color-switch-inactive-thumb: #8e8e93;
 
+      /* Warning */
+      --color-warning: #fffbeb;
+      --color-warning-border: #fde68a;
+      --color-warning-foreground: #b45309;
+
       /* Danger */
       --color-danger: #fef2f2;
       --color-danger-border: rgba(239, 68, 68, 0.12);
@@ -150,6 +155,11 @@
       --color-switch-active-thumb: #ffffff;
       --color-switch-inactive-track: rgba(255, 255, 255, 0.06);
       --color-switch-inactive-thumb: #8e8e93;
+
+      /* Warning */
+      --color-warning: rgba(69, 26, 3, 0.4);
+      --color-warning-border: rgba(120, 53, 15, 0.6);
+      --color-warning-foreground: #fcd34d;
 
       /* Danger */
       --color-danger: rgba(239, 68, 68, 0.14);

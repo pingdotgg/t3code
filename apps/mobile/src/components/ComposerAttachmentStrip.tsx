@@ -195,7 +195,7 @@ function ComposerAttachmentContent(props: ComposerAttachmentThumbnailProps) {
         <SymbolView
           name="doc.text"
           size={props.compact ? 15 : 22}
-          tintColor="#a3a3a3"
+          tintColorClassName="accent-icon-subtle"
           type="monochrome"
         />
         {!props.compact ? (

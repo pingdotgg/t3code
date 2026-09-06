@@ -773,7 +773,7 @@ const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
                     color={props.iconSubtleColor}
                     colorClassName={
                       iconIsDestructive
-                        ? "accent-adaptive-rose-600-400"
+                        ? "accent-danger-foreground"
                         : failed
                           ? "accent-danger-foreground/40"
                           : undefined
@@ -784,7 +784,7 @@ const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
               <Text
                 className={cn(
                   "min-w-0 flex-1 text-sm text-foreground-muted",
-                  iconIsDestructive && "font-t3-medium text-adaptive-rose-600-400",
+                  iconIsDestructive && "font-t3-medium text-danger-foreground",
                 )}
                 numberOfLines={1}
               >
@@ -832,7 +832,7 @@ const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
           entering={WORK_LOG_DETAIL_ENTER_TRANSITION}
           exiting={WORK_LOG_DETAIL_EXIT_TRANSITION}
           layout={WORK_LOG_LAYOUT_TRANSITION}
-          className="ml-7 border-l border-adaptive-neutral-300-a60-white-a12 pb-1 pl-3 pt-0.5"
+          className="ml-7 border-l border-border pb-1 pl-3 pt-0.5"
         >
           {viewedImagePath ? (
             <View className="pb-1.5">

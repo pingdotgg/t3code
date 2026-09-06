@@ -35,6 +35,8 @@ export function AppTextInput({ className, ref, ...props }: AppTextInputProps) {
         className,
       )}
       placeholderTextColorClassName="accent-placeholder"
+      selectionColorClassName="accent-foreground-secondary"
+      cursorColorClassName="accent-foreground-secondary"
       {...props}
     />
   );

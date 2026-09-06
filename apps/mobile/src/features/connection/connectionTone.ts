@@ -12,32 +12,32 @@ export function connectionTone(state: RemoteClientConnectionState): StatusTone {
     case "reconnecting":
       return {
         label: "Reconnecting",
-        pillClassName: "bg-adaptive-amber-500-a12-a16",
-        textClassName: "text-adaptive-amber-700-300",
+        pillClassName: "bg-warning",
+        textClassName: "text-warning-foreground",
       };
     case "connecting":
       return {
         label: "Connecting",
-        pillClassName: "bg-adaptive-sky-500-a12-a16",
-        textClassName: "text-adaptive-sky-700-300",
+        pillClassName: "bg-primary/10",
+        textClassName: "text-foreground-secondary",
       };
     case "error":
       return {
         label: "Connection failed",
-        pillClassName: "bg-adaptive-rose-500-a12-a16",
-        textClassName: "text-adaptive-rose-700-300",
+        pillClassName: "bg-danger",
+        textClassName: "text-danger-foreground",
       };
     case "offline":
       return {
         label: "Offline",
-        pillClassName: "bg-adaptive-rose-500-a12-a16",
-        textClassName: "text-adaptive-rose-700-300",
+        pillClassName: "bg-danger",
+        textClassName: "text-danger-foreground",
       };
     case "available":
       return {
         label: "Available",
-        pillClassName: "bg-adaptive-neutral-500-a10-a16",
-        textClassName: "text-adaptive-neutral-600-300",
+        pillClassName: "bg-subtle",
+        textClassName: "text-foreground-secondary",
       };
   }
 }
