@@ -1,7 +1,7 @@
 ---
 title: Effect Service Conventions
-model: claude-opus-5
-effort: high
+model: gpt-5-6-sol
+effort: medium
 input: full_diff
 tools:
   - browse_code
@@ -17,6 +17,7 @@ labels:
 requires:
   - Check
 maxBudgetPerPR: 25
+maxBudgetPerRun: 5
 conclusion: failure
 showToolCalls: true
 ---
