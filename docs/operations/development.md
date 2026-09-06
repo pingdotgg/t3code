@@ -74,8 +74,8 @@ Windows investigation while that suite is not a required gate.
 ### Unused code
 
 `vp run knip:check` checks unused files and dependencies across the repo, then
-unused runtime exports in `apps/web` and every internal package under `packages/`.
-CI enforces both checks.
+unused runtime exports in `apps/desktop`, `apps/web`, and every internal package under
+`packages/`. CI enforces both checks.
 Exported types and Effect schemas are allowed without consumers. The schema preprocessor
 recognizes schema types, including aliases and schema classes; functions that create or decode
 schemas remain checked. Completely unused files remain checked too.
