@@ -1,4 +1,9 @@
 const motionTiming = { duration: 150, easing: "ease-out" };
+// A scope change can remove a large part of the list at once. Cloning every
+// removed row for a fade and starting one animation per displaced row costs
+// more than the transition is worth, especially while several environments
+// stream shell updates. Keep motion for small, local changes only.
+const MAX_ANIMATED_ROWS_PER_UPDATE = 40;
 
 type RowPosition = { top: number; left: number; width: number; height: number };
 
@@ -104,7 +109,14 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
             },
           ]),
       );
-      const shouldAnimate = animate && positions !== null && !reducedMotion?.matches;
+      const canAnimate = animate && positions !== null && !reducedMotion?.matches;
+      const removedCount = canAnimate
+        ? [...positions!.keys()].filter((node) => !next.has(node)).length
+        : 0;
+      const movedCount = canAnimate
+        ? [...next].filter(([node, position]) => positions!.get(node)?.top !== position.top).length
+        : 0;
+      const shouldAnimate = canAnimate && removedCount + movedCount <= MAX_ANIMATED_ROWS_PER_UPDATE;
       if (!shouldAnimate) clearFades();
       else {
         for (const [node, position] of positions!) {

@@ -321,6 +321,16 @@ describe("sidebar list motion", () => {
     expect(clone.animations[0]!.cancel).toHaveBeenCalledOnce();
   });
 
+  it("skips expensive motion artifacts for a large list change", () => {
+    const rows = Array.from({ length: 41 }, (_, index) => new TestRow(`row-${index}`));
+    const { motion, layout, parent } = fixture(rows);
+    motion.update(true);
+    layout([]);
+    motion.update(true);
+    expect(rows.every((row) => row.clones.length === 0)).toBe(true);
+    expect(parent.children).toHaveLength(0);
+  });
+
   it("respects reduced motion while keeping the next baseline fresh", () => {
     const a = new TestRow("a");
     const b = new TestRow("b");

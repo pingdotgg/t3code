@@ -887,6 +887,8 @@ const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
   );
 });
 
+// dnd-kit returns a fresh bag from each sortable wrapper render. Compare its
+// fields instead of the bag object so shell updates can skip unchanged rows.
 const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   thread: SidebarThreadSummary;
   variant: "card" | "slim";
@@ -1870,7 +1872,55 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
       </Tooltip>
     </li>
   );
-});
+}, areSidebarThreadRowPropsEqual);
+
+function areSidebarThreadRowPropsEqual(
+  previous: SidebarThreadRowProps,
+  next: SidebarThreadRowProps,
+): boolean {
+  if (!areSortableThreadRowBagsEqual(previous.sortable, next.sortable)) return false;
+
+  const previousValues = previous as Record<string, unknown>;
+  const nextValues = next as Record<string, unknown>;
+  for (const key in previousValues) {
+    if (key !== "sortable" && !Object.is(previousValues[key], nextValues[key])) return false;
+  }
+  return true;
+}
+
+type SidebarThreadRowProps = {
+  readonly sortable?: SortableThreadRowBag | undefined;
+  readonly [key: string]: unknown;
+};
+
+function areSortableThreadRowBagsEqual(
+  previous: SortableThreadRowBag | undefined,
+  next: SortableThreadRowBag | undefined,
+): boolean {
+  if (previous === next) return true;
+  if (previous === undefined || next === undefined) return false;
+  return (
+    areSortableListenersEqual(previous.listeners, next.listeners) &&
+    previous.setNodeRef === next.setNodeRef &&
+    previous.transform === next.transform &&
+    previous.transition === next.transition &&
+    previous.isDragging === next.isDragging
+  );
+}
+
+function areSortableListenersEqual(
+  previous: SortableThreadRowBag["listeners"],
+  next: SortableThreadRowBag["listeners"],
+): boolean {
+  if (previous === next) return true;
+  if (previous === undefined || next === undefined) return false;
+  const previousEntries = Object.entries(previous);
+  const nextValues = next as Record<string, unknown>;
+  return (
+    previousEntries.length === Object.keys(next).length &&
+    previousEntries.every(([key, value]) => Object.is(value, nextValues[key]))
+  );
+}
 
 function latestTurnDiff(
   thread: SidebarThreadSummary,
@@ -3181,15 +3231,30 @@ export default function Sidebar() {
     snoozedThreads.length,
     visibleSnoozedThreads,
   ]);
+  // Shell updates replace one row object at a time, which gives the derived
+  // list a new identity even when its order is unchanged. Motion only needs
+  // to measure after a structural list change, so use the item ids as the
+  // dependency instead of the transient array identity.
+  const sidebarListItemOrderKey = useMemo(
+    () => sidebarListItems.map(sidebarListItemId).join("\0"),
+    [sidebarListItems],
+  );
+  const sidebarListItemCount = sidebarListItems.length;
   const listMotionPaused = dragState !== null;
   useLayoutEffect(() => {
     // Drag release clears the baseline, so its commit cannot replay the
     // sortable preview. Later thread actions can animate while writes settle.
     // Draft navigation can reveal a frozen row without changing the draft count.
     listMotionRef.current?.update(
-      !listMotionPaused && sidebarListItems.length + visibleDraftSessionCount > 0,
+      !listMotionPaused && sidebarListItemCount + visibleDraftSessionCount > 0,
     );
-  }, [listMotionPaused, routeDraftIdForRows, sidebarListItems, visibleDraftSessionCount]);
+  }, [
+    listMotionPaused,
+    routeDraftIdForRows,
+    sidebarListItemCount,
+    sidebarListItemOrderKey,
+    visibleDraftSessionCount,
+  ]);
   const handleThreadDragOver = useCallback(
     (event: DragOverEvent) => {
       const target = event.over
