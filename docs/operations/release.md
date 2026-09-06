@@ -9,7 +9,7 @@ This document covers the unified release workflow for stable and nightly desktop
 - Workflow: `.github/workflows/release.yml`
 - Triggers:
   - push tag matching `v*.*.*` for stable releases
-  - scheduled nightly check every three hours
+  - scheduled nightly check every 30 minutes via `.github/workflows/nightly-schedule.yml`
   - manual `workflow_dispatch` for either channel
 - Runs lint, typecheck, and tests alongside artifact builds. Publishing waits for every check.
 - Reads the shared production T3 Connect relay URL and Clerk client configuration before packaging clients.
@@ -158,8 +158,10 @@ One-time Vercel dashboard setup:
 
 - Workflow: `.github/workflows/release.yml`
 - Triggers:
-  - scheduled check every three hours
+  - scheduled check every 30 minutes via `.github/workflows/nightly-schedule.yml`
   - manual `workflow_dispatch` with `channel=nightly`
+- Automatic nightlies require new commits and at least six hours since the last nightly was published, including manual nightlies. The scheduled check skips if a release is active or queued.
+- Manual nightlies bypass the time and change checks. Nightly runs remain serialized, and automatic runs recheck after leaving the queue.
 - Runs the same desktop quality gates and artifact matrix as the tagged release flow.
 - Publishes a GitHub prerelease only:
   - current tag format: `vX.Y.Z-nightly.YYYYMMDD.<run_number>`
