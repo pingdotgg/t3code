@@ -1,10 +1,11 @@
 "use client";
 
+import { Spinner } from "~/components/ui/spinner";
+
 import {
   ArrowUpCircleIcon,
   CopyIcon,
   DownloadIcon,
-  LoaderIcon,
   LockIcon,
   LockOpenIcon,
   PlusIcon,
@@ -25,6 +26,11 @@ import {
   type ServerProviderModel,
 } from "@t3tools/contracts";
 
+import {
+  type CustomModelDefinition,
+  readCustomModelEntries,
+  toCustomModelSetting,
+} from "@t3tools/shared/model";
 import { cn } from "../../lib/utils";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { normalizeProviderAccentColor } from "../../providerInstances";
@@ -96,16 +102,13 @@ function providerEnvironmentsEqual(
 }
 
 /**
- * Read a string[] at `key` from the opaque config blob, filtering out
- * non-string entries. Used for `customModels`, which is always typed as
- * `string[]` by the concrete driver schemas but arrives here as
- * `Schema.Unknown`.
+ * Read `customModels` from the opaque config blob. The concrete driver
+ * schemas type it as `CustomModelSetting[]`, but it arrives here as
+ * `Schema.Unknown`, so the shared reader does the shape checking.
  */
-function readConfigStringArray(config: unknown, key: string): ReadonlyArray<string> {
+function readConfigCustomModels(config: unknown): ReadonlyArray<CustomModelDefinition> {
   if (config === null || typeof config !== "object") return [];
-  const value = (config as Record<string, unknown>)[key];
-  if (!Array.isArray(value)) return [];
-  return value.filter((entry): entry is string => typeof entry === "string");
+  return readCustomModelEntries((config as Record<string, unknown>).customModels);
 }
 
 /**
@@ -127,9 +130,14 @@ function nextConfigBlobWithValue(
   return base;
 }
 
+/**
+ * Custom rows come from current settings so name/descriptor edits show
+ * instantly; a bare entry falls back to the live row's driver-default
+ * capabilities (the server fills those in on its next probe).
+ */
 export function deriveProviderModelsForDisplay(input: {
   readonly liveModels: ReadonlyArray<ServerProviderModel> | undefined;
-  readonly customModels: ReadonlyArray<string>;
+  readonly customModels: ReadonlyArray<CustomModelDefinition>;
 }): ReadonlyArray<ServerProviderModel> {
   const liveCustomModelsBySlug = new Map(
     Arr.filterMap(input.liveModels ?? [], (model) =>
@@ -137,15 +145,13 @@ export function deriveProviderModelsForDisplay(input: {
     ),
   );
   const serverModels = input.liveModels?.filter((model) => !model.isCustom) ?? [];
-  const customModels = input.customModels.map(
-    (slug) =>
-      liveCustomModelsBySlug.get(slug) ?? {
-        slug,
-        name: slug,
-        isCustom: true,
-        capabilities: null,
-      },
-  );
+  const customModels = input.customModels.map((entry) => ({
+    slug: entry.slug,
+    name: entry.name,
+    isCustom: true,
+    capabilities:
+      entry.capabilities ?? liveCustomModelsBySlug.get(entry.slug)?.capabilities ?? null,
+  }));
   return [...serverModels, ...customModels];
 }
 
@@ -463,7 +469,7 @@ export function ProviderInstanceCard({
     ? instance.driver
     : null;
   const customModels =
-    instance.driver === "antigravity" ? [] : readConfigStringArray(instance.config, "customModels");
+    instance.driver === "antigravity" ? [] : readConfigCustomModels(instance.config);
   // Server-returned models may lag behind settings writes. Treat probe
   // models as the source for built-ins only; custom rows come directly
   // from the current instance config so add/remove reflects immediately.
@@ -504,8 +510,12 @@ export function ProviderInstanceCard({
     );
   };
 
-  const updateCustomModels = (next: ReadonlyArray<string>) => {
-    const nextConfig = nextConfigBlobWithValue(instance.config, "customModels", [...next]);
+  const updateCustomModels = (next: ReadonlyArray<CustomModelDefinition>) => {
+    const nextConfig = nextConfigBlobWithValue(
+      instance.config,
+      "customModels",
+      next.map(toCustomModelSetting),
+    );
     const { config: _omit, ...rest } = instance;
     onUpdate({ ...rest, config: nextConfig } as ProviderInstanceConfig);
   };
@@ -589,15 +599,19 @@ export function ProviderInstanceCard({
           selected ? "bg-muted/45" : "hover:bg-muted/25",
         )}
       >
-        <button
-          type="button"
+        <div
           className={cn(
-            "flex min-w-0 flex-1 cursor-pointer items-start gap-3 rounded-md text-left outline-none transition-opacity focus-visible:ring-2 focus-visible:ring-ring",
+            "pointer-events-none relative flex min-w-0 flex-1 items-start gap-3 rounded-md text-left transition-opacity",
             !enabled && !selected && "opacity-60 group-hover:opacity-100",
           )}
-          onClick={onSelect}
-          aria-pressed={selected}
         >
+          <button
+            type="button"
+            className="pointer-events-auto absolute inset-0 cursor-pointer rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            onClick={onSelect}
+            aria-label={`Select ${displayName}`}
+            aria-pressed={selected}
+          />
           {titleIconNode}
           <span className="min-w-0 flex-1">
             <span className="flex min-w-0 items-center gap-2">
@@ -613,9 +627,31 @@ export function ProviderInstanceCard({
                 </code>
               ) : null}
               {versionAdvisory ? (
-                <span role="img" aria-label="Update available" className="inline-flex shrink-0">
-                  <ArrowUpCircleIcon className="size-3.5 text-muted-foreground" />
-                </span>
+                updateCommand ? (
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <Button
+                          type="button"
+                          size="icon-micro"
+                          variant="ghost-muted"
+                          className="pointer-events-auto relative shrink-0"
+                          aria-label={`Copy ${displayName} update command`}
+                          onClick={() =>
+                            copyToClipboard(updateCommand, { providerName: displayName })
+                          }
+                        >
+                          <ArrowUpCircleIcon className="size-3.5" />
+                        </Button>
+                      }
+                    />
+                    <TooltipPopup side="top">Copy update command</TooltipPopup>
+                  </Tooltip>
+                ) : (
+                  <span role="img" aria-label="Update available" className="inline-flex shrink-0">
+                    <ArrowUpCircleIcon className="size-3.5 text-muted-foreground" />
+                  </span>
+                )
               ) : null}
             </span>
             <span className="mt-0.5 flex items-start gap-1.5 text-[13px] leading-[1.45] text-muted-foreground/80">
@@ -628,7 +664,7 @@ export function ProviderInstanceCard({
               </span>
             </span>
           </span>
-        </button>
+        </div>
         <span className="flex h-5 shrink-0 items-center">
           <Switch
             checked={enabled}
@@ -642,7 +678,7 @@ export function ProviderInstanceCard({
   }
 
   const editorHeaderAction = (
-    <div className="flex min-w-0 items-center gap-1.5">
+    <div className="flex shrink-0 items-center gap-1.5">
       {driverOption?.badgeLabel ? (
         <Badge variant="warning" size="sm" className="shrink-0">
           {driverOption.badgeLabel}
@@ -660,7 +696,7 @@ export function ProviderInstanceCard({
               render={
                 <Button
                   type="button"
-                  size="icon-micro"
+                  size="icon-xs"
                   variant="ghost"
                   className={cn(
                     "[--control-icon-color:currentColor]",
@@ -670,7 +706,7 @@ export function ProviderInstanceCard({
                   )}
                   aria-label="Update available — view details"
                 >
-                  <ArrowUpCircleIcon className="size-3.5" />
+                  <ArrowUpCircleIcon />
                 </Button>
               }
             />
@@ -704,7 +740,7 @@ export function ProviderInstanceCard({
                     disabled={isUpdating}
                     onClick={onRunUpdate}
                   >
-                    {isUpdating ? <LoaderIcon className="animate-spin" /> : <DownloadIcon />}
+                    {isUpdating ? <Spinner /> : <DownloadIcon />}
                     {isUpdating ? "Updating" : "Update now"}
                   </Button>
                 ) : null}
@@ -749,14 +785,14 @@ export function ProviderInstanceCard({
         {onDelete ? (
           <Button
             type="button"
-            size="icon-micro"
+            size="icon-xs"
             variant="ghost-muted"
             disabled={readOnly}
             className="[--control-icon-color:currentColor] hover:text-destructive"
             onClick={onDelete}
             aria-label={`Delete instance ${instanceId}`}
           >
-            <Trash2Icon className="size-3" />
+            <Trash2Icon />
           </Button>
         ) : null}
       </span>

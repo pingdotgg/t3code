@@ -36,7 +36,7 @@ import {
 } from "@t3tools/contracts";
 import { PREVIEW_VIEWPORT_PRESETS } from "@t3tools/shared/previewViewport";
 import { InfoIcon, MoreVertical, Plus as PlusIcon } from "lucide-react";
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useRef, useState, type ReactNode } from "react";
 
 import { ScreenRotationIcon } from "~/browser/ScreenRotationIcon";
 import { resolveEnvironmentOptionLabel } from "~/components/BranchToolbar.logic";
@@ -55,6 +55,8 @@ import {
   MenuSeparator,
   MenuTrigger,
 } from "../ui/menu";
+import { readLocalApi } from "~/localApi";
+
 import { toastManager } from "../ui/toast";
 import {
   AlertDialog,
@@ -802,11 +804,6 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
       .catch(() => setSources((previous) => previous ?? []));
   }, []);
 
-  // Loaded once so the first open is instant instead of flashing a spinner.
-  useEffect(() => {
-    loadSources();
-  }, [loadSources]);
-
   // Runs one import for the wizard. A new profile is registered only once the
   // import succeeds — the cookies land in its partition first — so a blocked
   // attempt never leaves an empty profile behind.
@@ -1168,6 +1165,19 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
             runWizardImport(importSession.source, importSession.environmentId, input)
           }
           onRefreshSource={() => refreshImportSource(importSession.source.id)}
+          onOpenFullDiskAccessSettings={() => {
+            // Rejects outside the desktop shell (and on shells that predate the
+            // method), so the one toast covers every way the link can fail.
+            void readLocalApi()
+              ?.shell.openSystemSettings("full-disk-access")
+              .catch(() => {
+                toastManager.add({
+                  type: "error",
+                  title: "Could not open System Settings",
+                  description: "Open Privacy & Security → Full Disk Access manually.",
+                });
+              });
+          }}
           onClose={() => setImportSession(null)}
         />
       ) : null}

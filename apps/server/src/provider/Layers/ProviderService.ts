@@ -35,6 +35,7 @@ import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
@@ -55,8 +56,12 @@ import {
   providerTurnMetricAttributes,
   withMetrics,
 } from "../../observability/Metrics.ts";
-import { ProviderAdapterRequestError } from "../Errors.ts";
-import { type ProviderAdapterError, ProviderValidationError } from "../Errors.ts";
+import {
+  ProviderAdapterRequestError,
+  type ProviderAdapterError,
+  ProviderValidationError,
+  ProviderWorkspaceMissingError,
+} from "../Errors.ts";
 import type { ProviderAdapterShape } from "../Services/ProviderAdapter.ts";
 import * as ProviderAdapterRegistry from "../Services/ProviderAdapterRegistry.ts";
 import * as ProviderService from "../Services/ProviderService.ts";
@@ -322,6 +327,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     options?.issueMcpCredential ?? McpSessionRegistry.issueActiveMcpCredential;
   const revokeMcpCredential =
     options?.revokeMcpCredential ?? McpSessionRegistry.revokeActiveMcpThread;
+  const fileSystem = yield* FileSystem.FileSystem;
   const runtimeEventPubSub = yield* PubSub.unbounded<ProviderRuntimeEvent>();
   const pendingCompactions = new Map<ThreadId, PendingCompaction>();
   const timedOutNativeCompactions = new Set<ThreadId>();
@@ -1235,6 +1241,20 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
                 : "none",
           "provider.cwd.effective": effectiveCwd ?? "",
         });
+        if (effectiveCwd !== undefined) {
+          // Fail fast with an actionable error when the workspace folder is
+          // gone (e.g. moved, deleted, or replaced by a plain file).
+          // Otherwise every adapter surfaces this as a misleading "failed to
+          // spawn <binary>" process error. Stat failures other than "missing"
+          // fall through to the adapter.
+          const workspaceIsDirectory = yield* fileSystem.stat(effectiveCwd).pipe(
+            Effect.map((workspaceStat) => workspaceStat.type === "Directory"),
+            Effect.catch((statError) => Effect.succeed(statError.reason._tag !== "NotFound")),
+          );
+          if (!workspaceIsDirectory) {
+            return yield* new ProviderWorkspaceMissingError({ threadId, cwd: effectiveCwd });
+          }
+        }
         const adapter = yield* registry.getByInstance(resolvedInstanceId);
         yield* clearTurnAnalyticsSession(resolvedInstanceId, threadId);
         yield* prepareMcpSession(threadId, resolvedInstanceId);

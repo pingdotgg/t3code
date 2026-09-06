@@ -49,6 +49,14 @@ You can also send `/compact` in an existing conversation. Web and desktop offer
 a large older thread. See [commands and skills](./composer.md#commands-and-skills)
 for using composer commands.
 
+## Usage limits
+
+If your Claude subscription runs out of usage mid-turn, the thread shows which
+limit was reached and the remaining wait when Claude provides a reset time.
+Claude Code holds the turn until that window reopens, so it can keep showing as
+working. Wait for the reset, or stop the turn and continue later. The warning's
+timestamp shows when the displayed wait started.
+
 ## Skills
 
 Claude skills come from the config directory's `skills` folder and the project's

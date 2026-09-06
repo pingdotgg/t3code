@@ -36,7 +36,9 @@ import { formatTokens } from "@t3tools/shared/usageFormat";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { ProjectionTurnRepository } from "../../persistence/Services/ProjectionTurns.ts";
 import { ProjectionTurnRepositoryLive } from "../../persistence/Layers/ProjectionTurns.ts";
-import { isGitRepository } from "../../git/Utils.ts";
+import { ProjectionThreadActivityRepository } from "../../persistence/Services/ProjectionThreadActivities.ts";
+import { ProjectionThreadActivityRepositoryLive } from "../../persistence/Layers/ProjectionThreadActivities.ts";
+import * as CheckpointStore from "../../checkpointing/CheckpointStore.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ThreadBackgroundLivenessService } from "../ThreadBackgroundLiveness.ts";
 import { ThreadPlanProgressService } from "../ThreadPlanProgress.ts";
@@ -955,7 +957,9 @@ const make = Effect.gen(function* () {
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
   const providerService = yield* ProviderService;
   const projectionTurnRepository = yield* ProjectionTurnRepository;
+  const projectionThreadActivityRepository = yield* ProjectionThreadActivityRepository;
   const serverSettingsService = yield* ServerSettingsService;
+  const checkpointStore = yield* CheckpointStore.CheckpointStore;
   const providerCommandId = (event: ProviderRuntimeEvent, tag: string) =>
     crypto.randomUUIDv4.pipe(
       Effect.map((uuid) => CommandId.make(`provider:${event.eventId}:${tag}:${uuid}`)),
@@ -1930,6 +1934,47 @@ const make = Effect.gen(function* () {
         const proposedPlans = detailedThread?.proposedPlans ?? [];
         const turnId = toTurnId(event.turnId);
         if (turnId) {
+          const userInputActivities =
+            yield* projectionThreadActivityRepository.listUserInputLifecycleByThreadId({
+              threadId: thread.id,
+            });
+          const pendingRequestIds = new Set<string>();
+          for (const activity of userInputActivities) {
+            const payload =
+              typeof activity.payload === "object" && activity.payload !== null
+                ? (activity.payload as Record<string, unknown>)
+                : null;
+            const requestId = payload?.requestId;
+            if (typeof requestId !== "string") continue;
+            if (
+              activity.kind === "user-input.requested" &&
+              activity.turnId === turnId &&
+              payload?.responseMode !== "message"
+            ) {
+              pendingRequestIds.add(requestId);
+            } else if (activity.kind === "user-input.resolved") {
+              pendingRequestIds.delete(requestId);
+            }
+          }
+          // A terminal turn cannot accept native callback answers. Message-mode
+          // questions may outlive that turn and still accept a later user message.
+          for (const requestId of pendingRequestIds) {
+            yield* orchestrationEngine.dispatch({
+              type: "thread.activity.append",
+              commandId: yield* providerCommandId(event, "terminal-user-input-resolved"),
+              threadId: thread.id,
+              activity: {
+                id: EventId.make(`${event.eventId}:user-input-resolved:${requestId}`),
+                createdAt: now,
+                tone: "info",
+                kind: "user-input.resolved",
+                summary: "User input dismissed",
+                payload: { requestId },
+                turnId,
+              },
+              createdAt: now,
+            });
+          }
           const assistantMessageIds = yield* getAssistantMessageIdsForTurn(thread.id, turnId);
           yield* Effect.forEach(
             assistantMessageIds,
@@ -2013,7 +2058,12 @@ const make = Effect.gen(function* () {
           : undefined;
         const workspaceCwd =
           checkpointContext?.worktreePath ?? checkpointContext?.workspaceRoot ?? undefined;
-        if (turnId && checkpointContext && workspaceCwd && isGitRepository(workspaceCwd)) {
+        if (
+          turnId &&
+          checkpointContext &&
+          workspaceCwd &&
+          (yield* checkpointStore.isGitRepository(workspaceCwd))
+        ) {
           // Skip if a checkpoint already exists for this turn. A real
           // (non-placeholder) capture from CheckpointReactor should not
           // be clobbered, and dispatching a duplicate placeholder for the
@@ -2223,4 +2273,7 @@ const make = Effect.gen(function* () {
 export const ProviderRuntimeIngestionLive = Layer.effect(
   ProviderRuntimeIngestionService,
   make,
-).pipe(Layer.provide(ProjectionTurnRepositoryLive));
+).pipe(
+  Layer.provide(ProjectionTurnRepositoryLive),
+  Layer.provide(ProjectionThreadActivityRepositoryLive),
+);

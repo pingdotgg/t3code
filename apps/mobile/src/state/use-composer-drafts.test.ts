@@ -145,6 +145,7 @@ vi.mock("../features/sharing/incoming-share-storage", () => ({
   loadIncomingShareDrafts: incomingShareStorageMocks.load,
 }));
 
+import type { DraftComposerAttachment } from "../lib/composerImages";
 import { appAtomRegistry } from "./atom-registry";
 import { threadOutboxManager } from "./thread-outbox";
 import {
@@ -159,7 +160,6 @@ import {
   copyComposerDraftContentIfEmpty,
   copyComposerDraftContentState,
   decodePersistedComposerState,
-  decodePersistedComposerDrafts,
   ensureComposerDraftsLoaded,
   type ComposerDraft,
   flushComposerDrafts,
@@ -252,12 +252,12 @@ describe("mobile composer drafts", () => {
     };
 
     expect(
-      decodePersistedComposerDrafts({
+      decodePersistedComposerState({
         schemaVersion: 1,
         drafts: {
           "environment-1:thread-1": { text: "Review this file", attachments: [file] },
         },
-      }),
+      }).drafts,
     ).toEqual({
       "environment-1:thread-1": { text: "Review this file", attachments: [file] },
     });
@@ -987,7 +987,7 @@ describe("mobile composer drafts", () => {
 
   it("rejects persisted images without image bytes or a file URI", () => {
     expect(() =>
-      decodePersistedComposerDrafts({
+      decodePersistedComposerState({
         schemaVersion: 1,
         drafts: {
           "environment-1:thread-1": {
@@ -1010,7 +1010,7 @@ describe("mobile composer drafts", () => {
 
   it("hydrates selector state even when the message content is empty", () => {
     expect(
-      decodePersistedComposerDrafts({
+      decodePersistedComposerState({
         schemaVersion: 1,
         drafts: {
           "new-task:environment-1:project-1": {
@@ -1030,7 +1030,7 @@ describe("mobile composer drafts", () => {
             },
           },
         },
-      }),
+      }).drafts,
     ).toEqual({
       "new-task:environment-1:project-1": {
         text: "",
@@ -1053,18 +1053,18 @@ describe("mobile composer drafts", () => {
 
   it("keeps legacy content-only drafts and rejects invalid selector state", () => {
     expect(
-      decodePersistedComposerDrafts({
+      decodePersistedComposerState({
         schemaVersion: 1,
         drafts: {
           "environment-1:thread-1": DRAFT,
         },
-      }),
+      }).drafts,
     ).toEqual({
       "environment-1:thread-1": DRAFT,
     });
 
     expect(() =>
-      decodePersistedComposerDrafts({
+      decodePersistedComposerState({
         schemaVersion: 1,
         drafts: {
           "environment-1:thread-1": {
@@ -1434,6 +1434,48 @@ describe("mobile composer drafts", () => {
     expect(copyComposerDraftContentState(drafts, sourceKey, targetKey)).toBe(drafts);
   });
 
+  it("drops another environment's upload stamp when carrying attachments across machines", () => {
+    const sourceKey = "new-task:environment-1:project-1";
+    const targetKey = "new-task:environment-2:project-2";
+    const uploadedElsewhere: DraftComposerAttachment = {
+      id: "image-1",
+      type: "image",
+      name: "screen.png",
+      mimeType: "image/png",
+      sizeBytes: 1,
+      previewUri: "file:///drafts/screen.png",
+      fileUri: "file:///drafts/screen.png",
+      uploadedAttachmentId: "upload-1",
+      uploadEnvironmentId: EnvironmentId.make("environment-1"),
+    };
+    const uploadedOnTarget: DraftComposerAttachment = {
+      ...uploadedElsewhere,
+      id: "image-2",
+      uploadedAttachmentId: "upload-2",
+      uploadEnvironmentId: EnvironmentId.make("environment-2"),
+    };
+
+    const next = copyComposerDraftContentState(
+      { [sourceKey]: { text: "Ship it", attachments: [uploadedElsewhere, uploadedOnTarget] } },
+      sourceKey,
+      targetKey,
+    );
+
+    expect(next[targetKey]?.attachments).toEqual([
+      {
+        id: "image-1",
+        type: "image",
+        name: "screen.png",
+        mimeType: "image/png",
+        sizeBytes: 1,
+        previewUri: "file:///drafts/screen.png",
+        fileUri: "file:///drafts/screen.png",
+      },
+      uploadedOnTarget,
+    ]);
+    expect(next[sourceKey]?.attachments).toEqual([uploadedElsewhere, uploadedOnTarget]);
+  });
+
   it("merges shared content into a project draft without duplicating retries", () => {
     const draftKey = "new-task:environment-1:project-1";
     const sharedAttachment = {
@@ -1748,7 +1790,92 @@ describe("mobile composer drafts", () => {
     expect(composerAttachmentCleanupMocks.remove.mock.calls).toEqual([[first.fileUri]]);
   });
 
-  // Uses a fresh module instance (hydration is one-shot), so it stays last.
+  // These final tests use fresh module instances for independent hydration.
+  it("keeps attachment files and uploads after a recovered message leaves an incomplete outbox", async () => {
+    vi.resetModules();
+    const drafts = await import("./use-composer-drafts");
+    const { threadOutboxManager: manager } = await import("./thread-outbox");
+    const { expoThreadOutboxStorage: storage, ThreadOutboxStorageError } =
+      await import("./thread-outbox-storage");
+    const { removeThreadOutboxMessage } = await import("./thread-outbox-removal");
+    const { appAtomRegistry: registry } = await import("./atom-registry");
+    onTestFinished(() => registry.dispose());
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    onTestFinished(() => warning.mockRestore());
+    const file = {
+      id: "file-partial-outbox",
+      type: "file" as const,
+      name: "shared.pdf",
+      mimeType: "application/pdf",
+      sizeBytes: 42,
+      fileUri: "file:///documents/t3-composer-attachments/shared.pdf",
+      uploadEnvironmentId: EnvironmentId.make("environment-1"),
+      uploadedAttachmentId: "pending-partial-outbox",
+    };
+    const readable = {
+      environmentId: EnvironmentId.make("environment-1"),
+      threadId: ThreadId.make("thread-1"),
+      messageId: MessageId.make("message-readable"),
+      commandId: CommandId.make("command-readable"),
+      text: "Send the readable message",
+      attachments: [file],
+      createdAt: "2026-09-04T00:00:00.000Z",
+    };
+    const saved = new Map([[readable.messageId, readable]]);
+    let unreadable = true;
+    const load = vi.spyOn(storage, "load").mockImplementation(async () => ({
+      messages: [...saved.values()],
+      errors: unreadable
+        ? [
+            new ThreadOutboxStorageError({
+              operation: "read-message",
+              environmentId: null,
+              threadId: null,
+              messageId: null,
+              fileName: "unreadable.json",
+              cause: new Error("unreadable record"),
+            }),
+          ]
+        : [],
+    }));
+    const remove = vi.spyOn(storage, "remove").mockImplementation(async (message) => {
+      saved.delete(message.messageId);
+    });
+    onTestFinished(() => {
+      load.mockRestore();
+      remove.mockRestore();
+    });
+
+    await expect(manager.load()).resolves.toBe(false);
+    await expect(manager.confirmQueued(readable)).resolves.toBe(true);
+    await expect(removeThreadOutboxMessage(readable)).resolves.toBe(true);
+    await drafts.releaseUnusedComposerAttachmentFiles([file]);
+    expect(registry.get(manager.queuedMessagesByThreadKeyAtom)).toEqual({});
+    expect(composerAttachmentCleanupMocks.remove).not.toHaveBeenCalled();
+    expect(composerAttachmentCleanupMocks.releaseUploads).not.toHaveBeenCalled();
+
+    const recovered = {
+      ...readable,
+      environmentId: EnvironmentId.make("environment-2"),
+      messageId: MessageId.make("message-recovered"),
+      commandId: CommandId.make("command-recovered"),
+    };
+    saved.set(recovered.messageId, recovered);
+    unreadable = false;
+    await expect(manager.load()).resolves.toBe(true);
+    await drafts.releaseUnusedComposerAttachmentFiles([file]);
+    expect(composerAttachmentCleanupMocks.remove).not.toHaveBeenCalled();
+    expect(composerAttachmentCleanupMocks.releaseUploads).not.toHaveBeenCalled();
+
+    await removeThreadOutboxMessage(recovered);
+    await drafts.releaseUnusedComposerAttachmentFiles([file]);
+    expect(composerAttachmentCleanupMocks.remove).toHaveBeenCalledWith(file.fileUri);
+    expect(composerAttachmentCleanupMocks.releaseUploads).toHaveBeenCalledWith(
+      file.uploadEnvironmentId,
+      [file.uploadedAttachmentId],
+    );
+  });
+
   it("hydrates persisted drafts before a cold-start sweep deletes their files", async () => {
     const file = {
       id: "file-cold-start",

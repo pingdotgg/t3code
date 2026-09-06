@@ -1,5 +1,8 @@
 import type { ScopedThreadRef } from "@t3tools/contracts";
-import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 import { useCallback } from "react";
 
 import { recordVisitForThread } from "~/browserHistoryStore";
@@ -12,7 +15,7 @@ import {
   resolveBrowserLinkTargetPreference,
   resolveLinkTarget,
 } from "./browserLinkTarget";
-import { openUrlInPreview } from "./openFileInPreview";
+import { BrowserSettingsReadError, openUrlInPreview } from "./openFileInPreview";
 
 const NO_MODIFIER = { metaKey: false, ctrlKey: false } as const;
 
@@ -24,8 +27,8 @@ const NO_MODIFIER = { metaKey: false, ctrlKey: false } as const;
  *
  * An in-app open that fails falls back to the system browser rather than
  * dropping the click: the user asked for the link, and the setting only says
- * where it should go first. The returned promise rejects only when that
- * fallback fails too, the same way `shell.openExternal` does.
+ * where it should go first. Failed settings reads reject without opening a
+ * browser. The promise also rejects if the system-browser fallback fails.
  */
 export function useOpenLink(threadRef: ScopedThreadRef | null | undefined): (
   url: string,
@@ -52,6 +55,8 @@ export function useOpenLink(threadRef: ScopedThreadRef | null | undefined): (
           recordVisitForThread(targetThreadRef, url);
           return;
         }
+        const failure = squashAtomCommandFailure(result);
+        if (failure instanceof BrowserSettingsReadError) throw failure;
         console.error(result.cause);
       }
       const api = readLocalApi();

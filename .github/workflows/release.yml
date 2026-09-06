@@ -216,6 +216,8 @@ jobs:
       - name: Typecheck
         run: vp run typecheck
 
+      - uses: ./.github/actions/setup-apt-mirrors
+
       - name: Install browser secret helper build libraries
         run: sudo apt-get update && sudo apt-get install -y libsecret-1-dev pkg-config
 
@@ -519,13 +521,16 @@ jobs:
           $setupExe = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\setup.exe"
           $proc = Start-Process -FilePath $setupExe `
             -ArgumentList "modify", "--installPath", "`"$installPath`"", "--add", `
-            "Microsoft.VisualStudio.Component.VC.Tools.x86.x64.Spectre", "--quiet", "--norestart" `
+            "Microsoft.VisualStudio.Component.VC.Runtimes.x86.x64.Spectre", "--quiet", "--norestart" `
             -Wait -PassThru -NoNewWindow
           if ($null -eq $proc -or $proc.ExitCode -ne 0) {
             $code = if ($null -ne $proc) { $proc.ExitCode } else { 1 }
             Write-Error "Visual Studio Installer failed with exit code $code"
             exit $code
           }
+
+      - uses: ./.github/actions/setup-apt-mirrors
+        if: matrix.platform == 'linux'
 
       - name: Install Linux desktop build libraries
         if: matrix.platform == 'linux'

@@ -91,19 +91,9 @@ export function UsageRouteScreen() {
     [isPast24Hours, merged.daily, merged.hourly],
   );
 
-  // The pull spinner tracks re-scans of environments that have answered
-  // before. The initial scan renders its own placeholder, and an unreachable
-  // environment stays pending forever — neither may pin the spinner on.
-  const refreshingUsage = environments.some((entry) => entry.isPending && entry.summary !== null);
+  const [refreshingUsage, setRefreshingUsage] = useState(false);
+  const refreshingRef = useRef(false);
   const showingLimits = tab === "limits";
-  // One ScrollView serves both tabs, so the offset would otherwise carry over
-  // and a short Limits list could open scrolled past its own content.
-  const scrollRef = useRef<ScrollView>(null);
-  const selectTab = (next: UsageTab) => {
-    if (next === tab) return;
-    setTab(next);
-    scrollRef.current?.scrollTo({ y: 0, animated: false });
-  };
   const selectWindow = (days: number) => {
     setWindowSelection({
       days,
@@ -111,17 +101,22 @@ export function UsageRouteScreen() {
     });
   };
   const refreshWindow = () => {
+    if (refreshingRef.current) return;
     const nextWindow = makeWindow(windowDays, undefined, isPast24Hours ? "hour" : "day");
     if (
-      nextWindow.sinceDay === window.sinceDay &&
-      nextWindow.untilDay === window.untilDay &&
-      nextWindow.sinceTime === window.sinceTime &&
-      nextWindow.untilTime === window.untilTime
+      nextWindow.sinceDay !== window.sinceDay ||
+      nextWindow.untilDay !== window.untilDay ||
+      nextWindow.sinceTime !== window.sinceTime ||
+      nextWindow.untilTime !== window.untilTime
     ) {
-      refresh();
-    } else {
       setWindowSelection({ days: windowDays, window: nextWindow });
     }
+    refreshingRef.current = true;
+    setRefreshingUsage(true);
+    void refresh(nextWindow).finally(() => {
+      refreshingRef.current = false;
+      setRefreshingUsage(false);
+    });
   };
 
   return (
@@ -133,7 +128,9 @@ export function UsageRouteScreen() {
         </>
       ) : null}
       <ScrollView
-        ref={scrollRef}
+        // Remount at each tab's native top. Scrolling to y: 0 ignores iOS's
+        // automatic header inset and hides the tab bar under the header.
+        key={tab}
         contentInsetAdjustmentBehavior="automatic"
         showsVerticalScrollIndicator={false}
         className="flex-1"
@@ -146,7 +143,7 @@ export function UsageRouteScreen() {
           />
         }
       >
-        <SegmentedControl options={TAB_OPTIONS} selected={tab} onSelect={selectTab} role="tab" />
+        <SegmentedControl options={TAB_OPTIONS} selected={tab} onSelect={setTab} role="tab" />
 
         {showingLimits ? (
           <UsageLimitsSection now={limits.now} failedLabels={limits.failedLabels} />

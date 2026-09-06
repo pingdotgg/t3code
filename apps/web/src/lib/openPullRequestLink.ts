@@ -1,12 +1,10 @@
 import type {
   EnvironmentId,
-  LocalApi,
   RepositoryIdentity,
   ScopedThreadRef,
   ThreadLinkedPullRequest,
 } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
-import * as Schema from "effect/Schema";
 import { type MouseEvent, useCallback } from "react";
 
 import { pullRequestHostOf, type SourceControlProviderKind } from "@t3tools/contracts";
@@ -18,41 +16,6 @@ import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 
 import { useProjects, useServerConfigs } from "../state/entities";
 import { usePrimaryEnvironmentId } from "../state/environments";
-
-export class PullRequestLinkOpenError extends Schema.TaggedErrorClass<PullRequestLinkOpenError>()(
-  "PullRequestLinkOpenError",
-  {
-    targetOrigin: Schema.NullOr(Schema.String),
-    cause: Schema.Defect(),
-  },
-) {
-  static fromCause(targetUrl: string, cause: unknown): PullRequestLinkOpenError {
-    let targetOrigin: string | null = null;
-    try {
-      targetOrigin = new URL(targetUrl).origin;
-    } catch {
-      // Keep malformed URLs out of diagnostics while preserving the open failure below.
-    }
-    return new PullRequestLinkOpenError({ targetOrigin, cause });
-  }
-
-  override get message(): string {
-    return this.targetOrigin === null
-      ? "Unable to open pull request link."
-      : `Unable to open pull request link at ${this.targetOrigin}.`;
-  }
-}
-
-export async function openPullRequestLink(
-  shell: Pick<LocalApi["shell"], "openExternal">,
-  targetUrl: string,
-): Promise<void> {
-  try {
-    await shell.openExternal(targetUrl);
-  } catch (cause) {
-    throw PullRequestLinkOpenError.fromCause(targetUrl, cause);
-  }
-}
 
 /** Builds a GitHub URL that remains available when the pull request API cannot be read. */
 export function gitHubPullRequestBrowserUrl(
