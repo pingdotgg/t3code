@@ -25,7 +25,10 @@ import {
 } from "./use-composer-drafts";
 import { useRemoteConnectionStatus } from "./use-remote-environment-registry";
 
-export { composerAttachmentUploadBlockReason } from "../lib/composerAttachmentUploadQueue";
+export {
+  composerAttachmentUploadBlockReason,
+  composerAttachmentsStillUploading,
+} from "../lib/composerAttachmentUploadQueue";
 
 export const composerAttachmentUploadsAtom = Atom.make<
   Readonly<Record<string, ComposerAttachmentUploadState>>
