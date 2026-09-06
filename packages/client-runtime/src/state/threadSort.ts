@@ -107,7 +107,7 @@ export function getThreadSortTimestamp(
  * top instead of sinking back to its creation-order slot. Shared by web and
  * mobile so both render the same order. Malformed timestamps sink to 0.
  */
-export function activeThreadAnchorTimestampMs(thread: {
+function activeThreadAnchorTimestampMs(thread: {
   readonly createdAt: string;
   readonly unsettledAt?: string | null | undefined;
 }): number {
