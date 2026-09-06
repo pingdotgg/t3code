@@ -1,9 +1,15 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Queue from "effect/Queue";
+import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
-import { loadDueScheduledTasks } from "./ScheduledTaskService.ts";
+import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
+import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
+import * as ScheduledTaskService from "./ScheduledTaskService.ts";
 
 const intervalScheduleJson = '{"type":"interval","everyMs":60000}';
 const rootWorkspaceStrategyJson = '{"type":"root"}';
@@ -64,8 +70,35 @@ const insertTask = Effect.fn("ScheduledTaskServiceTest.insertTask")(function* (i
   `;
 });
 
-it.effect("loads only enabled due tasks while skipping a malformed due row", () =>
+it.effect("polls enabled due tasks through the service while skipping a malformed due row", () =>
   Effect.gen(function* () {
+    yield* TestClock.setTime(Date.parse("2026-09-05T00:05:00.000Z"));
+    const launches = yield* Queue.unbounded<string>();
+    yield* Layer.build(
+      ScheduledTaskService.layer.pipe(
+        Layer.provide([
+          NodeCrypto.layer,
+          Layer.mock(ThreadManagement.ThreadManagementService)({}),
+          Layer.mock(ThreadLaunch.ThreadLaunchService)({
+            launch: (input) =>
+              Queue.offer(launches, input.title).pipe(
+                Effect.andThen(
+                  Effect.fail(
+                    new ThreadLaunch.ThreadLaunchError({
+                      operation: "create-thread",
+                      commandId: input.commandId,
+                      projectId: input.projectId,
+                      cause: new Error("Fixture stops at the dispatch boundary"),
+                    }),
+                  ),
+                ),
+              ),
+          }),
+        ]),
+      ),
+    );
+
+    // Insert after startup recovery so the running row represents an active run.
     yield* insertTask({
       id: "scheduled-task:due",
       enabled: true,
@@ -95,11 +128,8 @@ it.effect("loads only enabled due tasks while skipping a malformed due row", () 
       scheduleJson: "{malformed",
     });
 
-    const tasks = yield* loadDueScheduledTasks("2026-09-05T00:05:00.000Z");
-
-    assert.deepEqual(
-      tasks.map((task) => task.id),
-      ["scheduled-task:due"],
-    );
-  }).pipe(Effect.provide(SqlitePersistenceMemory)),
+    yield* TestClock.adjust("5 seconds");
+    assert.strictEqual(yield* Queue.take(launches), "scheduled-task:due");
+    assert.strictEqual(yield* Queue.size(launches), 0);
+  }).pipe(Effect.scoped, Effect.provide(SqlitePersistenceMemory)),
 );
