@@ -65,7 +65,7 @@ export function ThreadSearchMatchExcerpt(props: {
           props.selected
             ? "text-user-bubble-foreground"
             : isUser
-              ? "text-primary"
+              ? "text-foreground-secondary"
               : "text-adaptive-emerald-600-400",
         )}
       >

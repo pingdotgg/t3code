@@ -19,7 +19,7 @@ export function connectionTone(state: RemoteClientConnectionState): StatusTone {
       return {
         label: "Connecting",
         pillClassName: "bg-primary/10",
-        textClassName: "text-primary",
+        textClassName: "text-foreground-secondary",
       };
     case "error":
       return {

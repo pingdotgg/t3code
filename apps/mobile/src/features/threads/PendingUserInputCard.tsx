@@ -171,7 +171,7 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
         onPress={props.onToggleCollapsed}
         className="min-h-10 flex-1 flex-row items-center gap-2 active:opacity-70"
       >
-        <Text className="font-t3-bold text-2xs uppercase tracking-[1.1px] text-primary">
+        <Text className="font-t3-bold text-2xs uppercase tracking-[1.1px] text-foreground-secondary">
           User input needed
         </Text>
         <Text className="font-sans text-xs text-foreground-muted">
@@ -230,7 +230,7 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
         className="flex-row items-start gap-2"
       >
         <View className="flex-1 gap-2.5">
-          <Text className="font-t3-bold text-2xs uppercase tracking-[1.1px] text-primary">
+          <Text className="font-t3-bold text-2xs uppercase tracking-[1.1px] text-foreground-secondary">
             User input needed
           </Text>
           <Text className="font-t3-bold text-lg text-foreground">Fill in the pending answers</Text>
@@ -288,7 +288,7 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
                         <Text
                           className={cn(
                             "font-t3-bold text-sm",
-                            selected ? "text-primary" : "text-foreground-secondary",
+                            selected ? "text-foreground" : "text-foreground-secondary",
                           )}
                         >
                           {option.label}
