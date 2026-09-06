@@ -755,21 +755,38 @@ h1 > span {
 }
 .agent-list {
   display: grid;
-  grid-template-columns: repeat(6, 1fr);
-  gap: 12px;
-  margin: 25px 0 19px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 26px 20px;
+  margin: 25px 0 24px;
 }
 .agent {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  font-size: 11px;
-  white-space: nowrap;
+  min-width: 0;
+  margin: 0;
+  text-align: center;
 }
-.agent > img {
-  width: 23px;
-  height: 23px;
+.agent-box {
+  display: block;
+  width: 100%;
+  max-width: 280px;
+  height: auto;
+  margin: 0 auto;
   object-fit: contain;
+}
+.agent > figcaption {
+  padding: 12px 4px 0;
+  border-top: 3px ridge #777;
+}
+.agent h3 {
+  margin: 0 0 6px;
+  font-size: 14px;
+}
+.agent p {
+  max-width: 27ch;
+  margin: 0 auto;
+  color: var(--yellow);
+  font:
+    11px/1.5 "Courier New",
+    monospace;
 }
 .agents-note {
   margin: 0;
@@ -1356,10 +1373,6 @@ a.feature-tag {
     display: block;
     margin-top: 7px;
   }
-  .agent-list {
-    grid-template-columns: repeat(3, 1fr);
-    row-gap: 20px;
-  }
   .selling-strip {
     flex-wrap: wrap;
     justify-content: center;
@@ -1655,11 +1668,15 @@ a.feature-tag {
     font-size: 9px;
   }
   .agent-list {
-    grid-template-columns: repeat(2, 1fr);
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 22px 12px;
     margin-top: 20px;
   }
-  .agent {
-    font-size: 11px;
+  .agent h3 {
+    font-size: 13px;
+  }
+  .agent p {
+    font-size: 10px;
   }
   .agents-note {
     font-size: 8px;

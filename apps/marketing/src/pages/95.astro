@@ -4,12 +4,42 @@ import { GITHUB_REPOSITORY_URL, MARKETING_STATS } from "../lib/site";
 import "../styles/retro.css";
 
 const agents = [
-  { name: "Claude Code", icon: "claude-ai-icon.svg" },
-  { name: "Codex", icon: "openai_dark.svg" },
-  { name: "Cursor", icon: "cursor_light.svg" },
-  { name: "Grok", icon: "grok-dark.svg" },
-  { name: "OpenCode", icon: "opencode-dark.svg" },
-  { name: "Antigravity", icon: "antigravity.png" },
+  {
+    name: "Claude Code",
+    slug: "claude-code",
+    caption: "Now with manners.",
+    artwork: "Cream and orange software box with a bow-tied desktop computer and a gold PLEASE sticker.",
+  },
+  {
+    name: "Codex",
+    slug: "codex",
+    caption: "Some assembly automated.",
+    artwork: "Silver and green software box with a robot hand stacking glowing code blocks.",
+  },
+  {
+    name: "Cursor",
+    slug: "cursor",
+    caption: "Point. Click. Question everything.",
+    artwork: "Black and chrome software box with an enormous silver arrow and lightning bolts.",
+  },
+  {
+    name: "Grok",
+    slug: "grok",
+    caption: "Adult supervision sold separately.",
+    artwork: "Black and red software box with a spacecraft and an UH OH sticker.",
+  },
+  {
+    name: "OpenCode",
+    slug: "opencode",
+    caption: "Please copy this floppy.",
+    artwork: "Purple shareware box with floppy disks spilling from an open carton.",
+  },
+  {
+    name: "Antigravity",
+    slug: "antigravity",
+    caption: "System requirement: no gravity.",
+    artwork: "Blue and violet software box with a floating chrome triangle and metallic spheres.",
+  },
 ];
 const userDigits = MARKETING_STATS.users.replaceAll(",", "").padStart(7, "0").split("");
 ---
@@ -104,8 +134,29 @@ const userDigits = MARKETING_STATS.users.replaceAll(",", "").padStart(7, "0").sp
 
           <section class="agents-section" id="agents" aria-labelledby="agents-title">
             <div class="section-label"><h2 id="agents-title">PLAYS WELL WITH YOUR EXISTING COMPUTER GUYS.</h2><span>Collect all six. Or don't. We're not your dad.</span></div>
-            <div class="agent-list">{agents.map((agent) => <div class="agent"><img src={`/harnesses/${agent.icon}`} alt="" width="26" height="26" loading="lazy" /><span>{agent.name}</span></div>)}</div>
+            <div class="agent-list">
+              {agents.map((agent) => (
+                <figure class="agent">
+                  <img
+                    class="agent-box"
+                    src={`/95/providers/${agent.slug}-640.webp`}
+                    srcset={[320, 640, 960].map((width) => `/95/providers/${agent.slug}-${width}.webp ${width}w`).join(", ")}
+                    sizes="auto, (max-width: 620px) 43vw, (max-width: 1100px) 27vw, 280px"
+                    alt={agent.artwork}
+                    width="640"
+                    height="800"
+                    loading="lazy"
+                    decoding="async"
+                  />
+                  <figcaption>
+                    <h3>{agent.name}</h3>
+                    <p>{agent.caption}</p>
+                  </figcaption>
+                </figure>
+              ))}
+            </div>
             <p class="agents-note">Use the providers and subscriptions you already have. Provider charges still apply.</p>
+            <p class="agents-note">Parody packaging. No actual boxes for sale.</p>
           </section>
 
           <section class="features-section" id="features" aria-labelledby="features-title">
