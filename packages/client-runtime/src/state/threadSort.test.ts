@@ -112,6 +112,44 @@ describe("sortThreads", () => {
   });
 });
 
+describe("planPinnedReorder with hidden rows", () => {
+  it("keeps hidden slots available when inserting between visible neighbors", () => {
+    const midpoint = pinOrderKeyBetween("f", "t")!;
+    const keysById = new Map([
+      ["a", "f"],
+      ["b", "t"],
+      ["moved", "z"],
+      ["snoozed", midpoint],
+    ]);
+    const assignments = planPinnedReorder({
+      orderedIds: ["a", "moved", "b"],
+      keysById,
+      movedId: "moved",
+    });
+    expect(assignments).toHaveLength(1);
+    const key = assignments[0]!.orderKey;
+    expect(key > "f" && key < "t").toBe(true);
+    expect(key).not.toBe(midpoint);
+    expect(assignments[0]!.id).toBe("moved");
+  });
+
+  it("materializes keyless rows without overwriting hidden slots", () => {
+    const reserved = generateSpreadPinOrderKeys(6);
+    const keysById = new Map<string, string | null>([
+      ["a", null],
+      ["b", null],
+      ["c", null],
+      ...reserved.map((key, i) => [`hidden-${i}`, key] as const),
+    ]);
+    const assignments = planPinnedReorder({ orderedIds: ["c", "a", "b"], keysById, movedId: "c" });
+    expect(assignments.map(({ id }) => id)).toEqual(["c", "a", "b"]);
+    const keys = assignments.map(({ orderKey }) => orderKey);
+    expect(keys).toEqual([...keys].sort());
+    expect(new Set(keys).size).toBe(3);
+    expect(keys.every((key) => !reserved.includes(key))).toBe(true);
+  });
+});
+
 describe("planPinnedMove", () => {
   it("moves a thread up with a single key write", () => {
     const assignments = planPinnedMove({

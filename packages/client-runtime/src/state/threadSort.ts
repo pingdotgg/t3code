@@ -241,10 +241,15 @@ export function generateSpreadPinOrderKeys(count: number): string[] {
 export function planPinnedReorder(input: {
   /** Thread ids in the desired visual order (after the move). */
   readonly orderedIds: readonly string[];
+  /** Include retained keys from hidden rows; only orderedIds receive writes. */
   readonly keysById: ReadonlyMap<string, string | null | undefined>;
   readonly movedId: string;
 }): ReadonlyArray<{ readonly id: string; readonly orderKey: string }> {
   const { orderedIds, keysById, movedId } = input;
+  const visibleIds = new Set(orderedIds);
+  const reservedKeys = new Set(
+    [...keysById].flatMap(([id, key]) => (!visibleIds.has(id) && key != null ? [key] : [])),
+  );
   const movedIndex = orderedIds.indexOf(movedId);
   if (movedIndex === -1) return [];
   const beforeId = movedIndex > 0 ? orderedIds[movedIndex - 1] : null;
@@ -254,11 +259,14 @@ export function planPinnedReorder(input: {
   const beforeUsable = beforeId === null || beforeKey != null;
   const afterUsable = afterId === null || afterKey != null;
   if (beforeUsable && afterUsable) {
-    const key = pinOrderKeyBetween(beforeKey, afterKey);
+    let key = pinOrderKeyBetween(beforeKey, afterKey);
+    while (key !== null && reservedKeys.has(key)) key = pinOrderKeyBetween(key, afterKey);
     if (key !== null) return [{ id: movedId, orderKey: key }];
   }
   // Keyless neighbor (or corrupt keys): rewrite the section in the new order.
-  const keys = generateSpreadPinOrderKeys(orderedIds.length);
+  const keys = generateSpreadPinOrderKeys(orderedIds.length + reservedKeys.size)
+    .filter((key) => !reservedKeys.has(key))
+    .slice(0, orderedIds.length);
   return orderedIds.flatMap((id, index) => {
     const key = keys[index]!;
     return keysById.get(id) === key ? [] : [{ id, orderKey: key }];
