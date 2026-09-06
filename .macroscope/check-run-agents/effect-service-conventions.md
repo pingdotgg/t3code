@@ -16,8 +16,8 @@ labels:
   - vouch:trusted
 requires:
   - Check
-maxBudgetPerPR: 25
 maxBudgetPerRun: 5
+maxBudgetPerPR: 25
 conclusion: failure
 showToolCalls: true
 ---
