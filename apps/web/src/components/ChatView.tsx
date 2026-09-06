@@ -4718,6 +4718,9 @@ export default function ChatView(props: ChatViewProps) {
     (surfaces: readonly RightPanelSurface[]) => {
       if (!activeThreadRef) return;
       for (const surface of surfaces) {
+        // Without preview access only the local surface goes away. The
+        // server record is in-memory bookkeeping, not a live view, and stays
+        // listed until a client with the scope closes it or the server restarts.
         if (canOperatePreview && surface.kind === "preview" && surface.resourceId) {
           void closePreviewSession({
             closePreview,

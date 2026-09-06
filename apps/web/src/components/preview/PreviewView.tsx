@@ -598,6 +598,7 @@ export function PreviewView({
     const previouslyFocused =
       typeof document !== "undefined" ? (document.activeElement as HTMLElement | null) : null;
     const pickRequest = { cancelled: false };
+    let submitted = false;
     pickActiveRef.current = pickRequest;
     setPickActive(true);
     void (async () => {
@@ -610,6 +611,14 @@ export function PreviewView({
         if (pickRequest.cancelled) return;
         const result = await previewBridge.pickElement(runtimeTabId);
         if (!result || pickRequest.cancelled) return;
+        // The user has submitted. Nothing that happens after this point (a
+        // second picker click, a tab change, unmount) may discard it, so the
+        // pick stops being cancellable here rather than in `finally`.
+        if (pickActiveRef.current === pickRequest) {
+          pickActiveRef.current = null;
+          if (isMountedRef.current) setPickActive(false);
+          submitted = true;
+        }
         const { annotation: picked, submission, screenshotFailed = false } = result;
         // The structured annotation is still sendable when its optional crop
         // stalls or fails, so tell the user what they lost and keep going
@@ -617,7 +626,6 @@ export function PreviewView({
         // The stored copy drops the screenshot on failure, otherwise the prompt
         // would tell the agent a crop is attached when none was sent.
         const capture = await capturePreviewAnnotationScreenshot(picked);
-        if (pickRequest.cancelled) return;
         // Main reports a crop that failed or timed out on its side; the local
         // conversion can fail too. Either way the user should hear about it.
         const cropDropped = screenshotFailed || capture.status === "failed";
@@ -659,9 +667,10 @@ export function PreviewView({
       } catch {
         // Picker failed (e.g. webview navigated). Treat as silent cancel.
       } finally {
+        // A submitted pick already released itself above; a cancelled or
+        // failed one releases here. Avoid `setState on unmounted component`
+        // if the panel/thread closed while the pick was in flight.
         const isCurrentPick = pickActiveRef.current === pickRequest;
-        // Avoid `setState on unmounted component` if the panel/thread closed
-        // while the pick was in flight.
         if (isCurrentPick) {
           pickActiveRef.current = null;
           if (isMountedRef.current) setPickActive(false);
@@ -670,7 +679,7 @@ export function PreviewView({
         // pick stole it into the guest webContents. Skip if the previously-
         // focused element was unmounted or is no longer focusable.
         if (
-          isCurrentPick &&
+          (isCurrentPick || submitted) &&
           previouslyFocused &&
           previouslyFocused.isConnected &&
           typeof previouslyFocused.focus === "function"

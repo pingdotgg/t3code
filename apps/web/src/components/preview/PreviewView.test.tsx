@@ -584,12 +584,11 @@ describe("PreviewView navigation", () => {
       createdAt: "2026-09-05T00:00:00.000Z",
     };
     const onSendAnnotation = vi.fn();
-    mocks.pickElement.mockResolvedValue({ annotation, submission: "send" });
-    let finishCapture: (() => void) | undefined;
-    mocks.capturePreviewAnnotationScreenshot.mockImplementationOnce(
+    let submitPick: (() => void) | undefined;
+    mocks.pickElement.mockImplementationOnce(
       () =>
         new Promise((resolve) => {
-          finishCapture = () => resolve({ status: "none" });
+          submitPick = () => resolve({ annotation, submission: "send" });
         }),
     );
     const document = installTestDom();
@@ -606,7 +605,7 @@ describe("PreviewView navigation", () => {
     try {
       await act(async () => root.render(view()));
       await act(async () => mocks.toggleAnnotation?.());
-      expect(finishCapture).toBeDefined();
+      expect(submitPick).toBeDefined();
       expect(mocks.setAnnotationSendEnabled).toHaveBeenLastCalledWith(TEST_RUNTIME_TAB_ID, true);
 
       mocks.readEnvironmentScope.mockImplementation(
@@ -614,15 +613,58 @@ describe("PreviewView navigation", () => {
       );
       await act(async () => root.render(view()));
       expect(mocks.setAnnotationSendEnabled).toHaveBeenLastCalledWith(TEST_RUNTIME_TAB_ID, false);
-      await act(async () => finishCapture!());
+      await act(async () => submitPick!());
       expect(mocks.addPreviewAnnotation).toHaveBeenCalledWith(TEST_THREAD_REF, annotation);
       expect(onSendAnnotation).not.toHaveBeenCalled();
 
       mocks.readEnvironmentScope.mockReturnValue(true);
+      mocks.pickElement.mockResolvedValue({ annotation, submission: "send" });
       await act(async () => root.render(view()));
       await act(async () => mocks.toggleAnnotation?.());
       expect(mocks.setAnnotationSendEnabled).toHaveBeenLastCalledWith(TEST_RUNTIME_TAB_ID, true);
       expect(onSendAnnotation).toHaveBeenCalledWith(annotation, null);
+    } finally {
+      await act(async () => root.unmount());
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("keeps a submitted annotation when the picker is toggled during capture", async () => {
+    const annotation = {
+      id: "annotation-submitted",
+      pageUrl: "https://example.com/dashboard",
+      pageTitle: "Dashboard",
+      comment: "Tighten this spacing",
+      elements: [],
+      regions: [],
+      strokes: [],
+      styleChanges: [],
+      screenshot: null,
+      createdAt: "2026-09-05T00:00:00.000Z",
+    };
+    mocks.pickElement.mockResolvedValue({ annotation, submission: "attach" });
+    let finishCapture: (() => void) | undefined;
+    mocks.capturePreviewAnnotationScreenshot.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishCapture = () => resolve({ status: "none" });
+        }),
+    );
+    const document = installTestDom();
+    const { createRoot } = await import("react-dom/client");
+    const root = createRoot(document.createElement("div") as unknown as Element);
+    try {
+      await act(async () =>
+        root.render(<PreviewView threadRef={TEST_THREAD_REF} tabId="tab-1" visible />),
+      );
+      await act(async () => mocks.toggleAnnotation?.());
+      expect(finishCapture).toBeDefined();
+      // The pick is no longer active once the guest has submitted, so this
+      // starts a new pick instead of cancelling the submitted one.
+      await act(async () => mocks.toggleAnnotation?.());
+      expect(mocks.cancelPickElement).not.toHaveBeenCalled();
+      await act(async () => finishCapture!());
+      expect(mocks.addPreviewAnnotation).toHaveBeenCalledWith(TEST_THREAD_REF, annotation);
     } finally {
       await act(async () => root.unmount());
       vi.unstubAllGlobals();
