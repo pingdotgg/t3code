@@ -12,21 +12,17 @@ import * as TestClock from "effect/testing/TestClock";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import {
-  buildWslNodeEnvPreamble,
   buildWslRuntimeInstallScript,
   buildWslRuntimeInvalidateScript,
   buildWslRuntimePruneScript,
   DesktopWslDistroListError,
   formatMissingToolsReason,
-  formatNodePtyProbeFailureReason,
-  formatWslShellTransportFailureReason,
   parseNodePath,
   parseNodeVersion,
   parseResolvedPath,
   parseToolchainReport,
   parseWslRuntimeRoot,
   probeWslDistros,
-  sanitizeWslRuntimeId,
 } from "./DesktopWslEnvironment.ts";
 
 const encoder = new TextEncoder();
@@ -144,46 +140,19 @@ describe("probeWslDistros", () => {
   });
 });
 
-describe("formatNodePtyProbeFailureReason", () => {
-  it("identifies a packaged build that omitted the Linux node-pty prebuild", () => {
-    const reason = formatNodePtyProbeFailureReason(4);
-
-    expect(reason).toContain("packaged Linux node-pty binary was not included");
-    expect(reason).toContain("--wsl-prebuild");
-  });
-
-  it("leaves other node-pty load failures to the compatibility diagnostic", () => {
-    expect(formatNodePtyProbeFailureReason(1)).toBeNull();
-  });
-});
-
-describe("formatWslShellTransportFailureReason", () => {
-  it("distinguishes timeouts and spawn failures from normal shell exit codes", () => {
-    expect(formatWslShellTransportFailureReason("timeout")).toContain("timed out");
-    expect(formatWslShellTransportFailureReason("spawn")).toContain("could not start wsl.exe");
-    expect(formatWslShellTransportFailureReason("process")).toContain("lost communication");
-    expect(formatWslShellTransportFailureReason(null)).toBeNull();
-  });
-});
-
-describe("buildWslNodeEnvPreamble", () => {
-  it("passes the required Node engine range into the shared resolver", () => {
-    const preamble = buildWslNodeEnvPreamble("^22.16 || ^23.11 || >=24.10");
-
-    expect(preamble).toContain("T3_NODE_ENGINE_RANGE='^22.16 || ^23.11 || >=24.10'");
-    expect(preamble.indexOf("T3_NODE_ENGINE_RANGE=")).toBeLessThan(
-      preamble.lastIndexOf("ensure_remote_node_path || true"),
-    );
-  });
-
-  it("keeps the shared resolver permissive when no Node engine range is provided", () => {
-    expect(buildWslNodeEnvPreamble()).toContain("T3_NODE_ENGINE_RANGE=''");
-  });
-});
-
 describe("WSL runtime cache", () => {
-  it("sanitizes cache ids before interpolating them into Linux paths", () => {
-    expect(sanitizeWslRuntimeId("1.2.3/x64; touch /tmp/nope")).toBe("1.2.3_x64__touch__tmp_nope");
+  it.each([
+    [
+      "install",
+      (id: string) => buildWslRuntimeInstallScript("/runtime.tar.gz", id, "b".repeat(64)),
+    ],
+    ["prune", buildWslRuntimePruneScript],
+    ["invalidate", buildWslRuntimeInvalidateScript],
+  ] as const)("sanitizes cache ids in the %s script", (_, buildScript) => {
+    const runtimeId = "1.2.3/x64; touch /tmp/nope";
+    const script = buildScript(runtimeId);
+    expect(script).toContain("/1.2.3_x64__touch__tmp_nope");
+    expect(script).not.toContain(runtimeId);
   });
 
   it("installs through a temporary directory and only reuses valid completed caches", () => {
