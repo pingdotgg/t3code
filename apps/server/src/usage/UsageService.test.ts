@@ -7,7 +7,13 @@ import * as NodePath from "node:path";
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
-import { UsageDay, type UsageSummaryInput } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  USAGE_CONTRACT_VERSION,
+  UsageDay,
+  type UsageSummaryInput,
+} from "@t3tools/contracts";
+import { mergeUsage } from "@t3tools/shared/usageMerge";
 import * as Duration from "effect/Duration";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -98,6 +104,50 @@ function totalOutputTokens(summary: { buckets: readonly { totals: { outputTokens
 }
 
 describe("UsageService", () => {
+  it.live("counts a transcript home once when another environment uses a directory alias", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
+      const alias = NodePath.join(home, "claude-alias");
+      yield* Effect.promise(() =>
+        NodeFSP.symlink(settings.providers.claudeAgent.homePath, alias, "junction"),
+      );
+
+      const direct = yield* UsageService.make.pipe(
+        Effect.provide(serviceLayers({ prefix: "usage-direct-home", home, settings })),
+      );
+      const linked = yield* UsageService.make.pipe(
+        Effect.provide(
+          serviceLayers({
+            prefix: "usage-linked-home",
+            home,
+            settings: {
+              providers: { ...settings.providers, claudeAgent: { homePath: alias } },
+            },
+          }),
+        ),
+      );
+      const directSummary = yield* direct.readSummary(WINDOW);
+      const linkedSummary = yield* linked.readSummary(WINDOW);
+      const merged = mergeUsage(
+        [
+          { environmentId: EnvironmentId.make("direct"), label: "Direct", summary: directSummary },
+          { environmentId: EnvironmentId.make("linked"), label: "Linked", summary: linkedSummary },
+        ],
+        USAGE_CONTRACT_VERSION,
+      );
+
+      assert.strictEqual(merged.outputTokens, 5);
+      assert.strictEqual(merged.sessions, 1);
+      assert.deepStrictEqual(
+        directSummary.sources.find((source) => source.fingerprint.provider === "claude")
+          ?.fingerprint,
+        linkedSummary.sources.find((source) => source.fingerprint.provider === "claude")
+          ?.fingerprint,
+      );
+    }).pipe(Effect.scoped),
+  );
+
   it.live("reprices unchanged transcripts when custom prices are added, edited, or removed", () =>
     Effect.gen(function* () {
       const { transcript, settings, home } = yield* setup;

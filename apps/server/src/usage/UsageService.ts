@@ -388,7 +388,10 @@ export const make = Effect.gen(function* () {
       Effect.provideService(Path.Path, path),
     );
     const scanned: ScannedDir[] = [];
-    for (const { provider, dir, fileName } of dirs) {
+    for (const { provider, dir: configuredDir, fileName } of dirs) {
+      const dir = yield* fileSystem
+        .realPath(configuredDir)
+        .pipe(Effect.orElseSucceed(() => configuredDir));
       const volumeId = yield* Effect.promise(() => readDirectoryVolumeId(dir));
       const exists = yield* fileSystem
         .exists(dir)
