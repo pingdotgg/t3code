@@ -10,6 +10,7 @@ import {
   desktopLocalBackendId,
   desktopLocalConnectionId,
   isDesktopLocalConnectionTarget,
+  isWslConnectionTarget,
 } from "./desktopLocal";
 
 describe("desktop local connection identity", () => {
@@ -22,6 +23,18 @@ describe("desktop local connection identity", () => {
 
     expect(isDesktopLocalConnectionTarget(target)).toBe(true);
     expect(desktopLocalBackendId(target)).toBe("wsl:Ubuntu");
+    expect(isWslConnectionTarget(target)).toBe(true);
+  });
+
+  it("does not infer WSL for another desktop-local backend", () => {
+    const target = new BearerConnectionTarget({
+      connectionId: desktopLocalConnectionId("native-linux"),
+      environmentId: EnvironmentId.make("environment-native-linux"),
+      label: "Linux",
+    });
+
+    expect(isDesktopLocalConnectionTarget(target)).toBe(true);
+    expect(isWslConnectionTarget(target)).toBe(false);
   });
 
   it("does not classify the primary environment as desktop-local", () => {

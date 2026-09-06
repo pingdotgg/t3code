@@ -1,6 +1,7 @@
 import type { EnvironmentMachineKind } from "@t3tools/contracts";
 import { CloudIcon, LaptopIcon, MonitorIcon, ServerIcon, type LucideProps } from "lucide-react";
 import type { FunctionComponent, SVGProps } from "react";
+import { LinuxIcon } from "./Icons";
 
 // Lucide has no Apple desktops, so these two are drawn to its grammar (24
 // unit grid, 2 unit stroke, round joins) and share its prop surface so callers
@@ -45,6 +46,7 @@ function MacStudioIcon(props: SVGProps<SVGSVGElement>) {
 const ICON_BY_KIND: Record<EnvironmentMachineKind, FunctionComponent<LucideProps>> = {
   server: ServerIcon,
   cloud: CloudIcon,
+  linux: LinuxIcon,
   desktop: MonitorIcon,
   laptop: LaptopIcon,
   "mac-mini": MacMiniIcon,
@@ -54,6 +56,7 @@ const ICON_BY_KIND: Record<EnvironmentMachineKind, FunctionComponent<LucideProps
 export const ENVIRONMENT_MACHINE_KIND_LABELS: Record<EnvironmentMachineKind, string> = {
   server: "Server",
   cloud: "Cloud VM",
+  linux: "Linux/WSL",
   desktop: "Desktop",
   laptop: "Laptop",
   "mac-mini": "Mac mini",

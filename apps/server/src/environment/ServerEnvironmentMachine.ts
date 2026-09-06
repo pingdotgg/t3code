@@ -12,6 +12,7 @@ import * as ProcessRunner from "../processRunner.ts";
  */
 
 const DMI_ROOT = "/sys/class/dmi/id";
+const KERNEL_RELEASE_PATH = "/proc/sys/kernel/osrelease";
 
 // SMBIOS 3.x System Enclosure types (table 17). Codes that describe a shape
 // rather than a machine (docking stations, blades enclosures, IoT gateways)
@@ -144,11 +145,17 @@ const detectDarwinMachineKind = Effect.fn("detectDarwinMachineKind")(function* (
 });
 
 const detectLinuxMachineKind = Effect.fn("detectLinuxMachineKind")(function* () {
-  const [chassisType, sysVendor, productName] = yield* Effect.all([
+  const [kernelRelease, chassisType, sysVendor, productName] = yield* Effect.all([
+    readOptionalFile(KERNEL_RELEASE_PATH),
     readOptionalFile(`${DMI_ROOT}/chassis_type`),
     readOptionalFile(`${DMI_ROOT}/sys_vendor`),
     readOptionalFile(`${DMI_ROOT}/product_name`),
   ]);
+  // WSL exposes Microsoft in its kernel release on both WSL 1 and WSL 2.
+  // Check it before DMI because WSL 2 presents as a Hyper-V VM.
+  if (kernelRelease?.toLowerCase().includes("microsoft")) {
+    return "linux";
+  }
   return machineKindFromDmi({ chassisType, sysVendor, productName });
 });
 

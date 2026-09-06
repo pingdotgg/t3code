@@ -202,6 +202,26 @@ describe("detectServerEnvironmentMachineKind", () => {
     }),
   );
 
+  it.effect("recognizes WSL before its Hyper-V DMI identity", () =>
+    Effect.gen(function* () {
+      const result = yield* detectServerEnvironmentMachineKind().pipe(
+        Effect.provide(
+          withPlatform(
+            "linux",
+            dmiFileSystem({
+              osrelease: "5.15.153.1-microsoft-standard-WSL2\n",
+              chassis_type: "3\n",
+              sys_vendor: "Microsoft Corporation\n",
+              product_name: "Virtual Machine\n",
+            }),
+          ),
+        ),
+      );
+
+      expect(result).toBe("linux");
+    }),
+  );
+
   it.effect("returns null on Linux without DMI (containers, ARM boards)", () =>
     Effect.gen(function* () {
       const result = yield* detectServerEnvironmentMachineKind().pipe(
