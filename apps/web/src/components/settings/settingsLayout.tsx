@@ -155,9 +155,9 @@ export function useRelativeTimeTick(intervalMs = 1_000) {
   return nowMs;
 }
 
+/** Muted section headings have no descriptions; explanatory copy belongs to individual settings. */
 export function SettingsSection({
   title,
-  description,
   hideTitle = false,
   icon,
   headerAction,
@@ -167,7 +167,6 @@ export function SettingsSection({
   ...sectionProps
 }: ComponentPropsWithoutRef<"section"> & {
   title: string;
-  description?: ReactNode;
   hideTitle?: boolean;
   icon?: ReactNode;
   headerAction?: ReactNode;
@@ -195,11 +194,6 @@ export function SettingsSection({
               {icon}
               {title}
             </h2>
-            {description ? (
-              <div className="flex min-w-0 flex-wrap items-center gap-x-1.5 text-[13px] leading-[1.45] text-muted-foreground/80">
-                {description}
-              </div>
-            ) : null}
           </div>
           <div className="flex min-h-7 min-w-7 items-center justify-end">{headerAction}</div>
         </div>
@@ -224,6 +218,9 @@ export function SettingsSection({
  * environment's settings.json; where there is no primary (the hosted app)
  * the control goes inert with a tooltip instead of showing an editable
  * default that would never save.
+ *
+ * Keep descriptions short enough for one line where possible. Allow wrapping
+ * for clarity or narrow screens instead of truncating or forcing no-wrap.
  *
  * Control sizing across settings follows three tiers so rows share a baseline:
  * - `control` slot: `size="sm"` (Button, Select, Input, NumberField) or `icon-sm`.
