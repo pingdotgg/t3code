@@ -1256,6 +1256,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             { ...restartProbe, status: "disabled", enabled: false },
             { ...restartProbe, status: "error", installed: false },
             { ...restartProbe, driver: ProviderDriverKind.make("codex") },
+            // The instance was rebuilt with another sign-in method.
+            { ...restartProbe, auth: { status: "unknown", type: "gemini-api-key" } },
           ] satisfies ReadonlyArray<ServerProvider>;
           for (const next of untouched) {
             const merged = mergeProviderSnapshot(signedIn, next);
@@ -1266,6 +1268,20 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
           assert.deepStrictEqual(
             mergeProviderSnapshot({ ...signedIn, auth: { status: "unknown" } }, restartProbe).auth,
             { status: "unknown" },
+          );
+          assert.equal(
+            mergeProviderSnapshot(
+              { ...signedIn, driver: ProviderDriverKind.make("codex") },
+              restartProbe,
+            ).auth.status,
+            "unknown",
+          );
+          assert.deepStrictEqual(
+            mergeProviderSnapshot(signedIn, {
+              ...restartProbe,
+              auth: { status: "unknown", type: "oauth-personal" },
+            }).auth,
+            signedIn.auth,
           );
         });
       });

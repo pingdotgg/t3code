@@ -167,17 +167,22 @@ const mergeProviderModels = (
  * restart it reports the account as unchecked. The saved Google login still
  * works, and the previous snapshot proves it. Carry that account state until
  * a session, refresh, or sign-out reports something new. A confirmed missing
- * installation, sign-out, or disabled instance is never overridden.
+ * installation, sign-out, disabled instance, or a changed sign-in method is
+ * never overridden.
  */
 const carrySavedAntigravityAccount = (
   previousProvider: ServerProvider,
   nextProvider: ServerProvider,
 ): Pick<ServerProvider, "auth" | "status"> | undefined => {
+  const antigravity = ProviderDriverKind.make("antigravity");
   if (
-    nextProvider.driver !== ProviderDriverKind.make("antigravity") ||
+    nextProvider.driver !== antigravity ||
+    previousProvider.driver !== antigravity ||
     !nextProvider.enabled ||
     nextProvider.auth.status !== "unknown" ||
     previousProvider.auth.status !== "authenticated" ||
+    (nextProvider.auth.type !== undefined &&
+      nextProvider.auth.type !== previousProvider.auth.type) ||
     (!nextProvider.installed && nextProvider.status !== "warning")
   ) {
     return undefined;
