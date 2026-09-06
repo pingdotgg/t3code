@@ -126,6 +126,70 @@ export type AuthGrantScope = typeof AuthGrantScope.Type;
 export const AuthGrantScopes = Schema.Array(AuthGrantScope);
 export type AuthGrantScopes = typeof AuthGrantScopes.Type;
 
+/**
+ * Scopes that were split out of a broader one. A grant recorded before the
+ * split carries the parent; expanding it yields what the same grant means now.
+ * Servers apply this to stored credentials; clients use it in reverse to ask an
+ * older server for the parent when it does not know the split-out scope.
+ */
+export const LEGACY_SCOPE_EXPANSIONS: Readonly<
+  Partial<Record<AuthEnvironmentScope, ReadonlyArray<AuthEnvironmentScope>>>
+> = {
+  [AuthOrchestrationReadScope]: [AuthFilesystemReadScope, AuthDiagnosticsReadScope],
+  [AuthOrchestrationOperateScope]: [
+    AuthSettingsWriteScope,
+    AuthProvidersManageScope,
+    AuthEnvironmentMaintainScope,
+    AuthPreviewOperateScope,
+    AuthSourceControlWriteScope,
+    AuthFilesystemWriteScope,
+  ],
+  [AuthTerminalOperateScope]: [AuthTerminalReadScope],
+  [AuthReviewWriteScope]: [AuthFilesystemReadScope],
+};
+
+export function expandLegacyScopes(
+  scopes: ReadonlyArray<AuthEnvironmentScope>,
+): ReadonlyArray<AuthEnvironmentScope> {
+  const expanded = new Set(scopes);
+  for (const scope of scopes) {
+    for (const implied of LEGACY_SCOPE_EXPANSIONS[scope] ?? []) expanded.add(implied);
+  }
+  return expanded.size === scopes.length ? scopes : [...expanded];
+}
+
+/** The scope an older server checked before `scope` was split out, if any. */
+export function legacyParentScope(scope: AuthEnvironmentScope): AuthEnvironmentScope | null {
+  for (const [parent, children] of Object.entries(LEGACY_SCOPE_EXPANSIONS)) {
+    if (parent !== AuthReviewWriteScope && children?.includes(scope)) {
+      return parent as AuthEnvironmentScope;
+    }
+  }
+  return null;
+}
+
+/**
+ * Whether a session grants `scope`. An older server does not know the
+ * split-out scopes and still authorizes those RPCs with the parent, so a
+ * client checks the parent when the server does not advertise the split.
+ */
+export interface SessionGrantInput {
+  readonly authenticated: boolean;
+  readonly scopes?: ReadonlyArray<AuthEnvironmentScope> | undefined;
+  readonly auth?: { readonly serverUpdateScope?: string | undefined } | undefined;
+}
+
+export function sessionGrantsScope(
+  session: SessionGrantInput,
+  scope: AuthEnvironmentScope,
+): boolean {
+  if (!session.authenticated || session.scopes === undefined) return false;
+  if (session.scopes.includes(scope)) return true;
+  if (session.auth?.serverUpdateScope !== undefined) return false;
+  const parent = legacyParentScope(scope);
+  return parent !== null && session.scopes.includes(parent);
+}
+
 export const AuthStandardClientScopes = [
   AuthOrchestrationReadScope,
   AuthOrchestrationOperateScope,

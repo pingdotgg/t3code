@@ -58,10 +58,15 @@ extra authority: [every RPC declares a required
 scope](../../apps/server/src/auth/RpcAuthorization.ts), and the WebSocket RPC
 group's `RpcScopeAuthorization` middleware checks it before any handler runs.
 
-Self-update must work across authorization protocol changes. New servers advertise
-`auth.serverUpdateScope`; only an older server that omits it uses
-`orchestration:operate` for updates. An unchanged grant on an upgraded server must
-still include `environment:maintain`.
+Splitting a scope must not change what an existing credential can do.
+[`LEGACY_SCOPE_EXPANSIONS`](../../packages/contracts/src/auth.ts) records which
+scopes were carved out of which parent. The server applies it in two places: a
+migration rewrites stored pairing links and session rows, and session tokens
+carry a claims version so a pre-split token is expanded when verified. Clients
+apply it in reverse through `sessionGrantsScope`: a server that omits
+`auth.serverUpdateScope` predates the split and still authorizes the split-out
+RPCs with the parent scope, so the client checks the parent instead. Add to the
+table whenever a scope is split; never remove from it.
 
 Desktop restarts forget the previous local bearer token, so its reusable
 bootstrap grant replaces earlier sessions for the same subject and method.
