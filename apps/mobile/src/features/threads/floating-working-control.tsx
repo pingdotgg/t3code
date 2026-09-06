@@ -1,11 +1,13 @@
+import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 import { GlassContainer, GlassView } from "expo-glass-effect";
-import { useEffect, useState } from "react";
-import { ActivityIndicator, Text as SystemText, View } from "react-native";
+import { type ReactNode, useEffect, useState } from "react";
+import { ActivityIndicator, Pressable, Text as SystemText, View } from "react-native";
 import Animated, {
   Easing,
   FadeIn,
   FadeOut,
+  LinearTransition,
   ReduceMotion,
   useAnimatedStyle,
   useSharedValue,
@@ -33,6 +35,14 @@ const CONTROL_TIMING = {
   reduceMotion: ReduceMotion.System,
 } as const;
 const CONTROL_SEPARATION = (16 + CONTROL_HEIGHT) / 2;
+// The label swaps between syncing, compacting, and working while the capsule
+// stays mounted, so the capsule animates to the new label's width and the
+// labels cross-fade instead of the pill snapping between sizes.
+const CAPSULE_LAYOUT = LinearTransition.duration(CONTROL_TIMING.duration)
+  .easing(CONTROL_TIMING.easing)
+  .reduceMotion(ReduceMotion.System);
+const LABEL_ENTERING = FadeIn.duration(180).reduceMotion(ReduceMotion.System);
+const LABEL_EXITING = FadeOut.duration(120).reduceMotion(ReduceMotion.System);
 
 // Expo reapplies glass after native layout and window reattachment, when UIKit
 // can otherwise leave the label visible but lose the material behind it.
@@ -48,13 +58,61 @@ const CONTROL_OVERLAY_OFFSET = CONTROL_HEIGHT + CONTROL_GAP - COMPOSER_CAPSULE_I
 export const FLOATING_WORKING_CONTROL_COVERAGE = CONTROL_OVERLAY_OFFSET + CONTROL_GAP;
 
 /**
- * What the floating pill says. Syncing and working share one element so the
- * label swaps in place instead of one pill fading out for another.
+ * What the floating pill says. Connection, syncing, and working share one
+ * element so the label swaps in place instead of one pill fading out for
+ * another. The connection variant is tappable and triggers a reconnect.
  */
 export type FloatingWorkingStatus =
   | { readonly kind: "working"; readonly startedAt: string }
   | { readonly kind: "syncing"; readonly label: string }
-  | { readonly kind: "compacting" };
+  | { readonly kind: "compacting" }
+  | {
+      readonly kind: "connection";
+      readonly tone: "reconnecting" | "unavailable";
+      readonly label: string;
+      readonly onPress: () => void;
+    };
+
+export function connectionFloatingStatus(input: {
+  readonly connectionError: string | null;
+  readonly connectionState: EnvironmentConnectionPhase;
+  readonly environmentLabel: string | null;
+  readonly onReconnect: () => void;
+}): FloatingWorkingStatus | null {
+  const environmentLabel = input.environmentLabel ?? "Environment";
+  const unavailable = (label: string): FloatingWorkingStatus => ({
+    kind: "connection",
+    tone: "unavailable",
+    label,
+    onPress: input.onReconnect,
+  });
+
+  switch (input.connectionState) {
+    case "connecting":
+    case "reconnecting":
+      return {
+        kind: "connection",
+        tone: "reconnecting",
+        label:
+          input.connectionError === null
+            ? `Reconnecting to ${environmentLabel}...`
+            : `Failed to connect. Retrying ${environmentLabel}...`,
+        onPress: input.onReconnect,
+      };
+    case "offline":
+      return unavailable("You are offline");
+    case "error":
+      return unavailable(
+        input.connectionError
+          ? `Failed to connect to ${environmentLabel}: ${input.connectionError}`
+          : `Failed to connect to ${environmentLabel}`,
+      );
+    case "available":
+      return unavailable(`${environmentLabel} is not connected`);
+    case "connected":
+      return null;
+  }
+}
 
 export function FloatingWorkingControl(props: {
   readonly colorScheme: "light" | "dark";
@@ -82,6 +140,10 @@ export function FloatingWorkingControl(props: {
     return null;
   }
 
+  // Only the connection label is a button (tap to reconnect); the others
+  // pass touches through to the feed like before.
+  const statusInteractive = props.status?.kind === "connection";
+
   return (
     <Animated.View
       pointerEvents="box-none"
@@ -99,9 +161,11 @@ export function FloatingWorkingControl(props: {
           <AnimatedGlassView
             colorScheme={props.colorScheme}
             glassEffectStyle="regular"
-            pointerEvents="none"
+            isInteractive={statusInteractive}
+            pointerEvents={statusInteractive ? "auto" : "none"}
             className="h-11 justify-center overflow-hidden rounded-full"
             style={timerStyle}
+            layout={CAPSULE_LAYOUT}
           >
             <FloatingStatusLabel status={props.status} />
           </AnimatedGlassView>
@@ -124,9 +188,10 @@ export function FloatingWorkingControl(props: {
       ) : props.status !== null ? (
         <View pointerEvents="box-none" className="flex-row items-center gap-4">
           <Animated.View
-            pointerEvents="none"
+            pointerEvents={statusInteractive ? "auto" : "none"}
             className="h-11 justify-center rounded-full border border-border bg-card shadow-md shadow-black/10"
             style={timerStyle}
+            layout={CAPSULE_LAYOUT}
           >
             <FloatingStatusLabel status={props.status} />
           </Animated.View>
@@ -171,11 +236,7 @@ export function FloatingWorkingControl(props: {
 
 function CompactingLabel() {
   return (
-    <View
-      accessible
-      accessibilityLabel="Compacting"
-      className="h-11 flex-row items-center gap-1.5 px-4"
-    >
+    <StatusLabelRow accessibilityLabel="Compacting" className="gap-1.5">
       <SymbolView
         name="arrow.down.right.and.arrow.up.left"
         size={13}
@@ -183,27 +244,73 @@ function CompactingLabel() {
         type="monochrome"
       />
       <Text className="font-t3-medium text-xs text-foreground">Compacting…</Text>
-    </View>
+    </StatusLabelRow>
   );
 }
 
 function FloatingStatusLabel(props: { readonly status: FloatingWorkingStatus }) {
+  // Keyed by kind so a swap mounts a fresh row and the two cross-fade while
+  // the capsule's layout transition carries the width change.
   if (props.status.kind === "syncing") {
     return (
-      <View
-        accessible
-        accessibilityLabel={props.status.label}
-        className="h-11 flex-row items-center gap-2 px-4"
-      >
+      <StatusLabelRow key="syncing" accessibilityLabel={props.status.label} className="gap-2">
         <ActivityIndicator size="small" colorClassName="accent-icon-muted" />
         <Text className="font-t3-medium text-xs text-foreground">{props.status.label}</Text>
-      </View>
+      </StatusLabelRow>
     );
   }
   if (props.status.kind === "compacting") {
-    return <CompactingLabel />;
+    return <CompactingLabel key="compacting" />;
   }
-  return <WorkingDuration startedAt={props.status.startedAt} />;
+  if (props.status.kind === "connection") {
+    return (
+      <StatusLabelRow
+        key="connection"
+        accessibilityLabel={props.status.label}
+        accessibilityRole="button"
+        className="gap-2"
+        onPress={props.status.onPress}
+      >
+        {props.status.tone === "reconnecting" ? (
+          <ActivityIndicator size="small" colorClassName="accent-icon-muted" />
+        ) : (
+          <View className="h-2 w-2 rounded-full bg-red-500" />
+        )}
+        <Text className="max-w-[260px] font-t3-medium text-xs text-foreground" numberOfLines={1}>
+          {props.status.label}
+        </Text>
+      </StatusLabelRow>
+    );
+  }
+  return <WorkingDuration key="working" startedAt={props.status.startedAt} />;
+}
+
+function StatusLabelRow(props: {
+  readonly accessibilityLabel: string;
+  readonly accessibilityRole?: "button";
+  readonly className?: string;
+  readonly children: ReactNode;
+  readonly onPress?: () => void;
+}) {
+  const rowClassName = `h-11 flex-row items-center px-4 ${props.className ?? ""}`;
+  return (
+    <Animated.View entering={LABEL_ENTERING} exiting={LABEL_EXITING}>
+      {props.onPress ? (
+        <Pressable
+          accessibilityLabel={props.accessibilityLabel}
+          accessibilityRole={props.accessibilityRole}
+          className={`${rowClassName} active:opacity-70`}
+          onPress={props.onPress}
+        >
+          {props.children}
+        </Pressable>
+      ) : (
+        <View accessible accessibilityLabel={props.accessibilityLabel} className={rowClassName}>
+          {props.children}
+        </View>
+      )}
+    </Animated.View>
+  );
 }
 
 function WorkingDuration(props: { readonly startedAt: string }) {
@@ -219,7 +326,7 @@ function WorkingDuration(props: { readonly startedAt: string }) {
   const label = `Working for ${duration}`;
 
   return (
-    <View accessible accessibilityLabel={label} className="h-11 flex-row items-center px-4">
+    <StatusLabelRow accessibilityLabel={label}>
       <Text className="font-t3-medium text-xs text-foreground">Working for </Text>
       <SystemText
         className="text-xs text-foreground"
@@ -227,7 +334,7 @@ function WorkingDuration(props: { readonly startedAt: string }) {
       >
         {duration}
       </SystemText>
-    </View>
+    </StatusLabelRow>
   );
 }
 
