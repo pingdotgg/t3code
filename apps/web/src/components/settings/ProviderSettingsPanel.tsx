@@ -13,7 +13,6 @@ import {
   ProviderDriverKind,
   type ProviderInstanceConfig,
   type ProviderInstanceId,
-  type ServerProvider,
   resolveEnvironmentMachineKind,
   resolveProviderInstanceEnabled,
 } from "@t3tools/contracts";
@@ -22,7 +21,6 @@ import {
   getBackgroundActivityPresetSettings,
   resolveServerBackgroundActivitySettings,
 } from "@t3tools/shared/backgroundActivitySettings";
-import { limitsNotice } from "@t3tools/shared/usageLimits";
 import * as Arr from "effect/Array";
 import * as Duration from "effect/Duration";
 import * as Equal from "effect/Equal";
@@ -79,7 +77,6 @@ import { stackedThreadToast, toastManager } from "../ui/toast";
 import { AddProviderInstanceDialog } from "./AddProviderInstanceDialog";
 import { ExpandableText } from "./ExpandableText";
 import { ProviderInstanceCard } from "./ProviderInstanceCard";
-import { LimitWindows, ResetCredits } from "../usage/UsageLimits";
 import { ProviderSetupSection, readAntigravityAuthMethod } from "./ProviderSetupSection";
 import { DRIVER_OPTIONS, getDriverOption } from "./providerDriverMeta";
 import { searchableSetting } from "./settingsSearch";
@@ -159,59 +156,6 @@ function ProviderLastChecked({ lastCheckedAt }: { lastCheckedAt: string | null }
         <>Checked {lastCheckedRelative.value}</>
       )}
     </span>
-  );
-}
-
-function ProviderUsageLimits({
-  environmentId,
-  provider,
-}: {
-  readonly environmentId: EnvironmentId;
-  readonly provider: ServerProvider | undefined;
-}) {
-  const [now] = useState(() => Date.now());
-  const usageLimits = provider?.usageLimits;
-  const notice = usageLimits ? limitsNotice(usageLimits) : null;
-
-  return (
-    <SettingsSection title="Usage limits">
-      {!provider ? (
-        <SettingsRow title="Usage data is not available yet." />
-      ) : !usageLimits ? (
-        <SettingsRow
-          title="No usage data reported"
-          description="Refresh provider status after signing in to Codex to check your limits."
-        />
-      ) : notice ? (
-        <SettingsRow title="Usage limits unavailable" description={notice} />
-      ) : (
-        <div className="overflow-hidden p-3 sm:p-4">
-          <div className="relative overflow-hidden">
-            <div className="flex items-start justify-between gap-4">
-              <div className="min-w-0">
-                <p className="text-sm font-medium text-foreground">Current subscription</p>
-                <p className="mt-1 truncate text-xs text-muted-foreground">
-                  {provider.auth.label ?? provider.auth.type ?? "Not reported"}
-                </p>
-              </div>
-            </div>
-            <div className="mt-4 border-t border-border/60 pt-3">
-              <LimitWindows driver={provider.driver} windows={usageLimits.windows} now={now} />
-            </div>
-            {usageLimits.resetCredits ? (
-              <div className="mt-3 border-t border-border/60 pt-3">
-                <ResetCredits
-                  environmentId={environmentId}
-                  instanceId={provider.instanceId}
-                  credits={usageLimits.resetCredits}
-                  now={now}
-                />
-              </div>
-            ) : null}
-          </div>
-        </div>
-      )}
-    </SettingsSection>
   );
 }
 
@@ -833,10 +777,6 @@ export function EnvironmentProviderSettings({
   const selectedRow =
     rows.find((row) => row.instanceId === selectedInstanceId) ??
     (targetInstanceMissing ? null : (rows[0] ?? null));
-  const selectedLiveProvider = selectedRow
-    ? serverProviders.find((provider) => provider.instanceId === selectedRow.instanceId)
-    : undefined;
-
   const updateProviderInstance = (
     row: InstanceRow,
     next: ProviderInstanceConfig,
@@ -951,6 +891,7 @@ export function EnvironmentProviderSettings({
       <ProviderInstanceCard
         key={row.instanceId}
         instanceId={row.instanceId}
+        environmentId={environmentId}
         instance={row.instance}
         driverOption={driverOption}
         liveProvider={liveProvider}
@@ -1112,15 +1053,7 @@ export function EnvironmentProviderSettings({
           <div className="min-w-0 lg:min-h-0">
             {selectedRow ? (
               <ScrollArea scrollFade chainVerticalScroll className="lg:h-full">
-                <div className="space-y-6 p-4">
-                  {renderProviderInstance(selectedRow, "editor")}
-                  {selectedRow.driver === "codex" ? (
-                    <ProviderUsageLimits
-                      environmentId={environmentId}
-                      provider={selectedLiveProvider}
-                    />
-                  ) : null}
-                </div>
+                <div className="space-y-6 p-4">{renderProviderInstance(selectedRow, "editor")}</div>
               </ScrollArea>
             ) : (
               <div className="p-6 text-sm text-muted-foreground">

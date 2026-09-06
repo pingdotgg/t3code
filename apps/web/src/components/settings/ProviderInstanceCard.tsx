@@ -18,6 +18,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   isProviderDriverKind,
   resolveProviderInstanceEnabled,
+  type EnvironmentId,
   type ProviderInstanceConfig,
   type ProviderInstanceEnvironmentVariable,
   type ProviderInstanceId,
@@ -31,6 +32,7 @@ import {
   readCustomModelEntries,
   toCustomModelSetting,
 } from "@t3tools/shared/model";
+import { limitsNotice } from "@t3tools/shared/usageLimits";
 import { cn } from "../../lib/utils";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { normalizeProviderAccentColor } from "../../providerInstances";
@@ -48,6 +50,7 @@ import { ProviderInstanceIcon, providerInstanceInitials } from "../chat/Provider
 import { ProviderAccentColorPicker } from "./ProviderAccentColorPicker";
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
+import { LimitWindows, ResetCredits } from "../usage/UsageLimits";
 import {
   getProviderVersionAdvisoryPresentation,
   PROVIDER_STATUS_STYLES,
@@ -167,6 +170,60 @@ function ProviderAuthEmail(props: { readonly email: string | undefined }) {
       hideTooltip="Click to hide email"
       className="max-w-full truncate"
     />
+  );
+}
+
+function ProviderUsageLimits({
+  environmentId,
+  provider,
+}: {
+  readonly environmentId?: EnvironmentId;
+  readonly provider: ServerProvider | undefined;
+}) {
+  const [now] = useState(() => Date.now());
+  const usageLimits = provider?.usageLimits;
+  const notice = usageLimits ? limitsNotice(usageLimits) : null;
+  const providerName = provider?.displayName?.trim() || provider?.driver || "provider";
+
+  return (
+    <SettingsSection title="Usage limits">
+      {!provider ? (
+        <SettingsRow title="Usage data is not available yet." />
+      ) : !usageLimits ? (
+        <SettingsRow
+          title="No usage data reported"
+          description={`Refresh provider status after signing in to ${providerName} to check your limits.`}
+        />
+      ) : notice ? (
+        <SettingsRow title="Usage limits unavailable" description={notice} />
+      ) : (
+        <div className="overflow-hidden p-3 sm:p-4">
+          <div className="relative overflow-hidden">
+            <div className="flex items-start justify-between gap-4">
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-foreground">Current subscription</p>
+                <p className="mt-1 truncate text-xs text-muted-foreground">
+                  {provider.auth.label ?? provider.auth.type ?? "Not reported"}
+                </p>
+              </div>
+            </div>
+            <div className="mt-4 border-t border-border/60 pt-3">
+              <LimitWindows driver={provider.driver} windows={usageLimits.windows} now={now} />
+            </div>
+            {usageLimits.resetCredits && environmentId ? (
+              <div className="mt-3 border-t border-border/60 pt-3">
+                <ResetCredits
+                  environmentId={environmentId}
+                  instanceId={provider.instanceId}
+                  credits={usageLimits.resetCredits}
+                  now={now}
+                />
+              </div>
+            ) : null}
+          </div>
+        </div>
+      )}
+    </SettingsSection>
   );
 }
 
@@ -344,6 +401,7 @@ function ProviderEnvironmentSection(props: {
 
 interface ProviderInstanceCardProps {
   readonly instanceId: ProviderInstanceId;
+  readonly environmentId?: EnvironmentId;
   readonly instance: ProviderInstanceConfig;
   readonly driverOption: DriverOption | undefined;
   readonly liveProvider: ServerProvider | undefined;
@@ -399,6 +457,7 @@ interface ProviderInstanceCardProps {
  */
 export function ProviderInstanceCard({
   instanceId,
+  environmentId,
   instance,
   driverOption,
   liveProvider,
@@ -913,6 +972,13 @@ export function ProviderInstanceCard({
             />
           </div>
         </SettingsSection>
+      ) : null}
+
+      {mode === "editor" ? (
+        <ProviderUsageLimits
+          {...(environmentId ? { environmentId } : {})}
+          provider={liveProvider}
+        />
       ) : null}
     </>
   );
