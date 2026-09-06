@@ -488,6 +488,48 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
       yield* sql`DROP TRIGGER count_thread_shell_updates`;
       yield* sql`DROP TABLE thread_shell_updates`;
 
+      // Replayed order events must survive later lifecycle upserts, whose
+      // complete SQL row writes otherwise risk dropping the placement.
+      const orderUpdatedAt = "2026-01-01T00:00:00.200Z";
+      const orderEvents = [
+        { type: "thread.meta-updated", payload: { activeOrderKey: "gm" } },
+        { type: "thread.pinned", payload: { pinnedAt: now, pinOrderKey: "m" } },
+        {
+          type: "thread.snoozed",
+          payload: { snoozedAt: now, snoozedUntil: "2026-01-02T00:00:00.000Z" },
+        },
+        { type: "thread.unsnoozed", payload: { reason: "user" } },
+        { type: "thread.unpinned", payload: {} },
+        { type: "thread.meta-updated", payload: { title: "Renamed" } },
+      ] as const;
+      for (const [index, event] of orderEvents.entries()) {
+        yield* eventStore.append({
+          type: event.type,
+          eventId: EventId.make(`evt-active-order-${index}`),
+          aggregateKind: "thread",
+          aggregateId: ThreadId.make("thread-1"),
+          occurredAt: "2026-01-01T00:00:00.500Z",
+          commandId: CommandId.make(`cmd-active-order-${index}`),
+          causationEventId: null,
+          correlationId: null,
+          metadata: {},
+          payload: {
+            ...event.payload,
+            threadId: ThreadId.make("thread-1"),
+            updatedAt: orderUpdatedAt,
+          },
+        });
+        yield* projectionPipeline.bootstrap;
+        const rows = yield* sql<{
+          readonly activeOrderKey: string | null;
+          readonly updatedAt: string;
+        }>`
+          SELECT active_order_key AS "activeOrderKey", updated_at AS "updatedAt"
+          FROM projection_threads WHERE thread_id = 'thread-1'
+        `;
+        assert.deepEqual(rows, [{ activeOrderKey: "gm", updatedAt: orderUpdatedAt }]);
+      }
+
       // Settled lifecycle through the DB pipeline: thread.settled writes the
       // override + timestamp, thread.unsettled(user) flips to the active pin.
       yield* eventStore.append({
@@ -512,16 +554,23 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
         readonly settledOverride: string | null;
         readonly settledAt: string | null;
         readonly unsettledAt: string | null;
+        readonly activeOrderKey: string | null;
       }>`
         SELECT
           settled_override AS "settledOverride",
           settled_at AS "settledAt",
-          unsettled_at AS "unsettledAt"
+          unsettled_at AS "unsettledAt",
+          active_order_key AS "activeOrderKey"
         FROM projection_threads
         WHERE thread_id = 'thread-1'
       `;
       assert.deepEqual(settledRows, [
-        { settledOverride: "settled", settledAt: "2026-01-01T00:00:01.000Z", unsettledAt: null },
+        {
+          settledOverride: "settled",
+          settledAt: "2026-01-01T00:00:01.000Z",
+          unsettledAt: null,
+          activeOrderKey: null,
+        },
       ]);
 
       yield* eventStore.append({
@@ -546,11 +595,13 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
         readonly settledOverride: string | null;
         readonly settledAt: string | null;
         readonly unsettledAt: string | null;
+        readonly activeOrderKey: string | null;
       }>`
         SELECT
           settled_override AS "settledOverride",
           settled_at AS "settledAt",
-          unsettled_at AS "unsettledAt"
+          unsettled_at AS "unsettledAt",
+          active_order_key AS "activeOrderKey"
         FROM projection_threads
         WHERE thread_id = 'thread-1'
       `;
@@ -561,6 +612,7 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
           settledOverride: "active",
           settledAt: null,
           unsettledAt: "2026-01-01T00:00:02.000Z",
+          activeOrderKey: null,
         },
       ]);
     }),
