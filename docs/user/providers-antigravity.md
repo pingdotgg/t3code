@@ -123,6 +123,9 @@ is refused while the runtime is in use.
 
 ## Check access and troubleshoot
 
+A server restart keeps your Google sign-in. The provider shows the saved account
+until a session, a refresh, or a sign-out reports something new.
+
 To check access and reload models, use **Refresh provider status** in web or desktop
 provider settings, or **Refresh models** in mobile thread settings. If asked to
 sign in again, use setup on web or desktop.
