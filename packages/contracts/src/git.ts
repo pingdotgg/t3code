@@ -201,11 +201,9 @@ const VcsStatusChangeRequest = Schema.Struct({
   /** Optional for compatibility with older servers and providers. */
   isDraft: Schema.optional(Schema.Boolean),
   /**
-   * Last provider-side activity (ISO). For a merged/closed change request
-   * this bounds when it reached that state, so clients can tell a PR that
-   * terminated during a thread's life from one that was already history
-   * when the thread was created. Optional for old servers and providers
-   * whose lookups do not report it.
+   * Last provider-side activity (ISO), including comments and metadata edits.
+   * This is not the time a change request closed or merged. Optional for old
+   * servers and providers whose lookups do not report it.
    */
   updatedAt: Schema.optional(Schema.NullOr(Schema.String)),
 });

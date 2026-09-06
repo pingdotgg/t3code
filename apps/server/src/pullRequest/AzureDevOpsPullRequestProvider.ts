@@ -90,6 +90,8 @@ function toChangeRequest(pullRequest: AzureDevOpsPullRequest): ProviderChangeReq
     additions: 0,
     deletions: 0,
     createdAt: pullRequest.createdAt,
+    closedAt: pullRequest.state === "closed" ? pullRequest.closedAt : null,
+    mergedAt: pullRequest.state === "merged" ? pullRequest.closedAt : null,
     updatedAt: pullRequest.updatedAt,
     reviewRequestLogins: pullRequest.reviewRequestLogins,
     // Azure keeps labels on work items rather than on the pull request.

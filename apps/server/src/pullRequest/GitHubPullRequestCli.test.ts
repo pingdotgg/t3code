@@ -192,7 +192,9 @@ layer("GitHubPullRequestCli.layer", (it) => {
           url: "https://github.com/acme/web/pull/7",
           baseRefName: "main",
           headRefName: "feat/summary",
-          state: "open",
+          state: "merged",
+          closedAt: "2026-08-23T10:00:00Z",
+          mergedAt: "2026-08-23T10:00:00Z",
           updatedAt: "2026-08-24T12:34:56.000Z",
         }),
       );
@@ -211,7 +213,9 @@ layer("GitHubPullRequestCli.layer", (it) => {
         url: "https://github.com/acme/web/pull/7",
         headBranch: "feat/summary",
         baseBranch: "main",
-        state: "open",
+        state: "merged",
+        closedAt: "2026-08-23T10:00:00Z",
+        mergedAt: "2026-08-23T10:00:00Z",
         updatedAt: "2026-08-24T12:34:56.000Z",
       });
       expect(mockedGetPullRequest).toHaveBeenCalledOnce();

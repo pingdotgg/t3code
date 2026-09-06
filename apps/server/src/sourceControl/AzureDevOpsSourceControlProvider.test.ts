@@ -22,7 +22,8 @@ it.effect("maps Azure DevOps PR summaries into provider-neutral change requests"
           url: "https://dev.azure.com/acme/project/_git/repo/pullrequest/42",
           baseRefName: "main",
           headRefName: "feature/source-control",
-          state: "open",
+          state: "closed",
+          closedAt: "2026-08-23T10:00:00Z",
           updatedAt: Option.none(),
         }),
     });
@@ -39,7 +40,9 @@ it.effect("maps Azure DevOps PR summaries into provider-neutral change requests"
       url: "https://dev.azure.com/acme/project/_git/repo/pullrequest/42",
       baseRefName: "main",
       headRefName: "feature/source-control",
-      state: "open",
+      state: "closed",
+      closedAt: "2026-08-23T10:00:00Z",
+      mergedAt: null,
       updatedAt: Option.none(),
       isCrossRepository: false,
     });

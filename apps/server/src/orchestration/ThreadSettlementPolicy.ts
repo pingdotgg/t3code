@@ -2,7 +2,9 @@ import type { OrchestrationThreadShell } from "@t3tools/contracts";
 
 export interface SettlementPullRequest {
   readonly state: "open" | "closed" | "merged";
-  readonly updatedAt: string | null;
+  readonly closedAt?: string | null;
+  readonly mergedAt?: string | null;
+  readonly updatedAt?: string | null;
 }
 
 const DAY_MS = 24 * 60 * 60 * 1_000;
@@ -49,14 +51,15 @@ function pullRequestSettles(
   if (pullRequest.state !== "closed" && (pullRequest.state !== "merged" || !autoSettleOnMerge)) {
     return false;
   }
-  if (pullRequest.updatedAt === null) return false;
+  const terminalAt = pullRequest.state === "merged" ? pullRequest.mergedAt : pullRequest.closedAt;
+  if (terminalAt == null) return false;
   const userAnchor = latestTimestamp([
     thread.createdAt,
     thread.latestUserMessageAt,
     thread.latestTurn?.requestedAt,
   ]);
   if (userAnchor === null) return false;
-  const pullRequestAt = Date.parse(pullRequest.updatedAt);
+  const pullRequestAt = Date.parse(terminalAt);
   const userAnchorAt = Date.parse(userAnchor);
   if (Number.isNaN(pullRequestAt) || Number.isNaN(userAnchorAt)) return false;
   return pullRequestAt >= userAnchorAt;
