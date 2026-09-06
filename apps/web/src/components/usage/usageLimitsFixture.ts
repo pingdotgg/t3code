@@ -409,5 +409,5 @@ const FIXTURES: Record<string, (now: number) => Fixture> = {
 };
 
 export function makeLimitsFixture(name: string, now: number): Fixture | null {
-  return FIXTURES[name]?.(now) ?? null;
+  return Object.hasOwn(FIXTURES, name) ? FIXTURES[name]!(now) : null;
 }
