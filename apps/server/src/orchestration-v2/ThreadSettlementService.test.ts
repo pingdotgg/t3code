@@ -130,13 +130,36 @@ describe("isAutoSettlementCandidate", () => {
       snoozedAt: at(-60 * 60 * 1_000),
     });
     expect(isAutoSettlementCandidate(snoozed, NOW_MS)).toBe(false);
-    expect(isAutoSettlementCandidate(shell({ ...snoozed, status: "failed" }), NOW_MS)).toBe(true);
+    expect(
+      isAutoSettlementCandidate(
+        shell({ ...snoozed, status: "failed", latestRunCompletedAt: at(-30 * 60 * 1_000) }),
+        NOW_MS,
+      ),
+    ).toBe(true);
     expect(
       isAutoSettlementCandidate(
         shell({ ...snoozed, latestRunCompletedAt: at(-30 * 60 * 1_000) }),
         NOW_MS,
       ),
     ).toBe(true);
+    expect(
+      isAutoSettlementCandidate(
+        shell({ ...snoozed, status: "failed", latestRunCompletedAt: at(-2 * 60 * 60 * 1_000) }),
+        NOW_MS,
+      ),
+    ).toBe(false);
+    expect(
+      isAutoSettlementCandidate(
+        shell({ ...snoozed, status: "failed", latestRunCompletedAt: snoozed.snoozedAt }),
+        NOW_MS,
+      ),
+    ).toBe(false);
+    expect(
+      isAutoSettlementCandidate(
+        shell({ ...snoozed, status: "failed", latestRunCompletedAt: null }),
+        NOW_MS,
+      ),
+    ).toBe(false);
     // Expired snooze is no longer a park.
     expect(isAutoSettlementCandidate(shell({ ...snoozed, snoozedUntil: at(-1) }), NOW_MS)).toBe(
       true,
