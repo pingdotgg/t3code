@@ -119,6 +119,7 @@ import { resolveDiffThemeName, type DiffThemeName } from "../lib/diffRendering";
 import { fnv1a32 } from "../lib/diffRendering";
 import { LRUCache } from "../lib/lruCache";
 import { getSyntaxHighlighterPromise } from "../lib/syntaxHighlighting";
+import { GitHubIcon } from "./Icons";
 import { RenderErrorBoundary } from "./RenderErrorBoundary";
 import { useTheme } from "../hooks/useTheme";
 import { getClientSettings, useClientSettings } from "../hooks/useSettings";
@@ -1189,15 +1190,25 @@ const MARKDOWN_LINK_FAVICON_CLASS_NAME = "block size-full shrink-0 select-none";
 /** Hosts whose favicon request already failed this session — skip straight to the globe. */
 const failedFaviconHosts = new Set<string>();
 
+/** Sites whose brand mark (drawn in `currentColor`) replaces the fetched favicon so it follows the theme. */
+function brandLinkIcon(host: string): typeof GitHubIcon | null {
+  const hostname = host.toLowerCase();
+  if (hostname === "github.com" || hostname.endsWith(".github.com")) return GitHubIcon;
+  return null;
+}
+
 const MarkdownLinkFavicon = memo(function MarkdownLinkFavicon({ host }: { host: string }) {
   const [failedHost, setFailedHost] = useState<string | null>(null);
-  const faviconUrl = faviconUrlForOrigin(`https://${host}`);
+  const BrandIcon = brandLinkIcon(host);
+  const faviconUrl = BrandIcon ? null : faviconUrlForOrigin(`https://${host}`);
   return (
     <span
       className="ms-[0.25em] me-[0.2em] inline-flex size-[14px] [vertical-align:-0.125em]"
       aria-hidden
     >
-      {faviconUrl === null || failedHost === host || failedFaviconHosts.has(host) ? (
+      {BrandIcon ? (
+        <BrandIcon className={MARKDOWN_LINK_FAVICON_CLASS_NAME} />
+      ) : faviconUrl === null || failedHost === host || failedFaviconHosts.has(host) ? (
         <GlobeIcon className={MARKDOWN_LINK_FAVICON_CLASS_NAME} />
       ) : (
         <img

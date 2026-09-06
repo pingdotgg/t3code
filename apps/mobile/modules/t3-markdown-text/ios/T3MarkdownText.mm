@@ -60,14 +60,17 @@ static void T3MarkdownTextApplyAttachments(
     NSString *imageUri = [NSString stringWithUTF8String:attachmentRange.imageUri.c_str()];
     NSTextAttachment *attachment = [[NSTextAttachment alloc] init];
     UIImage *image = images[imageUri];
-    if ([imageUri hasPrefix:@"sf:"]) {
-      NSString *symbolName = [imageUri substringFromIndex:3];
+    const BOOL isSymbol = [imageUri hasPrefix:@"sf:"];
+    if (isSymbol) {
+      image = [UIImage systemImageNamed:[imageUri substringFromIndex:3]];
+    }
+    if (image != nil && (isSymbol || attachmentRange.tintWithForeground)) {
       UIColor *foregroundColor =
           [attributedString attribute:NSForegroundColorAttributeName
                               atIndex:attachmentRange.location
                        effectiveRange:nil] ?: UIColor.labelColor;
-      image = [[UIImage systemImageNamed:symbolName] imageWithTintColor:foregroundColor
-                                                          renderingMode:UIImageRenderingModeAlwaysOriginal];
+      image = [image imageWithTintColor:foregroundColor
+                          renderingMode:UIImageRenderingModeAlwaysOriginal];
     }
     attachment.image = image ?: [[UIImage alloc] init];
     const CGFloat attachmentSize = T3MarkdownTextAttachmentSize(attachmentRange);
