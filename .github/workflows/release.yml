@@ -19,7 +19,7 @@ on:
           - stable
           - nightly
       version:
-        description: "Release version (for example 1.2.3 or v1.2.3)"
+        description: "Stable version override (for example 1.2.3). Defaults to the version the latest nightly previewed."
         required: false
         type: string
 
@@ -39,33 +39,54 @@ permissions:
   id-token: none
 
 jobs:
-  check_changes:
-    name: Check automatic nightly release
-    if: github.event_name == 'schedule'
+  # Picks the commit every later job builds. Nightlies and tag pushes build the
+  # triggering commit. Manual stable releases build the commit of the latest
+  # published nightly, so stable only ever ships a build that nightly users
+  # have already run. Scheduled runs also decide here whether a nightly is due.
+  resolve_commit:
+    name: Resolve release commit
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 5
     outputs:
-      has_changes: ${{ steps.check.outputs.result }}
+      ref: ${{ steps.resolve.outputs.ref }}
+      nightly_version: ${{ steps.resolve.outputs.nightly_version }}
+      has_changes: ${{ steps.resolve.outputs.has_changes }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
         with:
           sparse-checkout: .github/scripts
 
-      - id: check
-        name: Check release gap and new commits
+      - id: resolve
+        name: Resolve release commit
         uses: actions/github-script@v8
+        env:
+          DISPATCH_CHANNEL: ${{ inputs.channel }}
         with:
           script: |
-            const { shouldReleaseNightly } = require('./.github/scripts/check-nightly-release.cjs');
-            return await shouldReleaseNightly({ github, context, core });
+            const {
+              shouldReleaseNightly,
+              resolveLatestNightlyCommit,
+            } = require('./.github/scripts/check-nightly-release.cjs');
+
+            if (context.eventName === 'schedule') {
+              core.setOutput('has_changes', await shouldReleaseNightly({ github, context, core }));
+              core.setOutput('ref', context.sha);
+            } else if (context.eventName === 'workflow_dispatch' && process.env.DISPATCH_CHANNEL !== 'nightly') {
+              const { tag, sha, version } = await resolveLatestNightlyCommit({ github, context, core });
+              core.notice(`Stable release builds ${sha}, the commit shipped by ${tag}.`);
+              core.setOutput('ref', sha);
+              core.setOutput('nightly_version', version);
+            } else {
+              core.setOutput('ref', context.sha);
+            }
 
   preflight:
     name: Preflight
-    needs: [check_changes]
+    needs: [resolve_commit]
     if: |
-      !failure() && !cancelled() &&
-      (github.event_name != 'schedule' || needs.check_changes.outputs.has_changes == 'true')
+      needs.resolve_commit.result == 'success' &&
+      (github.event_name != 'schedule' || needs.resolve_commit.outputs.has_changes == 'true')
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 10
     outputs:
@@ -78,11 +99,12 @@ jobs:
       cli_dist_tag: ${{ steps.release_meta.outputs.cli_dist_tag }}
       is_prerelease: ${{ steps.release_meta.outputs.is_prerelease }}
       make_latest: ${{ steps.release_meta.outputs.make_latest }}
-      ref: ${{ github.sha }}
+      ref: ${{ needs.resolve_commit.outputs.ref }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
         with:
+          ref: ${{ needs.resolve_commit.outputs.ref }}
           fetch-depth: 0
           sparse-checkout: |
             /*
@@ -104,8 +126,9 @@ jobs:
         env:
           DISPATCH_CHANNEL: ${{ github.event.inputs.channel }}
           DISPATCH_VERSION: ${{ github.event.inputs.version }}
+          NIGHTLY_VERSION: ${{ needs.resolve_commit.outputs.nightly_version }}
           NIGHTLY_DATE: ${{ github.run_started_at }}
-          NIGHTLY_SHA: ${{ github.sha }}
+          NIGHTLY_SHA: ${{ needs.resolve_commit.outputs.ref }}
           NIGHTLY_RUN_NUMBER: ${{ github.run_number }}
         run: |
           if [[ "${GITHUB_EVENT_NAME}" == "schedule" || ( "${GITHUB_EVENT_NAME}" == "workflow_dispatch" && "${DISPATCH_CHANNEL:-stable}" == "nightly" ) ]]; then
@@ -123,9 +146,9 @@ jobs:
             echo "make_latest=false" >> "$GITHUB_OUTPUT"
           else
             if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
-              raw="${DISPATCH_VERSION}"
+              raw="${DISPATCH_VERSION:-$NIGHTLY_VERSION}"
               if [[ -z "$raw" ]]; then
-                echo "workflow_dispatch stable releases require the version input." >&2
+                echo "workflow_dispatch stable releases need a version input or a published nightly." >&2
                 exit 1
               fi
             else
@@ -210,14 +233,12 @@ jobs:
 
   relay_public_config:
     name: Resolve T3 Connect public config
-    # Consumes only the commit SHA, not preflight's resolved version, so it runs
-    # alongside preflight instead of after it. The condition mirrors preflight's:
-    # check_changes is skipped on manual and tag releases (skipped is neither failure
-    # nor success, so success() would be wrong here).
-    needs: [check_changes]
+    # Consumes only the release commit, not preflight's resolved version, so it
+    # runs alongside preflight instead of after it. The condition mirrors preflight's.
+    needs: [resolve_commit]
     if: |
-      !failure() && !cancelled() &&
-      (github.event_name != 'schedule' || needs.check_changes.outputs.has_changes == 'true')
+      needs.resolve_commit.result == 'success' &&
+      (github.event_name != 'schedule' || needs.resolve_commit.outputs.has_changes == 'true')
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 5
     environment:
@@ -239,7 +260,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ needs.resolve_commit.outputs.ref }}
           sparse-checkout: |
             /*
             !/.repos/
@@ -312,19 +333,19 @@ jobs:
   # machine. node-pty is N-API, so one binary works across all WSL Node versions.
   build_wsl_node_pty:
     name: Build WSL node-pty (linux-x64)
-    # Same gating as relay_public_config: only the commit SHA is needed, so this
-    # runs alongside preflight. See the condition comment there.
-    needs: [check_changes]
+    # Same gating as relay_public_config: only the release commit is needed, so
+    # this runs alongside preflight. See the condition comment there.
+    needs: [resolve_commit]
     if: |
-      !failure() && !cancelled() &&
-      (github.event_name != 'schedule' || needs.check_changes.outputs.has_changes == 'true')
+      needs.resolve_commit.result == 'success' &&
+      (github.event_name != 'schedule' || needs.resolve_commit.outputs.has_changes == 'true')
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@v6
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ needs.resolve_commit.outputs.ref }}
           sparse-checkout: |
             /*
             !/.repos/
