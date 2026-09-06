@@ -35,7 +35,7 @@ function resolveRequestedKind(
   return Effect.succeed(kind);
 }
 
-export const make = Effect.gen(function* () {
+const make = Effect.gen(function* () {
   const registry = yield* VcsDriverRegistry.VcsDriverRegistry;
 
   const initRepository: VcsProvisioningService["Service"]["initRepository"] = Effect.fn(

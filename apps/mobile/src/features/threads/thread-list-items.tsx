@@ -40,7 +40,7 @@ import { ThreadSearchMatchExcerpt } from "./thread-search-match";
 export type ThreadListVariant = "compact" | "sidebar";
 
 /** Left inset that aligns compact secondary rows with the title column. */
-export const THREAD_LIST_COMPACT_INSET = HOME_HORIZONTAL_INSET;
+const THREAD_LIST_COMPACT_INSET = HOME_HORIZONTAL_INSET;
 const SIDEBAR_ROW_RADIUS = 12;
 
 function pullRequestTintColor(

@@ -199,7 +199,7 @@ const relayRequestDeadline = <E, R>(
     ),
   );
 
-export const traceRelayHttpRequest = <E, R>(
+const traceRelayHttpRequest = <E, R>(
   httpEffect: Effect.Effect<
     HttpServerResponse.HttpServerResponse,
     E,

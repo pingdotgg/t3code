@@ -213,7 +213,7 @@ export class DesktopAppActivation extends Context.Service<
 
 const { logWarning } = makeComponentLogger("desktop-app-activation");
 
-export const make = Effect.gen(function* () {
+const make = Effect.gen(function* () {
   const desktopEnvironment = yield* DesktopEnvironment.DesktopEnvironment;
   const desktopWindow = yield* DesktopWindow.DesktopWindow;
   const electronWindow = yield* ElectronWindow.ElectronWindow;

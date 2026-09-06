@@ -692,7 +692,7 @@ export class ApnsDeliveries extends Context.Service<
   }
 >()("t3code-relay/agentActivity/ApnsDeliveries") {}
 
-export const make = Effect.gen(function* () {
+const make = Effect.gen(function* () {
   const attempts = yield* DeliveryAttempts.DeliveryAttempts;
   const liveActivities = yield* LiveActivities.LiveActivities;
   const deliveryQueue = yield* ApnsDeliveryQueue.ApnsDeliveryQueue;

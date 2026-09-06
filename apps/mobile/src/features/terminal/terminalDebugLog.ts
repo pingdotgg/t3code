@@ -4,7 +4,7 @@
  * Enabled when `__DEV__` is true, or set `globalThis.__T3_TERMINAL_DEBUG__ = true` in a JS
  * debugger / Metro console to trace release/TestFlight builds.
  */
-export function isTerminalDebugEnabled(): boolean {
+function isTerminalDebugEnabled(): boolean {
   return (
     (typeof __DEV__ !== "undefined" && __DEV__) ||
     (typeof globalThis !== "undefined" &&

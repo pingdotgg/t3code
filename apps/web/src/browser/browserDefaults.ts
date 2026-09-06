@@ -128,7 +128,7 @@ export function browserDefaultOpenProfileId(
  * fall back to fitting the panel — and only when the panel hasn't been measured
  * yet does a fixed size apply.
  */
-export const FALLBACK_RESPONSIVE_VIEWPORT_SIZE = { width: 1024, height: 768 } as const;
+const FALLBACK_RESPONSIVE_VIEWPORT_SIZE = { width: 1024, height: 768 } as const;
 
 export function browserResponsiveViewportForToggle(input: {
   readonly defaults?: BrowserDefaults;

@@ -166,7 +166,7 @@ function toPersistenceSqlOrDecodeError(
         });
 }
 
-export const make = Effect.gen(function* () {
+const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
   // Runtime writes can carry stale payloads. Only recordImportedTranscript may

@@ -338,7 +338,7 @@ function deriveRepositoryCloneUrlsFromCreateOutput(
   };
 }
 
-export const make = Effect.gen(function* () {
+const make = Effect.gen(function* () {
   const process = yield* VcsProcess.VcsProcess;
 
   const execute: GitHubCli["Service"]["execute"] = (input) =>

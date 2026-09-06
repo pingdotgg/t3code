@@ -47,7 +47,7 @@ export class AgentActivityPublisher extends Context.Service<
   }
 >()("t3code-relay/agentActivity/AgentActivityPublisher") {}
 
-export const make = Effect.gen(function* () {
+const make = Effect.gen(function* () {
   const rows = yield* AgentActivityRows.AgentActivityRows;
   const links = yield* EnvironmentLinks.EnvironmentLinks;
   const liveActivities = yield* LiveActivities.LiveActivities;
@@ -231,7 +231,7 @@ function terminalAggregateState(state: RelayAgentActivityState): RelayAgentActiv
 // How long a finished thread keeps its Done/Failed row in the aggregate while
 // other agents are still active. Long enough to be seen on the lock screen,
 // short enough that the activity list stays about live work.
-export const TERMINAL_AGENT_ACTIVITY_DISPLAY_TTL_MS = 15 * 60 * 1_000;
+const TERMINAL_AGENT_ACTIVITY_DISPLAY_TTL_MS = 15 * 60 * 1_000;
 
 function isRecentTerminalState(state: RelayAgentActivityState, nowMs: number): boolean {
   if (!isTerminalPhase(state)) {

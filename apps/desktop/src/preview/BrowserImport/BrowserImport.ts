@@ -166,7 +166,7 @@ export const writeCookies = Effect.fn("BrowserImport.writeCookies")(function* (
   return { imported, skipped, skippedDomains: [...skippedDomains].slice(0, 20) };
 });
 
-export const make = Effect.gen(function* BrowserImportMake() {
+const make = Effect.gen(function* BrowserImportMake() {
   const browserSession = yield* BrowserSession.BrowserSession;
   const platform = yield* HostProcessPlatform;
   const executablePath = yield* HostProcessExecutablePath;

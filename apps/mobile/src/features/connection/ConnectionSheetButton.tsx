@@ -4,28 +4,6 @@ import { Platform, Pressable } from "react-native";
 import { AppText as Text } from "../../components/AppText";
 import { cn } from "../../lib/cn";
 
-const CARD_SHADOW = Platform.select({
-  ios: {
-    shadowColor: "rgba(23,23,23,0.08)",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 1,
-    shadowRadius: 16,
-  },
-  android: { elevation: 3 },
-});
-
-const CARD_SHADOW_DARK = Platform.select({
-  ios: {
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.18,
-    shadowRadius: 8,
-  },
-  android: { elevation: 4 },
-});
-
-export { CARD_SHADOW, CARD_SHADOW_DARK };
-
 export function ConnectionSheetButton(props: {
   readonly icon: React.ComponentProps<typeof SymbolView>["name"];
   readonly label: string;

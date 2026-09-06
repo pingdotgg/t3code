@@ -378,7 +378,7 @@ function bitbucketReviewPosition(
   }
 }
 
-export const make = Effect.gen(function* () {
+const make = Effect.gen(function* () {
   const bitbucket = yield* BitbucketApi.BitbucketApi;
 
   /**

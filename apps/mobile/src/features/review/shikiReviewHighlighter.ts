@@ -180,7 +180,6 @@ const languageAliases: Record<string, string> = {
   txt: "text",
 };
 let highlighterPromise: Promise<HighlighterCore> | null = null;
-let activeHighlighterEnginePromise: Promise<ReviewHighlighterEngine> | null = null;
 
 type LoadedLanguageModule = {
   default: Parameters<HighlighterCore["loadLanguage"]>[0];
@@ -317,43 +316,11 @@ async function getHighlighter(): Promise<HighlighterCore> {
       .then((result) => result.highlighter)
       .catch((error) => {
         highlighterPromise = null;
-        activeHighlighterEnginePromise = null;
-        throw error;
-      });
-    activeHighlighterEnginePromise = configuredHighlighterPromise
-      .then((result) => result.engine)
-      .catch((error) => {
-        activeHighlighterEnginePromise = null;
         throw error;
       });
   }
 
   return highlighterPromise;
-}
-
-export async function getActiveReviewHighlighterEngine(): Promise<ReviewHighlighterEngine> {
-  await getHighlighter();
-  return activeHighlighterEnginePromise ?? Promise.resolve("javascript");
-}
-
-export async function prepareReviewHighlighter(): Promise<void> {
-  await getHighlighter();
-}
-
-export async function prepareReviewHighlighterLanguages(
-  languages: ReadonlyArray<string>,
-): Promise<void> {
-  const highlighter = await getHighlighter();
-  await Promise.all(
-    languages.map(async (language) => {
-      const candidate = resolveLanguageAlias(language);
-      if (candidate === "text" || !(candidate in languageImports)) {
-        return;
-      }
-
-      await loadSingleLanguage(highlighter, candidate);
-    }),
-  );
 }
 
 function resolveLanguageAlias(language: string): string {

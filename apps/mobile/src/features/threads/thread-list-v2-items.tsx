@@ -90,7 +90,7 @@ const LEGACY_MENU_ACTIONS: MenuAction[] = [
 const SIDEBAR_V2_ROW_RADIUS = 12;
 
 /** Section label + rule: the only structure in an otherwise flat list. */
-export const ThreadListV2SectionDivider = memo(function ThreadListV2SectionDivider(props: {
+const ThreadListV2SectionDivider = memo(function ThreadListV2SectionDivider(props: {
   readonly label: string;
   readonly pane?: "screen" | "sidebar";
 }) {

@@ -9,7 +9,7 @@ export interface ThreadDetailTarget {
   readonly threadId: ThreadId | null;
 }
 
-export function useThreadDetail(target: ThreadDetailTarget) {
+function useThreadDetail(target: ThreadDetailTarget) {
   return useEnvironmentThread(target.environmentId, target.threadId);
 }
 

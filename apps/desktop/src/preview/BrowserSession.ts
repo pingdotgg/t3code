@@ -159,7 +159,7 @@ const encodeScopeForDigest = (scope: string): Uint8Array =>
       ),
   );
 
-export const make = Effect.gen(function* BrowserSessionMake() {
+const make = Effect.gen(function* BrowserSessionMake() {
   const crypto = yield* Crypto.Crypto;
   const sessionsRef = yield* SynchronizedRef.make<ReadonlyMap<string, Session>>(new Map());
 

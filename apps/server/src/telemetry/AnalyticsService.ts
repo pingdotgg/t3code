@@ -67,7 +67,7 @@ export class AnalyticsService extends Context.Service<
   );
 }
 
-export function serverOsFromNodePlatform(platform: string): ClientOs {
+function serverOsFromNodePlatform(platform: string): ClientOs {
   switch (platform) {
     case "darwin":
       return "macOS";
@@ -82,7 +82,7 @@ export function serverOsFromNodePlatform(platform: string): ClientOs {
   }
 }
 
-export const make = Effect.gen(function* () {
+const make = Effect.gen(function* () {
   const telemetryConfig = yield* TelemetryEnvConfig;
   const httpClient = yield* HttpClient.HttpClient;
   const serverConfig = yield* ServerConfig.ServerConfig;

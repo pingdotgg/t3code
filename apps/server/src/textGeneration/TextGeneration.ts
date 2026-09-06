@@ -153,7 +153,7 @@ export const makeTextGenerationFromRegistry = (
       ),
   });
 
-export const make = Effect.gen(function* () {
+const make = Effect.gen(function* () {
   const registry = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
   return makeTextGenerationFromRegistry(registry);
 });

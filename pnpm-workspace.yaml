@@ -169,6 +169,8 @@ patchedDependencies:
   effect@4.0.0-beta.103: patches/effect@4.0.0-beta.103.patch
   expo-audio@57.0.4: patches/expo-audio@57.0.4.patch
   expo-sharing@57.0.17: patches/expo-sharing@57.0.17.patch
+  # Compiled backport of https://github.com/webpro-nl/knip/commit/c6497a18c6534ee914b27bb459d7778a7b93a914
+  knip@6.34.0: patches/knip@6.34.0.patch
   react-native-gesture-handler@2.32.0: patches/react-native-gesture-handler@2.32.0.patch
   react-native-keyboard-controller@1.21.13: patches/react-native-keyboard-controller@1.21.13.patch
   react-native-nitro-modules@0.35.9: patches/react-native-nitro-modules@0.35.9.patch

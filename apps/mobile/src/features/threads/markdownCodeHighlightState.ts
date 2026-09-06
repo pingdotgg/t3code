@@ -31,7 +31,7 @@ class MarkdownCodeHighlightError extends Data.TaggedError("MarkdownCodeHighlight
   readonly cause: unknown;
 }> {}
 
-export function createMarkdownCodeHighlightAtomFamily(options?: {
+function createMarkdownCodeHighlightAtomFamily(options?: {
   readonly highlight?: MarkdownCodeHighlighter;
   readonly idleTtlMs?: number;
 }) {
@@ -61,7 +61,7 @@ export function createMarkdownCodeHighlightAtomFamily(options?: {
   return (input: MarkdownCodeHighlightInput) => family(new MarkdownCodeHighlightCacheKey(input));
 }
 
-export const markdownCodeHighlightAtom = createMarkdownCodeHighlightAtomFamily();
+const markdownCodeHighlightAtom = createMarkdownCodeHighlightAtomFamily();
 
 export function useMarkdownCodeHighlight(input: {
   readonly code: string;

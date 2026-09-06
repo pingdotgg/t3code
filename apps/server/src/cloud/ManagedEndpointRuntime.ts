@@ -111,7 +111,7 @@ const stopConnector = (connector: ActiveConnector | null) =>
       )
     : Effect.void;
 
-export const make = Effect.gen(function* () {
+const make = Effect.gen(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const relayClient = yield* RelayClient.RelayClient;
   const activeRef = yield* Ref.make<ActiveConnector | null>(null);

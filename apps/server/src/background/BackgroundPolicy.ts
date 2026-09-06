@@ -82,7 +82,7 @@ function leaseKey(lease: Pick<ClientActivityLease, "sessionId" | "rpcClientId" |
   return JSON.stringify([lease.sessionId, lease.rpcClientId, lease.clientId]);
 }
 
-export function upsertClientActivityLease(
+function upsertClientActivityLease(
   leases: ReadonlyMap<string, ClientActivityLease>,
   lease: ClientActivityLease,
   now: DateTime.Utc,
@@ -208,7 +208,7 @@ function computeSnapshot(input: {
   };
 }
 
-export const make = Effect.fn("background.policy.make")(function* () {
+const make = Effect.fn("background.policy.make")(function* () {
   const hostPowerMonitor = yield* HostPowerMonitor.HostPowerMonitor;
   const serverSettings = yield* ServerSettingsService;
   const leasesRef = yield* Ref.make(new Map<string, ClientActivityLease>());

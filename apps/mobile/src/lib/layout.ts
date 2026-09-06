@@ -15,10 +15,10 @@ function clamp(value: number, min: number, max: number): number {
 export const SPLIT_LAYOUT_MIN_WIDTH = 720;
 export const SPLIT_LAYOUT_MIN_HEIGHT = 600;
 
-export const SPLIT_SIDEBAR_MIN_WIDTH = 280;
+const SPLIT_SIDEBAR_MIN_WIDTH = 280;
 const SPLIT_SIDEBAR_DEFAULT_MAX_WIDTH = 380;
 
-export const AUXILIARY_PANE_MIN_CONTENT_WIDTH = 960;
+const AUXILIARY_PANE_MIN_CONTENT_WIDTH = 960;
 export const CHAT_CONTENT_MAX_WIDTH = 960;
 // min-h-8 uses the 14px rem configured in metro.config.js.
 export const THREAD_WORK_ROW_MIN_HEIGHT = 28;
@@ -44,8 +44,8 @@ export function deriveThreadWorkLogSizing(input: {
   };
 }
 
-export const AUXILIARY_PANE_MIN_WIDTH = 260;
-export const AUXILIARY_PANE_MAX_WIDTH = 480;
+const AUXILIARY_PANE_MIN_WIDTH = 260;
+const AUXILIARY_PANE_MAX_WIDTH = 480;
 const AUXILIARY_PANE_DEFAULT_MAX_WIDTH = 320;
 const FILE_INSPECTOR_MIN_VIEWPORT_WIDTH = 820;
 const FILE_INSPECTOR_MIN_MAIN_WIDTH = 560;

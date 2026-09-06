@@ -1,4 +1,4 @@
-export function isCloudDebugEnabled(): boolean {
+function isCloudDebugEnabled(): boolean {
   return (
     (typeof __DEV__ !== "undefined" && __DEV__) ||
     (typeof globalThis !== "undefined" &&

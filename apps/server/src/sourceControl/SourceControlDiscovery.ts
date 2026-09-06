@@ -64,7 +64,7 @@ export class SourceControlDiscovery extends Context.Service<
   }
 >()("t3/sourceControl/SourceControlDiscovery") {}
 
-export const make = Effect.gen(function* () {
+const make = Effect.gen(function* () {
   const config = yield* ServerConfig;
   const process = yield* VcsProcess.VcsProcess;
   const sourceControlProviders = yield* SourceControlProviderRegistry.SourceControlProviderRegistry;

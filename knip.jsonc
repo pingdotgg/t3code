@@ -4,6 +4,8 @@
   "rules": { "types": "off", "nsTypes": "off" },
   // These executables are supplied by the OS or installed separately from npm.
   "ignoreBinaries": ["eas", "file", "mkfifo", "pkill", "pkg-config", "plutil", "sips"],
+  // @effect/tsgo embeds the language service and reads this tsconfig plugin key.
+  "ignoreDependencies": ["@effect/language-service"],
   "workspaces": {
     ".": {
       // Keep vendored reference repositories outside the root project.
@@ -22,6 +24,8 @@
         "src/bin.ts!",
         "src/service-launcher.ts!",
         "scripts/cli.ts",
+        // Invoked directly by the test-t3-app skill for isolated SQLite fixtures.
+        "scripts/t3-sqlite-state.ts",
         "src/provider/testFixtures/*.mjs",
       ],
       // Native msgpack acceleration and the Vite+ web build prerequisite.
@@ -49,6 +53,8 @@
       "ignoreIssues": { "src/components/ui/*.tsx": ["exports", "nsExports", "duplicates"] },
     },
     "apps/mobile": {
+      // Expo uses Babel without a direct @babel/* dependency to enable this plugin.
+      "babel": true,
       // Expo loads local config plugins by string; Metro handles platform variants.
       "entry": ["index.ts!", "plugins/*.cjs"],
       // Fonts are configured as asset paths; Expo autolinks the native packages.

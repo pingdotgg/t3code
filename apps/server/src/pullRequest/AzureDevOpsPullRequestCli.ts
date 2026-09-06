@@ -261,7 +261,7 @@ function isReviewerName(value: string): boolean {
   return name.length > 0 && !name.startsWith("-");
 }
 
-export const make = Effect.gen(function* () {
+const make = Effect.gen(function* () {
   const azure = yield* AzureDevOpsCli.AzureDevOpsCli;
 
   // Every command resolves the organization, project and repository from the checkout, which is

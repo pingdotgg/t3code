@@ -13,7 +13,7 @@ const SYMBOL_BY_KIND: Record<EnvironmentMachineKind, SFSymbol> = {
   "mac-studio": "macstudio",
 };
 
-export const ENVIRONMENT_MACHINE_KIND_LABELS: Record<EnvironmentMachineKind, string> = {
+const ENVIRONMENT_MACHINE_KIND_LABELS: Record<EnvironmentMachineKind, string> = {
   server: "Server",
   cloud: "Cloud VM",
   linux: "Linux/WSL",

@@ -45,14 +45,14 @@ function emitChange() {
   listeners.forEach((listener) => listener());
 }
 
-export function subscribeReviewCommentTarget(listener: () => void): () => void {
+function subscribeReviewCommentTarget(listener: () => void): () => void {
   listeners.add(listener);
   return () => {
     listeners.delete(listener);
   };
 }
 
-export function getReviewCommentTarget(): ReviewCommentTarget | null {
+function getReviewCommentTarget(): ReviewCommentTarget | null {
   return currentTarget;
 }
 
@@ -84,7 +84,7 @@ export function getReviewUnifiedLineNumber(line: ReviewRenderableLineRow): numbe
   return line.newLineNumber ?? line.oldLineNumber;
 }
 
-export function getReviewChangeMarker(change: ReviewRenderableLineRow["change"]): string {
+function getReviewChangeMarker(change: ReviewRenderableLineRow["change"]): string {
   if (change === "add") return "+";
   if (change === "delete") return "-";
   return " ";

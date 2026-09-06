@@ -145,7 +145,7 @@ function sampleInterval(
   return LIVE_SAMPLE_INTERVAL;
 }
 
-export const make = Effect.fn("desktop.telemetryPublisher.make")(function* () {
+const make = Effect.fn("desktop.telemetryPublisher.make")(function* () {
   const electronApp = yield* ElectronApp.ElectronApp;
   const powerMonitor = yield* ElectronPowerMonitor.ElectronPowerMonitor;
   yield* electronApp.whenReady;

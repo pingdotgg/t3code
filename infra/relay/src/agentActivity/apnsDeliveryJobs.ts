@@ -12,7 +12,7 @@ import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 
 const MAX_JOB_AGE_MS = 10 * 60 * 1_000;
-export const APNS_DELIVERY_JOB_SIGNING_ALGORITHM = "hmac-sha256";
+const APNS_DELIVERY_JOB_SIGNING_ALGORITHM = "hmac-sha256";
 
 const ApnsDeliveryKindSchema = Schema.Literals([
   "live_activity_start",

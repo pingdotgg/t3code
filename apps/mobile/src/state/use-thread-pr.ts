@@ -28,11 +28,7 @@ const threadPrSnapshotsAtom = Atom.make<ReadonlyMap<string, ThreadPrSnapshot>>(n
   Atom.withLabel("mobile:thread-pr-snapshots"),
 );
 
-export {
-  presentThreadPr,
-  type ThreadPr,
-  type ThreadPrPresentation,
-} from "./thread-pr-presentation";
+export { type ThreadPr, type ThreadPrPresentation } from "./thread-pr-presentation";
 
 /**
  * Live status for a thread's server-provided PR. Visible rows share a summary

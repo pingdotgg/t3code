@@ -14,7 +14,7 @@ export interface TracingResource {
   readonly appVariant: string;
 }
 
-export function resolveTracingConfig(): TracingConfig | null {
+function resolveTracingConfig(): TracingConfig | null {
   const config = resolveCloudPublicConfig();
   if (!hasTracingPublicConfig(config)) {
     return null;

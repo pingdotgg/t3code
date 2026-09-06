@@ -10,7 +10,7 @@ export class BrowserTraceCollector extends Context.Service<
   }
 >()("t3/observability/BrowserTraceCollector") {}
 
-export const make = (sink: TraceSink): BrowserTraceCollector["Service"] =>
+const make = (sink: TraceSink): BrowserTraceCollector["Service"] =>
   BrowserTraceCollector.of({
     record: (records) =>
       Effect.sync(() => {

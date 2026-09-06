@@ -116,7 +116,7 @@ const copyTree = (
       }),
   );
 
-export const make = Effect.gen(function* () {
+const make = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const fs = yield* FileSystem.FileSystem;
   const join = environment.path.join;

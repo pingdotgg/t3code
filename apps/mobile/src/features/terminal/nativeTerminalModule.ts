@@ -94,7 +94,3 @@ export function getNativeTerminalHardwareKeyRevision(): number | null {
     return null;
   }
 }
-
-export function hasNativeTerminalSurface() {
-  return resolveNativeTerminalSurfaceView() !== null;
-}

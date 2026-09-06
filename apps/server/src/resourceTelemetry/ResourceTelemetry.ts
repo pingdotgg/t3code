@@ -142,7 +142,7 @@ function buildHealth(input: {
   };
 }
 
-export const make = Effect.fn("resourceTelemetry.resourceTelemetry.make")(function* () {
+const make = Effect.fn("resourceTelemetry.resourceTelemetry.make")(function* () {
   const nativeClient = yield* NativeTelemetryClient.NativeTelemetryClient;
   const desktopReceiver = yield* DesktopTelemetryReceiver.DesktopTelemetryReceiver;
   const attribution = yield* ResourceAttribution.ResourceAttribution;

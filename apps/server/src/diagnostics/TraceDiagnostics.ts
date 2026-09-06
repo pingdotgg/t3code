@@ -411,7 +411,7 @@ function readTraceFile(
   );
 }
 
-export const make = Effect.gen(function* () {
+const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
 
   const read: TraceDiagnostics["Service"]["read"] = Effect.fn("TraceDiagnostics.read")(

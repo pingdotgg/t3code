@@ -203,8 +203,6 @@ export const AzureDevOpsCliError = Schema.Union([
 ]);
 export type AzureDevOpsCliError = typeof AzureDevOpsCliError.Type;
 
-export const isAzureDevOpsCliError = Schema.is(AzureDevOpsCliError);
-
 export interface AzureDevOpsRepositoryCloneUrls {
   readonly nameWithOwner: string;
   readonly url: string;
@@ -352,7 +350,7 @@ function decodeAzureDevOpsJson<S extends Schema.Top>(
   );
 }
 
-export const make = Effect.gen(function* () {
+const make = Effect.gen(function* () {
   const process = yield* VcsProcess.VcsProcess;
 
   const execute: AzureDevOpsCli["Service"]["execute"] = (input) =>

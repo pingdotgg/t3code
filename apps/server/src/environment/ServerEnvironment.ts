@@ -179,7 +179,7 @@ const makeIdentity = Effect.gen(function* () {
   });
 });
 
-export const make = Effect.gen(function* () {
+const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const serverConfig = yield* ServerConfig.ServerConfig;
   const secrets = yield* ServerSecretStore.ServerSecretStore;

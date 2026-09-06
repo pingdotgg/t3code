@@ -42,7 +42,7 @@ export function fromProviders(
  * The hosts this build can read change requests from. A host with no entry here still shows up
  * in the provider list as unimplemented, so its projects are explained rather than missing.
  */
-export const make = Effect.map(
+const make = Effect.map(
   Effect.all([
     GitHubPullRequestProvider.make,
     GitLabPullRequestProvider.make,

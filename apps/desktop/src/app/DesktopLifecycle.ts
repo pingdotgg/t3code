@@ -159,7 +159,7 @@ function quitFromSignal(
   );
 }
 
-export const make = DesktopLifecycle.of({
+const make = DesktopLifecycle.of({
   relaunch: Effect.fn("desktop.lifecycle.relaunch")(function* (reason) {
     const electronApp = yield* ElectronApp.ElectronApp;
     const environment = yield* DesktopEnvironment.DesktopEnvironment;

@@ -211,7 +211,7 @@ function makeUpdateState(input: {
   };
 }
 
-export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
+const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
   const providerRegistry = yield* ProviderRegistry;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const httpClient = yield* HttpClient.HttpClient;

@@ -142,7 +142,7 @@ function providerEnvironmentSecretName(input: {
  */
 const USAGE_LIMIT_SOURCE_KEY_REDACTED = "\u2022\u2022\u2022\u2022\u2022\u2022";
 
-export function usageLimitSourceSecretName(sourceId: string): string {
+function usageLimitSourceSecretName(sourceId: string): string {
   return `usage-limit-source-${Buffer.from(sourceId, "utf8").toString("base64url")}`;
 }
 

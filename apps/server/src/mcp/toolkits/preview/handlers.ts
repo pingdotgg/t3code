@@ -104,5 +104,3 @@ export const PreviewStandardToolkitHandlersLive = PreviewStandardToolkit.toLayer
 export const PreviewSnapshotToolkitHandlersLive = PreviewSnapshotToolkit.toLayer({
   preview_snapshot,
 });
-
-export const PreviewToolkitHandlersLive = PreviewToolkit.toLayer(handlers);

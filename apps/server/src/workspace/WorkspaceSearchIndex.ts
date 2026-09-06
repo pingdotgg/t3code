@@ -552,7 +552,7 @@ function parseWorkspaceSearchIndexKey(key: string): {
  * idle cleanup; using a default cwd here would mix resources from different
  * workspaces.
  */
-export const layer = (key: string) => {
+const layer = (key: string) => {
   const { cwd, variant } = parseWorkspaceSearchIndexKey(key);
   return Layer.effect(WorkspaceSearchIndex, make(cwd, variant));
 };

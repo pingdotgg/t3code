@@ -82,7 +82,7 @@ export function retryAtFromHeader(value: string | undefined, now: number): numbe
   return Number.isFinite(retryAt) && retryAt > now ? retryAt : undefined;
 }
 
-export const make = Effect.gen(function* () {
+const make = Effect.gen(function* () {
   const entries = yield* Ref.make<ReadonlyMap<string, RateLimitEntry>>(new Map());
 
   const check: SourceControlRateLimit["Service"]["check"] = Effect.fn(

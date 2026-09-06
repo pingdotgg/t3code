@@ -402,7 +402,7 @@ const runProcessCore = Effect.fn("processRunner.runProcessCore")(function* (
   } satisfies ProcessRunOutput;
 });
 
-export const make = Effect.fn("ProcessRunner.make")(function* () {
+const make = Effect.fn("ProcessRunner.make")(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
 
   const run: ProcessRunner["Service"]["run"] = (input) =>

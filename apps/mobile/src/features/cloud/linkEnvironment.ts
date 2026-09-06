@@ -367,7 +367,7 @@ export function listCloudEnvironments(input: {
   });
 }
 
-export function getCloudEnvironmentStatus(input: {
+function getCloudEnvironmentStatus(input: {
   readonly clerkToken: string;
   readonly environment: RelayClientEnvironmentRecord;
   readonly relayScopes?: ReadonlyArray<RelayDpopAccessTokenScope>;
@@ -397,7 +397,7 @@ export function getCloudEnvironmentStatus(input: {
   });
 }
 
-export function loadCloudEnvironmentStatuses(input: {
+function loadCloudEnvironmentStatuses(input: {
   readonly clerkToken: string;
   readonly environments: ReadonlyArray<RelayClientEnvironmentRecord>;
 }): Effect.Effect<

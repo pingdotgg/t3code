@@ -289,7 +289,7 @@ const serversEqual = (
   return true;
 };
 
-export const make = Effect.gen(function* PortDiscoveryMake() {
+const make = Effect.gen(function* PortDiscoveryMake() {
   const net = yield* Net.NetService;
   const processRunner = yield* ProcessRunner.ProcessRunner;
   const hostPlatform = yield* HostProcessPlatform;

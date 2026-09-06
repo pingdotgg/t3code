@@ -47,7 +47,7 @@ function findByName(map, name) {
 }
 
 /**
- * @param {import('xcode').XcodeProject} proj
+ * @param {import('expo/config-plugins').XcodeProject} proj
  * @param {{ targetName: string }} opts
  */
 function addWidgetAssetCatalog(proj, opts) {

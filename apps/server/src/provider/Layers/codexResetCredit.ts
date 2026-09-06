@@ -45,7 +45,7 @@ export class CodexResetCreditCoordinator extends Context.Service<
   }
 >()("t3/provider/Layers/codexResetCredit/CodexResetCreditCoordinator") {}
 
-export const make = Effect.gen(function* () {
+const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const statesRef = yield* Ref.make<ReadonlyMap<string, AccountRedemptionState>>(new Map());
 

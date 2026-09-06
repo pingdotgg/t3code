@@ -237,7 +237,6 @@ export const GitLabCliError = Schema.Union([
   GitLabNamespaceDecodeError,
 ]);
 export type GitLabCliError = typeof GitLabCliError.Type;
-export const isGitLabCliError = Schema.is(GitLabCliError);
 
 export interface GitLabMergeRequestSummary {
   readonly number: number;
@@ -409,7 +408,7 @@ function parseRepositoryPath(repository: string): {
   return { namespacePath, projectPath };
 }
 
-export const make = Effect.gen(function* () {
+const make = Effect.gen(function* () {
   const process = yield* VcsProcess.VcsProcess;
 
   const run = (

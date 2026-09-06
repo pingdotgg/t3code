@@ -62,7 +62,7 @@ export const NoOpProviderEventLoggers: ProviderEventLoggers["Service"] = {
  * Builds both stream views over one shared store. Setup failures are logged
  * and downgraded to the no-op service so diagnostics never block startup.
  */
-export const make = Effect.gen(function* () {
+const make = Effect.gen(function* () {
   const { providerEventLogPath } = yield* ServerConfig;
   const attribution = yield* ResourceAttribution.ResourceAttribution;
   const store = yield* EventNdjsonLogger.makeEventNdjsonLogStore(providerEventLogPath, {

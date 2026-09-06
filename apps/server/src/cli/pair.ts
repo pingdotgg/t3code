@@ -173,7 +173,7 @@ export const resolveTailscaleLocalTarget = (
   return { localPort: state.port };
 };
 
-export const formatPairOutput = (input: {
+const formatPairOutput = (input: {
   readonly serverLabel: string;
   readonly origin: string;
   readonly pairingUrl: string;

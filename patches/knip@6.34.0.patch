@@ -1,0 +1,244 @@
+diff --git a/dist/CatalogCounselor.d.ts b/dist/CatalogCounselor.d.ts
+index ac7cb0db0ed7715141b667bc6104471e421134b0..5e07e3915ca4bd1f206adb6492c0b6be0a633aa0 100644
+--- a/dist/CatalogCounselor.d.ts
++++ b/dist/CatalogCounselor.d.ts
+@@ -6,12 +6,14 @@ export type CatalogContainer = {
+     filePath: string;
+     catalog?: Catalog;
+     catalogs?: Catalogs;
++    overrides?: Catalog;
+ };
+ export declare class CatalogCounselor {
+     private filePath;
+     private entries;
+     private referencedEntries;
+     private referenceIssues;
++    private overrideReferences;
+     private fileContent?;
+     constructor(options: MainOptions);
+     private addReferencedCatalogEntry;
+diff --git a/dist/CatalogCounselor.js b/dist/CatalogCounselor.js
+index 85df4b6add89e5f11368604e830757e794b328bf..6f73b4ce294373ba40088d74f33671ac7dc64830 100644
+--- a/dist/CatalogCounselor.js
++++ b/dist/CatalogCounselor.js
+@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
+ import { ROOT_WORKSPACE_NAME } from './constants.js';
+ import { JsonCatalogPeeker } from './JsonCatalogPeeker.js';
+ import { PackagePeeker } from './PackagePeeker.js';
+-import { extractCatalogReferences, parseCatalog } from './util/catalog.js';
++import { extractCatalogReferences, getOverrideCatalogReferences, parseCatalog, } from './util/catalog.js';
+ import { extname } from './util/path.js';
+ import { YamlCatalogPeeker } from './YamlCatalogPeeker.js';
+ export class CatalogCounselor {
+@@ -10,10 +10,14 @@ export class CatalogCounselor {
+     entries = new Set();
+     referencedEntries = new Set();
+     referenceIssues = [];
++    overrideReferences = [];
+     fileContent;
+     constructor(options) {
+         this.filePath = options.catalog.filePath;
+         this.entries = parseCatalog(options.catalog);
++        this.overrideReferences = getOverrideCatalogReferences(options.catalog.overrides);
++        for (const reference of this.overrideReferences)
++            this.addReference(reference);
+     }
+     addReferencedCatalogEntry(entryName) {
+         this.referencedEntries.add(entryName);
+@@ -23,14 +27,18 @@ export class CatalogCounselor {
+     }
+     addWorkspace({ name: workspace, manifest, manifestPath: filePath, manifestStr, }) {
+         const catalogReferences = extractCatalogReferences(manifest);
++        if (workspace === ROOT_WORKSPACE_NAME) {
++            for (const reference of getOverrideCatalogReferences(manifest.pnpm?.overrides))
++                catalogReferences.push(reference);
++        }
+         if (catalogReferences.length === 0)
+             return;
+         const peeker = new PackagePeeker(manifestStr);
+-        for (const { catalogName, packageName } of catalogReferences) {
++        for (const { catalogName, packageName, selector } of catalogReferences) {
+             const catalogEntryName = `${catalogName}:${packageName}`;
+             this.addReferencedCatalogEntry(catalogEntryName);
+             if (!this.entries.has(catalogEntryName)) {
+-                const pos = peeker.getCatalogReferenceLocation(packageName, catalogName);
++                const pos = peeker.getCatalogReferenceLocation(selector ?? packageName, catalogName);
+                 this.referenceIssues.push({
+                     type: 'catalogReferences',
+                     filePath,
+@@ -47,11 +55,12 @@ export class CatalogCounselor {
+         const filePath = this.filePath;
+         const workspace = ROOT_WORKSPACE_NAME;
+         const catalogIssues = [];
+-        if (this.entries.size > 0) {
++        const overrideReferenceIssues = [];
++        if (this.entries.size > 0 || this.overrideReferences.length > 0) {
+             this.fileContent = await readFile(filePath, 'utf-8');
+             const isYaml = ['.yml', '.yaml'].includes(extname(filePath));
+-            const Peeker = isYaml ? YamlCatalogPeeker : JsonCatalogPeeker;
+-            const peeker = new Peeker(this.fileContent);
++            const yamlPeeker = isYaml ? new YamlCatalogPeeker(this.fileContent) : undefined;
++            const peeker = yamlPeeker ?? new JsonCatalogPeeker(this.fileContent);
+             for (const entry of this.entries.keys()) {
+                 if (!this.referencedEntries.has(entry)) {
+                     const [parentSymbol, symbol] = entry.split(':');
+@@ -62,7 +71,21 @@ export class CatalogCounselor {
+                     catalogIssues.push({ type: 'catalog', filePath, workspace, symbol, parentSymbol, fixes, ...pos });
+                 }
+             }
++            for (const { catalogName, packageName, selector } of this.overrideReferences) {
++                if (this.entries.has(`${catalogName}:${packageName}`))
++                    continue;
++                const pos = yamlPeeker?.getOverrideCatalogReferenceLocation(selector);
++                overrideReferenceIssues.push({
++                    type: 'catalogReferences',
++                    filePath,
++                    workspace,
++                    symbol: packageName,
++                    parentSymbol: catalogName,
++                    fixes: [],
++                    ...pos,
++                });
++            }
+         }
+-        return [...catalogIssues, ...this.referenceIssues];
++        return [...catalogIssues, ...this.referenceIssues, ...overrideReferenceIssues];
+     }
+ }
+diff --git a/dist/YamlCatalogPeeker.d.ts b/dist/YamlCatalogPeeker.d.ts
+index 30c12ce90e6fc4d408b13a6ade12e992a138af3a..957d5e911ac2ad97bd0bce02cf3f261f4f5fbad2 100644
+--- a/dist/YamlCatalogPeeker.d.ts
++++ b/dist/YamlCatalogPeeker.d.ts
+@@ -9,4 +9,8 @@ export declare class YamlCatalogPeeker {
+         line: number;
+         col: number;
+     } | undefined;
++    getOverrideCatalogReferenceLocation(selector: string): {
++        line: number;
++        col: number;
++    } | undefined;
+ }
+diff --git a/dist/YamlCatalogPeeker.js b/dist/YamlCatalogPeeker.js
+index a3660dbbb16cc33937fc02834e7581132ea47bef..5901f4cf413951320df65078201ae0ebb9e7119c 100644
+--- a/dist/YamlCatalogPeeker.js
++++ b/dist/YamlCatalogPeeker.js
+@@ -22,6 +22,9 @@ export class YamlCatalogPeeker {
+             else if (line.startsWith('catalogs:')) {
+                 this.sections.catalogs = i;
+             }
++            else if (line.startsWith('overrides:')) {
++                this.sections.overrides = i;
++            }
+         }
+         this.ready = true;
+     }
+@@ -63,4 +66,18 @@ export class YamlCatalogPeeker {
+             }
+         }
+     }
++    getOverrideCatalogReferenceLocation(selector) {
++        if (!this.ready)
++            this.init();
++        const startLine = this.sections.overrides;
++        if (typeof startLine === 'undefined')
++            return;
++        for (let i = startLine + 1; i < this.lines.length; i++) {
++            const line = this.lines[i];
++            if (!line.startsWith('  '))
++                break;
++            if (matchesKey(line, '  ', selector))
++                return { line: i + 1, col: line.indexOf(selector) + 1 };
++        }
++    }
+ }
+diff --git a/dist/util/catalog.d.ts b/dist/util/catalog.d.ts
+index 1788b677af9934b410507fcad85c158c87c1c176..115698d0cf537d3849e5ad469065a396d3da3b5d 100644
+--- a/dist/util/catalog.d.ts
++++ b/dist/util/catalog.d.ts
+@@ -4,8 +4,13 @@ export declare const DEFAULT_CATALOG = "default";
+ export type CatalogReference = {
+     catalogName: string;
+     packageName: string;
++    selector?: string;
++};
++export type OverrideCatalogReference = CatalogReference & {
++    selector: string;
+ };
+ export declare const getCatalogReference: (specifier: string) => CatalogReference | undefined;
+ export declare const getCatalogContainer: (cwd: string, manifest: PackageJson, manifestPath: string, pnpmWorkspacePath?: string, pnpmWorkspace?: any) => Promise<CatalogContainer>;
+ export declare const parseCatalog: (container: CatalogContainer) => Set<string>;
++export declare const getOverrideCatalogReferences: (overrides: Record<string, string> | undefined) => OverrideCatalogReference[];
+ export declare const extractCatalogReferences: (manifest: PackageJson) => CatalogReference[];
+diff --git a/dist/util/catalog.js b/dist/util/catalog.js
+index 9616152aead2b349d06bb21f3ebd509bf583aed8..2b07ba27976a963ea41358dd934f29a81c7aa9b6 100644
+--- a/dist/util/catalog.js
++++ b/dist/util/catalog.js
+@@ -27,7 +27,7 @@ export const getCatalogContainer = async (cwd, manifest, manifestPath, pnpmWorks
+         yarnWorkspace?.catalogs ??
+         manifest.catalogs ??
+         ((!Array.isArray(manifest.workspaces) && manifest.workspaces?.catalogs) || {});
+-    return { filePath, catalog, catalogs };
++    return { filePath, catalog, catalogs, overrides: pnpmWorkspace?.overrides };
+ };
+ const extractEntries = (catalog) => {
+     if (catalog && typeof catalog === 'object')
+@@ -56,23 +56,43 @@ export const parseCatalog = (container) => {
+             entries.add(id);
+     return entries;
+ };
++const OVERRIDE_DELIMITER = /[^ |@]>/;
++const toCatalogReference = (packageName, version) => {
++    if (typeof version !== 'string' || !version.startsWith('catalog:'))
++        return;
++    return { catalogName: version.slice('catalog:'.length) || DEFAULT_CATALOG, packageName };
++};
++const collectCatalogReferences = (dependencies, catalogReferences) => {
++    if (!dependencies)
++        return;
++    for (const [packageName, version] of Object.entries(dependencies)) {
++        const reference = toCatalogReference(packageName, version);
++        if (reference)
++            catalogReferences.push(reference);
++    }
++};
++export const getOverrideCatalogReferences = (overrides) => {
++    const catalogReferences = [];
++    if (!overrides)
++        return catalogReferences;
++    for (const [selector, version] of Object.entries(overrides)) {
++        const delimiterIndex = selector.search(OVERRIDE_DELIMITER);
++        const target = delimiterIndex === -1 ? selector : selector.slice(delimiterIndex + 2);
++        const packageName = getPackageNameFromModuleSpecifier(target);
++        if (!packageName)
++            continue;
++        const reference = toCatalogReference(packageName, version);
++        if (reference)
++            catalogReferences.push({ ...reference, selector });
++    }
++    return catalogReferences;
++};
+ export const extractCatalogReferences = (manifest) => {
+     const catalogReferences = [];
+-    const checkDependencies = (dependencies) => {
+-        if (!dependencies)
+-            return;
+-        for (const [name, version] of Object.entries(dependencies)) {
+-            if (typeof version === 'string' && version.startsWith('catalog:')) {
+-                const catalogName = version.slice('catalog:'.length) || DEFAULT_CATALOG;
+-                catalogReferences.push({ catalogName, packageName: name });
+-            }
+-        }
+-    };
+-    checkDependencies(manifest.dependencies);
+-    checkDependencies(manifest.devDependencies);
+-    checkDependencies(manifest.peerDependencies);
+-    checkDependencies(manifest.optionalDependencies);
+-    checkDependencies(manifest.resolutions);
+-    checkDependencies(manifest.pnpm?.overrides);
++    collectCatalogReferences(manifest.dependencies, catalogReferences);
++    collectCatalogReferences(manifest.devDependencies, catalogReferences);
++    collectCatalogReferences(manifest.peerDependencies, catalogReferences);
++    collectCatalogReferences(manifest.optionalDependencies, catalogReferences);
++    collectCatalogReferences(manifest.resolutions, catalogReferences);
+     return catalogReferences;
+ };
