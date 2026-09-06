@@ -97,6 +97,51 @@ it.effect("returns bounded structural preview snapshot failures", () =>
   ).pipe(Effect.provide(TestLayer)),
 );
 
+it.effect("returns a typed click lookup reason through the MCP tool", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const locator = "role=button[name='request-secret']";
+      const server = yield* McpServer.McpServer;
+      const broker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
+      const events = yield* broker.connect({
+        clientId: "mcp-click-failure-client",
+        environmentId,
+      });
+      yield* Stream.runForEach(events, (event) =>
+        event.type === "connected"
+          ? Effect.void
+          : broker.respond({
+              clientId: "mcp-click-failure-client",
+              connectionId: event.connectionId,
+              requestId: event.request.requestId,
+              ok: false,
+              error: {
+                _tag: "PreviewAutomationTargetLookupError",
+                message: "The preview click target is disabled.",
+                detail: { failureKind: "disabled" },
+              },
+            }),
+      ).pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+
+      const result = yield* server
+        .callTool({ name: "preview_click", arguments: { locator } })
+        .pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
+
+      expect(result.isError).toBe(true);
+      expect(result.content).toEqual([
+        {
+          type: "text",
+          text: `Preview automation click found locator (${locator.length} characters), but it is disabled.`,
+        },
+      ]);
+    }),
+  ).pipe(Effect.provide(TestLayer)),
+);
+
 it.effect("terminates HTTP MCP sessions with DELETE", () =>
   Effect.scoped(
     Effect.gen(function* () {

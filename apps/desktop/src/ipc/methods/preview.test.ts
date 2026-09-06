@@ -154,6 +154,24 @@ describe("preview IPC methods", () => {
     }),
   );
 
+  effectIt.effect("returns typed click outcomes across the preview IPC handler", () =>
+    Effect.gen(function* () {
+      const result = {
+        _tag: "NotSent",
+        reason: "target-disabled",
+      } as const;
+      const manager = PreviewManager.PreviewManager.of({
+        automationClick: () => Effect.succeed(result),
+      } as unknown as PreviewManager.PreviewManager["Service"]);
+
+      expect(
+        yield* PreviewIpc.automationClick
+          .handler({ tabId: "tab-1", input: { locator: "role=button[name='Send']" } })
+          .pipe(Effect.provideService(PreviewManager.PreviewManager, manager)),
+      ).toEqual(result);
+    }),
+  );
+
   it("keeps the public automation status tab id limit", () => {
     const encode = Schema.encodeUnknownSync(PreviewAutomationStatus);
     const tabId = "t".repeat(129);

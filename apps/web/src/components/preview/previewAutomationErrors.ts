@@ -1,4 +1,5 @@
 import {
+  type DesktopPreviewAutomationClickResult,
   EnvironmentId,
   type PreviewAutomationHost,
   PreviewAutomationOperation,
@@ -134,6 +135,70 @@ export class PreviewAutomationTargetNotEditableHostError extends Schema.TaggedEr
   }
 }
 
+const PreviewAutomationTargetHostFields = {
+  requestId: TrimmedNonEmptyString,
+  operation: PreviewAutomationOperation,
+  environmentId: EnvironmentId,
+  threadId: ThreadId,
+  tabId: Schema.NullOr(PreviewTabId),
+};
+
+export class PreviewAutomationTargetLookupHostError extends Schema.TaggedErrorClass<PreviewAutomationTargetLookupHostError>()(
+  "PreviewAutomationTargetLookupHostError",
+  {
+    ...PreviewAutomationTargetHostFields,
+    failureKind: Schema.Literals(["missing", "hidden", "disabled", "ambiguous"]),
+    matchCount: Schema.optional(Schema.Int.check(Schema.isGreaterThan(0))),
+  },
+) {
+  get responseTag() {
+    return "PreviewAutomationTargetLookupError" as const;
+  }
+
+  override get message(): string {
+    if (this.failureKind === "hidden") return "The preview click target is not visible.";
+    if (this.failureKind === "disabled") return "The preview click target is disabled.";
+    if (this.failureKind === "ambiguous") {
+      return this.matchCount === undefined
+        ? "The preview click target matched multiple elements."
+        : `The preview click target matched ${this.matchCount} elements.`;
+    }
+    return "The preview click target was not found.";
+  }
+}
+
+export function confirmPreviewAutomationClickTarget(
+  result: DesktopPreviewAutomationClickResult | void,
+  context: PreviewAutomationOperationContext & { readonly operation: "click" },
+): DesktopPreviewAutomationClickResult | void {
+  if (result?._tag !== "NotSent") return result;
+  switch (result.reason) {
+    case "target-missing":
+      throw new PreviewAutomationTargetLookupHostError({
+        ...context,
+        failureKind: "missing",
+      });
+    case "target-hidden":
+      throw new PreviewAutomationTargetLookupHostError({
+        ...context,
+        failureKind: "hidden",
+      });
+    case "target-disabled":
+      throw new PreviewAutomationTargetLookupHostError({
+        ...context,
+        failureKind: "disabled",
+      });
+    case "target-ambiguous":
+      throw new PreviewAutomationTargetLookupHostError({
+        ...context,
+        failureKind: "ambiguous",
+        matchCount: result.matchCount,
+      });
+    default:
+      throw new PreviewAutomationOperationError({ ...context, cause: result });
+  }
+}
+
 const targetNotEditableDiagnostics = (
   cause: unknown,
 ): {
@@ -211,6 +276,7 @@ export const PreviewAutomationHostError = Schema.Union([
   PreviewAutomationViewportTimeoutError,
   PreviewAutomationTargetUnavailableError,
   PreviewAutomationRecordingNotActiveError,
+  PreviewAutomationTargetLookupHostError,
   PreviewAutomationTargetNotEditableHostError,
   PreviewAutomationOperationError,
 ]);

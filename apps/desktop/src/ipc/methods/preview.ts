@@ -2,6 +2,7 @@ import {
   DesktopPreviewAnnotationThemeInputSchema,
   DesktopPreviewArtifactInputSchema,
   DesktopPreviewAutomationClickInputSchema,
+  DesktopPreviewAutomationClickResultSchema,
   DesktopPreviewAutomationEvaluateInputSchema,
   DesktopPreviewAutomationPressInputSchema,
   DesktopPreviewAutomationScrollInputSchema,
@@ -400,10 +401,10 @@ export const automationSnapshot = DesktopIpc.makeIpcMethod({
 export const automationClick = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PREVIEW_AUTOMATION_CLICK_CHANNEL,
   payload: DesktopPreviewAutomationClickInputSchema,
-  result: Schema.Void,
+  result: DesktopPreviewAutomationClickResultSchema,
   handler: Effect.fn("desktop.ipc.preview.automationClick")(function* ({ tabId, input }) {
     const manager = yield* PreviewManager.PreviewManager;
-    yield* manager.automationClick(tabId, input);
+    return yield* manager.automationClick(tabId, input);
   }),
 });
 

@@ -6,6 +6,7 @@ import {
   PreviewAutomationInvalidSelectorError,
   PreviewAutomationMalformedResponseError,
   PreviewAutomationNoAvailableHostError,
+  PreviewAutomationTargetLookupError,
   PreviewAutomationTargetNotEditableError,
   PreviewTabId,
   ProviderInstanceId,
@@ -400,6 +401,55 @@ it.effect("classifies a remote non-editable target without collapsing it to exec
         remoteTag: "PreviewAutomationTargetNotEditableError",
       });
       expect(error.message).toBe("Preview automation type requires an editable focused element.");
+    }),
+  );
+});
+
+it.effect("preserves a remote click lookup reason without exposing the locator", () => {
+  const locator = "role=button[name='request-secret']";
+  const remoteError = {
+    _tag: "PreviewAutomationTargetLookupError",
+    message: "The preview click target is not visible.",
+    detail: { failureKind: "hidden" },
+  } as const;
+
+  return Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* makeBroker;
+      const requests = requestsFrom(yield* broker.connect(makeHost()));
+      yield* Stream.runForEach(requests, (request) =>
+        broker.respond({
+          clientId: "client-1",
+          connectionId: request.connectionId,
+          requestId: request.requestId,
+          ok: false,
+          error: remoteError,
+        }),
+      ).pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+
+      const error = yield* broker
+        .invoke<void>({
+          scope,
+          operation: "click",
+          input: { locator },
+          tabId: PreviewTabId.make("tab-1"),
+        })
+        .pipe(Effect.flip);
+
+      expect(error).toBeInstanceOf(PreviewAutomationTargetLookupError);
+      expect(error).toMatchObject({
+        operation: "click",
+        failureKind: "hidden",
+        selectorKind: "locator",
+        selectorLength: locator.length,
+        remoteTag: "PreviewAutomationTargetLookupError",
+      });
+      expect(error.message).toBe(
+        `Preview automation click found locator (${locator.length} characters), but it is not visible.`,
+      );
+      expect(error.message).not.toContain("request-secret");
+      expect(error.cause).toBe(remoteError);
     }),
   );
 });

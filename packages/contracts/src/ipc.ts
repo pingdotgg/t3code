@@ -1027,6 +1027,32 @@ export const DesktopPreviewAutomationClickInputSchema = Schema.Struct({
   input: PreviewAutomationClickInput,
 });
 
+export const DesktopPreviewAutomationClickResultSchema = Schema.Union([
+  Schema.TaggedStruct("Dispatched", {}),
+  Schema.TaggedStruct("NotSent", {
+    reason: Schema.Literal("tab-not-visible"),
+  }),
+  Schema.TaggedStruct("NotSent", {
+    reason: Schema.Literal("timeout"),
+    timeoutMs: Schema.Int.check(Schema.isGreaterThan(0)),
+  }),
+  Schema.TaggedStruct("NotSent", {
+    reason: Schema.Literal("target-missing"),
+  }),
+  Schema.TaggedStruct("NotSent", {
+    reason: Schema.Literal("target-hidden"),
+  }),
+  Schema.TaggedStruct("NotSent", {
+    reason: Schema.Literal("target-disabled"),
+  }),
+  Schema.TaggedStruct("NotSent", {
+    reason: Schema.Literal("target-ambiguous"),
+    matchCount: Schema.Int.check(Schema.isGreaterThan(0)),
+  }),
+]);
+export type DesktopPreviewAutomationClickResult =
+  typeof DesktopPreviewAutomationClickResultSchema.Type;
+
 export const DesktopPreviewAutomationTypeInputSchema = Schema.Struct({
   tabId: DesktopPreviewTabIdSchema,
   input: PreviewAutomationTypeInput,
@@ -1245,7 +1271,10 @@ export interface DesktopPreviewBridge {
   automation: {
     status: (tabId: string) => Promise<DesktopPreviewAutomationStatus>;
     snapshot: (tabId: string) => Promise<PreviewAutomationSnapshot>;
-    click: (tabId: string, input: PreviewAutomationClickInput) => Promise<void>;
+    click: (
+      tabId: string,
+      input: PreviewAutomationClickInput,
+    ) => Promise<DesktopPreviewAutomationClickResult | void>;
     type: (tabId: string, input: PreviewAutomationTypeInput) => Promise<void>;
     press: (tabId: string, input: PreviewAutomationPressInput) => Promise<void>;
     scroll: (tabId: string, input: PreviewAutomationScrollInput) => Promise<void>;
