@@ -253,7 +253,7 @@ export function ComposerEditor({
         autoFocus={props.autoFocus ?? false}
         autoCorrect={props.autoCorrect ?? true}
         spellCheck={props.spellCheck ?? true}
-        style={{ flex: 1, minHeight: 0 }}
+        style={{ flex: 1, minHeight: 0, padding: 2.5 }}
         onComposerChange={(event) => {
           const acknowledgedEventCount = acceptNativeEvent(
             event.nativeEvent.eventCount,
