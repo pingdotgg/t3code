@@ -75,7 +75,7 @@ export function normalizeBaseFontSize(value: number | null | undefined): number 
   return Math.min(MAX_BASE_FONT_SIZE, Math.max(MIN_BASE_FONT_SIZE, Math.round(value)));
 }
 
-export function normalizeCodeFontSize(value: number | null | undefined): number {
+function normalizeCodeFontSize(value: number | null | undefined): number {
   if (typeof value !== "number" || !Number.isFinite(value)) {
     return DEFAULT_CODE_FONT_SIZE;
   }
@@ -83,18 +83,18 @@ export function normalizeCodeFontSize(value: number | null | undefined): number 
   return Math.min(MAX_CODE_FONT_SIZE, Math.max(MIN_CODE_FONT_SIZE, Math.round(value)));
 }
 
-export function normalizeCodeWordBreak(value: boolean | null | undefined): boolean {
+function normalizeCodeWordBreak(value: boolean | null | undefined): boolean {
   return value === true;
 }
 
 /** Terminal size derived from base: 10.5pt at base 16, snapped to 0.5pt steps. */
-export function deriveTerminalFontSize(baseFontSize: number): number {
+function deriveTerminalFontSize(baseFontSize: number): number {
   const scale = normalizeBaseFontSize(baseFontSize) / DEFAULT_BASE_FONT_SIZE;
   return normalizeTerminalFontSize(Math.round(DEFAULT_TERMINAL_FONT_SIZE * scale * 2) / 2);
 }
 
 /** Code/diff size derived from base: 12pt at base 16. */
-export function deriveCodeFontSize(baseFontSize: number): number {
+function deriveCodeFontSize(baseFontSize: number): number {
   const scale = normalizeBaseFontSize(baseFontSize) / DEFAULT_BASE_FONT_SIZE;
   return normalizeCodeFontSize(Math.round(DEFAULT_CODE_FONT_SIZE * scale));
 }

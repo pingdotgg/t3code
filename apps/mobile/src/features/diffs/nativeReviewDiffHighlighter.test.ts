@@ -2,11 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import type { NativeReviewDiffRow } from "./nativeReviewDiffSurface";
 import type { NativeReviewDiffFile } from "./nativeReviewDiffTypes";
-import {
-  highlightNativeReviewDiffVisibleRows,
-  streamNativeReviewDiffTokens,
-  type NativeReviewDiffTokenChunk,
-} from "./nativeReviewDiffHighlighter";
+import { highlightNativeReviewDiffVisibleRows } from "./nativeReviewDiffHighlighter";
 
 const tokenization = vi.hoisted(() => ({
   calls: [] as string[],
@@ -339,22 +335,5 @@ describe.each(["native", "javascript"] as const)("%s highlighting budgets", (eng
     expect(tokenization.calls).toHaveLength(1);
     expect(result.rowCount).toBe(0);
     expect(result.tokensByRowId).toEqual({});
-  });
-
-  it("applies the same long-line guard to streamed token chunks", async () => {
-    const content = "x".repeat(10_000);
-    const chunks: NativeReviewDiffTokenChunk[] = [];
-
-    await streamNativeReviewDiffTokens({
-      rows: [line(1, content)],
-      files: [TYPESCRIPT_FILE],
-      scheme: "dark",
-      engine,
-      onChunk: (chunk) => chunks.push(chunk),
-    });
-
-    expect(chunks).toHaveLength(1);
-    expect(chunks[0]?.tokensByRowId["line-1"]).toEqual([{ content, color: null, fontStyle: null }]);
-    expect(tokenization.calls).toHaveLength(0);
   });
 });

@@ -100,7 +100,12 @@ export class GitManager extends Context.Service<
       readonly cwd: string;
       readonly branch: string;
     }) => Effect.Effect<
-      { readonly state: "open" | "closed" | "merged"; readonly updatedAt: string | null } | null,
+      {
+        readonly state: "open" | "closed" | "merged";
+        readonly updatedAt: string | null;
+        readonly closedAt?: string | null;
+        readonly mergedAt?: string | null;
+      } | null,
       GitManagerServiceError
     >;
     readonly invalidateLocalStatus: (cwd: string) => Effect.Effect<void, never>;
@@ -171,6 +176,8 @@ interface OpenPrInfo {
 interface PullRequestInfo extends OpenPrInfo, PullRequestHeadRemoteInfo {
   state: "open" | "closed" | "merged";
   isDraft?: boolean;
+  closedAt?: string | null;
+  mergedAt?: string | null;
   updatedAt: Option.Option<DateTime.Utc>;
 }
 
@@ -406,6 +413,8 @@ function toPullRequestInfo(summary: ChangeRequest): PullRequestInfo {
     headRefName: summary.headRefName,
     state: summary.state ?? "open",
     ...(summary.isDraft === true ? { isDraft: true } : {}),
+    closedAt: summary.closedAt ?? null,
+    mergedAt: summary.mergedAt ?? null,
     updatedAt: summary.updatedAt,
     ...(summary.isCrossRepository !== undefined
       ? { isCrossRepository: summary.isCrossRepository }
@@ -2157,7 +2166,12 @@ export const make = Effect.gen(function* () {
       return null;
     }
     const statusPr = toStatusPr(latest);
-    return { state: statusPr.state, updatedAt: statusPr.updatedAt };
+    return {
+      state: statusPr.state,
+      updatedAt: statusPr.updatedAt,
+      closedAt: latest.closedAt ?? null,
+      mergedAt: latest.mergedAt ?? null,
+    };
   });
   const invalidateLocalStatus: GitManager["Service"]["invalidateLocalStatus"] = Effect.fn(
     "invalidateLocalStatus",

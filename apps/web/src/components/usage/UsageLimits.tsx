@@ -20,6 +20,7 @@ import {
   type LimitPace,
   paceOf,
   providerLimitsLabel,
+  remainingPercent,
 } from "@t3tools/shared/usageLimits";
 import { GaugeIcon, TrendingDownIcon, TrendingUpIcon } from "lucide-react";
 import { Fragment, useState } from "react";
@@ -95,14 +96,16 @@ function WindowBar({
   readonly now: number;
 }) {
   const timestampFormat = usePrimarySettings((settings) => settings.timestampFormat);
-  const used = Math.max(0, Math.min(100, window.usedPercent));
+  const remaining = remainingPercent(window);
   const elapsed = elapsedShare(window, now);
+  // The fill is quota left, so the even-spending mark is the time left.
+  const timeLeft = elapsed === null ? null : Math.round((1 - elapsed) * 100);
   const resetsIn = formatResetsIn(window, now);
   const resetsAt = window.resetsAt
     ? formatUpcomingTimestamp(window.resetsAt, timestampFormat, now)
     : null;
-  const summary = `${window.label}: ${Math.round(used)}% used${
-    elapsed === null ? "" : `, ${Math.round(elapsed * 100)}% of the window elapsed`
+  const summary = `${window.label}: ${remaining}% left${
+    timeLeft === null ? "" : `, ${timeLeft}% of the window left`
   }${resetsIn ? `, ${resetsIn}` : ""}`;
 
   return (
@@ -118,27 +121,26 @@ function WindowBar({
         }
       >
         <div className="absolute inset-x-0 inset-y-1.5 rounded-full bg-muted" />
-        {used > 0 ? (
+        {remaining > 0 ? (
           <div
             className="absolute inset-y-1.5 left-0 rounded-full"
-            style={{ width: `${used}%`, backgroundColor: color }}
+            style={{ width: `${remaining}%`, backgroundColor: color }}
           />
         ) : null}
-        {elapsed !== null ? (
+        {timeLeft !== null ? (
           <span
             aria-hidden
             className="absolute inset-y-0.5 w-px -translate-x-1/2 bg-foreground/60"
-            style={{ left: `${elapsed * 100}%` }}
+            style={{ left: `${timeLeft}%` }}
           />
         ) : null}
       </TooltipTrigger>
       <TooltipPopup side="top" className="max-w-72 text-xs">
         <div className="flex flex-col gap-0.5">
           <span className="text-foreground">
-            {Math.round(used)}% used
-            {elapsed !== null ? ` · ${Math.round(elapsed * 100)}% of the window elapsed` : ""}
+            {remaining}% left{timeLeft !== null ? ` · ${timeLeft}% of the window left` : ""}
           </span>
-          {elapsed !== null ? (
+          {timeLeft !== null ? (
             <span className="text-muted-foreground">The line is where even spending would be.</span>
           ) : null}
           {resetsAt ? (
@@ -153,24 +155,31 @@ function WindowBar({
   );
 }
 
-/** One account's windows as rows: label and percent, bar, pace and countdown. */
-function LimitWindows({
+/**
+ * One account's windows as rows: label and percent, bar, pace and countdown.
+ * Compact rows fit the composer panel with narrower columns.
+ */
+export function LimitWindows({
   driver,
   windows,
   now,
+  compact = false,
 }: {
   readonly driver: ServerProvider["driver"];
   readonly windows: ReadonlyArray<ServerProviderUsageWindow>;
   readonly now: number;
+  readonly compact?: boolean;
 }) {
   const color = barColor(driver);
   return (
-    <div className="grid grid-cols-[11rem_minmax(0,1fr)_7rem] gap-x-4 gap-y-1">
-      {windows.map((window, index) => {
-        // Windows that reset together show the countdown once.
-        const previous = windows[index - 1];
-        const sharesReset =
-          previous?.resetsAt !== undefined && previous.resetsAt === window.resetsAt;
+    <div
+      className={
+        compact
+          ? "grid grid-cols-[minmax(0,9rem)_minmax(3rem,1fr)_auto] gap-x-3 gap-y-0.5"
+          : "grid grid-cols-[11rem_minmax(0,1fr)_7rem] gap-x-4 gap-y-1"
+      }
+    >
+      {windows.map((window) => {
         const pace = paceOf(window, now);
         const resetsIn = formatResetsIn(window, now);
         return (
@@ -178,13 +187,13 @@ function LimitWindows({
             <span className="flex min-w-0 items-center gap-2 text-xs">
               <span className="truncate text-muted-foreground">{window.label}</span>
               <span className="ms-auto shrink-0 font-medium text-foreground tabular-nums">
-                {Math.round(window.usedPercent)}%
+                {remainingPercent(window)}% left
               </span>
             </span>
             <WindowBar color={color} window={window} now={now} />
-            <span className="flex items-center gap-2 text-xs text-muted-foreground tabular-nums">
+            <span className="flex items-center gap-2 text-xs whitespace-nowrap text-muted-foreground tabular-nums">
               {pace ? <PaceIcon pace={pace} /> : null}
-              <span className="ms-auto shrink-0">{sharesReset ? "" : (resetsIn ?? "")}</span>
+              <span className="ms-auto shrink-0">{resetsIn ?? ""}</span>
             </span>
           </Fragment>
         );
@@ -292,7 +301,7 @@ const OUTCOME_TEXT: Record<ProviderConsumeResetCreditOutcome, string> = {
  * Banked reset credits with a confirmed redeem action. Redeeming spends a
  * credit the provider granted the user, so it never fires on a bare click.
  */
-function ResetCredits({
+export function ResetCredits({
   environmentId,
   instanceId,
   credits,
@@ -341,7 +350,7 @@ function ResetCredits({
       <span className="tabular-nums">{summary}</span>
       {credits.availableCount > 0 ? (
         <Button size="xs" variant="outline" disabled={busy} onClick={() => setConfirming(true)}>
-          {busy ? "Using credit…" : "Use a reset credit"}
+          {busy ? "Using…" : "Use reset"}
         </Button>
       ) : null}
       {status ? <span className="text-foreground">{status}</span> : null}
