@@ -332,7 +332,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   readonly snoozePresetMinute: string;
   readonly project: EnvironmentProject | null;
   readonly projectTitle?: string;
-  readonly providerDriver: string | null;
+  /** Provider drivers back to front: earlier owners first, current last.
+      Empty when the environment's config has not resolved yet. */
+  readonly providerDrivers: ReadonlyArray<string>;
   /** Which machine hosts the thread. Null when only one environment is
       connected — repeating the same label on every row is noise. Mirrors
       the web sidebar's remote-environment cloud icon, but as text since
@@ -810,9 +812,20 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
             #{pr.label}
           </Text>
         ) : null}
-        {props.providerDriver ? (
-          <View className="opacity-60">
-            <ProviderIcon provider={props.providerDriver} size={14} />
+        {props.providerDrivers.length > 0 ? (
+          // Earlier owners peek out behind the current provider so a
+          // handed-off thread shows where it has been. Mirrors the web
+          // sidebar's stack: smaller and dimmer rather than ringed, since
+          // the row surface varies.
+          <View className="flex-row items-center">
+            {props.providerDrivers.slice(0, -1).map((driver, index) => (
+              <View key={`${driver}:${index}`} className="-mr-1 opacity-30">
+                <ProviderIcon provider={driver} size={12} />
+              </View>
+            ))}
+            <View className="opacity-60">
+              <ProviderIcon provider={props.providerDrivers.at(-1)} size={14} />
+            </View>
           </View>
         ) : null}
       </View>

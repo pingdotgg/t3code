@@ -5476,6 +5476,9 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
             yield* rememberSnapshotMessage({
               createdBy: turnInput.message.createdBy,
               creationSource: turnInput.message.creationSource,
+              ...(turnInput.message.scheduledTaskId === undefined
+                ? {}
+                : { scheduledTaskId: turnInput.message.scheduledTaskId }),
               id: turnInput.message.messageId,
               threadId: turnInput.threadId,
               runId: turnInput.runId,

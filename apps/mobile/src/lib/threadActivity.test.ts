@@ -7,12 +7,14 @@ import {
   ProviderThreadId,
   RunId,
   RunAttemptId,
+  ScheduledTaskId,
   ThreadId,
   TurnItemId,
   type OrchestrationV2RunAttempt,
   type OrchestrationV2ProjectedTurnItem,
   type OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
+import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
 import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -118,6 +120,27 @@ function assistantMessage(updatedAt = "2026-06-20T00:00:03.000Z") {
 }
 
 describe("buildThreadFeed", () => {
+  it("recognizes automation attribution after projecting a user message", () => {
+    const feed = buildThreadFeed([
+      projected(
+        {
+          ...userMessage(),
+          createdBy: "agent",
+          creationSource: "server",
+          scheduledTaskId: ScheduledTaskId.make("daily-audit"),
+        },
+        0,
+      ),
+    ]);
+    const messageEntry = feed.find((entry) => entry.type === "message");
+
+    expect(messageEntry).toBeDefined();
+    expect(resolveUserMessagePresentation(messageEntry!.message)).toMatchObject({
+      text: "Run checks",
+      isAutomation: true,
+    });
+  });
+
   it("adds local feedback messages to an otherwise server-authored feed", () => {
     const feed = buildThreadFeed([], {
       localMessages: [

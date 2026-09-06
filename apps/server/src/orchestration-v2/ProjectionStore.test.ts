@@ -858,6 +858,92 @@ it.layer(TestLayer)("ProjectionStoreV2", (it) => {
     }),
   );
 
+  it.effect("projects root provider owners into the shell in first-use order", () =>
+    Effect.gen(function* () {
+      const projectionStore = yield* ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const projectId = ProjectId.make("project:provider-history");
+      const threadId = ThreadId.make("thread:provider-history");
+      const claudeInstanceId = ProviderInstanceId.make("claude");
+      const claudeDriver = ProviderDriverKind.make("claudeAgent");
+      yield* projectionStore.apply({
+        id: EventId.make("event:provider-history:thread"),
+        type: "thread.created",
+        threadId,
+        occurredAt: now,
+        payload: {
+          createdBy: "user",
+          creationSource: "web",
+          id: threadId,
+          projectId,
+          title: "Provider history",
+          providerInstanceId,
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          activeProviderThreadId: null,
+          lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+          archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
+          lastVisitedAt: null,
+          deletedAt: null,
+        },
+      });
+      const providerThreads = [
+        // The root Codex conversation, then a Claude subagent it delegated to
+        // (owned by a node, so not a handoff), then the handoff target.
+        { suffix: "codex", instanceId: providerInstanceId, ownerNodeId: null, seconds: 0 },
+        {
+          suffix: "claude-subagent",
+          instanceId: claudeInstanceId,
+          ownerNodeId: NodeId.make("node:provider-history"),
+          seconds: 1,
+        },
+        { suffix: "claude", instanceId: claudeInstanceId, ownerNodeId: null, seconds: 2 },
+        // A second Codex conversation after handing back: no duplicate entry.
+        { suffix: "codex-again", instanceId: providerInstanceId, ownerNodeId: null, seconds: 3 },
+      ] as const;
+      for (const providerThread of providerThreads) {
+        const createdAt = DateTime.add(now, { seconds: providerThread.seconds });
+        yield* projectionStore.apply({
+          id: EventId.make(`event:provider-history:${providerThread.suffix}`),
+          type: "provider-thread.updated",
+          threadId,
+          driver: providerThread.instanceId === claudeInstanceId ? claudeDriver : driver,
+          occurredAt: createdAt,
+          payload: {
+            id: ProviderThreadId.make(`provider-thread:provider-history:${providerThread.suffix}`),
+            driver: providerThread.instanceId === claudeInstanceId ? claudeDriver : driver,
+            providerInstanceId: providerThread.instanceId,
+            providerSessionId: null,
+            appThreadId: threadId,
+            ownerNodeId: providerThread.ownerNodeId,
+            nativeThreadRef: null,
+            nativeConversationHeadRef: null,
+            status: "idle",
+            firstRunOrdinal: null,
+            lastRunOrdinal: null,
+            handoffIds: [],
+            forkedFrom: null,
+            createdAt,
+            updatedAt: createdAt,
+          },
+        });
+      }
+
+      const shell = (yield* projectionStore.getShellSnapshot()).threads.find(
+        (thread) => thread.id === threadId,
+      );
+      assert.deepEqual(shell?.providerInstanceHistory, [providerInstanceId, claudeInstanceId]);
+    }),
+  );
+
   it.effect("does not treat visited or marked-unread state as thread activity", () =>
     Effect.gen(function* () {
       const projectionStore = yield* ProjectionStoreV2;

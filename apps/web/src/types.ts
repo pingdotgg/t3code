@@ -12,6 +12,7 @@ import type {
   ProviderInteractionMode,
   RunId,
   RuntimeMode,
+  ScheduledTaskId,
 } from "@t3tools/contracts";
 import type {
   EnvironmentProject,
@@ -87,6 +88,7 @@ export interface ChatMessage {
   readonly streaming: boolean;
   readonly createdBy?: OrchestrationV2Actor;
   readonly creationSource?: OrchestrationV2CreationSource;
+  readonly scheduledTaskId?: ScheduledTaskId;
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly inputIntent?: OrchestrationV2UserMessageInputIntent | undefined;

@@ -89,6 +89,8 @@ export interface EnvironmentThreadShell {
   readonly pendingBackgroundTasks: ReadonlyArray<
     NonNullable<OrchestrationV2ThreadShell["pendingBackgroundTasks"]>[number]
   >;
+  /** Provider instances that have owned the root conversation, oldest first. */
+  readonly providerInstanceHistory: ReadonlyArray<ProviderInstanceId>;
   readonly itemCount: number;
   readonly visibleItemCount: number;
   readonly createdAt: string;
@@ -209,6 +211,7 @@ export function presentThreadShell(
     hasPendingUserInput: thread.pendingRuntimeRequest?.kind === "user_input",
     hasActionableProposedPlan: thread.hasActionableProposedPlan,
     pendingBackgroundTasks: thread.pendingBackgroundTasks ?? [],
+    providerInstanceHistory: thread.providerInstanceHistory ?? [],
     itemCount: thread.itemCount,
     visibleItemCount: thread.visibleItemCount,
     createdAt: iso(thread.createdAt),
@@ -236,3 +239,18 @@ export function presentThreadShell(
 }
 
 export const scopeThreadShell = presentThreadShell;
+
+const THREAD_PROVIDER_STACK_LIMIT = 3;
+
+/**
+ * Provider instances to draw in a thread row's trailing stack, back to front:
+ * the current one is always last, earlier owners precede it oldest first.
+ * Newest history wins when the thread has been handed off more times than fit.
+ */
+export function resolveThreadProviderStack(
+  thread: Pick<EnvironmentThreadShell, "providerInstanceHistory" | "modelSelection" | "runtime">,
+): ReadonlyArray<ProviderInstanceId> {
+  const current = thread.runtime?.providerInstanceId ?? thread.modelSelection.instanceId;
+  const previous = thread.providerInstanceHistory.filter((instanceId) => instanceId !== current);
+  return [...previous.slice(-(THREAD_PROVIDER_STACK_LIMIT - 1)), current];
+}
