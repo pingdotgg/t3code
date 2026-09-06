@@ -9,6 +9,8 @@ const testState = vi.hoisted(() => ({
   breakdown: "time" as "model" | "time",
 }));
 
+vi.mock("../../hooks/useNavigateBack", () => ({ useEscapeToGoBack: () => {} }));
+
 vi.mock("react", async (importOriginal) => {
   const actual = await importOriginal<typeof import("react")>();
   return {

@@ -20,6 +20,7 @@ import {
 } from "@t3tools/shared/usageMerge";
 
 import { isElectron } from "../../env";
+import { useEscapeToGoBack } from "../../hooks/useNavigateBack";
 import { cn } from "../../lib/utils";
 import { environmentPresentations } from "../../state/presentation";
 import { serverEnvironment } from "../../state/server";
@@ -91,6 +92,7 @@ function isUsageWindowDays(value: number): value is UsagePagePreferences["window
 }
 
 export function UsagePage() {
+  useEscapeToGoBack();
   const [preferences, setPreferences] = useState(readUsagePagePreferences);
   const [windowSelection, setWindowSelection] = useState(() => ({
     days: preferences.windowDays,
