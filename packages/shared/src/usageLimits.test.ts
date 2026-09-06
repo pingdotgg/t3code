@@ -485,6 +485,23 @@ describe("pools", () => {
       ["codex", 1],
     ]);
     const [session, week] = pools[0]!.windows;
+    // A member with no reset has no clock, so it does not vote on pace.
+    const untimed = collectLimitPools(
+      collectLimitAccounts(input).map((account) =>
+        account.key === "hub:b"
+          ? {
+              ...account,
+              limits: {
+                ...account.limits,
+                windows: account.limits.windows.map((w) => ({ ...w, resetsAt: undefined })),
+              },
+            }
+          : account,
+      ),
+      now,
+    );
+    // Only a votes: 80% used, 80% elapsed.
+    expect(untimed[0]?.windows[0]?.pace).toBe("on");
     // a is 80% through its window and b 60%: the pool is 70% elapsed, 60% used.
     expect(session).toMatchObject({
       id: "five_hour",

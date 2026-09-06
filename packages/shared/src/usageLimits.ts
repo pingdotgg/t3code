@@ -387,11 +387,16 @@ function poolWindows(accounts: readonly LimitAccount[], now: number): readonly L
     );
     const first = members[0]!.window;
     const usedPercent = members.reduce((sum, m) => sum + m.window.usedPercent, 0) / members.length;
-    const elapsed = members
-      .map((m) => elapsedShare(m.window, now))
-      .filter((share): share is number => share !== null);
+    // Pace compares spend against the clock, so it is judged only over the
+    // members that have a clock; a window with no reset would otherwise
+    // count as spend with no time elapsed and skew the verdict.
+    const timed = members.flatMap((m) => {
+      const share = elapsedShare(m.window, now);
+      return share === null ? [] : [{ used: m.window.usedPercent, elapsed: share }];
+    });
+    const timedUsed = timed.reduce((sum, t) => sum + t.used, 0) / timed.length;
     const meanElapsed =
-      elapsed.length > 0 ? elapsed.reduce((sum, share) => sum + share, 0) / elapsed.length : null;
+      timed.length > 0 ? timed.reduce((sum, t) => sum + t.elapsed, 0) / timed.length : null;
     const resets = members
       .flatMap((member) => {
         const at = resetMillis(member.window);
@@ -413,7 +418,7 @@ function poolWindows(accounts: readonly LimitAccount[], now: number): readonly L
       members,
       usedPercent: Math.round(usedPercent),
       remainingPercent: Math.round(100 - usedPercent),
-      pace: meanElapsed === null ? null : paceOfShares(usedPercent, meanElapsed),
+      pace: meanElapsed === null ? null : paceOfShares(timedUsed, meanElapsed),
       resets,
     };
   });
