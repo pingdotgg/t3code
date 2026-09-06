@@ -41,15 +41,6 @@ export interface ClientTracingConfig {
   readonly exportIntervalMs?: number;
 }
 
-export const ClientTracingLive = Layer.succeed(
-  Tracer.Tracer,
-  Tracer.make({
-    span(options) {
-      return activeDelegate?.span(options) ?? new Tracer.NativeSpan(options);
-    },
-  }),
-);
-
 export function configureClientTracing(config: ClientTracingConfig = {}): Promise<void> {
   if (config.exportIntervalMs === undefined && activeConfigKey !== null) {
     return pendingConfiguration;

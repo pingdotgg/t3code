@@ -1,4 +1,1 @@
-export {
-  isTransportConnectionErrorMessage,
-  sanitizeThreadErrorMessage,
-} from "@t3tools/client-runtime/errors";
+export { sanitizeThreadErrorMessage } from "@t3tools/client-runtime/errors";

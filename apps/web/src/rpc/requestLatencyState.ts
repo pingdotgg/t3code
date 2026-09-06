@@ -112,7 +112,7 @@ export function acknowledgeRpcRequest(requestId: string): void {
   setSlowRpcAckRequests(slowRequests.filter((request) => request.requestId !== requestId));
 }
 
-export function clearAllTrackedRpcRequests(): void {
+function clearAllTrackedRpcRequests(): void {
   for (const pending of pendingRpcAckRequests.values()) {
     clearTimeout(pending.timeoutId);
   }

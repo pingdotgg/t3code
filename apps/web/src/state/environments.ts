@@ -11,7 +11,6 @@ import { useMemo } from "react";
 import { environmentCatalog } from "../connection/catalog";
 import { environmentPresentations, useEnvironmentPresentation } from "./presentation";
 import { primaryEnvironmentIdAtom } from "./primaryEnvironment";
-import { useEnvironmentQuery } from "./query";
 import { relayEnvironmentDiscovery } from "./relay";
 import { usePreparedConnection } from "./session";
 
@@ -84,8 +83,4 @@ export function useEnvironmentHttpBaseUrl(environmentId: EnvironmentId | null): 
 
 export function useRelayEnvironmentDiscovery(): Discovery.RelayEnvironmentDiscoveryState {
   return useAtomValue(relayEnvironmentDiscovery.stateValueAtom);
-}
-
-export function useEnvironmentConnectionState(environmentId: EnvironmentId) {
-  return useEnvironmentQuery(environmentCatalog.stateAtom(environmentId));
 }

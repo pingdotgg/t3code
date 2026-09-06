@@ -46,7 +46,7 @@ async function withStore<A>(
 }
 
 /** Rasterizes a bitmap that is too large to inline, retrying at half size. */
-export async function downscaleProjectFavicon(
+async function downscaleProjectFavicon(
   image: { readonly mimeType: string; readonly bytes: Uint8Array<ArrayBuffer> },
   signal: AbortSignal,
 ) {

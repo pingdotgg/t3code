@@ -13,7 +13,7 @@ import {
   type BrowserDpopKey,
 } from "./dpop";
 
-export const relayDpopSignerLayer = Layer.effect(
+const relayDpopSignerLayer = Layer.effect(
   ManagedRelay.ManagedRelayDpopSigner,
   Effect.gen(function* () {
     const crypto = yield* Crypto.Crypto;

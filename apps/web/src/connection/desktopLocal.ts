@@ -17,7 +17,7 @@ import {
  * via {@link isDesktopLocalConnectionTarget}, so the convention can never drift
  * between the two.
  */
-export const DESKTOP_LOCAL_CONNECTION_ID_PREFIX = "local:";
+const DESKTOP_LOCAL_CONNECTION_ID_PREFIX = "local:";
 
 export function desktopLocalConnectionId(backendId: string): string {
   return `${DESKTOP_LOCAL_CONNECTION_ID_PREFIX}${backendId}`;

@@ -32,14 +32,6 @@ export function useAssetUrlState(
   );
 }
 
-export function useAssetUrl(
-  environmentId: EnvironmentId | null,
-  resource: AssetResource | null,
-): string | null {
-  const result = useAssetUrlState(environmentId, resource);
-  return result._tag === "Success" ? result.url : null;
-}
-
 export function useAssetUrlRefresh(
   environmentId: EnvironmentId | null,
   resource: AssetResource | null,
