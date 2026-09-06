@@ -7746,28 +7746,13 @@ export default function ChatView(props: ChatViewProps) {
     },
     [activeThreadRef, isServerThread, onDiffPanelOpen],
   );
-  const revertCheckpoints = activeThread?.checkpoints;
-  const revertHandlerRef = useRef({
-    threadKey: activeThreadKey,
-    checkpoints: revertCheckpoints,
-    handler: onRevertToTurnCount,
-  });
-  revertHandlerRef.current = {
-    threadKey: activeThreadKey,
-    checkpoints: revertCheckpoints,
-    handler: onRevertToTurnCount,
-  };
-  // A new thread or checkpoint snapshot must not retarget an old row's click.
-  const onRevertTimelineTurn = useCallback(
-    (targetTurnCount: number) => {
-      const current = revertHandlerRef.current;
-      if (current.threadKey !== activeThreadKey || current.checkpoints !== revertCheckpoints) {
-        return;
-      }
-      void current.handler(targetTurnCount);
-    },
-    [activeThreadKey, revertCheckpoints],
-  );
+  // The revert handler is read from a ref at call-time so the callback
+  // reference is fully stable and never busts TimelineRowCtx identity.
+  const onRevertToTurnCountRef = useRef(onRevertToTurnCount);
+  onRevertToTurnCountRef.current = onRevertToTurnCount;
+  const onRevertTimelineTurn = useCallback((targetTurnCount: number) => {
+    void onRevertToTurnCountRef.current(targetTurnCount);
+  }, []);
 
   // Empty state: no active thread
   if (!activeThread) {
