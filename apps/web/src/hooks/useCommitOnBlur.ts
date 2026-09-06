@@ -34,6 +34,7 @@ export function useCommitOnBlur(value: string, onCommit: (next: string) => void)
       }
     },
     onKeyDown: (event: KeyboardEvent<HTMLInputElement>) => {
+      if (event.nativeEvent.isComposing || event.keyCode === 229) return;
       if (event.key === "Enter") {
         event.preventDefault();
         (event.target as HTMLInputElement).blur();
