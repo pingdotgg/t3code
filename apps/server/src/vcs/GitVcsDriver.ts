@@ -7,11 +7,14 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import {
   GitCommandError,
+  type VcsError,
   VcsProcessExitError,
+  VcsProcessSpawnError,
   type VcsSwitchRefInput,
   type VcsSwitchRefResult,
   type VcsCreateRefInput,
@@ -420,6 +423,18 @@ function parseGitRemoteVerboseOutput(
   return remotes;
 }
 
+// Missing `git` is "not a repository," same as exit 128. Keep missing cwd as a spawn error.
+function isMissingGitExecutableError(error: VcsError): error is VcsProcessSpawnError {
+  return (
+    error._tag === "VcsProcessSpawnError" &&
+    error.cause instanceof PlatformError.PlatformError &&
+    error.cause.reason._tag === "NotFound" &&
+    error.cause.reason.module === "ChildProcess" &&
+    error.cause.reason.method === "spawn" &&
+    error.cause.reason.syscall !== "chdir"
+  );
+}
+
 const gitCommand = (
   process: VcsProcess.VcsProcess["Service"],
   operation: string,
@@ -478,7 +493,10 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         timeoutMs: 5_000,
         maxOutputBytes: 4_096,
       },
-    ).pipe(Effect.map((result) => result.exitCode === 0 && result.stdout.trim() === "true"));
+    ).pipe(
+      Effect.map((result) => result.exitCode === 0 && result.stdout.trim() === "true"),
+      Effect.catchIf(isMissingGitExecutableError, () => Effect.succeed(false)),
+    );
 
   const execute: VcsDriver.VcsDriver["Service"]["execute"] = (input) =>
     gitCommand(vcsProcess, input.operation, input.cwd, input.args, {
