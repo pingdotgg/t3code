@@ -26,7 +26,9 @@ unreadable settings with defaults.
 
 T3 Code checks the selected computer for Claude Code and Codex. If an agent is
 not installed or signed in, select its action to open a terminal with the
-correct command ready to run. Other providers can be enabled in Settings.
+correct command ready to run. Install uses the vendor's standalone installer,
+which does not need Node or npm and keeps **Update now** working in Settings.
+Other providers can be enabled in Settings.
 
 The setup terminal uses the home directory and environment configured for the
 selected provider instance. Sensitive values remain redacted in Settings and
