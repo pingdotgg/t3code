@@ -49,6 +49,21 @@ const serverExposureLayer = Layer.succeed(DesktopServerExposure.DesktopServerExp
   getAdvertisedEndpoints: Effect.succeed([]),
 } satisfies DesktopServerExposure.DesktopServerExposure["Service"]);
 
+const localOnlyServerExposureLayer = Layer.succeed(DesktopServerExposure.DesktopServerExposure, {
+  getState: Effect.die("unexpected getState"),
+  backendConfig: Effect.succeed({
+    port: 4888,
+    bindHost: "127.0.0.1",
+    httpBaseUrl: new URL("http://127.0.0.1:4888"),
+    tailscaleServeEnabled: false,
+    tailscaleServePort: 443,
+  }),
+  configureFromSettings: () => Effect.die("unexpected configureFromSettings"),
+  setMode: () => Effect.die("unexpected setMode"),
+  setTailscaleServeEnabled: () => Effect.die("unexpected setTailscaleServeEnabled"),
+  getAdvertisedEndpoints: Effect.succeed([]),
+} satisfies DesktopServerExposure.DesktopServerExposure["Service"]);
+
 function makeEnvironmentLayer(
   baseDir: string,
   options?: {
@@ -306,6 +321,45 @@ describe("DesktopBackendConfiguration", () => {
         assert.equal(wsl.bootstrap.desktopBootstrapToken, primary.bootstrap.desktopBootstrapToken);
       }),
     ),
+  );
+
+  it.effect("resolveWsl binds loopback and advertises localhost when exposure is local-only", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-desktop-backend-config-test-",
+      });
+      const entryPath = path.join(baseDir, "apps/server/dist/bin.mjs");
+      yield* fileSystem.makeDirectory(path.dirname(entryPath), { recursive: true });
+      yield* fileSystem.writeFileString(entryPath, "");
+
+      const config = yield* Effect.gen(function* () {
+        const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
+        return yield* configuration.resolveWsl({ port: 5000, distro: "Ubuntu" });
+      }).pipe(
+        Effect.provide(
+          DesktopBackendConfiguration.layer.pipe(
+            Layer.provideMerge(localOnlyServerExposureLayer),
+            Layer.provideMerge(DesktopAppSettings.layerTest()),
+            Layer.provideMerge(DesktopWslServerTree.layerTest()),
+            Layer.provideMerge(
+              DesktopWslEnvironment.layerTest({
+                isAvailable: true,
+                distros: [{ name: "Ubuntu", isDefault: true, version: 2 }],
+                getDistroIp: () => Option.some("172.27.0.99"),
+              }),
+            ),
+            Layer.provideMerge(makeEnvironmentLayer(baseDir, { platform: "win32" })),
+          ),
+        ),
+      );
+
+      assert.equal(config.bootstrap.host, "127.0.0.1");
+      // A loopback-only bind inside WSL is reachable from Windows through
+      // WSL2 localhost forwarding, so the renderer must not use the distro IP.
+      assert.equal(config.httpBaseUrl.href, "http://127.0.0.1:5000/");
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("resolveWsl pins a default-tracking run to the concrete default distro", () =>
@@ -877,8 +931,9 @@ describe("DesktopBackendConfiguration", () => {
 
           assert.equal(config.executablePath, "wsl.exe");
           assert.equal(config.bootstrap.port, 5050);
-          // Binds to 0.0.0.0 inside WSL so the backend is reachable via
-          // both wslhost-forwarded localhost and the distro's eth0 IP.
+          // Network-accessible exposure binds 0.0.0.0 inside WSL so the backend
+          // is reachable via both wslhost-forwarded localhost and the distro's
+          // eth0 IP.
           assert.equal(config.bootstrap.host, "0.0.0.0");
           assert.equal(config.bootstrap.tailscaleServeEnabled, false);
           assert.notProperty(config.bootstrap, "desktopTelemetryFd");
