@@ -140,7 +140,7 @@ function PoolWindowCard({
       </View>
       <View>
         {pool.members.map(({ account, window }, index) => {
-          const credits = account.redeem ? (account.limits.resetCredits?.availableCount ?? 0) : 0;
+          const credits = account.limits.resetCredits?.availableCount ?? 0;
           const resetsIn = formatResetsIn(window, now);
           return (
             <Pressable
@@ -358,9 +358,9 @@ export function UsageLimitAccountScreen({ route }: AccountScreenProps) {
               <View className="gap-3 rounded-[24px] border-continuous bg-card p-4">
                 <Text className="text-sm font-t3-medium text-foreground">Reset credits</Text>
                 <ResetCredits
-                  key={`${account.redeem.environmentId}:${account.redeem.instanceId}`}
+                  key={account.key}
                   environmentId={account.redeem.environmentId}
-                  instanceId={account.redeem.instanceId}
+                  input={account.redeem.input}
                   credits={account.limits.resetCredits}
                   now={now}
                 />

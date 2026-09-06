@@ -1,7 +1,7 @@
 import {
   type EnvironmentId,
   type ProviderConsumeResetCreditOutcome,
-  ProviderInstanceId,
+  ProviderConsumeResetCreditInput,
   ServerProvider,
   ServerProviderResetCredits,
   ServerProviderUsageWindow,
@@ -202,7 +202,10 @@ const OUTCOME_TEXT: Record<ProviderConsumeResetCreditOutcome, string> = {
 };
 
 /** Everything a redeem needs: where to send it and what to say afterwards. */
-export function useResetCredit(environmentId: EnvironmentId, instanceId: ProviderInstanceId) {
+export function useResetCredit(
+  environmentId: EnvironmentId,
+  input: ProviderConsumeResetCreditInput,
+) {
   const consume = useAtomCommand(serverEnvironment.consumeResetCredit, { reportFailure: false });
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -212,10 +215,10 @@ export function useResetCredit(environmentId: EnvironmentId, instanceId: Provide
     setConfirming(false);
     setBusy(true);
     setStatus(null);
-    const result = await consume({ environmentId, input: { instanceId } });
+    const result = await consume({ environmentId, input });
     setBusy(false);
     if (result._tag === "Success") {
-      setStatus(OUTCOME_TEXT[result.value.outcome]);
+      setStatus(result.value.warning ?? OUTCOME_TEXT[result.value.outcome]);
       return;
     }
     setStatus(
@@ -282,19 +285,16 @@ export function resetCreditsSummary(
 /** Banked reset credits with the redeem button and its confirm, self-contained. */
 export function ResetCredits({
   environmentId,
-  instanceId,
+  input,
   credits,
   now,
 }: {
   readonly environmentId: EnvironmentId;
-  readonly instanceId: ProviderInstanceId;
+  readonly input: ProviderConsumeResetCreditInput;
   readonly credits: ServerProviderResetCredits;
   readonly now: number;
 }) {
-  const { confirming, setConfirming, busy, status, redeem } = useResetCredit(
-    environmentId,
-    instanceId,
-  );
+  const { confirming, setConfirming, busy, status, redeem } = useResetCredit(environmentId, input);
   if (credits.availableCount === 0 && status === null) return null;
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
