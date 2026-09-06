@@ -1,4 +1,5 @@
 ---
+import type { ComponentProps } from "astro/types";
 import { Image } from "astro:assets";
 import iconStable from "../assets/icon.webp";
 import iconNightly from "../assets/icon-nightly.webp";
@@ -6,7 +7,13 @@ import Layout from "../layouts/Layout.astro";
 import { RELEASES_URL } from "../lib/releases";
 import { ANDROID_PLAY_STORE_URL, IOS_APP_STORE_URL } from "../lib/site";
 
-const imageProps = { alt: "", densities: [1, 2, 3], format: "webp", quality: 90, decoding: "async" } as const;
+const imageProps = {
+  alt: "",
+  densities: [1, 2, 3],
+  format: "webp",
+  quality: 90,
+  decoding: "async",
+} satisfies Partial<ComponentProps<typeof Image>>;
 ---
 
 <Layout title="Download — T3 Code" description="Download T3 Code for macOS, Windows, or Linux.">
