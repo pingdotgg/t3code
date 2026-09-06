@@ -139,6 +139,7 @@ export function ThreadDisclosureChevron(props: {
 }
 
 function ShimmerWorkContent(props: {
+  readonly compact?: boolean;
   readonly environmentId?: EnvironmentId;
   readonly highlighted: boolean;
   readonly icon: WorkContentIcon;
@@ -151,26 +152,29 @@ function ShimmerWorkContent(props: {
 }) {
   return (
     <View className="flex-row items-center gap-1.5">
-      <View className="h-6 w-6 shrink-0 items-center justify-center">
-        {props.showIcon && props.toolIcon && props.environmentId ? (
-          <ToolActivityIconView
-            environmentId={props.environmentId}
-            icon={props.toolIcon}
-            fallback={props.icon}
-            fallbackColor={props.iconSubtleColor}
-            themeAppearance={props.themeAppearance ?? "light"}
-          />
-        ) : props.showIcon ? (
-          <WorkLogIcon
-            icon={props.icon}
-            color={props.iconSubtleColor}
-            highlighted={props.highlighted}
-          />
-        ) : null}
-      </View>
+      {props.showIcon ? (
+        <View className="h-6 w-6 shrink-0 items-center justify-center">
+          {props.toolIcon && props.environmentId ? (
+            <ToolActivityIconView
+              environmentId={props.environmentId}
+              icon={props.toolIcon}
+              fallback={props.icon}
+              fallbackColor={props.iconSubtleColor}
+              themeAppearance={props.themeAppearance ?? "light"}
+            />
+          ) : (
+            <WorkLogIcon
+              icon={props.icon}
+              color={props.iconSubtleColor}
+              highlighted={props.highlighted}
+            />
+          )}
+        </View>
+      ) : null}
       <Text
         className={cn(
-          "min-w-0 shrink text-sm",
+          "min-w-0 shrink",
+          props.compact ? "text-xs" : "text-sm",
           props.highlighted ? "text-foreground" : "text-foreground-muted",
         )}
         numberOfLines={1}
@@ -183,6 +187,8 @@ function ShimmerWorkContent(props: {
 }
 
 export function ShimmeringWorkContent(props: {
+  /** Secondary line: no icon slot, caption size. */
+  readonly compact?: boolean;
   readonly environmentId?: EnvironmentId;
   readonly icon: WorkContentIcon;
   readonly iconSubtleColor: ColorValue;
@@ -198,7 +204,10 @@ export function ShimmeringWorkContent(props: {
   const screenIsFocused = useIsFocused();
   const progress = useSharedValue(0);
   const gradientId = `work-shimmer-${useId().replaceAll(":", "")}`;
-  const contentWidth = Math.min(availableWidth, SHIMMER_ICON_AND_GAP_WIDTH + Math.ceil(textWidth));
+  const contentWidth = Math.min(
+    availableWidth,
+    (props.showIcon ? SHIMMER_ICON_AND_GAP_WIDTH : 0) + Math.ceil(textWidth),
+  );
 
   useEffect(() => {
     const subscription = AppState.addEventListener("change", (state) => {
@@ -254,6 +263,7 @@ export function ShimmeringWorkContent(props: {
       onLayout={(event) => setAvailableWidth(event.nativeEvent.layout.width)}
     >
       <ShimmerWorkContent
+        compact={props.compact}
         environmentId={props.environmentId}
         highlighted={false}
         icon={props.icon}
@@ -294,6 +304,7 @@ export function ShimmeringWorkContent(props: {
           >
             <Animated.View style={[{ width: availableWidth }, counterSweepStyle]}>
               <ShimmerWorkContent
+                compact={props.compact}
                 environmentId={props.environmentId}
                 highlighted
                 icon={props.icon}
@@ -1015,6 +1026,7 @@ export const ThreadAgentSpawnCard = memo(function ThreadAgentSpawnCard(props: {
               {working ? (
                 <ShimmeringWorkContent
                   key={props.rowSizing.textSizeKey}
+                  compact
                   icon="brain"
                   iconSubtleColor={props.iconSubtleColor}
                   label={summary.status}

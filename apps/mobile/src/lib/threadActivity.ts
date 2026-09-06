@@ -122,6 +122,8 @@ export interface WorkLogEntry {
       readonly title: string;
       readonly status: WorkLogToolLifecycleStatus | undefined;
       readonly detail: string | undefined;
+      /** When this member last reported, so the card can show the newest activity. */
+      readonly updatedAt: string;
     }>;
   };
   toolData?: unknown;
@@ -226,6 +228,7 @@ export interface AgentSpawnSummary {
     readonly status: string;
     readonly tone: "working" | "completed" | "failed" | "stopped";
     readonly detail: string | undefined;
+    readonly updatedAt: string;
   }>;
 }
 
@@ -739,6 +742,7 @@ function agentSpawnMember(
     title: entry.toolTitle ?? previous?.title ?? entry.label,
     status: entry.toolLifecycleStatus ?? previous?.status,
     detail: entry.detail ?? previous?.detail,
+    updatedAt: entry.createdAt,
   };
 }
 
@@ -771,6 +775,7 @@ function agentSpawnLifecycleStatus(
     return "inProgress";
   }
   if (statuses.includes("failed")) return "failed";
+  if (statuses.includes("declined")) return "declined";
   if (statuses.includes("stopped")) return "stopped";
   return "completed";
 }
@@ -792,9 +797,7 @@ function collapseDerivedWorkLogEntries(
   // lifecycle row is dropped.
   const spawnToolCallIds = new Set(
     entries.flatMap((entry) =>
-      entry.agentSpawnToolCallId !== undefined && !entry.isBackgroundTask
-        ? [entry.agentSpawnToolCallId]
-        : [],
+      entry.agentSpawnToolCallId !== undefined ? [entry.agentSpawnToolCallId] : [],
     ),
   );
   for (const entry of entries) {
@@ -1250,26 +1253,40 @@ export function agentSpawnSummary(
       status: tone === "working" ? "working" : (agent.status ?? tone),
       tone,
       detail: agent.detail,
+      updatedAt: agent.updatedAt,
     };
   });
   const tone = agentSpawnTone(batchStatus);
-  const count = Math.max(members.length, 1);
-  const title = members.length === 1 ? members[0]!.title : `${count} subagents`;
+  // A workflow's coordinator is not a member; before any member reports the
+  // batch has none.
+  const title =
+    members.length === 0
+      ? "Subagents"
+      : members.length === 1
+        ? members[0]!.title
+        : `${members.length} subagents`;
   if (tone === "working") {
     const working = members.filter((member) => member.tone === "working");
-    const latest = working.findLast((member) => member.detail !== undefined);
+    const latest = working
+      .filter((member) => member.detail !== undefined)
+      .reduce<(typeof working)[number] | undefined>(
+        (newest, member) =>
+          newest === undefined || member.updatedAt > newest.updatedAt ? member : newest,
+        undefined,
+      );
     const status =
       latest?.detail ??
       (members.length > 1 ? `${working.length} of ${members.length} working` : "Working");
     return { title, status, tone, members };
   }
+  // The batch tone covers a coordinator that failed or stopped on its own.
   const failed = members.filter((member) => member.tone === "failed").length;
   const stopped = members.filter((member) => member.tone === "stopped").length;
   const outcome =
-    failed > 0
-      ? `${members.length > 1 ? `${failed} ` : ""}failed`
-      : stopped > 0
-        ? `${members.length > 1 ? `${stopped} ` : ""}stopped`
+    tone === "failed" || failed > 0
+      ? `${members.length > 1 && failed > 0 ? `${failed} ` : ""}failed`
+      : tone === "stopped" || stopped > 0
+        ? `${members.length > 1 && stopped > 0 ? `${stopped} ` : ""}stopped`
         : "completed";
   return { title, status: outcome, tone, members };
 }
@@ -2124,7 +2141,9 @@ function appendToolGroupRows(
   const latestActivity = latestActiveActivity ?? activities.at(-1)!;
   // Like web, the trailing run keeps shining after its latest call succeeds;
   // only a failed, declined, or stopped call hands the live slot to "Thinking".
-  const shimmer = active || (activeTail && latestActivity.status === "success");
+  // Only the trailing run can be the turn's live slot; an in-progress row in
+  // an earlier run (a call whose end was never reported) stays in place.
+  const shimmer = activeTail && (active || latestActivity.status === "success");
   const singleActivity = activities.length === 1 ? latestActivity : null;
   const summary = live
     ? liveToolActivitySummary(latestActivity, live)

@@ -13,6 +13,7 @@ import {
 } from "@t3tools/contracts";
 
 import {
+  agentSpawnSummary,
   buildPendingUserInputAnswers,
   buildThreadFeed,
   derivePendingApprovals,
@@ -24,6 +25,7 @@ import {
   workEntryRowLabel,
   type ThreadFeedActivity,
   type ThreadFeedEntry,
+  type WorkLogEntry,
 } from "./threadActivity";
 
 describe("Codex feedback pseudo-messages", () => {
@@ -2451,6 +2453,22 @@ describe("buildThreadFeed", () => {
     expect(liveIds([call(1, "inProgress"), call(1, "failed"), call(2, "inProgress")])).toEqual([
       "work-toggle:live-activity-row",
     ]);
+    // A call whose end was never reported, in a run before an error row,
+    // keeps its own identity: only the trailing run can hold the live slot.
+    const errorRow = makeActivity({
+      id: EventId.make("runtime-error"),
+      kind: "runtime.error",
+      tone: "error",
+      summary: "Provider error",
+      createdAt: "2026-04-01T00:00:02.500Z",
+      turnId,
+      payload: { message: "boom" },
+    });
+    expect(liveIds([call(1, "inProgress"), errorRow, call(2, "inProgress")])).toEqual([
+      "work-toggle:work-live:work-group:tool:turn-failing-calls:call-1",
+      "activity-group:runtime-error",
+      "work-toggle:live-activity-row",
+    ]);
   });
 
   it("hands a settled tool run off to Thinking once assistant text streams after it", () => {
@@ -3236,6 +3254,55 @@ describe("quiet timeline: nested agents", () => {
       },
     });
     expect(rows[0]?.getFullDetail()).toBe("Reviewer 0 · completed\nReviewer 1 · completed");
+  });
+
+  it("summarizes a spawn card from the newest member report and the batch outcome", () => {
+    type Member = NonNullable<WorkLogEntry["agentSpawn"]>["agents"][number];
+    const member = (title: string, status: Member["status"], detail: string, seconds: number) =>
+      ({
+        title,
+        status,
+        detail,
+        updatedAt: `2026-04-01T00:00:${String(seconds).padStart(2, "0")}.000Z`,
+      }) satisfies Member;
+    const direct = (agents: ReadonlyArray<Member>) => ({
+      workflowId: null,
+      agentTaskIds: agents.map((_, index) => `a${index}`),
+      agents,
+    });
+
+    // The newest report wins regardless of member order.
+    expect(
+      agentSpawnSummary(
+        direct([
+          member("Agent 0", "inProgress", "Reading b.ts", 5),
+          member("Agent 1", "inProgress", "Reading a.ts", 2),
+        ]),
+        "inProgress",
+      ),
+    ).toMatchObject({ title: "2 subagents", status: "Reading b.ts", tone: "working" });
+
+    // A declined request is a failed batch, not a completed one.
+    expect(
+      agentSpawnSummary(direct([member("Agent 0", "declined", "", 1)]), "declined"),
+    ).toMatchObject({ status: "failed", tone: "failed" });
+
+    // A coordinator that failed on its own reports the failure even when every
+    // member succeeded; before any member reports, the card has a neutral title.
+    const workflow = (agents: ReadonlyArray<Member>) => ({
+      workflowId: "wf",
+      agentTaskIds: ["wf", ...agents.map((_, index) => `wf:wf:${index}`)],
+      agents: [member("review", "failed", "", 9), ...agents],
+    });
+    expect(
+      agentSpawnSummary(workflow([member("Reviewer", "completed", "", 3)]), "failed"),
+    ).toMatchObject({ title: "Reviewer", status: "failed", tone: "failed" });
+    expect(
+      agentSpawnSummary(
+        { workflowId: "wf", agentTaskIds: ["wf"], agents: [member("review", undefined, "", 1)] },
+        "inProgress",
+      ),
+    ).toMatchObject({ title: "Subagents", status: "Working", tone: "working", members: [] });
   });
 
   it("treats a Codex child's idle turn end as a finished batch member", () => {
