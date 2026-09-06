@@ -263,18 +263,24 @@ describe("streaming row projection", () => {
 
   it("owns checkpoint lookups across streaming and equal source snapshots", () => {
     const initial = fixture("Partial");
-    let checkpointReads = 0;
+    let checkpointLookupReads = 0;
     const summary: TurnDiffSummary = {
       turnId: initial.historyTurnId,
-      checkpointTurnCount: 1,
+      get checkpointTurnCount() {
+        checkpointLookupReads += 1;
+        return 1;
+      },
       checkpointRef: CheckpointRef.make("refs/t3/checkpoints/history-turn"),
       status: "ready",
       files: [],
       get assistantMessageId() {
-        checkpointReads += 1;
+        checkpointLookupReads += 1;
         return MessageId.make("history-assistant");
       },
-      completedAt: initial.time(4),
+      get completedAt() {
+        checkpointLookupReads += 1;
+        return initial.time(4);
+      },
     };
     const input = {
       ...initial.input,
@@ -284,7 +290,7 @@ describe("streaming row projection", () => {
       expandedWorkGroupIds: new Set<string>(),
     };
     const previous = deriveMessagesTimelineRowsWithState(input);
-    expect(checkpointReads).toBeGreaterThan(0);
+    expect(checkpointLookupReads).toBeGreaterThan(0);
     expect(previous.rows.some((row) => row.kind === "message" && row.revertTurnCount === 0)).toBe(
       true,
     );
@@ -299,9 +305,9 @@ describe("streaming row projection", () => {
       expandedTurnIds: new Set(input.expandedTurnIds),
       expandedWorkGroupIds: new Set(input.expandedWorkGroupIds),
     };
-    checkpointReads = 0;
+    checkpointLookupReads = 0;
     const next = deriveMessagesTimelineRowsWithState(nextInput, previous);
-    expect(checkpointReads).toBe(0);
+    expect(checkpointLookupReads).toBe(0);
     expect(next.rows).toEqual(deriveMessagesTimelineRows(nextInput));
     for (const [index, row] of previous.rows.entries()) {
       if ((row.kind === "message" || row.kind === "assistant-meta") && row.message === last) {
@@ -332,7 +338,7 @@ describe("streaming row projection", () => {
 
   it("reuses long-thread rows through detail events, selectors, and attachment previews", () => {
     const initial = fixture("Partial");
-    let checkpointReads = 0;
+    let checkpointLookupReads = 0;
     const history = Array.from({ length: 250 }, (_, index) => {
       const turnId = TurnId.make(`older-turn-${index}`);
       const user = {
@@ -357,15 +363,21 @@ describe("streaming row projection", () => {
       };
       const checkpoint: TurnDiffSummary = {
         turnId,
-        checkpointTurnCount: index + 1,
+        get checkpointTurnCount() {
+          checkpointLookupReads += 1;
+          return index + 1;
+        },
         checkpointRef: CheckpointRef.make(`refs/t3/checkpoints/older-${index}`),
         status: "ready",
         files: [],
         get assistantMessageId() {
-          checkpointReads += 1;
+          checkpointLookupReads += 1;
           return assistant.id;
         },
-        completedAt: assistant.createdAt,
+        get completedAt() {
+          checkpointLookupReads += 1;
+          return assistant.createdAt;
+        },
       };
       return { user, assistant, checkpoint };
     });
@@ -470,8 +482,8 @@ describe("streaming row projection", () => {
     try {
       const first = project();
       const saved = structuredClone(first.rows);
-      expect(checkpointReads).toBeGreaterThan(0);
-      checkpointReads = 0;
+      expect(checkpointLookupReads).toBeGreaterThan(0);
+      checkpointLookupReads = 0;
       for (let index = 0; index < 10; index += 1) {
         const next = send(` ${index}`, index + 1);
         for (const [rowIndex, row] of first.rows.entries()) {
@@ -483,7 +495,7 @@ describe("streaming row projection", () => {
           expect(next.rows[rowIndex]).toBe(row);
         }
       }
-      expect(checkpointReads).toBe(0);
+      expect(checkpointLookupReads).toBe(0);
       const streamed = project();
       expect(streamed.rows).toEqual(deriveMessagesTimelineRows(streamed.input));
 
