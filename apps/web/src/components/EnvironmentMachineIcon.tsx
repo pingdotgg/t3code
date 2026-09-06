@@ -59,8 +59,8 @@ export const ENVIRONMENT_MACHINE_KIND_LABELS: Record<EnvironmentMachineKind, str
   linux: "Linux/WSL",
   desktop: "Desktop",
   laptop: "Laptop",
-  "mac-mini": "Mac mini",
-  "mac-studio": "Mac Studio",
+  "mac-mini": "Mini PC",
+  "mac-studio": "Workstation",
 };
 
 export function environmentMachineIcon(
