@@ -3,7 +3,8 @@ import { defaultAnimateLayoutChanges, type AnimateLayoutChanges } from "@dnd-kit
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/unstable/reactivity";
 import {
-  animatePinnedLayoutChanges,
+  animateSidebarLayoutChanges,
+  applySidebarThreadDrop,
   archiveSelectedThreadEntries,
   buildBulkTitleRegenerationContextMenuItem,
   buildBulkUnpinContextMenuItem,
@@ -32,14 +33,21 @@ import {
   shouldRecedeSidebarThread,
   sortLogicalProjectsForSidebar,
   sortSettledThreadsForSidebar,
+  resolveSidebarDropTarget,
   pinOrderKeyBetween,
   planPinnedReorder,
+  planSidebarThreadDrop,
+  sidebarMarkerId,
+  sidebarListItemId,
   sortPinnedThreadsForSidebar,
   sortThreadsForSidebar,
   sortProjectsForSidebar,
   sortScopedProjectsForSidebar,
   shouldCreateNewThreadInCurrentProject,
   THREAD_JUMP_HINT_SHOW_DELAY_MS,
+  type SidebarListItem,
+  type SidebarListMarker,
+  type SidebarSection,
 } from "./Sidebar.logic";
 import {
   EnvironmentId,
@@ -53,12 +61,13 @@ import {
   DEFAULT_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
   type Project,
+  type SidebarThreadSummary,
   type Thread,
 } from "../types";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
 
-describe("animatePinnedLayoutChanges", () => {
+describe("animateSidebarLayoutChanges", () => {
   const baseArgs: Parameters<AnimateLayoutChanges>[0] = {
     active: null,
     containerId: "pinned-threads",
@@ -76,11 +85,11 @@ describe("animatePinnedLayoutChanges", () => {
 
   it("does not replay layout movement after the pointer is released", () => {
     expect(defaultAnimateLayoutChanges(baseArgs)).toBe(true);
-    expect(animatePinnedLayoutChanges(baseArgs)).toBe(false);
+    expect(animateSidebarLayoutChanges(baseArgs)).toBe(false);
   });
 
   it("keeps layout movement while the user is sorting", () => {
-    expect(animatePinnedLayoutChanges({ ...baseArgs, isSorting: true })).toBe(true);
+    expect(animateSidebarLayoutChanges({ ...baseArgs, isSorting: true })).toBe(true);
   });
 });
 
@@ -1022,6 +1031,715 @@ describe("planPinnedReorder", () => {
     const keys = assignments.map((entry) => entry.orderKey);
     expect([...keys].sort()).toEqual(keys);
     expect(new Set(keys).size).toBe(keys.length);
+  });
+});
+
+describe("resolveSidebarDropTarget", () => {
+  const thread = (key: string, section: SidebarSection): SidebarListItem => ({
+    kind: "thread",
+    key,
+    section,
+  });
+  const marker = (marker: SidebarListMarker): SidebarListItem => ({ kind: "marker", marker });
+  // Pinned p1 p2 | Active a1 a2 | Snoozed z1 | Settled s1
+  const items: readonly SidebarListItem[] = [
+    marker("pinned-header"),
+    thread("p1", "pinned"),
+    thread("p2", "pinned"),
+    marker("pinned-divider"),
+    thread("a1", "active"),
+    thread("a2", "active"),
+    marker("snoozed-header"),
+    thread("z1", "snoozed"),
+    marker("settled-header"),
+    thread("s1", "settled"),
+  ];
+  const resolve = (activeKey: string, overId: string) =>
+    resolveSidebarDropTarget(items, activeKey, overId);
+
+  it("keeps marker-like scoped thread keys draggable", () => {
+    const key = "marker:pinned-header";
+    const list: SidebarListItem[] = [
+      marker("pinned-header"),
+      thread(key, "pinned"),
+      thread("env:other", "pinned"),
+      marker("pinned-divider"),
+    ];
+    expect(new Set(list.map(sidebarListItemId)).size).toBe(list.length);
+    expect(resolveSidebarDropTarget(list, key, "env:other")).toEqual({
+      section: "pinned",
+      pinnedOrder: ["env:other", key],
+      activeOrder: [],
+    });
+  });
+
+  it("reads the section off the markers above the gap", () => {
+    expect(resolve("p1", "a2")).toEqual({
+      section: "active",
+      pinnedOrder: ["p2"],
+      activeOrder: ["a1", "a2", "p1"],
+    });
+    expect(resolve("a1", "s1")).toEqual({
+      section: "settled",
+      pinnedOrder: ["p1", "p2"],
+      activeOrder: ["a2"],
+    });
+    expect(resolve("s1", "a1")).toEqual({
+      section: "active",
+      pinnedOrder: ["p1", "p2"],
+      activeOrder: ["s1", "a1", "a2"],
+    });
+  });
+
+  it("uses arrayMove placement, so a marker hovered from below lands above it", () => {
+    // Dragging a1 up onto the divider: the divider shifts down, a1 becomes
+    // the last pinned row.
+    expect(resolve("a1", sidebarMarkerId("pinned-divider"))).toEqual({
+      section: "pinned",
+      pinnedOrder: ["p1", "p2", "a1"],
+      activeOrder: ["a2"],
+    });
+    // Dragging p2 down onto the divider: the divider shifts up, p2 is the
+    // first inbox row — an unpin.
+    expect(resolve("p2", sidebarMarkerId("pinned-divider"))).toEqual({
+      section: "active",
+      pinnedOrder: ["p1"],
+      activeOrder: ["p2", "a1", "a2"],
+    });
+    // Same on the Settled header: from above it settles; from below the
+    // gap lands in whatever is above the header — here the snoozed shelf,
+    // which is never a target.
+    expect(resolve("a2", sidebarMarkerId("settled-header"))?.section).toBe("settled");
+    expect(resolve("s1", sidebarMarkerId("settled-header"))).toBeNull();
+  });
+
+  it("reorders inside the pinned block with the dragged row at the over slot", () => {
+    expect(resolve("p1", "p2")).toEqual({
+      section: "pinned",
+      pinnedOrder: ["p2", "p1"],
+      activeOrder: ["a1", "a2"],
+    });
+    expect(resolve("a2", "p1")).toEqual({
+      section: "pinned",
+      pinnedOrder: ["a2", "p1", "p2"],
+      activeOrder: ["a1"],
+    });
+  });
+
+  it("lands first in Pinned when hovering its permanent header", () => {
+    expect(resolve("a2", sidebarMarkerId("pinned-header"))).toEqual({
+      section: "pinned",
+      pinnedOrder: ["a2", "p1", "p2"],
+      activeOrder: ["a1"],
+    });
+  });
+
+  it("reorders active rows in either direction without changing sections", () => {
+    for (const [from, to] of [
+      ["a1", "a2"],
+      ["a2", "a1"],
+    ] as const) {
+      expect(resolve(from, to)).toEqual({
+        section: "active",
+        pinnedOrder: ["p1", "p2"],
+        activeOrder: ["a2", "a1"],
+      });
+    }
+  });
+
+  it("never lands in the snoozed shelf", () => {
+    expect(resolve("a1", "z1")).toBeNull();
+    expect(resolve("a1", sidebarMarkerId("snoozed-header"))).toBeNull();
+  });
+
+  it("lands on a placeholder when the section is otherwise empty", () => {
+    const withPlaceholder: readonly SidebarListItem[] = [
+      marker("pinned-header"),
+      marker("pinned-divider"),
+      thread("a1", "active"),
+      marker("settled-header"),
+      marker("settled-placeholder"),
+    ];
+    expect(
+      resolveSidebarDropTarget(withPlaceholder, "a1", sidebarMarkerId("settled-placeholder")),
+    ).toEqual({ section: "settled", pinnedOrder: [], activeOrder: [] });
+  });
+
+  it("lands in empty Pinned using its header without an extra placeholder", () => {
+    const emptyPinned: readonly SidebarListItem[] = [
+      marker("pinned-header"),
+      marker("pinned-divider"),
+      thread("a1", "active"),
+    ];
+    expect(resolveSidebarDropTarget(emptyPinned, "a1", sidebarMarkerId("pinned-header"))).toEqual({
+      section: "pinned",
+      pinnedOrder: ["a1"],
+      activeOrder: [],
+    });
+    expect(resolveSidebarDropTarget(emptyPinned, "a1", sidebarMarkerId("pinned-divider"))).toEqual({
+      section: "pinned",
+      pinnedOrder: ["a1"],
+      activeOrder: [],
+    });
+  });
+
+  it("rejects ids that are not in the list", () => {
+    expect(resolve("a1", "nope")).toBeNull();
+    expect(resolve("nope", "a1")).toBeNull();
+    expect(resolve(sidebarMarkerId("pinned-divider"), "a1")).toBeNull();
+  });
+});
+
+describe("planSidebarThreadDrop", () => {
+  const pinnedKeysById = new Map<string, string | null>([
+    ["p1", "f"],
+    ["p2", "m"],
+    ["p3", "t"],
+  ]);
+  const activeKeysById = new Map<string, string | null>([
+    ["a1", "f"],
+    ["a2", "m"],
+    ["a3", "t"],
+  ]);
+  const plan = (
+    overrides: Partial<Omit<Parameters<typeof planSidebarThreadDrop>[0], "target">> & {
+      activeKey: string;
+      activeSection: "pinned" | "active" | "snoozed" | "settled";
+      target: Omit<Parameters<typeof planSidebarThreadDrop>[0]["target"], "activeOrder"> & {
+        activeOrder?: readonly string[];
+      };
+    },
+  ) =>
+    planSidebarThreadDrop({
+      pinnedOrder: ["p1", "p2", "p3"],
+      pinnedKeysById,
+      activeOrder: ["a1", "a2", "a3"],
+      activeKeysById,
+      ...overrides,
+      target: { activeOrder: [], ...overrides.target },
+    });
+
+  it("allows old-server pinned reordering while rejecting settlement", () => {
+    expect(
+      plan({
+        activeKey: "p1",
+        activeSection: "pinned",
+        supportsSettlement: false,
+        target: { section: "pinned", pinnedOrder: ["p2", "p1", "p3"] },
+      }).kind,
+    ).toBe("reorder-pinned");
+    expect(
+      plan({
+        activeKey: "p1",
+        activeSection: "pinned",
+        supportsSettlement: false,
+        target: { section: "settled", pinnedOrder: ["p2", "p3"] },
+      }),
+    ).toEqual({ kind: "none" });
+  });
+
+  it.each(["pinned", "active"] as const)("reserves hidden %s slots during a drop", (section) => {
+    const order = section === "pinned" ? ["p2", "p1", "p3"] : ["a2", "a1", "a3"];
+    const keys = new Map(section === "pinned" ? pinnedKeysById : activeKeysById);
+    const moved = section === "pinned" ? "p1" : "a1";
+    const reserved = pinOrderKeyBetween(keys.get(order[0]!)!, keys.get(order[2]!)!)!;
+    keys.set("snoozed", reserved);
+    const result = plan({
+      activeKey: moved,
+      activeSection: section,
+      pinnedKeysById: section === "pinned" ? keys : pinnedKeysById,
+      activeKeysById: section === "active" ? keys : activeKeysById,
+      target: {
+        section,
+        pinnedOrder: section === "pinned" ? order : [],
+        activeOrder: section === "active" ? order : [],
+      },
+    });
+    if (result.kind !== "reorder-pinned" && result.kind !== "move-active")
+      throw new Error("Expected reorder");
+    expect(result.assignments).toHaveLength(1);
+    expect(result.assignments[0]!.orderKey).not.toBe(reserved);
+  });
+
+  it.each([
+    { key: "p2", section: "pinned" as const, unpin: true, unsettle: false, unsnooze: false },
+    { key: "s1", section: "settled" as const, unpin: false, unsettle: true, unsnooze: false },
+    { key: "z1", section: "snoozed" as const, unpin: false, unsettle: false, unsnooze: true },
+  ])("moves a $section thread to the chosen Active slot", (source) => {
+    const order = ["a1", source.key, "a2", "a3"];
+    const result = plan({
+      activeKey: source.key,
+      activeSection: source.section,
+      target: { section: "active", pinnedOrder: [], activeOrder: order },
+    });
+    expect(result).toEqual({
+      kind: "move-active",
+      order,
+      assignments: [{ id: source.key, orderKey: expect.any(String) }],
+      unpin: source.unpin,
+      unsettle: source.unsettle,
+      unsnooze: source.unsnooze,
+    });
+    if (result.kind !== "move-active") return;
+    const key = result.assignments[0]!.orderKey;
+    expect(key > "f" && key < "m").toBe(true);
+  });
+
+  it.each([
+    { state: "pinned", activePinned: true, activeSettled: false },
+    { state: "settled", activePinned: false, activeSettled: true },
+    { state: "pinned and settled", activePinned: true, activeSettled: true },
+  ])("clears a snoozed thread's $state state before waking it into Active", (hiddenState) => {
+    expect(
+      plan({
+        activeKey: "z1",
+        activeSection: "snoozed",
+        activePinned: hiddenState.activePinned,
+        activeSettled: hiddenState.activeSettled,
+        target: {
+          section: "active",
+          pinnedOrder: ["p1", "p2", "p3"],
+          activeOrder: ["a1", "z1", "a2", "a3"],
+        },
+      }),
+    ).toEqual({
+      kind: "move-active",
+      order: ["a1", "z1", "a2", "a3"],
+      assignments: [{ id: "z1", orderKey: expect.any(String) }],
+      unpin: hiddenState.activePinned,
+      unsettle: hiddenState.activeSettled,
+      unsnooze: true,
+    });
+  });
+
+  it("saves the first Active reorder, then moves only one key on subsequent drops", () => {
+    const rows = ["a1", "a2", "a3"].map((id, index) => ({
+      id,
+      createdAt: new Date(Date.UTC(2026, 8, 4, 12 - index)).toISOString(),
+      activeOrderKey: null as string | null,
+    }));
+    const firstOrder = ["a2", "a3", "a1"];
+    const first = plan({
+      activeKey: "a1",
+      activeSection: "active",
+      target: { section: "active", pinnedOrder: [], activeOrder: firstOrder },
+      activeKeysById: new Map(rows.map((row) => [row.id, row.activeOrderKey])),
+    });
+    expect(first.kind).toBe("move-active");
+    if (first.kind !== "move-active") return;
+    expect(first.unpin || first.unsettle || first.unsnooze).toBe(false);
+    const savedKeys = new Map(first.assignments.map(({ id, orderKey }) => [id, orderKey]));
+    const savedRows = rows.map((row) => ({
+      ...row,
+      activeOrderKey: savedKeys.get(row.id) ?? null,
+    }));
+    expect(sortThreadsForSidebar(savedRows).map((row) => row.id)).toEqual(firstOrder);
+
+    const secondOrder = ["a2", "a1", "a3"];
+    const second = plan({
+      activeKey: "a1",
+      activeSection: "active",
+      activeOrder: firstOrder,
+      activeKeysById: savedKeys,
+      target: { section: "active", pinnedOrder: [], activeOrder: secondOrder },
+    });
+    expect(second.kind).toBe("move-active");
+    if (second.kind !== "move-active") return;
+    expect(second.assignments).toEqual([{ id: "a1", orderKey: expect.any(String) }]);
+    const finalRows = savedRows.map((row) =>
+      row.id === "a1" ? { ...row, activeOrderKey: second.assignments[0]!.orderKey } : row,
+    );
+    expect(sortThreadsForSidebar(finalRows).map((row) => row.id)).toEqual(secondOrder);
+  });
+
+  it("does not write when an Active thread is dropped in its existing slot", () => {
+    expect(
+      plan({
+        activeKey: "a2",
+        activeSection: "active",
+        target: { section: "active", pinnedOrder: [], activeOrder: ["a1", "a2", "a3"] },
+      }),
+    ).toEqual({ kind: "none" });
+  });
+
+  it("requires Active ordering support only for the threads whose keys must change", () => {
+    const input = {
+      activeKey: "a3",
+      activeSection: "active" as const,
+      target: { section: "active" as const, pinnedOrder: [], activeOrder: ["a1", "a3", "a2"] },
+      activeReorderableKeys: new Set(["a3"]),
+    };
+    expect(plan(input).kind).toBe("move-active");
+    expect(
+      plan({
+        ...input,
+        activeKeysById: new Map([
+          ["a1", null],
+          ["a2", "m"],
+          ["a3", "t"],
+        ]),
+      }),
+    ).toEqual({ kind: "none" });
+    expect(plan({ ...input, activeReorderableKeys: new Set() })).toEqual({ kind: "none" });
+  });
+
+  it("settles anything dropped on Settled except a settled thread", () => {
+    const target = { section: "settled", pinnedOrder: ["p1", "p2", "p3"] } as const;
+    expect(plan({ activeKey: "a1", activeSection: "active", target })).toEqual({ kind: "settle" });
+    expect(plan({ activeKey: "p1", activeSection: "pinned", target })).toEqual({ kind: "settle" });
+    expect(plan({ activeKey: "z1", activeSection: "snoozed", target })).toEqual({ kind: "settle" });
+    expect(plan({ activeKey: "s1", activeSection: "settled", target })).toEqual({ kind: "none" });
+  });
+
+  it("pins a foreign thread with a key between its new neighbors", () => {
+    const result = plan({
+      activeKey: "a1",
+      activeSection: "active",
+      target: { section: "pinned", pinnedOrder: ["p1", "a1", "p2", "p3"] },
+    });
+    expect(result.kind).toBe("pin");
+    if (result.kind !== "pin") return;
+    expect(result.order).toEqual(["p1", "a1", "p2", "p3"]);
+    expect(result.orderKey).toBeDefined();
+    expect(result.orderKey! > "f" && result.orderKey! < "m").toBe(true);
+    expect(result.extraAssignments).toEqual([]);
+
+    const empty = plan({
+      activeKey: "a1",
+      activeSection: "active",
+      target: { section: "pinned", pinnedOrder: ["a1"] },
+      pinnedOrder: [],
+      pinnedKeysById: new Map(),
+    });
+    expect(empty.kind).toBe("pin");
+    if (empty.kind !== "pin") return;
+    expect(empty.orderKey).toBeDefined();
+  });
+
+  it("reorders an already-pinned snoozed thread after pinning wakes it", () => {
+    const result = plan({
+      activeKey: "z1",
+      activeSection: "snoozed",
+      activePinned: true,
+      target: { section: "pinned", pinnedOrder: ["p1", "z1", "p2", "p3"] },
+      pinnedKeysById: new Map([...pinnedKeysById, ["z1", "x"]]),
+    });
+    expect(result.kind).toBe("pin");
+    if (result.kind !== "pin") return;
+    expect(result.extraAssignments).toEqual([{ id: "z1", orderKey: result.orderKey }]);
+    expect(result.orderKey! > "f" && result.orderKey! < "m").toBe(true);
+  });
+
+  it("uses keyed disabled neighbors as anchors without writing to them", () => {
+    const insertion = plan({
+      activeKey: "a1",
+      activeSection: "active",
+      target: { section: "pinned", pinnedOrder: ["p1", "a1", "p2", "p3"] },
+      reorderableKeys: new Set(["a1"]),
+    });
+    expect(insertion.kind).toBe("pin");
+    if (insertion.kind !== "pin") return;
+    expect(insertion.order).toEqual(["p1", "a1", "p2", "p3"]);
+    expect(insertion.orderKey! > "f" && insertion.orderKey! < "m").toBe(true);
+    expect(insertion.extraAssignments).toEqual([]);
+
+    const reorder = plan({
+      activeKey: "p3",
+      activeSection: "pinned",
+      target: { section: "pinned", pinnedOrder: ["p1", "p3", "p2"] },
+      reorderableKeys: new Set(["p3"]),
+    });
+    expect(reorder.kind).toBe("reorder-pinned");
+    if (reorder.kind !== "reorder-pinned") return;
+    expect(reorder.assignments).toEqual([{ id: "p3", orderKey: expect.any(String) }]);
+    expect(reorder.assignments[0]!.orderKey > "f").toBe(true);
+    expect(reorder.assignments[0]!.orderKey < "m").toBe(true);
+  });
+
+  it.each([
+    {
+      activeKey: "a1",
+      activeSection: "active" as const,
+      order: ["p1", "p3", "a1", "p2"],
+    },
+    { activeKey: "p1", activeSection: "pinned" as const, order: ["p3", "p1", "p2"] },
+  ])("rejects $activeSection drops that require rewriting a disabled neighbor", (source) => {
+    expect(
+      plan({
+        activeKey: source.activeKey,
+        activeSection: source.activeSection,
+        target: { section: "pinned", pinnedOrder: source.order },
+        pinnedOrder: ["p1", "p3", "p2"],
+        pinnedKeysById: new Map([
+          ["p1", "f"],
+          ["p2", null],
+          ["p3", "t"],
+        ]),
+        reorderableKeys: new Set(["p1", "p3", source.activeKey]),
+      }),
+    ).toEqual({ kind: "none" });
+  });
+
+  it("rewrites the section when a foreign thread lands next to a keyless pin", () => {
+    const result = plan({
+      activeKey: "a1",
+      activeSection: "active",
+      target: { section: "pinned", pinnedOrder: ["p1", "a1", "p2", "p3"] },
+      pinnedKeysById: new Map([
+        ["p1", null],
+        ["p2", "m"],
+        ["p3", "t"],
+      ]),
+    });
+    expect(result.kind).toBe("pin");
+    if (result.kind !== "pin") return;
+    expect(result.orderKey).toBeDefined();
+    expect(result.extraAssignments.map((entry) => entry.id)).toEqual(["p1", "p2", "p3"]);
+    const byId = new Map([
+      ["a1", result.orderKey!],
+      ...result.extraAssignments.map((e) => [e.id, e.orderKey] as const),
+    ]);
+    const ordered = result.order.map((id) => byId.get(id)!);
+    expect([...ordered].sort()).toEqual(ordered);
+  });
+
+  it("reorders within the pinned block, and is a no-op when the order is unchanged", () => {
+    const down = plan({
+      activeKey: "p1",
+      activeSection: "pinned",
+      target: { section: "pinned", pinnedOrder: ["p2", "p3", "p1"] },
+    });
+    expect(down.kind).toBe("reorder-pinned");
+    if (down.kind !== "reorder-pinned") return;
+    expect(down.assignments).toEqual([{ id: "p1", orderKey: expect.any(String) }]);
+    expect(down.assignments[0]!.orderKey > "t").toBe(true);
+
+    expect(
+      plan({
+        activeKey: "p1",
+        activeSection: "pinned",
+        target: { section: "pinned", pinnedOrder: ["p1", "p2", "p3"] },
+      }),
+    ).toEqual({ kind: "none" });
+  });
+});
+
+describe("applySidebarThreadDrop", () => {
+  const createdAt = "2026-03-09T08:00:00.000Z";
+  const earlier = "2026-03-09T09:00:00.000Z";
+  const now = "2026-03-09T12:00:00.000Z";
+  const serverNow = "2026-03-09T12:00:01.000Z";
+  const wakeAt = "2026-03-10T08:00:00.000Z";
+  const thread = (overrides: Partial<SidebarThreadSummary> = {}) => ({
+    id: ThreadId.make("dragged"),
+    title: "Keep this title",
+    createdAt,
+    updatedAt: earlier,
+    latestUserMessageAt: null,
+    latestTurn: null,
+    pinnedAt: null,
+    pinOrderKey: null,
+    activeOrderKey: null,
+    snoozedAt: null,
+    snoozedUntil: null,
+    settledAt: null,
+    settledOverride: null,
+    unsettledAt: null,
+    ...overrides,
+  });
+  const newer = thread({ id: ThreadId.make("newer"), createdAt: "2026-03-09T11:00:00.000Z" });
+
+  it("previews an un-settle at the same active position as the eventual server row", () => {
+    const source = thread({ settledOverride: "settled", settledAt: earlier });
+    const preview = applySidebarThreadDrop(source, "active", now);
+    const final = {
+      ...source,
+      settledOverride: "active" as const,
+      settledAt: null,
+      unsettledAt: serverNow,
+    };
+    expect(sortThreadsForSidebar([newer, preview]).map((row) => row.id)).toEqual([
+      "dragged",
+      "newer",
+    ]);
+    expect(sortThreadsForSidebar([newer, preview]).map((row) => row.id)).toEqual(
+      sortThreadsForSidebar([newer, final]).map((row) => row.id),
+    );
+  });
+
+  it.each([
+    { state: "pin", pinnedAt: earlier, pinOrderKey: "m", snoozedAt: null, snoozedUntil: null },
+    {
+      state: "snooze",
+      pinnedAt: null,
+      pinOrderKey: null,
+      snoozedAt: earlier,
+      snoozedUntil: wakeAt,
+    },
+    {
+      state: "snoozed pin",
+      pinnedAt: earlier,
+      pinOrderKey: "m",
+      snoozedAt: earlier,
+      snoozedUntil: wakeAt,
+    },
+  ])("preserves the active sort anchor when clearing a $state", ({ state: _state, ...parked }) => {
+    const source = thread({ ...parked, settledOverride: "active", unsettledAt: earlier });
+    const preview = applySidebarThreadDrop(source, "active", now);
+    const final = {
+      ...source,
+      pinnedAt: null,
+      pinOrderKey: null,
+      snoozedAt: null,
+      snoozedUntil: null,
+      updatedAt: serverNow,
+    };
+    expect(preview).toEqual({ ...final, updatedAt: source.updatedAt });
+    expect(sortThreadsForSidebar([newer, preview]).map((row) => row.id)).toEqual([
+      "newer",
+      "dragged",
+    ]);
+    expect(sortThreadsForSidebar([newer, preview]).map((row) => row.id)).toEqual(
+      sortThreadsForSidebar([newer, final]).map((row) => row.id),
+    );
+  });
+
+  it("clears underlying pinning and settlement when waking into Active", () => {
+    const source = thread({
+      pinnedAt: earlier,
+      pinOrderKey: "m",
+      snoozedAt: earlier,
+      snoozedUntil: wakeAt,
+      settledOverride: "settled",
+      settledAt: earlier,
+    });
+    expect(applySidebarThreadDrop(source, "active", now)).toEqual({
+      ...source,
+      pinnedAt: null,
+      pinOrderKey: null,
+      snoozedAt: null,
+      snoozedUntil: null,
+      settledOverride: "active",
+      settledAt: null,
+      unsettledAt: now,
+    });
+  });
+
+  it("previews a new settlement at the same position as the eventual server row", () => {
+    const source = thread({
+      pinnedAt: earlier,
+      pinOrderKey: "m",
+      snoozedAt: earlier,
+      snoozedUntil: wakeAt,
+      unsettledAt: earlier,
+    });
+    const preview = applySidebarThreadDrop(source, "settled", now);
+    const final = {
+      ...source,
+      pinnedAt: null,
+      pinOrderKey: null,
+      snoozedAt: null,
+      snoozedUntil: null,
+      settledOverride: "settled" as const,
+      settledAt: serverNow,
+      unsettledAt: null,
+    };
+    const existing = { ...newer, settledOverride: "settled" as const, settledAt: newer.createdAt };
+    expect(preview).toEqual({ ...final, settledAt: now });
+    expect(sortSettledThreadsForSidebar([existing, preview]).map((row) => row.id)).toEqual([
+      "dragged",
+      "newer",
+    ]);
+    expect(sortSettledThreadsForSidebar([existing, preview]).map((row) => row.id)).toEqual(
+      sortSettledThreadsForSidebar([existing, final]).map((row) => row.id),
+    );
+  });
+
+  it("retains a snoozed thread's earlier settlement and its position when settling again", () => {
+    const source = thread({
+      snoozedAt: earlier,
+      snoozedUntil: wakeAt,
+      settledOverride: "settled",
+      settledAt: earlier,
+    });
+    const preview = applySidebarThreadDrop(source, "settled", now);
+    const final = { ...source, snoozedAt: null, snoozedUntil: null };
+    const existing = { ...newer, settledOverride: "settled" as const, settledAt: newer.createdAt };
+    expect(preview).toEqual(final);
+    expect(sortSettledThreadsForSidebar([existing, preview]).map((row) => row.id)).toEqual([
+      "newer",
+      "dragged",
+    ]);
+  });
+
+  it("pins a settled thread at its requested slot and projects the re-entry stamp", () => {
+    const source = thread({
+      snoozedAt: earlier,
+      snoozedUntil: wakeAt,
+      settledOverride: "settled",
+      settledAt: earlier,
+    });
+    const original = { ...source };
+    const preview = applySidebarThreadDrop(source, "pinned", now, "m");
+    expect(preview).toEqual({
+      ...source,
+      pinnedAt: now,
+      pinOrderKey: "m",
+      snoozedAt: null,
+      snoozedUntil: null,
+      settledOverride: "active",
+      settledAt: null,
+      unsettledAt: now,
+    });
+    expect(
+      sortPinnedThreadsForSidebar([
+        thread({ id: ThreadId.make("after"), pinnedAt: earlier, pinOrderKey: "t" }),
+        preview,
+        thread({ id: ThreadId.make("before"), pinnedAt: earlier, pinOrderKey: "f" }),
+      ]).map((row) => row.id),
+    ).toEqual(["before", "dragged", "after"]);
+    expect(source).toEqual(original);
+  });
+
+  it("keeps an existing pin's timestamp and key unless the drop supplies a new key", () => {
+    const source = thread({
+      pinnedAt: earlier,
+      pinOrderKey: "t",
+      snoozedAt: earlier,
+      snoozedUntil: wakeAt,
+      settledOverride: "active",
+      unsettledAt: earlier,
+    });
+    const unchangedSlot = applySidebarThreadDrop(source, "pinned", now);
+    expect(unchangedSlot).toEqual({ ...source, snoozedAt: null, snoozedUntil: null });
+    expect(applySidebarThreadDrop(source, "pinned", now, "m")).toEqual({
+      ...unchangedSlot,
+      pinOrderKey: "m",
+    });
+  });
+
+  it("keeps an Active drop at its chosen position after unpinning", () => {
+    const source = thread({ pinnedAt: earlier, pinOrderKey: "g", activeOrderKey: "z" });
+    const preview = applySidebarThreadDrop(source, "active", now, "m");
+    expect(preview).toMatchObject({ pinnedAt: null, pinOrderKey: null, activeOrderKey: "m" });
+    expect(
+      sortThreadsForSidebar([
+        thread({ id: ThreadId.make("after"), activeOrderKey: "t" }),
+        preview,
+        thread({ id: ThreadId.make("before"), activeOrderKey: "f" }),
+      ]).map((row) => row.id),
+    ).toEqual(["before", "dragged", "after"]);
+  });
+
+  it("clears the manual Active position when settling so reopening returns to the top", () => {
+    const source = thread({ activeOrderKey: "z" });
+    const settled = applySidebarThreadDrop(source, "settled", now);
+    expect(settled.activeOrderKey).toBeNull();
+    const reopened = applySidebarThreadDrop(settled, "active", serverNow);
+    expect(sortThreadsForSidebar([newer, reopened]).map((row) => row.id)).toEqual([
+      "dragged",
+      "newer",
+    ]);
   });
 });
 
