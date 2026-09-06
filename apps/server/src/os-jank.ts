@@ -2,9 +2,10 @@ import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hos
 import {
   listLoginShellCandidates,
   mergePathEntries,
-  readPathFromLoginShell,
+  readEnvironmentFromLoginShell,
   readPathFromLaunchctl,
   resolveWindowsEnvironment,
+  type ShellEnvironmentReader,
 } from "@t3tools/shared/shell";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -17,13 +18,21 @@ function logPathHydrationWarning(message: string, error?: unknown): void {
   );
 }
 
-function hydratePosixPath(env: NodeJS.ProcessEnv, platform: NodeJS.Platform): void {
+export function hydratePosixEnvironment(
+  env: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform,
+  readShellEnvironment: ShellEnvironmentReader = readEnvironmentFromLoginShell,
+): void {
   let shellPath: string | undefined;
   for (const shell of listLoginShellCandidates(platform, env.SHELL)) {
     try {
-      shellPath = readPathFromLoginShell(shell);
+      const shellEnvironment = readShellEnvironment(shell, ["PATH", "SSH_AUTH_SOCK"]);
+      shellPath = shellEnvironment.PATH;
+      if (!env.SSH_AUTH_SOCK && shellEnvironment.SSH_AUTH_SOCK) {
+        env.SSH_AUTH_SOCK = shellEnvironment.SSH_AUTH_SOCK;
+      }
     } catch (error) {
-      logPathHydrationWarning(`Failed to read PATH from login shell ${shell}.`, error);
+      logPathHydrationWarning(`Failed to read environment from login shell ${shell}.`, error);
     }
 
     if (shellPath) break;
@@ -82,10 +91,10 @@ export const fixPath = Effect.fn("fixPath")(function* (): Effect.fn.Return<
       }),
     ),
   );
-  yield* Effect.sync(() => hydratePosixPath(env, platform)).pipe(
+  yield* Effect.sync(() => hydratePosixEnvironment(env, platform)).pipe(
     Effect.catchDefect((defect) =>
       Effect.sync(() => {
-        logPathHydrationWarning("Failed to hydrate PATH from the user environment.", defect);
+        logPathHydrationWarning("Failed to hydrate the login-shell environment.", defect);
       }),
     ),
   );
