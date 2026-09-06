@@ -1,13 +1,20 @@
 import { describe, expect, it } from "@effect/vitest";
+import { EnvironmentNotRegisteredError } from "@t3tools/client-runtime/connection";
+import { isTransportConnectionErrorMessage } from "@t3tools/client-runtime/errors";
+import { EnvironmentRpcUnavailableError } from "@t3tools/client-runtime/rpc";
 import {
   CommandId,
+  EnvironmentAuthorizationError,
   EnvironmentId,
   MessageId,
+  OrchestrationDispatchCommandError,
   ProjectId,
   ProviderInstanceId,
   ThreadId,
 } from "@t3tools/contracts";
 import { AtomRegistry } from "effect/unstable/reactivity";
+import * as RpcClientError from "effect/unstable/rpc/RpcClientError";
+import * as Socket from "effect/unstable/socket/Socket";
 import { onTestFinished, vi } from "vite-plus/test";
 
 const outboxFiles = vi.hoisted(() => new Map<string, string | Error>());
@@ -1399,6 +1406,62 @@ describe("thread outbox", () => {
       }),
     ).toBe(true);
     expect(shouldRetryThreadOutboxDelivery(new Error("Thread no longer exists"))).toBe(false);
+    expect(
+      shouldRetryThreadOutboxDelivery(
+        new OrchestrationDispatchCommandError({ message: "Thread no longer exists" }),
+      ),
+    ).toBe(false);
+    expect(
+      shouldRetryThreadOutboxDelivery(
+        new EnvironmentAuthorizationError({
+          message: "Missing scope",
+          requiredScope: "orchestration:operate",
+        }),
+      ),
+    ).toBe(false);
+  });
+
+  // A pending task created offline drains the moment the phone reconnects,
+  // which is exactly when the socket is most likely to drop again. Every way a
+  // request can fail in flight must retry; a restore turns the pending task
+  // into a draft and it disappears from the list.
+  it("retries every in-flight transport failure by tag, not by message text", () => {
+    const socketReasons = [
+      new Socket.SocketReadError({ cause: new Error("The network connection was lost.") }),
+      new Socket.SocketWriteError({ cause: new Error("Broken pipe") }),
+      new Socket.SocketCloseError({ code: 1006 }),
+      new Socket.SocketOpenError({ kind: "Timeout", cause: new Error("timeout") }),
+    ];
+    for (const reason of socketReasons) {
+      const error = new RpcClientError.RpcClientError({ reason });
+      expect(isTransportConnectionErrorMessage(error.message)).toBe(
+        reason._tag === "SocketCloseError" || reason._tag === "SocketOpenError",
+      );
+      expect(shouldRetryThreadOutboxDelivery(error)).toBe(true);
+    }
+    expect(
+      shouldRetryThreadOutboxDelivery(
+        new RpcClientError.RpcClientError({
+          reason: new RpcClientError.RpcClientDefect({
+            message: "Error decoding message",
+            cause: new Error("Unexpected end of JSON input"),
+          }),
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      shouldRetryThreadOutboxDelivery(
+        new EnvironmentRpcUnavailableError({
+          environmentId: "environment-1",
+          message: "Home is not connected.",
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      shouldRetryThreadOutboxDelivery(
+        new EnvironmentNotRegisteredError({ environmentId: EnvironmentId.make("environment-1") }),
+      ),
+    ).toBe(true);
   });
 
   it("retains queued messages when settings synchronization fails before startTurn", () => {
