@@ -34,7 +34,11 @@ import { AppText as Text } from "../../components/AppText";
 import { T3Wordmark } from "../../components/T3Wordmark";
 import { cn } from "../../lib/cn";
 import { THREAD_WORK_ROW_MIN_HEIGHT, type deriveThreadWorkLogSizing } from "../../lib/layout";
-import { type ThreadFeedActivity, workEntryRowLabel } from "../../lib/threadActivity";
+import {
+  type AgentSpawnSummary,
+  type ThreadFeedActivity,
+  workEntryRowLabel,
+} from "../../lib/threadActivity";
 import {
   resolveThreadWorkGroupInitialScroll,
   shouldFollowThreadWorkGroupAppend,
@@ -773,7 +777,7 @@ const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
                     color={props.iconSubtleColor}
                     colorClassName={
                       iconIsDestructive
-                        ? "accent-danger-foreground"
+                        ? "accent-adaptive-rose-600-400"
                         : failed
                           ? "accent-danger-foreground/40"
                           : undefined
@@ -784,7 +788,7 @@ const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
               <Text
                 className={cn(
                   "min-w-0 flex-1 text-sm text-foreground-muted",
-                  iconIsDestructive && "font-t3-medium text-danger-foreground",
+                  iconIsDestructive && "font-t3-medium text-adaptive-rose-600-400",
                 )}
                 numberOfLines={1}
               >
@@ -832,7 +836,7 @@ const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
           entering={WORK_LOG_DETAIL_ENTER_TRANSITION}
           exiting={WORK_LOG_DETAIL_EXIT_TRANSITION}
           layout={WORK_LOG_LAYOUT_TRANSITION}
-          className="ml-7 border-l border-border pb-1 pl-3 pt-0.5"
+          className="ml-7 border-l border-adaptive-neutral-300-a60-white-a12 pb-1 pl-3 pt-0.5"
         >
           {viewedImagePath ? (
             <View className="pb-1.5">
@@ -937,6 +941,139 @@ export function ThreadWorkGroupToggle(props: {
     </View>
   );
 }
+
+const AGENT_SPAWN_TONE_DOT_CLASS = {
+  working: "bg-adaptive-sky-600-400",
+  completed: "bg-adaptive-emerald-600-400",
+  failed: "bg-adaptive-rose-600-400",
+  stopped: "bg-foreground-muted",
+} as const satisfies Record<AgentSpawnSummary["tone"], string>;
+
+/**
+ * A batch of spawned subagents. The status line updates in place as members
+ * report progress; expanding lists each member. Text nodes carry keys tied to
+ * the row identity only, so a progress tick re-renders the labels without
+ * remounting the card (see the batch key in appendActivityGroupRows).
+ */
+export const ThreadAgentSpawnCard = memo(function ThreadAgentSpawnCard(props: {
+  readonly summary: AgentSpawnSummary;
+  readonly expanded: boolean;
+  readonly iconSubtleColor: ColorValue;
+  readonly rowSizing: ReturnType<typeof deriveThreadWorkLogSizing>;
+  readonly onToggle: () => void;
+  readonly onCopy: () => void;
+}) {
+  const { summary, expanded } = props;
+  const working = summary.tone === "working";
+  const memberCount = summary.members.length;
+  const canExpand = memberCount > 0;
+  return (
+    <Animated.View layout={WORK_LOG_LAYOUT_TRANSITION} className="-mx-1 mb-1 px-1">
+      <Pressable
+        accessibilityRole={canExpand ? "button" : undefined}
+        accessibilityState={canExpand ? { expanded } : undefined}
+        accessibilityLabel={`${summary.title}, ${summary.status}`}
+        accessibilityHint={
+          canExpand
+            ? `Double tap to ${expanded ? "hide" : "show"} ${memberCount} ${memberCount === 1 ? "subagent" : "subagents"}. Long press to copy.`
+            : "Long press to copy."
+        }
+        hitSlop={4}
+        onPress={() => {
+          if (!canExpand) return;
+          void Haptics.selectionAsync();
+          props.onToggle();
+        }}
+        onLongPress={props.onCopy}
+        className="rounded-xl border border-adaptive-neutral-200-a80-white-a8 bg-card px-2.5 py-2 active:bg-subtle"
+      >
+        <View className="flex-row items-center gap-2">
+          <View className="h-6 w-6 shrink-0 items-center justify-center">
+            <SymbolView
+              name={{ ios: "sparkles", android: "auto_awesome" }}
+              size={14}
+              weight="medium"
+              tintColor={props.iconSubtleColor}
+              type="monochrome"
+            />
+          </View>
+          <View className="min-w-0 flex-1 gap-0.5">
+            <Text
+              key={props.rowSizing.textSizeKey}
+              className="font-t3-medium text-sm text-foreground"
+              numberOfLines={1}
+            >
+              {summary.title}
+            </Text>
+            <View className="flex-row items-center gap-1.5">
+              <View
+                className={cn(
+                  "h-1.5 w-1.5 shrink-0 rounded-full",
+                  AGENT_SPAWN_TONE_DOT_CLASS[summary.tone],
+                )}
+              />
+              {working ? (
+                <ShimmeringWorkContent
+                  key={props.rowSizing.textSizeKey}
+                  icon="brain"
+                  iconSubtleColor={props.iconSubtleColor}
+                  label={summary.status}
+                  showIcon={false}
+                />
+              ) : (
+                <Text className="min-w-0 flex-1 text-xs text-foreground-muted" numberOfLines={1}>
+                  {summary.status}
+                </Text>
+              )}
+            </View>
+          </View>
+          {canExpand ? (
+            <ThreadDisclosureChevron
+              expanded={expanded}
+              collapsedDirection="down"
+              size={11}
+              tintColor={props.iconSubtleColor}
+            />
+          ) : null}
+        </View>
+        {expanded && canExpand ? (
+          <Animated.View
+            entering={WORK_LOG_DETAIL_ENTER_TRANSITION}
+            exiting={WORK_LOG_DETAIL_EXIT_TRANSITION}
+            layout={WORK_LOG_LAYOUT_TRANSITION}
+            className="ml-8 mt-1.5 gap-1.5 border-l border-adaptive-neutral-300-a60-white-a12 pl-3"
+          >
+            {summary.members.map((member) => (
+              <View key={member.title} className="gap-px">
+                <View className="flex-row items-center gap-1.5">
+                  <View
+                    className={cn(
+                      "h-1.5 w-1.5 shrink-0 rounded-full",
+                      AGENT_SPAWN_TONE_DOT_CLASS[member.tone],
+                    )}
+                  />
+                  <Text className="min-w-0 flex-1 text-xs text-foreground" numberOfLines={1}>
+                    {member.title}
+                  </Text>
+                  <Text className="shrink-0 text-2xs text-foreground-muted">{member.status}</Text>
+                </View>
+                {member.detail ? (
+                  <Text
+                    selectable
+                    className="pl-3 font-mono text-2xs leading-normal text-foreground-muted"
+                    numberOfLines={expanded ? 6 : 1}
+                  >
+                    {member.detail}
+                  </Text>
+                ) : null}
+              </View>
+            ))}
+          </Animated.View>
+        ) : null}
+      </Pressable>
+    </Animated.View>
+  );
+});
 
 export function ThreadThinkingRow(props: {
   readonly rowSizing: ReturnType<typeof deriveThreadWorkLogSizing>;
