@@ -19,6 +19,12 @@ export interface ComposerTaskStep {
 
 const MAX_TASK_SEGMENTS = 10;
 
+const taskStatusLabels = {
+  pending: "Pending",
+  inProgress: "Running",
+  completed: "Completed",
+} satisfies Record<ComposerTaskStep["status"], string>;
+
 function keyedTaskSteps(steps: readonly ComposerTaskStep[]) {
   const occurrences = new Map<string, number>();
   return steps.map((step) => {
@@ -84,7 +90,7 @@ function TaskSummary({
           className={progress.completedSteps >= progress.totalSteps ? "text-success" : undefined}
           data-composer-task-progress="true"
         >
-          {progress.completedSteps}/{progress.totalSteps}
+          {progress.completedSteps}/{progress.totalSteps} complete
         </ComposerBanner.Count>
         <TaskSegments className="hidden w-20 sm:flex" steps={steps} />
         <ComposerBanner.ToggleIcon expanded={expanded} />
@@ -185,6 +191,9 @@ export const ComposerTasksContent = memo(function ComposerTasksContent({
                   {step.step}
                 </ComposerBanner.Content>
                 <ComposerBanner.Actions>
+                  <span className="text-[10px] text-muted-foreground">
+                    {taskStatusLabels[step.status]}
+                  </span>
                   <span
                     className="w-10 text-right text-[10px] text-muted-foreground/45 tabular-nums"
                     data-composer-task-duration="true"
