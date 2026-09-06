@@ -443,14 +443,6 @@ function poolWindows(accounts: readonly LimitAccount[], now: number): readonly L
   return pools.sort((left, right) => WINDOW_KIND_ORDER[left.kind] - WINDOW_KIND_ORDER[right.kind]);
 }
 
-/** The instance's configured name, else the driver's, else its raw kind. */
-export function providerLimitsLabel(
-  provider: Pick<ServerProvider, "driver" | "displayName">,
-  driverLabel: (driver: ServerProvider["driver"]) => string | undefined,
-): string {
-  return provider.displayName?.trim() || driverLabel(provider.driver) || String(provider.driver);
-}
-
 /** The one-line status under a provider heading when there are no bars to draw. */
 export function limitsNotice(limits: ServerProviderUsageLimits): string | null {
   if (limits.unavailable?.reason === "unsupported") {
@@ -625,7 +617,7 @@ export function collectProviderUsageLimits(
     accounts.push({
       id: provider.instanceId,
       driver: provider.driver,
-      label: `${providerLimitsLabel(provider, () => undefined)} [${provider.instanceId}]`,
+      label: `${provider.displayName?.trim() || String(provider.driver)} [${provider.instanceId}]`,
       ...(provider.auth.label ? { plan: provider.auth.label } : {}),
       instanceId: provider.instanceId,
       ...(provider.displayName ? { displayName: provider.displayName } : {}),
