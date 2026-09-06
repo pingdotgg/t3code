@@ -50,7 +50,6 @@ const ContextMenuPosition = Schema.Struct({
 const ContextMenuInput = Schema.Struct({
   items: Schema.Array(ContextMenuItemSchema),
   position: Schema.optionalKey(ContextMenuPosition),
-  sourceType: Schema.optionalKey(Schema.Literals(["mouse", "keyboard"])),
 });
 
 function toWebSocketBaseUrl(httpBaseUrl: URL): string {
@@ -285,7 +284,6 @@ export const showContextMenu = DesktopIpc.makeIpcMethod({
       window: window.value,
       items: input.items,
       position: Option.fromNullishOr(input.position),
-      ...(input.sourceType === undefined ? {} : { sourceType: input.sourceType }),
     });
     return Option.getOrNull(selectedItemId);
   }),

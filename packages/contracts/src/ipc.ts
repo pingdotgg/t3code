@@ -1124,7 +1124,6 @@ export interface DesktopBridge {
   showContextMenu: <T extends string>(
     items: readonly ContextMenuItem<T>[],
     position?: { x: number; y: number },
-    sourceType?: "mouse" | "keyboard",
   ) => Promise<T | null>;
   openExternal: (url: string) => Promise<boolean>;
   /**
@@ -1287,7 +1286,6 @@ export interface LocalApi {
     show: <T extends string>(
       items: readonly ContextMenuItem<T>[],
       position?: { x: number; y: number },
-      sourceType?: "mouse" | "keyboard",
     ) => Promise<T | null>;
     close: () => Promise<void>;
   };
