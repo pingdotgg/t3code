@@ -2222,6 +2222,7 @@ export const stageResourceMonitor = Effect.fn("stageResourceMonitor")(function* 
   if (input.platform !== "win") {
     yield* fs.chmod(destinationPath, 0o755);
   }
+  return destinationPath;
 });
 
 export const stageBrowserSecret = Effect.fn("stageBrowserSecret")(function* (input: {
@@ -2983,14 +2984,21 @@ export const stageWindowsServerSidecar = Effect.fn("stageWindowsServerSidecar")(
   // extract and reject on every launch. The desktop app treats a missing
   // archive as "no WSL-local runtime" and goes straight to the mounted tree.
   if (bundlesWslRuntime({ arch: input.arch, prebuildPath: input.wslPrebuildPath })) {
-    yield* stageResourceMonitor({
+    const monitorPath = yield* stageResourceMonitor({
       repoRoot: input.repoRoot,
-      stageResourcesDir: path.join(serverStageDir, "apps/server/dist"),
+      stageResourcesDir: path.join(input.stageRoot, "wsl-monitor"),
       platform: "linux",
       arch: input.arch,
       verbose: input.verbose,
       reuseExisting: true,
     });
+    const monitorDir = path.join(
+      serverStageDir,
+      "apps/server/dist/resource-monitor",
+      `linux-${input.arch}`,
+    );
+    yield* fs.makeDirectory(monitorDir, { recursive: true });
+    yield* fs.copyFile(monitorPath, path.join(monitorDir, "t3-resource-monitor"));
     yield* stageWslRuntimeArchive({
       sourceDir: serverStageDir,
       archivePath: input.wslRuntimeArchivePath,

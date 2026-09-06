@@ -1904,14 +1904,17 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         yield* fs.makeDirectory(path.dirname(monitorPath), { recursive: true });
         yield* fs.writeFileString(monitorPath, "linux monitor");
         yield* fs.chmod(monitorPath, 0o644);
-        yield* stageResourceMonitor({
+        const stagedMonitor = yield* stageResourceMonitor({
           repoRoot: root,
-          stageResourcesDir: path.join(sourceDir, "apps/server/dist"),
+          stageResourcesDir: path.join(root, "wsl-monitor"),
           platform: "linux",
           arch: "x64",
           verbose: false,
           reuseExisting: true,
         });
+        const monitorDir = path.join(sourceDir, "apps/server/dist/resource-monitor/linux-x64");
+        yield* fs.makeDirectory(monitorDir, { recursive: true });
+        yield* fs.copyFile(stagedMonitor, path.join(monitorDir, "t3-resource-monitor"));
 
         const members = [
           "node_modules/node-pty/prebuilds/darwin-x64/pty.node",
@@ -1959,7 +1962,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         assert.equal(Number(yield* process.exitCode), 0);
 
         assert.include(listing, "apps/server/dist/bin.mjs");
-        assert.include(listing, "apps/server/dist/resource-monitor/t3-resource-monitor");
+        assert.include(listing, "apps/server/dist/resource-monitor/linux-x64/t3-resource-monitor");
         const extractedDir = path.join(root, "extracted");
         yield* fs.makeDirectory(extractedDir);
         const extract = yield* spawner.spawn(
@@ -1968,7 +1971,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         assert.equal(Number(yield* extract.exitCode), 0);
         const extractedMonitor = path.join(
           extractedDir,
-          "apps/server/dist/resource-monitor/t3-resource-monitor",
+          "apps/server/dist/resource-monitor/linux-x64/t3-resource-monitor",
         );
         assert.equal(yield* fs.readFileString(extractedMonitor), "linux monitor");
         if ((yield* HostProcessPlatform) !== "win32") {
