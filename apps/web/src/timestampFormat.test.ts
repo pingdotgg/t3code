@@ -52,6 +52,25 @@ describe("formatShortTimestamp", () => {
   });
 });
 
+describe("formatChatTimestampTooltip", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.resetModules();
+  });
+
+  it.each(["de-DE", "it-IT"])("keeps the English date label in a %s runtime", async (locale) => {
+    const DateTimeFormat = Intl.DateTimeFormat;
+    vi.spyOn(Intl, "DateTimeFormat").mockImplementation(function (locales, options) {
+      return new DateTimeFormat(locales ?? locale, options);
+    });
+    vi.resetModules();
+    const { formatChatTimestampTooltip: format } = await import("./timestampFormat");
+    const date = new Date(2026, 5, 4, 14, 4).toISOString();
+
+    expect(format(date, "24-hour")).toBe("14:04, 4th June 2026");
+  });
+});
+
 describe("formatExpiresInLabel", () => {
   beforeEach(() => {
     vi.useFakeTimers();
