@@ -1,3 +1,4 @@
+import { derivePendingRequests } from "@t3tools/client-runtime/pending-requests";
 import { useAtomValue } from "@effect/atom-react";
 import { useCallback, useMemo, useState } from "react";
 
@@ -12,10 +13,7 @@ import { threadEnvironment } from "../state/threads";
 import { scopedRequestKey } from "../lib/scopedEntities";
 import {
   buildPendingUserInputAnswers,
-  derivePendingApprovals,
-  derivePendingUserInputs,
   setPendingUserInputCustomAnswer,
-  sortThreadActivities,
   togglePendingUserInputOptionSelection,
   type PendingUserInputDraftAnswer,
 } from "../lib/threadActivity";
@@ -83,20 +81,11 @@ export function useSelectedThreadRequests() {
     null,
   );
 
-  // Sort once; both derivations expect the same lifecycle ordering.
-  const sortedActivities = useMemo(
-    () => (selectedThread ? sortThreadActivities(selectedThread.activities) : []),
-    [selectedThread],
-  );
-  const activePendingApprovals = useMemo(
-    () => derivePendingApprovals(sortedActivities),
-    [sortedActivities],
+  const { approvals: activePendingApprovals, userInputs: activePendingUserInputs } = useMemo(
+    () => derivePendingRequests(selectedThread?.activities ?? []),
+    [selectedThread?.activities],
   );
   const activePendingApproval = activePendingApprovals[0] ?? null;
-  const activePendingUserInputs = useMemo(
-    () => derivePendingUserInputs(sortedActivities),
-    [sortedActivities],
-  );
   const activePendingUserInput = activePendingUserInputs[0] ?? null;
   const activePendingUserInputDrafts =
     activePendingUserInput && selectedThreadShell
