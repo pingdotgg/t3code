@@ -743,4 +743,67 @@ it.layer(NodeServices.layer)("settled thread decider", (it) => {
       ]);
     }),
   );
+
+  it.effect("only allows idle-only session stops after active work finishes", () =>
+    Effect.gen(function* () {
+      const stopCommand = {
+        type: "thread.session.stop",
+        commandId: CommandId.make("cmd-stop-only-if-idle"),
+        threadId: ThreadId.make("thread-1"),
+        createdAt: NOW,
+        onlyIfIdle: true,
+      } as const;
+
+      const activeError = yield* decideOrchestrationCommand({
+        command: stopCommand,
+        readModel: makeReadModel(null, null, makeSession("running")),
+      }).pipe(Effect.flip);
+      expect(activeError._tag).toBe("OrchestrationCommandInvariantError");
+
+      const blockedError = yield* decideOrchestrationCommand({
+        command: stopCommand,
+        readModel: makeReadModel(null, null, makeSession("ready"), [
+          {
+            id: EventId.make("activity-reconnect-approval"),
+            tone: "approval",
+            kind: "approval.requested",
+            summary: "Approval requested",
+            payload: { requestId: "request-reconnect" },
+            turnId: null,
+            createdAt: NOW,
+          },
+        ]),
+      }).pipe(Effect.flip);
+      expect(blockedError._tag).toBe("OrchestrationCommandInvariantError");
+
+      const queuedError = yield* decideOrchestrationCommand({
+        command: stopCommand,
+        readModel: makeReadModel(
+          null,
+          null,
+          makeSession("ready"),
+          [],
+          [
+            {
+              id: MessageId.make("message-reconnect-queued"),
+              role: "user",
+              text: "Continue",
+              turnId: null,
+              streaming: false,
+              createdAt: NOW,
+              updatedAt: NOW,
+            },
+          ],
+        ),
+      }).pipe(Effect.flip);
+      expect(queuedError._tag).toBe("OrchestrationCommandInvariantError");
+
+      const idle = yield* decideOrchestrationCommand({
+        command: stopCommand,
+        readModel: makeReadModel(null, null, makeSession("ready")),
+      });
+      const idleEvents = Array.isArray(idle) ? idle : [idle];
+      expect(idleEvents.map((event) => event.type)).toEqual(["thread.session-stop-requested"]);
+    }),
+  );
 });

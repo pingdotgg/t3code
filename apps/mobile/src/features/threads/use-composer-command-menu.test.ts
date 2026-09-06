@@ -93,4 +93,29 @@ describe("mobile slash commands", () => {
       }),
     ).toEqual({ text: "/plan ", cursor: 6, interactionMode: null });
   });
+
+  it("offers MCP reconnect only for existing Codex threads", () => {
+    const codex = {
+      driver: ProviderDriverKind.make("codex"),
+      slashCommands: [],
+    };
+    expect(
+      buildComposerSlashCommandItems({
+        query: "reconnect",
+        atMessageStart: true,
+        hasThread: true,
+        allowInteractionMode: false,
+        selectedProviderStatus: codex,
+      }).map((item) => item.id),
+    ).toEqual(["cmd:reconnect-mcp"]);
+    expect(
+      buildComposerSlashCommandItems({
+        query: "reconnect",
+        atMessageStart: true,
+        hasThread: false,
+        allowInteractionMode: false,
+        selectedProviderStatus: codex,
+      }),
+    ).toEqual([]);
+  });
 });
