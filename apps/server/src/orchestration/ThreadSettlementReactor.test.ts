@@ -149,6 +149,7 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
   const snapshotReadCount = yield* Ref.make(0);
   const snapshotReads = yield* Queue.unbounded<number>();
   const settings = yield* Ref.make(options.settings ?? DEFAULT_SERVER_SETTINGS);
+  const settingsReads = yield* Queue.unbounded<ServerSettings>();
   const settingsChanges = yield* PubSub.unbounded<ServerSettings>();
   const mergedPullRequests = yield* PubSub.unbounded<PullRequestMergeEvent>();
   const commands = yield* Ref.make<ReadonlyArray<AutoSettleCommand>>([]);
@@ -208,7 +209,7 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
   const serverSettings = ServerSettingsService.of({
     start: Effect.void,
     ready: Effect.void,
-    getSettings: Ref.get(settings),
+    getSettings: Ref.get(settings).pipe(Effect.tap((value) => Queue.offer(settingsReads, value))),
     updateSettings,
     streamChanges: Stream.fromPubSub(settingsChanges),
     subscribeChanges: PubSub.subscribe(settingsChanges).pipe(
@@ -253,6 +254,7 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
     snapshots,
     snapshotReadCount,
     snapshotReads,
+    settingsReads,
     commands,
     branchCalls,
     summaryCalls,
@@ -306,18 +308,23 @@ describe("ThreadSettlementReactor", () => {
 
         yield* Effect.gen(function* () {
           const reactor = yield* ThreadSettlementReactor.ThreadSettlementReactor;
-          yield* startHarness(reactor, fixture.activation, fixture.snapshotReads);
+          yield* reactor.start();
+          yield* Queue.take(fixture.settingsReads);
+          yield* Deferred.succeed(fixture.activation, undefined);
+          yield* Queue.take(fixture.settingsReads);
+          yield* reactor.drain;
           yield* TestClock.adjust("1 minute");
-          yield* Queue.take(fixture.snapshotReads);
+          yield* Queue.take(fixture.settingsReads);
           yield* reactor.drain;
           yield* fixture.publishMerge;
-          yield* Queue.take(fixture.snapshotReads);
+          yield* Queue.take(fixture.settingsReads);
           yield* reactor.drain;
 
           assert.deepStrictEqual(yield* Ref.get(fixture.branchCalls), []);
           assert.deepStrictEqual(yield* Ref.get(fixture.summaryCalls), []);
           assert.deepStrictEqual(yield* Ref.get(fixture.invalidatedCwds), []);
           assert.deepStrictEqual(yield* Ref.get(fixture.commands), []);
+          assert.strictEqual(yield* Ref.get(fixture.snapshotReadCount), 0);
 
           yield* fixture.updateSettings({ sidebarAutoSettleAfterDays: 1 });
           yield* Queue.take(fixture.snapshotReads);
@@ -679,13 +686,16 @@ describe("ThreadSettlementReactor", () => {
           yield* Deferred.succeed(fixture.activation, undefined);
           yield* Queue.take(fixture.snapshotReads);
           yield* Deferred.await(firstLookupStarted);
+          yield* Queue.clear(fixture.settingsReads);
 
           yield* fixture.updateSettings({ sidebarAutoSettleOnMerge: false });
           yield* Deferred.succeed(releaseFirstLookup, undefined);
-          yield* Queue.take(fixture.snapshotReads);
+          // The in-flight decision and the newly queued sweep both read the disabled settings.
+          yield* Queue.take(fixture.settingsReads);
+          yield* Queue.take(fixture.settingsReads);
           yield* reactor.drain;
           assert.deepStrictEqual(yield* Ref.get(fixture.commands), []);
-          assert.strictEqual(yield* Ref.get(fixture.snapshotReadCount), 2);
+          assert.strictEqual(yield* Ref.get(fixture.snapshotReadCount), 1);
 
           yield* Ref.set(state, "closed");
           yield* fixture.updateSettings({ enableAgentBrowserAccess: false });
@@ -694,7 +704,7 @@ describe("ThreadSettlementReactor", () => {
           yield* Deferred.succeed(releaseLaterLookup, undefined);
           yield* reactor.drain;
 
-          assert.strictEqual(yield* Ref.get(fixture.snapshotReadCount), 3);
+          assert.strictEqual(yield* Ref.get(fixture.snapshotReadCount), 2);
           assert.strictEqual(yield* Ref.get(lookupCount), 2);
           assert.deepStrictEqual(
             (yield* Ref.get(fixture.commands)).map((command) => command.threadId),
