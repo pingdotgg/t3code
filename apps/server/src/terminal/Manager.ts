@@ -2887,11 +2887,12 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     );
   };
 
-  const inspectSubprocesses: TerminalManager["Service"]["inspectSubprocesses"] = (input) =>
-    withThreadLock(
+  const inspectSubprocesses: TerminalManager["Service"]["inspectSubprocesses"] = (input) => {
+    const terminalIds = [...new Set(input.terminalIds)];
+    return withThreadLock(
       input.threadId,
       Effect.gen(function* () {
-        const sessions = yield* Effect.forEach(input.terminalIds, (terminalId) =>
+        const sessions = yield* Effect.forEach(terminalIds, (terminalId) =>
           requireSession(input.threadId, terminalId),
         );
         const hasRunningSession = sessions.some(
@@ -2950,6 +2951,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         return { terminals };
       }),
     );
+  };
 
   const write: TerminalManager["Service"]["write"] = Effect.fn("terminal.write")(function* (input) {
     const terminalId = input.terminalId;

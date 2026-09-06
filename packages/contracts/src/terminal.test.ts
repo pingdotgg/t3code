@@ -3,11 +3,13 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   DEFAULT_TERMINAL_ID,
+  MAX_TERMINAL_SUBPROCESS_INSPECTION_IDS,
   TerminalAttachInput,
   TerminalClearInput,
   TerminalCloseInput,
   TerminalEvent,
   TerminalError,
+  TerminalInspectSubprocessesInput,
   TerminalOpenInput,
   TerminalProviderEnvironmentError,
   TerminalResizeInput,
@@ -249,6 +251,23 @@ describe("TerminalCloseInput", () => {
         deleteHistory: true,
       }),
     ).toBe(true);
+  });
+});
+
+describe("TerminalInspectSubprocessesInput", () => {
+  it("bounds the number of terminal ids", () => {
+    const input = (length: number) => ({
+      threadId: "thread-1",
+      terminalIds: Array.from({ length }, (_, index) => `term-${index + 1}`),
+    });
+
+    expect(decodes(TerminalInspectSubprocessesInput, input(1))).toBe(true);
+    expect(
+      decodes(TerminalInspectSubprocessesInput, input(MAX_TERMINAL_SUBPROCESS_INSPECTION_IDS)),
+    ).toBe(true);
+    expect(
+      decodes(TerminalInspectSubprocessesInput, input(MAX_TERMINAL_SUBPROCESS_INSPECTION_IDS + 1)),
+    ).toBe(false);
   });
 });
 

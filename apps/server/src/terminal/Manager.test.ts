@@ -1082,6 +1082,30 @@ it.layer(
     }),
   );
 
+  it.effect("deduplicates terminal ids before on-demand inspection", () =>
+    Effect.gen(function* () {
+      const { manager } = yield* createManager(5, {
+        subprocessInspector: () =>
+          Effect.succeed({
+            hasRunningSubprocess: true,
+            childCommand: "sleep",
+            processIds: [9000, 9001],
+          }),
+        subprocessPollIntervalMs: 60_000,
+      });
+
+      yield* manager.open(openInput());
+      const result = yield* manager.inspectSubprocesses({
+        threadId: "thread-1",
+        terminalIds: [DEFAULT_TERMINAL_ID, DEFAULT_TERMINAL_ID, DEFAULT_TERMINAL_ID],
+      });
+
+      expect(result.terminals).toEqual([
+        { terminalId: DEFAULT_TERMINAL_ID, hasRunningSubprocess: true },
+      ]);
+    }),
+  );
+
   it.effect("does not invoke subprocess polling until a terminal session is running", () =>
     Effect.gen(function* () {
       let checks = 0;
