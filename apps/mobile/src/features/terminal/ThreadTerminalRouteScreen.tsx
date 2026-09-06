@@ -5,6 +5,7 @@ import {
   DEFAULT_TERMINAL_ID,
   EnvironmentId,
   ThreadId,
+  sessionGrantsScope,
 } from "@t3tools/contracts";
 import { type KnownTerminalSession } from "@t3tools/client-runtime/state/terminal";
 import type { MenuAction } from "@react-native-menu/menu";
@@ -192,9 +193,13 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
   const isAuthenticated =
     terminalSession.error === null && terminalSession.data?.authenticated === true;
   const canOperateTerminal =
-    isAuthenticated && terminalSession.data?.scopes?.includes(AuthTerminalOperateScope) === true;
+    isAuthenticated &&
+    terminalSession.data !== null &&
+    sessionGrantsScope(terminalSession.data, AuthTerminalOperateScope);
   const canReadTerminal =
-    isAuthenticated && terminalSession.data?.scopes?.includes(AuthTerminalReadScope) === true;
+    isAuthenticated &&
+    terminalSession.data !== null &&
+    sessionGrantsScope(terminalSession.data, AuthTerminalReadScope);
   const environment = useEnvironmentPresentation(routeEnvironmentId);
   const isEnvironmentReady = environment.presentation?.connection.phase === "connected";
   const requestedTerminalId = firstRouteParam(params.terminalId);

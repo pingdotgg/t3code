@@ -1,5 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
-import { AuthSettingsWriteScope, type EnvironmentId } from "@t3tools/contracts";
+import { AuthSettingsWriteScope, type EnvironmentId, sessionGrantsScope } from "@t3tools/contracts";
 import { ChevronDownIcon, PlusIcon, RotateCcwIcon, XIcon } from "lucide-react";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
@@ -53,7 +53,7 @@ const priceTargetsAtom = Atom.make((get): readonly UsagePriceTarget[] =>
           ? session.waiting
             ? "pending"
             : "denied"
-          : sessionData.authenticated && sessionData.scopes?.includes(AuthSettingsWriteScope)
+          : sessionGrantsScope(sessionData, AuthSettingsWriteScope)
             ? "granted"
             : "denied";
     return {

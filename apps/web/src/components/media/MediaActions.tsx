@@ -11,6 +11,8 @@ import {
   type AuthSessionState,
   type ContextMenuItem,
   type EnvironmentId,
+  sessionGrantsScope,
+  type SessionGrantInput,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/unstable/reactivity";
@@ -43,11 +45,8 @@ function mediaFileName(source: MediaActionSource): string {
 }
 
 /** An explicit action may ask the server while its grant is still unresolved. */
-function allowsHostMedia(session: Pick<AuthSessionState, "authenticated" | "scopes"> | null) {
-  return (
-    session === null ||
-    (session.authenticated && session.scopes?.includes(AuthFilesystemReadScope) === true)
-  );
+function allowsHostMedia(session: SessionGrantInput | null) {
+  return session === null || sessionGrantsScope(session, AuthFilesystemReadScope);
 }
 
 function canReadHostMedia(environmentId: EnvironmentId | null): boolean {

@@ -3,6 +3,8 @@ import {
   AuthProvidersManageScope,
   type AuthSessionState,
   type EnvironmentId,
+  sessionGrantsScope,
+  type SessionGrantInput,
 } from "@t3tools/contracts";
 
 export interface ProviderEnvironmentOptionLike {
@@ -72,21 +74,19 @@ export type ProviderOperateAccess = "granted" | "denied" | "pending";
 
 /** Cached grants remain usable during revalidation; unknown or failed lookups grant nothing. */
 function resolveSessionOperateAccess(input: {
-  readonly session: Pick<AuthSessionState, "authenticated" | "scopes"> | null;
+  readonly session: SessionGrantInput | null;
   readonly isPending: boolean;
   readonly hasError: boolean;
 }): ProviderOperateAccess {
   if (input.hasError) return "denied";
   if (input.session === null) return input.isPending ? "pending" : "denied";
-  return input.session.authenticated && input.session.scopes?.includes(AuthProvidersManageScope)
-    ? "granted"
-    : "denied";
+  return sessionGrantsScope(input.session, AuthProvidersManageScope) ? "granted" : "denied";
 }
 
 export function resolvePrimaryOperateAccess(input: {
   readonly isPrimary: boolean;
   readonly hasDesktopBridge: boolean;
-  readonly session: Pick<AuthSessionState, "authenticated" | "scopes"> | null;
+  readonly session: SessionGrantInput | null;
   readonly isPending: boolean;
   readonly hasError: boolean;
 }): ProviderOperateAccess {
@@ -94,7 +94,7 @@ export function resolvePrimaryOperateAccess(input: {
 }
 
 export function resolveRemoteOperateAccess(input: {
-  readonly session: Pick<AuthSessionState, "authenticated" | "scopes"> | null;
+  readonly session: SessionGrantInput | null;
   readonly isPending: boolean;
   readonly hasError: boolean;
 }): ProviderOperateAccess {

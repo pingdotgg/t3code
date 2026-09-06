@@ -170,6 +170,7 @@ import * as GitWorkflowService from "./git/GitWorkflowService.ts";
 import * as ReviewService from "./review/ReviewService.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
+import { base64UrlDecodeUtf8, base64UrlEncode, signPayload } from "./auth/utils.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
 import * as CloudManagedEndpointRuntime from "./cloud/ManagedEndpointRuntime.ts";
@@ -7689,6 +7690,58 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         ),
       );
       assert.equal(yield* fs.readFileString(filePath), "allowed");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("expands tokens issued before scopes were split", () =>
+    Effect.gen(function* () {
+      const config = yield* buildAppUnderTest();
+      const secrets = yield* ServerSecretStore.ServerSecretStore.pipe(
+        Effect.provide(ServerSecretStore.layer),
+        Effect.provide(Layer.succeed(ServerConfig.ServerConfig, config)),
+      );
+
+      // A v1 token carrying the pre-split standard grant (minus review:write,
+      // which can no longer be requested), which is what an existing bearer
+      // credential looks like after the server upgrades. Stored session rows
+      // are rewritten by migration 048, covered by its own test.
+      const current = yield* exchangeAccessToken(defaultDesktopBootstrapToken, {
+        scope: "orchestration:read orchestration:operate terminal:operate relay:read",
+      });
+      assert.equal(current.response.status, 200);
+      const [encodedPayload] = (current.body.access_token ?? "").split(".");
+      const claims = base64UrlDecodeUtf8(encodedPayload!);
+      assert.include(claims, '"v":2');
+      const legacyPayload = base64UrlEncode(claims.replace('"v":2', '"v":1'));
+      const secret = yield* secrets.getOrCreateRandom("server-signing-key", 32);
+      const legacyToken = `${legacyPayload}.${signPayload(legacyPayload, secret)}`;
+
+      // The current token was issued with split scopes and must not widen.
+      const currentSession = yield* HttpClient.get("/api/auth/session", {
+        headers: { authorization: `Bearer ${current.body.access_token ?? ""}` },
+      });
+      const currentScopes = (
+        (yield* currentSession.json) as { readonly scopes?: ReadonlyArray<string> }
+      ).scopes;
+      assert.notInclude(currentScopes ?? [], "filesystem:read");
+
+      const legacySession = yield* HttpClient.get("/api/auth/session", {
+        headers: { authorization: `Bearer ${legacyToken}` },
+      });
+      const legacyScopes = (
+        (yield* legacySession.json) as { readonly scopes?: ReadonlyArray<string> }
+      ).scopes;
+      assert.include(legacyScopes ?? [], "filesystem:read");
+      assert.include(legacyScopes ?? [], "filesystem:write");
+      assert.include(legacyScopes ?? [], "terminal:read");
+      // Expansion only covers the split scopes; access administration was
+      // never part of a standard grant.
+      assert.notInclude(legacyScopes ?? [], "access:write");
+
+      const ticketResponse = yield* HttpClient.post("/api/auth/websocket-ticket", {
+        headers: { authorization: `Bearer ${legacyToken}` },
+      });
+      assert.equal(ticketResponse.status, 200);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
