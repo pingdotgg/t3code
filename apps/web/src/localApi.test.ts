@@ -70,6 +70,26 @@ afterEach(() => {
 });
 
 describe("LocalApi", () => {
+  it.each([
+    { type: "contextmenu", button: -1, detail: 0, touch: false, expected: "keyboard" },
+    { type: "contextmenu", button: 2, detail: 0, touch: false, expected: undefined },
+    { type: "contextmenu", button: -1, detail: 0, touch: true, expected: undefined },
+    { type: "contextmenu", button: -1, detail: 0, touch: undefined, expected: undefined },
+    { type: "click", button: 0, detail: 0, touch: false, expected: "keyboard" },
+    { type: "click", button: 0, detail: 1, touch: false, expected: undefined },
+    { type: "click", button: 0, detail: 1, touch: true, expected: undefined },
+  ])("classifies menu invocation $type/$button/$detail/touch=$touch", async (input) => {
+    const { contextMenuSourceType } = await import("./localApi");
+    expect(
+      contextMenuSourceType({
+        type: input.type,
+        button: input.button,
+        detail: input.detail,
+        sourceCapabilities: input.touch === undefined ? null : { firesTouchEvents: input.touch },
+      }),
+    ).toBe(input.expected);
+  });
+
   it("keeps backend operations out of the local host facade", async () => {
     const { createLocalApi } = await import("./localApi");
     const api = createLocalApi();
@@ -144,7 +164,9 @@ describe("LocalApi", () => {
     await expect(api.persistence.getClientSettings()).resolves.toEqual(DEFAULT_CLIENT_SETTINGS);
     await api.persistence.setClientSettings(DEFAULT_CLIENT_SETTINGS);
 
-    expect(showContextMenu).toHaveBeenCalledWith(items, undefined);
+    expect(showContextMenu).toHaveBeenCalledWith(items, undefined, undefined);
+    await api.contextMenu.show(items, { x: 4, y: 5 }, "keyboard");
+    expect(showContextMenu).toHaveBeenLastCalledWith(items, { x: 4, y: 5 }, "keyboard");
     expect(pickFolder).toHaveBeenCalledWith({ initialPath: "/tmp" });
     expect(getClientSettings).toHaveBeenCalledTimes(1);
     expect(setClientSettings).toHaveBeenCalledWith(DEFAULT_CLIENT_SETTINGS);

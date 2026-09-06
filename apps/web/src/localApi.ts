@@ -6,6 +6,24 @@ import { readBrowserClientSettings, writeBrowserClientSettings } from "./clientP
 
 let cachedApi: LocalApi | undefined;
 
+export function contextMenuSourceType(
+  event: Pick<MouseEvent, "type" | "button" | "detail"> & {
+    sourceCapabilities?: { firesTouchEvents: boolean } | null;
+  },
+) {
+  // Chromium uses no button for keyboard context menus and touch long-press.
+  // Only the latter reports touch capabilities. Keep unknown sources unchanged.
+  if (
+    (event.type === "contextmenu" &&
+      event.button === -1 &&
+      event.sourceCapabilities?.firesTouchEvents === false) ||
+    (event.type === "click" && event.detail === 0)
+  ) {
+    return "keyboard";
+  }
+  return undefined;
+}
+
 function createBrowserLocalApi(): LocalApi {
   return {
     dialogs: {
@@ -45,9 +63,14 @@ function createBrowserLocalApi(): LocalApi {
       show: async <T extends string>(
         items: readonly ContextMenuItem<T>[],
         position?: { x: number; y: number },
+        sourceType?: "mouse" | "keyboard",
       ): Promise<T | null> => {
         if (window.desktopBridge) {
-          return window.desktopBridge.showContextMenu(items, position) as Promise<T | null>;
+          return window.desktopBridge.showContextMenu(
+            items,
+            position,
+            sourceType,
+          ) as Promise<T | null>;
         }
         return showContextMenuFallback(items, position);
       },

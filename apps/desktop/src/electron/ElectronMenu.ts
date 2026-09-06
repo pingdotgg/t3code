@@ -17,6 +17,7 @@ export interface ElectronMenuContextInput {
   readonly window: Electron.BrowserWindow;
   readonly items: readonly ContextMenuItem[];
   readonly position: Option.Option<ElectronMenuPosition>;
+  readonly sourceType?: "mouse" | "keyboard";
 }
 
 export interface ElectronMenuTemplateInput {
@@ -252,7 +253,10 @@ export const make = Effect.gen(function* () {
               callback: () => complete(Option.none()),
             }),
           });
-          menu.popup(popupOptions);
+          menu.popup({
+            ...popupOptions,
+            ...(input.sourceType === undefined ? {} : { sourceType: input.sourceType }),
+          });
         } catch (cause) {
           if (completed) {
             return;

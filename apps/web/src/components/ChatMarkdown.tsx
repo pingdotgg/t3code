@@ -140,7 +140,7 @@ import {
   shouldOpenMarkdownFileLinkInEditor,
   type MarkdownFileLinkMeta,
 } from "../markdown-links";
-import { readLocalApi } from "../localApi";
+import { contextMenuSourceType, readLocalApi } from "../localApi";
 import { useAssetUrlRefresh, useAssetUrlState } from "../assets/assetUrls";
 import { cn } from "../lib/utils";
 import { useRemoteOpenResolution, type RemoteOpenMode } from "../remoteOpen";
@@ -1969,7 +1969,7 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
   );
 
   const showFileContextMenu = useCallback(
-    async (position: { x: number; y: number }) => {
+    async (position: { x: number; y: number }, sourceType?: "mouse" | "keyboard") => {
       const api = readLocalApi();
       if (!api) return;
 
@@ -1986,6 +1986,7 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
             { id: "copy-full", label: "Copy full path" },
           ] as const,
           position,
+          sourceType,
         );
 
         if (clicked === "preview-media") {
@@ -2045,7 +2046,7 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
               return { x: bounds.left, y: bounds.bottom };
             })()
           : { x: event.clientX, y: event.clientY };
-      void showFileContextMenu(position);
+      void showFileContextMenu(position, contextMenuSourceType(event.nativeEvent));
     },
     [showFileContextMenu],
   );
@@ -2851,6 +2852,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
             const api = readLocalApi();
             if (!api) return;
             const pullRequest = resolveThreadPullRequest(href);
+            const sourceType = contextMenuSourceType(event.nativeEvent);
             const currentPullRequest =
               threadRef === undefined ? null : readThreadShell(threadRef)?.linkedPullRequest;
             const threadLinkAction =
@@ -2864,7 +2866,8 @@ const CHAT_MARKDOWN_COMPONENTS = {
               canOpenInPreview,
               threadLinkAction,
               position: { x: event.clientX, y: event.clientY },
-              showContextMenu: (items, position) => api.contextMenu.show(items, position),
+              showContextMenu: (items, position) =>
+                api.contextMenu.show(items, position, sourceType),
               openInPreview: async (target) => {
                 const result = await openExternalLinkInPreview(target);
                 if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {

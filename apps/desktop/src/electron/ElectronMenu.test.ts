@@ -58,6 +58,32 @@ describe("ElectronMenu", () => {
     }).pipe(Effect.provide(TestLayer)),
   );
 
+  it.effect("preserves keyboard invocation without changing the default pointer menu", () =>
+    Effect.gen(function* () {
+      const electronMenu = yield* ElectronMenu.ElectronMenu;
+      for (const sourceType of [undefined, "mouse", "keyboard"] as const) {
+        let popupOptions: Electron.PopupOptions | undefined;
+        buildFromTemplateMock.mockImplementation(() => ({
+          popup: (options: Electron.PopupOptions) => {
+            popupOptions = options;
+            options.callback?.();
+          },
+        }));
+        const selectedItemId = yield* electronMenu.showContextMenu({
+          window: makeWindow(2),
+          items: [{ id: "copy", label: "Copy Link" }],
+          position: Option.some({ x: 10, y: 20 }),
+          ...(sourceType === undefined ? {} : { sourceType }),
+        });
+        assert.isTrue(Option.isNone(selectedItemId));
+        assert.equal(popupOptions?.sourceType, sourceType);
+        assert.equal(popupOptions?.x, 20);
+        assert.equal(popupOptions?.y, 40);
+        if (sourceType === undefined) assert.notProperty(popupOptions, "sourceType");
+      }
+    }).pipe(Effect.provide(TestLayer)),
+  );
+
   it.effect("resolves with the clicked leaf item id", () =>
     Effect.gen(function* () {
       buildFromTemplateMock.mockImplementation(
