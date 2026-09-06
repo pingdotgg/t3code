@@ -1047,23 +1047,15 @@ describe("remote environment provider update notice", () => {
     dismissedKeys: new Set<string>(),
   };
 
-  it("skips providers that are current or disabled", () => {
+  it("stays quiet when there is no one-click update to offer", () => {
     expect(
       buildRemoteProviderUpdateNotice({
         ...base,
         providers: [
           provider({ driver: driver("codex"), advisoryStatus: "current", latestVersion: null }),
           provider({ driver: driver("cursor"), enabled: false }),
+          provider({ driver: driver("claude"), updateCommand: null }),
         ],
-      }),
-    ).toBeNull();
-  });
-
-  it("stays quiet without an update command to run", () => {
-    expect(
-      buildRemoteProviderUpdateNotice({
-        ...base,
-        providers: [provider({ driver: driver("codex"), updateCommand: null })],
       }),
     ).toBeNull();
   });
@@ -1089,7 +1081,7 @@ describe("remote environment provider update notice", () => {
       status: "idle",
       failureMessage: null,
     });
-    expect(notice?.targets).toHaveLength(1);
+    expect(notice?.candidates).toHaveLength(1);
   });
 
   it("lists distinct providers in one notice", () => {
@@ -1120,7 +1112,7 @@ describe("remote environment provider update notice", () => {
     ).toBe("env-remote|codex:1.2.0");
   });
 
-  it("reports live update progress and failures from the environment", () => {
+  it("reports live update progress from the environment", () => {
     expect(
       buildRemoteProviderUpdateNotice({
         ...base,
@@ -1138,42 +1130,41 @@ describe("remote environment provider update notice", () => {
         ],
       }),
     ).toMatchObject({ status: "running" });
-    expect(
-      buildRemoteProviderUpdateNotice({
-        ...base,
-        providers: [
-          provider({
-            driver: driver("codex"),
-            updateState: {
-              status: "failed",
-              startedAt: checkedAt,
-              finishedAt: laterCheckedAt,
-              message: "npm exited with 1",
-              output: null,
-            },
-          }),
-        ],
-      }),
-    ).toMatchObject({ status: "failed", failureMessage: "npm exited with 1" });
   });
 
-  it("treats an unchanged update as a failure so the retry stays visible", () => {
+  it("keeps a retry visible after a failed or unchanged update, failure first", () => {
+    const settledState = (status: "failed" | "unchanged", message: string) => ({
+      status,
+      startedAt: checkedAt,
+      finishedAt: laterCheckedAt,
+      message,
+      output: null,
+    });
     expect(
       buildRemoteProviderUpdateNotice({
         ...base,
         providers: [
           provider({
             driver: driver("codex"),
-            updateState: {
-              status: "unchanged",
-              startedAt: checkedAt,
-              finishedAt: laterCheckedAt,
-              message: "codex is still on v1.0.0",
-              output: null,
-            },
+            updateState: settledState("unchanged", "codex is still on v1.0.0"),
           }),
         ],
       }),
     ).toMatchObject({ status: "failed", failureMessage: "codex is still on v1.0.0" });
+    expect(
+      buildRemoteProviderUpdateNotice({
+        ...base,
+        providers: [
+          provider({
+            driver: driver("codex"),
+            updateState: settledState("unchanged", "codex is still on v1.0.0"),
+          }),
+          provider({
+            driver: driver("cursor"),
+            updateState: settledState("failed", "npm exited with 1"),
+          }),
+        ],
+      }),
+    ).toMatchObject({ status: "failed", failureMessage: "npm exited with 1" });
   });
 });

@@ -1,5 +1,5 @@
 import type { EnvironmentId } from "@t3tools/contracts";
-import { useMemo, useRef, useState } from "react";
+import { useMemo } from "react";
 
 import { useEnvironment } from "~/state/environments";
 import { serverEnvironment } from "~/state/server";
@@ -15,6 +15,11 @@ import { ComposerServerUpdateIcon } from "./ComposerServerUpdateStatus";
  * The provider update notice for a remote environment (SSH, relay, T3 Connect).
  * Local environments already get the one-click update from the launch popover,
  * so they are skipped here and never double-notified.
+ *
+ * Progress comes only from the environment's published `updateState`: the
+ * backend marks a target queued the moment it accepts the dispatch and refuses a
+ * second one for the same instance, so there is nothing for optimistic client
+ * state to cover.
  */
 export function useComposerProviderUpdateBannerItem(
   environmentId: EnvironmentId | null,
@@ -23,65 +28,34 @@ export function useComposerProviderUpdateBannerItem(
   const { dismissedNotificationKeys, dismissNotificationKey } =
     useDismissedProviderUpdateNotificationKeys();
   const updateProvider = useAtomCommand(serverEnvironment.updateProvider);
-  const [pendingKey, setPendingKey] = useState<string | null>(null);
-  // A state update may land after runUpdate returns, so it cannot gate the
-  // dispatch — a ref updates synchronously and blocks a double-click.
-  const inFlightKeyRef = useRef<string | null>(null);
 
   const environmentLabel = environment?.label;
   const target = environment?.entry.target;
-  const connectionPhase = environment?.connection.phase;
+  // Providers survive a disconnect, so offering an update we cannot dispatch
+  // needs the live phase to rule it out.
+  const isConnected = environment?.connection.phase === "connected";
   const providers = environment?.serverConfig?.providers;
 
-  const notice = useMemo(
-    () =>
+  return useMemo(() => {
+    if (
       environmentId === null ||
       environmentLabel === undefined ||
       target === undefined ||
       isLocalConnectionTarget(target) ||
-      connectionPhase !== "connected"
-        ? null
-        : buildRemoteProviderUpdateNotice({
-            environmentId,
-            environmentLabel,
-            providers: providers ?? [],
-            dismissedKeys: dismissedNotificationKeys,
-          }),
-    [
-      connectionPhase,
-      dismissedNotificationKeys,
-      environmentId,
-      environmentLabel,
-      providers,
-      target,
-    ],
-  );
-
-  return useMemo(() => {
-    if (environmentId === null || notice === null) {
+      !isConnected
+    ) {
       return null;
     }
-    const status = pendingKey === notice.dismissalKey ? "running" : notice.status;
-    const runUpdate = async () => {
-      if (inFlightKeyRef.current === notice.dismissalKey) {
-        return;
-      }
-      inFlightKeyRef.current = notice.dismissalKey;
-      setPendingKey(notice.dismissalKey);
-      try {
-        await Promise.allSettled(
-          notice.targets.map((target) =>
-            updateProvider({
-              environmentId,
-              input: { provider: target.driver, instanceId: target.instanceId },
-            }),
-          ),
-        );
-      } finally {
-        inFlightKeyRef.current = null;
-        setPendingKey(null);
-      }
-    };
+    const notice = buildRemoteProviderUpdateNotice({
+      environmentId,
+      environmentLabel,
+      providers: providers ?? [],
+      dismissedKeys: dismissedNotificationKeys,
+    });
+    if (notice === null) {
+      return null;
+    }
+    const { status } = notice;
     return {
       id: `provider-update:${environmentId}`,
       variant: status === "failed" ? "error" : "default",
@@ -95,7 +69,14 @@ export function useComposerProviderUpdateBannerItem(
           size="xs"
           variant="ghost"
           disabled={status === "running"}
-          onClick={() => void runUpdate()}
+          onClick={() => {
+            for (const candidate of notice.candidates) {
+              void updateProvider({
+                environmentId,
+                input: { provider: candidate.driver, instanceId: candidate.instanceId },
+              });
+            }
+          }}
         >
           {status === "running" ? "Updating…" : status === "failed" ? "Retry" : "Update now"}
         </Button>
@@ -107,5 +88,14 @@ export function useComposerProviderUpdateBannerItem(
             onDismiss: () => dismissNotificationKey(notice.dismissalKey),
           }),
     };
-  }, [dismissNotificationKey, environmentId, notice, pendingKey]);
+  }, [
+    dismissNotificationKey,
+    dismissedNotificationKeys,
+    environmentId,
+    environmentLabel,
+    isConnected,
+    providers,
+    target,
+    updateProvider,
+  ]);
 }

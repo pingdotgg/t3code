@@ -790,7 +790,8 @@ export interface RemoteProviderUpdateNotice {
   readonly title: string;
   readonly status: "idle" | "running" | "failed";
   readonly failureMessage: string | null;
-  readonly targets: ReadonlyArray<Pick<ServerProvider, "driver" | "instanceId">>;
+  /** One per driver: instances of a driver share an installer, so one dispatch covers them all. */
+  readonly candidates: ProviderUpdateCandidate[];
 }
 
 /**
@@ -805,15 +806,14 @@ export function buildRemoteProviderUpdateNotice(input: {
   readonly providers: ReadonlyArray<ServerProvider>;
   readonly dismissedKeys: ReadonlySet<string>;
 }): RemoteProviderUpdateNotice | null {
-  const candidates = input.providers.filter(
-    (provider): provider is ProviderUpdateCandidate =>
-      isProviderUpdateCandidate(provider) &&
-      hasOneClickUpdateProviderCandidate(provider, input.providers),
+  // Deliberately not canOneClickUpdateProviderCandidate: an update already in
+  // flight must keep its notice so the banner can report progress.
+  const candidates = collectProviderUpdateCandidates(input.providers).filter((candidate) =>
+    hasOneClickUpdateProviderCandidate(candidate, input.providers),
   );
-  const byDriver = dedupeProvidersByDriver(candidates);
-  const [representative] = byDriver;
-  const notificationKey = providerUpdateNotificationKey(byDriver);
-  if (representative === undefined || notificationKey === null) {
+  const [first] = candidates;
+  const notificationKey = providerUpdateNotificationKey(candidates);
+  if (first === undefined || notificationKey === null) {
     return null;
   }
   const dismissalKey = `${input.environmentId}|${notificationKey}`;
@@ -821,24 +821,19 @@ export function buildRemoteProviderUpdateNotice(input: {
     return null;
   }
 
-  const providerName = PROVIDER_DISPLAY_NAMES[representative.driver] ?? representative.driver;
-  const settled = candidates.find(
-    (candidate) =>
-      candidate.updateState?.status === "failed" || candidate.updateState?.status === "unchanged",
-  );
+  // A real failure outranks an update that ran but changed nothing.
+  const settled =
+    candidates.find((candidate) => candidate.updateState?.status === "failed") ??
+    candidates.find((candidate) => candidate.updateState?.status === "unchanged");
+  const providerName = PROVIDER_DISPLAY_NAMES[first.driver] ?? first.driver;
   return {
     dismissalKey,
     title:
-      byDriver.length > 1
-        ? `${formatProviderList(byDriver)} updates are available on ${input.environmentLabel}`
-        : `${providerName} ${formatVersion(representative.versionAdvisory.latestVersion)} is available on ${input.environmentLabel}`,
+      candidates.length > 1
+        ? `${formatProviderList(candidates)} updates are available on ${input.environmentLabel}`
+        : `${providerName} ${formatVersion(first.versionAdvisory.latestVersion)} is available on ${input.environmentLabel}`,
     status: candidates.some(isProviderUpdateActive) ? "running" : settled ? "failed" : "idle",
     failureMessage: settled?.updateState?.message ?? null,
-    // One dispatch per driver: instances of a driver share the installer, so a
-    // per-instance dispatch would just re-run the same install.
-    targets: byDriver.map((candidate) => ({
-      driver: candidate.driver,
-      instanceId: candidate.instanceId,
-    })),
+    candidates,
   };
 }
