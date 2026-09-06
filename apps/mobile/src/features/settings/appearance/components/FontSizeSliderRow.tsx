@@ -176,10 +176,9 @@ export function FontSizeSliderRow(props: {
               />
             </View>
             <Animated.View
-              className="absolute left-0 rounded-full bg-white"
+              className="absolute left-0 rounded-full border-border bg-primary-foreground"
               style={[
                 {
-                  borderColor: "rgba(0, 0, 0, 0.06)",
                   borderWidth: 1,
                   height: THUMB_SIZE,
                   marginTop: -THUMB_SIZE / 2,
