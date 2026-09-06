@@ -65,6 +65,35 @@ describe("KeybindingsSettings.logic", () => {
     ).toBe("mod+shift+k");
   });
 
+  it.each(["Dead", "Unidentified", "`"])(
+    "captures Ctrl+Backquote when the browser reports %s",
+    (key) => {
+      expect(
+        keybindingFromKeyboardEvent(
+          { key, code: "Backquote", metaKey: false, ctrlKey: true, altKey: false, shiftKey: false },
+          "Linux",
+        ),
+      ).toBe("mod+`");
+    },
+  );
+
+  it("does not guess other dead keys or capture unmodified input", () => {
+    const modifiers = { metaKey: false, ctrlKey: true, altKey: false, shiftKey: false };
+    expect(
+      keybindingFromKeyboardEvent({ key: "Dead", code: "Quote", ...modifiers }, "Linux"),
+    ).toBeNull();
+    expect(keybindingFromKeyboardEvent({ key: "Dead", ...modifiers }, "Linux")).toBeNull();
+    expect(
+      keybindingFromKeyboardEvent(
+        { key: "Dead", code: "Backquote", ...modifiers, ctrlKey: false },
+        "Linux",
+      ),
+    ).toBeNull();
+    expect(
+      keybindingFromKeyboardEvent({ key: "§", code: "Backquote", ...modifiers }, "Linux"),
+    ).toBe("mod+§");
+  });
+
   it("serializes shortcuts and when expressions for upserts", () => {
     expect(
       shortcutToKeybindingInput({

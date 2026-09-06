@@ -291,7 +291,7 @@ function titleCaseCommandSegment(segment: string): string {
   return words.join(" ");
 }
 
-export function normalizeShortcutKeyToken(key: string): string | null {
+export function normalizeShortcutKeyToken(key: string, code?: string): string | null {
   const normalized = key.toLowerCase();
   if (
     normalized === "meta" ||
@@ -318,14 +318,19 @@ export function normalizeShortcutKeyToken(key: string): string | null {
     return normalized;
   }
   if (normalized === "pageup" || normalized === "pagedown") return normalized;
+  if ((normalized === "dead" || normalized === "unidentified") && code === "Backquote") {
+    return "`";
+  }
   return null;
 }
 
 export function keybindingFromKeyboardEvent(
-  event: Pick<KeyboardEvent, "key" | "metaKey" | "ctrlKey" | "altKey" | "shiftKey">,
+  event: Pick<KeyboardEvent, "key" | "metaKey" | "ctrlKey" | "altKey" | "shiftKey"> & {
+    code?: string;
+  },
   platform: string,
 ): string | null {
-  const keyToken = normalizeShortcutKeyToken(event.key);
+  const keyToken = normalizeShortcutKeyToken(event.key, event.code);
   if (!keyToken) return null;
 
   const parts: string[] = [];
