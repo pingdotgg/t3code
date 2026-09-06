@@ -62,6 +62,17 @@ For a local Git repository without a remote, **Publish Repository** creates a ho
 adds it as `origin`, and pushes your commits. If there are no commits yet, it creates the remote;
 make your first commit before pushing.
 
+## Compare work across turns
+
+On web and desktop, in the diff scope menu, choose **Pin baseline** and a completed turn to compare its final state
+with **Latest turn**. Choose **Start of thread (Turn 0)** to include turn 1's changes. For imported
+sessions, the initial snapshot starts when T3 begins capturing checkpoints, not at the start of
+historic CLI work. Choose a numbered **Turn** to fix the endpoint instead of following new turns.
+
+**Unpin baseline** returns to a single-turn diff. Working-tree and branch scopes clear the pin.
+Pins are local to the current client, thread, and environment. An empty turn can still be a useful
+comparison endpoint; its individual file count does not describe the whole pinned range.
+
 ## Create a pull request
 
 Use a thread's Git actions to commit, push, and create a pull request. T3 Code can generate commit
