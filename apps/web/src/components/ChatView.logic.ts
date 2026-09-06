@@ -106,6 +106,32 @@ export function shouldOpenProactivePullRequest(
   return previousTargetKey !== undefined && targetKey !== null && targetKey !== previousTargetKey;
 }
 
+interface ProactivePanelObservation {
+  threadKey: string;
+  runningTurnId: TurnId | null | undefined;
+  targetKey: string | null | undefined;
+  userActionTurnId: TurnId | null;
+  userActionRevision: number;
+}
+
+/** Capture user intent before loading or metadata writes can defer panel activation. */
+export function observeProactivePanelUserChoice(
+  previous: ProactivePanelObservation | null,
+  input: { threadKey: string; runningTurnId: TurnId | null; userActionRevision: number },
+): ProactivePanelObservation {
+  const sameThread = previous?.threadKey === input.threadKey;
+  const newTurn =
+    sameThread && input.runningTurnId !== null && input.runningTurnId !== previous.userActionTurnId;
+  return {
+    threadKey: input.threadKey,
+    runningTurnId: sameThread ? previous.runningTurnId : undefined,
+    targetKey: sameThread ? previous.targetKey : undefined,
+    userActionTurnId: input.runningTurnId ?? (sameThread ? previous.userActionTurnId : null),
+    userActionRevision:
+      !sameThread || newTurn ? input.userActionRevision : previous.userActionRevision,
+  };
+}
+
 export function shouldOpenProactiveTurnDiff(input: {
   previousRunningTurnId: TurnId | null | undefined;
   runningTurnId: TurnId | null;
@@ -124,9 +150,7 @@ export function shouldOpenProactiveTurnDiff(input: {
 export function resolveProactiveTurnDiffAction(input: {
   checkpoint: Pick<TurnDiffSummary, "status" | "files"> | undefined;
   isGitRepo: boolean | undefined;
-  activeSurfaceKind: RightPanelSurface["kind"] | null;
 }): "defer" | "ignore" | "open" {
-  if (input.activeSurfaceKind === "pull-request") return "ignore";
   if (input.checkpoint === undefined || input.checkpoint.status === "missing") return "defer";
   if (input.isGitRepo === undefined) return "defer";
   if (
