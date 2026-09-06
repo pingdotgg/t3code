@@ -9,6 +9,10 @@ import {
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  isUsageLimitsCommand,
+  collectProviderUsageLimits,
+  sameUsageLimitCommandCoverage,
+  withUsageLimitsCommands,
   collectLimitSources,
   collectLimitsGroups,
   elapsedShare,
@@ -16,6 +20,7 @@ import {
   limitsNotice,
   paceOf,
   providersWithLimits,
+  remainingPercent,
 } from "./usageLimits.ts";
 
 const now = Date.parse("2026-09-03T12:00:00.000Z");
@@ -302,5 +307,207 @@ describe("collectLimitSources", () => {
       "Laptop · hub",
       "Desktop · hub",
     ]);
+  });
+});
+
+describe("/usage-limits", () => {
+  const limits = { checkedAt: "2026-09-03T11:00:00.000Z", windows: [window] };
+  const selected = provider({
+    usageLimits: limits,
+    auth: { status: "authenticated", email: "same@example.com" },
+  });
+  const sources = [
+    {
+      id: UsageLimitSourceId.make("hub"),
+      kind: "cliproxy" as const,
+      label: "Accounts",
+      checkedAt: limits.checkedAt,
+      accounts: [
+        {
+          id: "duplicate",
+          driver: selected.driver,
+          email: "SAME@example.com",
+          usageLimits: limits,
+        },
+        { id: "oss", driver: selected.driver, plan: "Codex OSS", usageLimits: limits },
+        { id: "other-provider", driver: ProviderDriverKind.make("claude"), usageLimits: limits },
+      ],
+    },
+  ];
+
+  it("keeps accounts and custom instances separate, filtering by driver", () => {
+    const report = collectProviderUsageLimits(
+      selected.instanceId,
+      [
+        selected,
+        provider({
+          instanceId: ProviderInstanceId.make("codex-work"),
+          displayName: "Work",
+          usageLimits: { ...limits, resetCredits: { availableCount: 2 } },
+        }),
+        provider({
+          driver: ProviderDriverKind.make("claude"),
+          instanceId: ProviderInstanceId.make("claude"),
+          usageLimits: limits,
+        }),
+      ],
+      sources,
+      now,
+    );
+    expect(report?.createdAt).toBe("2026-09-03T12:00:00.000Z");
+    expect(report?.accounts.map((account) => account.id)).toEqual([
+      "codex",
+      "codex-work",
+      "hub:oss",
+    ]);
+    expect(report?.accounts[0]).toMatchObject({
+      instanceId: selected.instanceId,
+      email: selected.auth.email,
+    });
+    expect(report?.accounts[1]).toMatchObject({
+      displayName: "Work",
+      limits: { resetCredits: { availableCount: 2 } },
+    });
+    expect(report?.accounts[2]).toMatchObject({
+      label: "Accounts · oss",
+      sourceLabel: "CLI Proxy",
+      plan: "Codex OSS",
+    });
+    expect(report?.notices).toEqual([]);
+  });
+
+  it("supports a source-only provider and keeps duplicates when the native probe failed", () => {
+    expect(
+      collectProviderUsageLimits(selected.instanceId, [provider({})], sources, now)?.accounts.map(
+        (account) => account.id,
+      ),
+    ).toEqual(["hub:duplicate", "hub:oss"]);
+    const failed = provider({ usageLimits: { ...limits, unavailable: { reason: "probeFailed" } } });
+    expect(
+      collectProviderUsageLimits(selected.instanceId, [failed], sources, now)?.accounts.map(
+        (account) => account.id,
+      ),
+    ).toEqual(["codex", "hub:duplicate", "hub:oss"]);
+    expect(collectProviderUsageLimits(selected.instanceId, [provider({})], [], now)).toBeNull();
+    expect(
+      collectProviderUsageLimits(
+        selected.instanceId,
+        [provider({ enabled: false, usageLimits: limits })],
+        [],
+        now,
+      ),
+    ).toBeNull();
+  });
+
+  it("surfaces source errors only for sources that carry the selected driver", () => {
+    const failing = { ...sources[0]!, error: "token expired" };
+    expect(
+      collectProviderUsageLimits(selected.instanceId, [selected], [failing], now)?.notices,
+    ).toEqual(["Accounts: token expired"]);
+    const claudeOnly = { ...failing, accounts: failing.accounts.slice(2) };
+    expect(
+      collectProviderUsageLimits(selected.instanceId, [selected], [claudeOnly], now)?.notices,
+    ).toEqual([]);
+    // A read failure clears the accounts, so the error must not depend on a match.
+    const unreadable = { ...failing, accounts: [] };
+    expect(
+      collectProviderUsageLimits(selected.instanceId, [selected], [unreadable], now)?.notices,
+    ).toEqual(["Accounts: token expired"]);
+    // A source-only provider still gets the report, carrying only the error.
+    const sourceOnly = collectProviderUsageLimits(
+      selected.instanceId,
+      [provider({})],
+      [unreadable],
+      now,
+    );
+    expect(sourceOnly?.accounts).toEqual([]);
+    expect(sourceOnly?.notices).toEqual(["Accounts: token expired"]);
+  });
+
+  it("advertises global and workspace commands only for providers present in Limits", () => {
+    const withWorkspace = provider({
+      workspaceSnapshots: [
+        { cwd: "/tmp/project", checkedAt: limits.checkedAt, slashCommands: [], skills: [] },
+      ],
+    });
+    const [supported] = withUsageLimitsCommands([withWorkspace], sources);
+    expect(supported?.slashCommands.map((command) => command.name)).toEqual(["usage-limits"]);
+    expect(
+      supported?.workspaceSnapshots?.[0]?.slashCommands.map((command) => command.name),
+    ).toEqual(["usage-limits"]);
+    expect(withUsageLimitsCommands([withWorkspace], [])[0]?.slashCommands).toEqual([]);
+    // A provider's own command of the same name is left alone without coverage.
+    const ownCommand = provider({
+      slashCommands: [{ name: "usage-limits", description: "Provider's own" }],
+    });
+    expect(withUsageLimitsCommands([ownCommand], [])[0]?.slashCommands).toEqual([
+      { name: "usage-limits", description: "Provider's own" },
+    ]);
+    const unreadable = { ...sources[0]!, accounts: [], error: "token expired" };
+    expect(
+      withUsageLimitsCommands([withWorkspace], [unreadable])[0]?.slashCommands.map(
+        (command) => command.name,
+      ),
+    ).toEqual(["usage-limits"]);
+    expect(
+      withUsageLimitsCommands([selected], [])[0]?.slashCommands.map((command) => command.name),
+    ).toEqual(["usage-limits"]);
+  });
+});
+
+describe("sameUsageLimitCommandCoverage", () => {
+  const codexAccount = {
+    id: "a",
+    driver: ProviderDriverKind.make("codex"),
+    usageLimits: { checkedAt: "2026-09-03T11:00:00.000Z", windows: [] },
+  };
+  const base = {
+    id: UsageLimitSourceId.make("hub"),
+    kind: "cliproxy" as const,
+    label: "Accounts",
+    checkedAt: "2026-09-03T11:00:00.000Z",
+  };
+  it("ignores quota movement but not the drivers offered the command", () => {
+    const withCodex = [{ ...base, accounts: [codexAccount] }];
+    const withCodexLater = [
+      {
+        ...base,
+        accounts: [
+          {
+            ...codexAccount,
+            usageLimits: { ...codexAccount.usageLimits, checkedAt: "2026-09-03T12:00:00.000Z" },
+          },
+        ],
+      },
+    ];
+    expect(sameUsageLimitCommandCoverage(withCodex, withCodexLater)).toBe(true);
+    expect(sameUsageLimitCommandCoverage(withCodex, [{ ...base, accounts: [] }])).toBe(false);
+  });
+  it("treats a failed read as a change in coverage, in both directions", () => {
+    const empty = [{ ...base, accounts: [] }];
+    const failed = [{ ...base, accounts: [], error: "token expired" }];
+    expect(sameUsageLimitCommandCoverage(empty, failed)).toBe(false);
+    expect(sameUsageLimitCommandCoverage(failed, empty)).toBe(false);
+    expect(
+      sameUsageLimitCommandCoverage(failed, [{ ...base, accounts: [], error: "still down" }]),
+    ).toBe(true);
+  });
+});
+
+describe("remainingPercent", () => {
+  it("inverts and clamps the reported usage", () => {
+    expect(remainingPercent(window)).toBe(60);
+    expect(remainingPercent({ ...window, usedPercent: 0 })).toBe(100);
+    expect(remainingPercent({ ...window, usedPercent: 100 })).toBe(0);
+    expect(remainingPercent({ ...window, usedPercent: 33.4 })).toBe(67);
+  });
+});
+
+describe("isUsageLimitsCommand", () => {
+  it("recognizes only the standalone local action", () => {
+    expect(isUsageLimitsCommand("  /USAGE-LIMITS\n")).toBe(true);
+    expect(isUsageLimitsCommand("/usage-limits explain")).toBe(false);
+    expect(isUsageLimitsCommand("Explain /usage-limits")).toBe(false);
+    expect(isUsageLimitsCommand("/usage")).toBe(false);
   });
 });

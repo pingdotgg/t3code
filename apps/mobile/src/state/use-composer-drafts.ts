@@ -238,10 +238,6 @@ export function decodePersistedComposerState(value: unknown): {
   };
 }
 
-export function decodePersistedComposerDrafts(value: unknown): Record<string, ComposerDraft> {
-  return decodePersistedComposerState(value).drafts;
-}
-
 async function getComposerDraftsFile() {
   const { Directory, File, Paths } = await import("expo-file-system");
   const directory = new Directory(Paths.document, COMPOSER_DRAFTS_DIRECTORY);
@@ -1053,15 +1049,33 @@ export function copyComposerDraftContentState(
   if (!sourceHasContent || targetHasContent) {
     return current;
   }
+  // Pending uploads live on one server. Crossing environments keeps the local
+  // bytes (the upload worker re-sends them to the new key's environment) but
+  // drops the old stamp, so it cannot pin the source environment's pending
+  // upload alive from the copy.
+  const targetEnvironmentId = composerDraftEnvironmentId(targetDraftKey, []);
+  const attachments = source.attachments.map((attachment) =>
+    attachment.uploadEnvironmentId !== undefined &&
+    attachment.uploadEnvironmentId !== targetEnvironmentId
+      ? stripAttachmentUploadReference(attachment)
+      : attachment,
+  );
   return {
     ...current,
     [targetDraftKey]: {
       ...target,
       text: source.text,
-      attachments: source.attachments,
+      attachments,
       ...(source.importedShareIds ? { importedShareIds: source.importedShareIds } : {}),
     },
   };
+}
+
+function stripAttachmentUploadReference(
+  attachment: DraftComposerAttachment,
+): DraftComposerAttachment {
+  const { uploadedAttachmentId: _id, uploadEnvironmentId: _environmentId, ...rest } = attachment;
+  return rest;
 }
 
 export async function copyComposerDraftContentIfEmpty(
