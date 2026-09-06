@@ -281,6 +281,58 @@ const startHarness = Effect.fn("startThreadSettlementHarness")(function* (
 });
 
 describe("ThreadSettlementReactor", () => {
+  it.effect("skips PR work on startup, timer and merge sweeps when settlement is disabled", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([
+            makeThread("branch-thread", { branch: "feature" }),
+            makeThread("linked-thread", {
+              linkedPullRequest: {
+                projectId: PROJECT_ID,
+                repository: "owner/repository",
+                number: 42,
+                url: "https://example.test/owner/repository/pull/42",
+              },
+            }),
+          ]),
+          settings: {
+            ...DEFAULT_SERVER_SETTINGS,
+            sidebarAutoSettleAfterDays: null,
+            sidebarAutoSettleOnMerge: false,
+          },
+        });
+
+        yield* Effect.gen(function* () {
+          const reactor = yield* ThreadSettlementReactor.ThreadSettlementReactor;
+          yield* startHarness(reactor, fixture.activation, fixture.snapshotReads);
+          yield* TestClock.adjust("1 minute");
+          yield* Queue.take(fixture.snapshotReads);
+          yield* reactor.drain;
+          yield* fixture.publishMerge;
+          yield* Queue.take(fixture.snapshotReads);
+          yield* reactor.drain;
+
+          assert.deepStrictEqual(yield* Ref.get(fixture.branchCalls), []);
+          assert.deepStrictEqual(yield* Ref.get(fixture.summaryCalls), []);
+          assert.deepStrictEqual(yield* Ref.get(fixture.invalidatedCwds), []);
+          assert.deepStrictEqual(yield* Ref.get(fixture.commands), []);
+
+          yield* fixture.updateSettings({ sidebarAutoSettleAfterDays: 1 });
+          yield* Queue.take(fixture.snapshotReads);
+          yield* reactor.drain;
+          assert.strictEqual((yield* Ref.get(fixture.branchCalls)).length, 1);
+          assert.strictEqual((yield* Ref.get(fixture.summaryCalls)).length, 1);
+          assert.deepStrictEqual(
+            (yield* Ref.get(fixture.commands)).map((command) => command.threadId).toSorted(),
+            [ThreadId.make("branch-thread"), ThreadId.make("linked-thread")],
+          );
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
   it.effect("starts without clients and skips protected threads before pull request lookup", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -600,14 +652,14 @@ describe("ThreadSettlementReactor", () => {
               Effect.tap((count) =>
                 count === 1
                   ? Deferred.succeed(firstLookupStarted, undefined)
-                  : count === 3
+                  : count === 2
                     ? Deferred.succeed(laterLookupStarted, undefined)
                     : Effect.void,
               ),
               Effect.tap((count) =>
                 count === 1
                   ? Deferred.await(releaseFirstLookup)
-                  : count === 3
+                  : count === 2
                     ? Deferred.await(releaseLaterLookup)
                     : Effect.void,
               ),
@@ -643,7 +695,7 @@ describe("ThreadSettlementReactor", () => {
           yield* reactor.drain;
 
           assert.strictEqual(yield* Ref.get(fixture.snapshotReadCount), 3);
-          assert.strictEqual(yield* Ref.get(lookupCount), 3);
+          assert.strictEqual(yield* Ref.get(lookupCount), 2);
           assert.deepStrictEqual(
             (yield* Ref.get(fixture.commands)).map((command) => command.threadId),
             [ThreadId.make("settings-thread")],

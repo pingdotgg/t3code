@@ -44,6 +44,10 @@ export const make = Effect.gen(function* () {
     mergedPullRequest: PullRequestService.PullRequestMergeEvent | null,
   ) {
     const snapshot = yield* snapshots.getShellSnapshot();
+    const settings = yield* settingsService.getSettings;
+    if (!settings.sidebarAutoSettleOnMerge && settings.sidebarAutoSettleAfterDays === null) {
+      return;
+    }
     const now = DateTime.formatIso(yield* DateTime.now);
     const projects = new Map(snapshot.projects.map((project) => [project.id, project]));
     // A merge event re-sweeps every candidate, not just the threads linked to
