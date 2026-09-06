@@ -47,12 +47,15 @@ async function shouldReleaseNightly({
     return false;
   }
 
-  const { data: commit } = await github.rest.repos.getCommit({
+  const { data: comparison } = await github.rest.repos.compareCommitsWithBasehead({
     ...context.repo,
-    ref: lastNightly.tag_name,
+    basehead: `${lastNightly.tag_name}...${context.sha}`,
+    per_page: 1,
   });
-  if (commit.sha === context.sha) {
-    core.info(`No changes since ${lastNightly.tag_name}. Skipping.`);
+  if (comparison.status !== "ahead") {
+    core.info(
+      `Candidate commit is ${comparison.status} relative to ${lastNightly.tag_name}. Skipping.`,
+    );
     return false;
   }
 

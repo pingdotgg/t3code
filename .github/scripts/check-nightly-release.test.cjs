@@ -11,7 +11,7 @@ const nightly = (hoursAgo, overrides = {}) => ({
   ...overrides,
 });
 
-function fixture({ releases = [nightly(7)], releasedSha = "old", activeStatus } = {}) {
+function fixture({ releases = [nightly(7)], comparisonStatus = "ahead", activeStatus } = {}) {
   const calls = [];
   return {
     calls,
@@ -29,9 +29,9 @@ function fixture({ releases = [nightly(7)], releasedSha = "old", activeStatus } 
           },
           repos: {
             listReleases() {},
-            async getCommit(params) {
+            async compareCommitsWithBasehead(params) {
               calls.push(params);
-              return { data: { sha: releasedSha } };
+              return { data: { status: comparisonStatus } };
             },
           },
         },
@@ -66,7 +66,7 @@ test("releases new commits at six hours and after an idle period", async () => {
 });
 
 test("skips unchanged commits after the gap", async () => {
-  const { options } = fixture({ releasedSha: "new" });
+  const { options } = fixture({ comparisonStatus: "identical" });
   assert.equal(await shouldReleaseNightly(options), false);
 });
 
@@ -84,11 +84,11 @@ test("ignores stable releases and drafts when checking the gap", async () => {
   assert.equal(await shouldReleaseNightly(options), true);
 });
 
-test("resolves the published tag to a commit, including legacy nightly tags", async () => {
+test("compares against the published tag, including legacy nightly tags", async () => {
   const tag = "nightly-v0.9.0";
   const { options, calls } = fixture({ releases: [nightly(7, { tag_name: tag })] });
   assert.equal(await shouldReleaseNightly(options), true);
-  assert.equal(calls[0].ref, tag);
+  assert.equal(calls[0].basehead, `${tag}...new`);
 });
 
 for (const status of ["in_progress", "queued", "waiting", "pending", "requested"]) {
@@ -118,3 +118,10 @@ test("fails instead of dispatching when GitHub cannot supply release state", asy
   };
   await assert.rejects(shouldReleaseNightly(options), /GitHub unavailable/);
 });
+
+for (const status of ["behind", "diverged"]) {
+  test(`skips a candidate commit that is ${status} relative to the last nightly`, async () => {
+    const { options } = fixture({ comparisonStatus: status });
+    assert.equal(await shouldReleaseNightly(options), false);
+  });
+}
