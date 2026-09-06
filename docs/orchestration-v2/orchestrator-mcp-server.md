@@ -10,6 +10,7 @@ agent can use this endpoint to:
 - cancel an active delegated task; and
 - create one or more ordinary top-level T3 threads;
 - list and incrementally read project threads;
+- rename threads, regenerate titles, and link or unlink pull requests;
 - send or steer follow-up messages; and
 - wait for or interrupt ordinary thread runs.
 
@@ -283,6 +284,20 @@ and `creationSource: "mcp"`; provider output uses `creationSource: "provider"`.
 Actor and ingress are separate so agent-authored user-role messages remain
 distinguishable from human-authored messages.
 
+### `t3_thread_update`
+
+Updates metadata for the calling thread or another thread in the same project.
+The typed actions are `rename`, `regenerate_title`, `link_pull_request`, and
+`unlink_pull_request`. A link input supplies the repository, number, and URL;
+the server records the target thread's project ID. Branch and workspace changes
+are outside this tool.
+
+The result includes the command ID and durable event sequence together with the
+resultant title, title-regeneration marker, and linked pull request. Reusing a
+`clientRequestId` for the same action and thread replays the same command
+receipt. Thread list and read results expose the linked pull request, and thread
+detail also exposes an in-flight title regeneration.
+
 ### `t3_thread_send`
 
 Sends a message to an ordinary or delegated thread in the calling project:
@@ -385,8 +400,10 @@ orchestration_error
 
 ## Code Ownership
 
-- Shared schemas: `packages/contracts/src/orchestratorMcp.ts`
-- MCP service: `apps/server/src/mcp/OrchestratorMcpService.ts`
+- Shared schemas: `packages/contracts/src/orchestratorMcp.ts` and
+  `packages/contracts/src/threadMetadataMcp.ts`
+- MCP services: `apps/server/src/mcp/OrchestratorMcpService.ts` and the focused
+  `apps/server/src/mcp/ThreadMetadataMcpService.ts`
 - Tool definitions and handlers:
   `apps/server/src/mcp/toolkits/orchestrator/`
 - HTTP registration and authentication:
