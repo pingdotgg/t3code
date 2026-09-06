@@ -56,7 +56,8 @@ export const DesktopConfig = Config.all({
     Config.withDefault(3000),
   ),
   /**
-   * Mac hub Control Center URL loaded in the desktop preview pane.
+   * Unified Agent Control Center URL loaded in the desktop preview pane
+   * (`T3CODE_UA_CONTROL_CENTER_URL`, default local hub `/ui`).
    * Auth is the hub UI cookie session (ua_ui), not an MCP bearer in the renderer.
    */
   uaControlCenterUrl: Config.string("T3CODE_UA_CONTROL_CENTER_URL").pipe(

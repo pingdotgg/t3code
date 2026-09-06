@@ -1,5 +1,9 @@
-/** Default Mac hub Control Center UI (Tailscale). Override with T3CODE_UA_CONTROL_CENTER_URL. */
-export const DEFAULT_UA_CONTROL_CENTER_URL = "http://100.111.5.64:8765/ui";
+/**
+ * Default Unified Agent Control Center UI: a local hub on the loopback address.
+ * Point at a remote hub (e.g. one reached over Tailscale) with
+ * T3CODE_UA_CONTROL_CENTER_URL.
+ */
+export const DEFAULT_UA_CONTROL_CENTER_URL = "http://127.0.0.1:8765/ui";
 
 /** Desktop application-menu action id (URL is appended after `:`). */
 export const OPEN_UA_CONTROL_CENTER_MENU_ACTION = "open-ua-control-center";

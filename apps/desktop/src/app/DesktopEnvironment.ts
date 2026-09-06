@@ -70,8 +70,8 @@ export class DesktopEnvironment extends Context.Service<
     readonly otlpTracesUrl: Option.Option<string>;
     readonly otlpExportIntervalMs: number;
     /**
-     * Mac hub Control Center URL for the desktop preview pane
-     * (`T3CODE_UA_CONTROL_CENTER_URL`, default Tailscale hub `/ui`).
+     * Unified Agent Control Center URL for the desktop preview pane
+     * (`T3CODE_UA_CONTROL_CENTER_URL`, default local hub `/ui`).
      */
     readonly uaControlCenterUrl: string;
     readonly branding: DesktopAppBranding;

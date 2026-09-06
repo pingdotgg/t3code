@@ -211,7 +211,7 @@ describe("DesktopApplicationMenu", () => {
       );
       const action = yield* Deferred.await(selectedAction);
       assert.isTrue(action.startsWith("open-ua-control-center:"));
-      assert.isTrue(action.includes("100.111.5.64:8765/ui"));
+      assert.isTrue(action.includes("127.0.0.1:8765/ui"));
     }),
   );
 });

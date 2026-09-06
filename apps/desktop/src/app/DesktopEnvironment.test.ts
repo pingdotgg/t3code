@@ -79,7 +79,7 @@ describe("DesktopEnvironment", () => {
       assert.deepEqual(environment.commitHashOverride, Option.some("0123456789abcdef"));
       assert.deepEqual(environment.otlpTracesUrl, Option.some("http://127.0.0.1:4318/v1/traces"));
       assert.equal(environment.otlpExportIntervalMs, 2500);
-      assert.equal(environment.uaControlCenterUrl, "http://100.111.5.64:8765/ui");
+      assert.equal(environment.uaControlCenterUrl, "http://127.0.0.1:8765/ui");
     }),
   );
 
@@ -171,11 +171,13 @@ describe("DesktopEnvironment", () => {
         {},
         {
           T3CODE_HOME: "/tmp/t3",
-          T3CODE_UA_CONTROL_CENTER_URL: " http://127.0.0.1:8765/ui ",
+          T3CODE_UA_CONTROL_CENTER_URL: " http://ua-hub.example:9876/ui ",
         },
       );
 
-      assert.equal(environment.uaControlCenterUrl, "http://127.0.0.1:8765/ui");
+      // Distinct from the loopback default so this test fails if env overrides
+      // stop being applied.
+      assert.equal(environment.uaControlCenterUrl, "http://ua-hub.example:9876/ui");
     }),
   );
 });

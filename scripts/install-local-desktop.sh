@@ -27,9 +27,15 @@ mv "$EXTRACT_DIR/squashfs-root" "$INSTALL_DIR"
 chmod 4755 "$INSTALL_DIR/chrome-sandbox" 2>/dev/null || true
 
 mkdir -p "$BIN_DIR" "$APPS_DIR"
-cat > "$BIN_DIR/t3code" <<'EOF'
+# The default UA Control Center URL in shared code is the local hub (loopback).
+# This machine's authoritative hub is on the Mac over Tailscale, and a GUI launch
+# inherits no interactive-shell env, so bake the override into the wrapper.
+# Override at install time:  T3CODE_UA_CONTROL_CENTER_URL=http://host:port/ui  ./scripts/install-local-desktop.sh
+UA_CONTROL_CENTER_URL="${T3CODE_UA_CONTROL_CENTER_URL:-http://100.111.5.64:8765/ui}"
+cat > "$BIN_DIR/t3code" <<EOF
 #!/bin/sh
-exec /home/anthony/.local/opt/t3code/AppRun "$@"
+export T3CODE_UA_CONTROL_CENTER_URL="\${T3CODE_UA_CONTROL_CENTER_URL:-${UA_CONTROL_CENTER_URL}}"
+exec /home/anthony/.local/opt/t3code/AppRun "\$@"
 EOF
 chmod +x "$BIN_DIR/t3code"
 ln -sfn t3code "$BIN_DIR/t3-code-desktop"
