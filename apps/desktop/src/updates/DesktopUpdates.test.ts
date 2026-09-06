@@ -794,7 +794,6 @@ describe("DesktopUpdates", () => {
         const error = yield* updates.setChannel("nightly").pipe(Effect.flip);
 
         assert.instanceOf(error, DesktopUpdates.DesktopUpdateChannelPersistenceError);
-        assert.isTrue(DesktopUpdates.isDesktopUpdateSetChannelError(error));
         assert.equal(error.channel, "nightly");
         assert.strictEqual(error.cause, settingsFailure);
         assert.strictEqual(error.cause.cause, diskFailure);

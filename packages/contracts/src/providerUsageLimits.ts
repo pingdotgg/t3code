@@ -121,3 +121,24 @@ export const ProviderConsumeResetCreditResult = Schema.Struct({
   outcome: ProviderConsumeResetCreditOutcome,
 });
 export type ProviderConsumeResetCreditResult = typeof ProviderConsumeResetCreditResult.Type;
+
+/** A point-in-time view of one provider's limits, built for the /usage-limits panel. */
+export const UsageLimitsReport = Schema.Struct({
+  createdAt: IsoDateTime,
+  accounts: Schema.Array(
+    Schema.Struct({
+      id: TrimmedNonEmptyString,
+      driver: ProviderDriverKind,
+      label: TrimmedNonEmptyString,
+      plan: Schema.optional(TrimmedNonEmptyString),
+      email: Schema.optional(TrimmedNonEmptyString),
+      sourceLabel: Schema.optional(TrimmedNonEmptyString),
+      instanceId: Schema.optional(ProviderInstanceId),
+      displayName: Schema.optional(Schema.String),
+      accentColor: Schema.optional(Schema.String),
+      limits: ServerProviderUsageLimits,
+    }),
+  ),
+  notices: Schema.Array(Schema.String),
+});
+export type UsageLimitsReport = typeof UsageLimitsReport.Type;
