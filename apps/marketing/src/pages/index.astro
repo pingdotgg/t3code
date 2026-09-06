@@ -826,8 +826,11 @@ const screenshot = await getImage({
     gap: 12px;
     overflow-x: auto;
     overscroll-behavior-x: contain;
-    padding: 4px max(32px, calc((100vw - 1240px) / 2 + 32px));
-    scroll-padding-inline: max(32px, calc((100vw - 1240px) / 2 + 32px));
+    /* Percentages resolve against this element's own box rather than the
+       viewport, so the first card lines up with the heading's .container edge
+       even when a classic scrollbar makes 100vw wider than the layout. */
+    padding: 4px max(32px, calc((100% - 1240px) / 2 + 32px));
+    scroll-padding-inline: max(32px, calc((100% - 1240px) / 2 + 32px));
   }
 
   .endorsement-card {

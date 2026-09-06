@@ -1,3 +1,5 @@
+import * as NodeOS from "node:os";
+
 import type { ServerProviderSkill } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -6,6 +8,45 @@ import type * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { parse as parseYamlDocument } from "yaml";
+
+/**
+ * The home directory the agent expands `~` against, matching Python's
+ * `os.path.expanduser` in the launch environment T3 hands the process:
+ * `USERPROFILE`, then `HOMEDRIVE` + `HOMEPATH`, on Windows and `HOME`
+ * elsewhere. Values are used verbatim; a path may contain spaces.
+ */
+export function resolveAntigravityUserHome(
+  platform: NodeJS.Platform,
+  environment: NodeJS.ProcessEnv,
+): string {
+  if (platform === "win32") {
+    if (environment.USERPROFILE) return environment.USERPROFILE;
+    if (environment.HOMEDRIVE && environment.HOMEPATH) {
+      return `${environment.HOMEDRIVE}${environment.HOMEPATH}`;
+    }
+    return NodeOS.homedir();
+  }
+  return environment.HOME || NodeOS.homedir();
+}
+
+/**
+ * The agent's two user-global skill directories under a Gemini home, in
+ * native precedence order: `config/skills` is shared with the Antigravity IDE
+ * and CLI, and `antigravity-cli/skills` is where the `agy` CLI installs
+ * skills. The agent resolves both under `GEMINI_HOME`, which T3 points at a
+ * private profile, so the profile links these back to the user's `~/.gemini`.
+ * `~/.agents/skills` is not read: the agent only treats `.agents/skills` as a
+ * project directory.
+ */
+export function antigravityUserSkillDirectories(
+  path: Path.Path,
+  geminiHome: string,
+): readonly [configSkills: string, cliSkills: string] {
+  return [
+    path.join(geminiHome, "config", "skills"),
+    path.join(geminiHome, "antigravity-cli", "skills"),
+  ];
+}
 
 const MAX_SKILL_BYTES = 1_000_000;
 const MAX_SCAN_BYTES = 8_000_000;
@@ -118,7 +159,7 @@ const readSkill = Effect.fn("readAntigravitySkill")(function* (
  */
 export const discoverAntigravitySkills = Effect.fn("discoverAntigravitySkills")(function* (input: {
   readonly cwd: string;
-  readonly profileDirectory: string;
+  readonly userHome: string;
 }): Effect.fn.Return<
   ReadonlyArray<ServerProviderSkill>,
   AntigravitySkillsProbeError,
@@ -126,13 +167,14 @@ export const discoverAntigravitySkills = Effect.fn("discoverAntigravitySkills")(
 > {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const [configSkills, cliSkills] = antigravityUserSkillDirectories(
+    path,
+    path.join(input.userHome, ".gemini"),
+  );
   const roots = [
-    { directory: path.resolve(input.profileDirectory, "config", "skills"), scope: "user" },
+    { directory: configSkills, scope: "user" },
     { directory: path.resolve(input.cwd, ".gemini", "skills"), scope: "project" },
-    {
-      directory: path.resolve(input.profileDirectory, "antigravity-cli", "skills"),
-      scope: "user",
-    },
+    { directory: cliSkills, scope: "user" },
     { directory: path.resolve(input.cwd, ".agents", "skills"), scope: "project" },
     { directory: path.resolve(input.cwd, ".agent", "skills"), scope: "project" },
   ];

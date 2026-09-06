@@ -5,7 +5,7 @@ import { isPublicFaviconHost } from "./hostClassification.ts";
  * conventional favicon and let the image element fall back to a browser glyph.
  * Chrome-backed tools can pass their tab's explicit favicon URL separately.
  */
-export function faviconUrlForPage(rawUrl: string | null | undefined, _size = 32): string | null {
+function faviconUrlForPage(rawUrl: string | null | undefined, _size = 32): string | null {
   if (!rawUrl || rawUrl.length > 4096) return null;
   try {
     const pageUrl = new URL(rawUrl);
@@ -40,7 +40,7 @@ function themedFaviconUrlForPage(
 }
 
 /** Accepts image URLs supplied by a trusted provider event. */
-export function explicitFaviconUrl(rawUrl: string | null | undefined): string | null {
+function explicitFaviconUrl(rawUrl: string | null | undefined): string | null {
   if (!rawUrl || rawUrl.length > 4096) return null;
   try {
     const url = new URL(rawUrl);
