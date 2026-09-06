@@ -36,6 +36,7 @@ export function fileBreadcrumbChildren(
   entries: readonly ProjectEntry[],
   directoryPath: string,
 ): FileBreadcrumbChild[] {
+  let collator: Intl.Collator | undefined;
   const prefix = directoryPath ? `${directoryPath}/` : "";
   return entries
     .flatMap((entry) => {
@@ -46,10 +47,11 @@ export function fileBreadcrumbChildren(
     })
     .toSorted((left, right) => {
       if (left.kind !== right.kind) return left.kind === "directory" ? -1 : 1;
-      return left.label.localeCompare(right.label, undefined, {
+      collator ??= new Intl.Collator(undefined, {
         numeric: true,
         sensitivity: "base",
       });
+      return collator.compare(left.label, right.label);
     });
 }
 
