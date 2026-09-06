@@ -30,9 +30,6 @@ const DEVELOPMENT_ASSETS = {
   appIcon: fromRepoRoot(BRAND_ASSET_PATHS.developmentIosIconPng),
   iosIcon: fromRepoRoot(BRAND_ASSET_PATHS.developmentIconComposerProject),
   splashIcon: fromRepoRoot(BRAND_ASSET_PATHS.developmentIosIconPng),
-  androidAdaptiveForeground: fromRepoRoot(BRAND_ASSET_PATHS.developmentUniversalIconPng),
-  androidAdaptiveBackgroundColor: "#00639B",
-  androidMonochromeIcon: "./assets/android-icon-mark.png",
   androidNotificationIcon: "./assets/android-notification-icon.png",
   androidNotificationColor: "#00639B",
 } as const;
@@ -41,9 +38,6 @@ const PREVIEW_ASSETS = {
   appIcon: fromRepoRoot(BRAND_ASSET_PATHS.nightlyIosIconPng),
   iosIcon: fromRepoRoot(BRAND_ASSET_PATHS.nightlyIconComposerProject),
   splashIcon: fromRepoRoot(BRAND_ASSET_PATHS.nightlyIosIconPng),
-  androidAdaptiveForeground: fromRepoRoot(BRAND_ASSET_PATHS.nightlyLinuxIconPng),
-  androidAdaptiveBackgroundColor: "#111533",
-  androidMonochromeIcon: "./assets/android-icon-mark.png",
   androidNotificationIcon: "./assets/android-notification-icon.png",
   androidNotificationColor: "#7565C7",
 } as const;
@@ -52,9 +46,6 @@ const RELEASE_ASSETS = {
   appIcon: fromRepoRoot(BRAND_ASSET_PATHS.productionIosIconPng),
   iosIcon: fromRepoRoot(BRAND_ASSET_PATHS.productionIconComposerProject),
   splashIcon: fromRepoRoot(BRAND_ASSET_PATHS.productionIosIconPng),
-  androidAdaptiveForeground: "./assets/android-icon-mark.png",
-  androidAdaptiveBackgroundColor: "#000000",
-  androidMonochromeIcon: "./assets/android-icon-mark.png",
   androidNotificationIcon: "./assets/android-notification-icon.png",
   androidNotificationColor: "#FFFFFF",
 } as const;
@@ -218,13 +209,9 @@ const config: ExpoConfig = {
     },
   },
   android: {
+    // Full app artwork needs legacy icon scaling; adaptive foregrounds are cropped by Android.
     icon: variant.assets.appIcon,
     package: variant.androidPackage,
-    adaptiveIcon: {
-      backgroundColor: variant.assets.androidAdaptiveBackgroundColor,
-      foregroundImage: variant.assets.androidAdaptiveForeground,
-      monochromeImage: variant.assets.androidMonochromeIcon,
-    },
     // Opts into OnBackInvokedCallback-based back dispatch (Android 13+).
     // JS back handling survives it via react-native's Android 16 shim plus
     // withAndroidPredictiveBackCompat on Android 13-15.
@@ -279,13 +266,10 @@ const config: ExpoConfig = {
     [
       "expo-quick-actions",
       {
-        // Adaptive launcher-shortcut icon; referenced by resource name from
+        // Launcher-shortcut icon; referenced by resource name from
         // the shortcut items set in src/features/shortcuts.
         androidIcons: {
-          shortcut_icon: {
-            foregroundImage: variant.assets.androidAdaptiveForeground,
-            backgroundColor: variant.assets.androidAdaptiveBackgroundColor,
-          },
+          shortcut_icon: variant.assets.appIcon,
         },
       },
     ],
