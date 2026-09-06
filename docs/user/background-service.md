@@ -25,6 +25,21 @@ Updating restarts the server. Finish active work first, and wait for any remote
 update already in progress. To match a remote client's version, follow
 [Updating T3 Code](./updating.md).
 
+## Switch an existing server to the service
+
+Only one server can use a state directory at a time. If a terminal or desktop SSH
+connection already started your server, `t3 connect` saves authorization but does
+not start a second server. Service installation refuses to take over that server.
+
+1. Let active agent work and terminal commands finish.
+2. Stop the existing server through the app or terminal that started it.
+3. Run `t3 service install` with the same `--base-dir` if you use a custom home directory.
+4. Reconnect. Desktop SSH discovers the service's current port.
+
+Do not delete ownership files to bypass a running server. A crashed server releases
+ownership automatically. Servers from older releases must stop before the new
+server can take ownership.
+
 ## Platform support
 
 Linux needs systemd user services. Setup enables lingering so T3 Code starts at

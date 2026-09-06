@@ -301,6 +301,13 @@ export const layer = Layer.effect(
         ),
       onShutdown: () => desktopWindow.handleBackendNotReady,
       onPreflightFailed: handlePrimaryPreflightFailure,
+      // A held ownership lock never clears on its own. Retrying would only
+      // hide the cause, so say what to do and leave the app open.
+      onStateDirOwned: () =>
+        electronDialog.showErrorBox(
+          "Another T3 Code server is already running",
+          "A T3 Code server started elsewhere (a terminal, the background service, or an SSH session) already owns this data directory. Stop that server, then restart T3 Code.",
+        ),
     });
 
     const instancesRef = yield* SynchronizedRef.make<

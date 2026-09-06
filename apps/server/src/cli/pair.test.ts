@@ -5,6 +5,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as ProcessRunner from "../processRunner.ts";
 import * as NetService from "@t3tools/shared/Net";
 import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 import { assert, describe, expect, it } from "@effect/vitest";
@@ -21,9 +22,9 @@ import {
 import * as ServiceLauncherClient from "../cloud/serviceLauncherClient.ts";
 import {
   makePersistedServerRuntimeState,
-  persistServerRuntimeState,
   type PersistedServerRuntimeState,
 } from "../serverRuntimeState.ts";
+import { persistServerRuntimeState } from "../serverOwnership.ts";
 import {
   DevServerNotProxiableError,
   resolveDirectPairingBaseUrl,
@@ -31,6 +32,8 @@ import {
 } from "./pair.ts";
 
 import packageJson from "../../package.json" with { type: "json" };
+
+const TestPlatformLayer = ProcessRunner.layer.pipe(Layer.provideMerge(NodeServices.layer));
 
 const CliRuntimeLayer = Layer.mergeAll(NodeServices.layer, NetService.layer);
 
@@ -179,7 +182,7 @@ describe("t3 pair", () => {
         assert.equal(credentials[0]?.label, "t3 pair");
       }),
     ).pipe(
-      Effect.provide(NodeServices.layer),
+      Effect.provide(TestPlatformLayer),
       Effect.provideService(HostProcessEnvironment, {
         ...process.env,
         [SERVICE_LAUNCHER_CONTEXT_ENV]: JSON.stringify({
@@ -214,7 +217,7 @@ describe("t3 pair", () => {
 
         assert.include(output, "Pairing URL: http://localhost:5733/pair#token=");
       }),
-    ).pipe(Effect.provide(NodeServices.layer)),
+    ).pipe(Effect.provide(TestPlatformLayer)),
   );
 
   it.effect("directs to t3 serve or t3 connect when no server is running", () =>
@@ -231,7 +234,7 @@ describe("t3 pair", () => {
       assert.include(rendered, "No running T3 Code server found.");
       assert.include(rendered, "npx t3 serve");
       assert.include(rendered, "npx t3 connect");
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide(TestPlatformLayer)),
   );
 
   it.effect("ignores runtime state whose recorded pid is no longer alive", () =>
@@ -261,7 +264,7 @@ describe("t3 pair", () => {
         );
         assert.include(rendered, "No running T3 Code server found.");
       }),
-    ).pipe(Effect.provide(NodeServices.layer)),
+    ).pipe(Effect.provide(TestPlatformLayer)),
   );
 
   it.effect("ignores stale runtime state pointing at a dead server", () =>
@@ -286,6 +289,6 @@ describe("t3 pair", () => {
         typeof error === "object" && error !== null && "cause" in error ? error.cause : error,
       );
       assert.include(rendered, "No running T3 Code server found.");
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide(TestPlatformLayer)),
   );
 });

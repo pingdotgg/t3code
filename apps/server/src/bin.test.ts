@@ -7,6 +7,7 @@ import * as NodeChildProcess from "node:child_process";
 
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as ProcessRunner from "./processRunner.ts";
 import {
   CommandId,
   EnvironmentOrchestrationHttpApi,
@@ -19,6 +20,7 @@ import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as DateTime from "effect/DateTime";
 import * as Layer from "effect/Layer";
+import * as FileSystem from "effect/FileSystem";
 import * as HttpRouter from "effect/unstable/http/HttpRouter";
 import * as HttpServer from "effect/unstable/http/HttpServer";
 import * as HttpApi from "effect/unstable/httpapi/HttpApi";
@@ -41,10 +43,8 @@ import { OrchestrationLayerLive } from "./orchestration/runtimeLayer.ts";
 import { orchestrationHttpApiLayer } from "./orchestration/http.ts";
 import { layerConfig as SqlitePersistenceLayerLive } from "./persistence/Layers/Sqlite.ts";
 import * as RepositoryIdentityResolver from "./project/RepositoryIdentityResolver.ts";
-import {
-  makePersistedServerRuntimeState,
-  persistServerRuntimeState,
-} from "./serverRuntimeState.ts";
+import { makePersistedServerRuntimeState } from "./serverRuntimeState.ts";
+import { persistServerRuntimeState } from "./serverOwnership.ts";
 import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
@@ -405,7 +405,9 @@ const withLiveProjectCliServer = <A, E, R>(baseDir: string, run: () => Effect.Ef
     );
   });
 
-it.layer(NodeServices.layer)("bin cli parsing", (it) => {
+const TestPlatformLayer = ProcessRunner.layer.pipe(Layer.provideMerge(NodeServices.layer));
+
+it.layer(TestPlatformLayer)("bin cli parsing", (it) => {
   it.effect("accepts the built-in lowercase log-level flag values", () =>
     Effect.gen(function* () {
       const { output } = yield* captureStdout(runCli(["--log-level", "debug", "--version"]));
@@ -822,6 +824,76 @@ it.layer(NodeServices.layer)("bin cli parsing", (it) => {
           assert.equal(addedProject?.title, "Live Project");
         }),
       );
+    }),
+  );
+
+  it.effect("skips stale project discovery without deleting the record", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-project-stale-test-" });
+      const config = yield* makeCliTestServerConfig(baseDir);
+      let requests = 0;
+      const server = yield* Effect.acquireRelease(
+        Effect.callback<NodeHttp.Server>((resume) => {
+          const server = NodeHttp.createServer((_request, response) => {
+            requests += 1;
+            response.writeHead(503);
+            response.end();
+          });
+          server.listen(0, "127.0.0.1", () => resume(Effect.succeed(server)));
+        }),
+        (server) => Effect.sync(() => server.close()),
+      );
+      const address = server.address();
+      if (!address || typeof address === "string") return yield* Effect.die("Expected TCP address");
+      yield* persistServerRuntimeState({
+        path: config.serverRuntimeStatePath,
+        state: {
+          ...(yield* makePersistedServerRuntimeState({ config, port: address.port })),
+          pid: 2147483647,
+        },
+      });
+      const before = yield* fs.readFileString(config.serverRuntimeStatePath);
+      yield* runCliWithRuntime(["project", "add", baseDir, "--base-dir", baseDir]);
+      assert.equal(requests, 0);
+      assert.equal(yield* fs.readFileString(config.serverRuntimeStatePath), before);
+    }),
+  );
+
+  it.effect("keeps a replacement runtime record when a project CLI request fails", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-project-owner-test-" });
+      const config = yield* makeCliTestServerConfig(baseDir);
+      const newer = {
+        version: 1,
+        pid: process.pid,
+        ownerId: "replacement",
+        port: 45731,
+        origin: "http://127.0.0.1:45731",
+        startedAt: "2026-09-04T00:00:00.000Z",
+      };
+      // @effect-diagnostics-next-line preferSchemaOverJson:off - Simulate a replacement process publishing its discovery document.
+      const newerText = JSON.stringify(newer);
+      const server = yield* Effect.acquireRelease(
+        Effect.callback<NodeHttp.Server>((resume) => {
+          const server = NodeHttp.createServer((_request, response) => {
+            NodeFS.writeFileSync(config.serverRuntimeStatePath, newerText);
+            response.writeHead(503);
+            response.end();
+          });
+          server.listen(0, "127.0.0.1", () => resume(Effect.succeed(server)));
+        }),
+        (server) => Effect.sync(() => server.close()),
+      );
+      const address = server.address();
+      if (!address || typeof address === "string") return yield* Effect.die("Expected TCP address");
+      yield* persistServerRuntimeState({
+        path: config.serverRuntimeStatePath,
+        state: yield* makePersistedServerRuntimeState({ config, port: address.port }),
+      });
+      yield* runCliWithRuntime(["project", "add", baseDir, "--base-dir", baseDir]);
+      assert.equal(yield* fs.readFileString(config.serverRuntimeStatePath), newerText);
     }),
   );
 

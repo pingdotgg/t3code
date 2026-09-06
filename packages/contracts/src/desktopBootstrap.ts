@@ -22,3 +22,10 @@ export const DesktopBackendBootstrap = Schema.Struct({
 });
 
 export type DesktopBackendBootstrap = typeof DesktopBackendBootstrap.Type;
+
+/**
+ * Exit code the server uses when another server already owns its state
+ * directory. The desktop reads it to stop its restart loop instead of
+ * retrying forever against a lock that will not clear on its own.
+ */
+export const SERVER_EXIT_CODE_STATE_DIR_OWNED = 78;

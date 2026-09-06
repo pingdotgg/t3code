@@ -42,6 +42,7 @@ import { HttpClient } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import {
+  SERVER_EXIT_CODE_STATE_DIR_OWNED,
   DesktopBackendBootstrap,
   type DesktopBackendBootstrap as DesktopBackendBootstrapValue,
   PRIMARY_LOCAL_ENVIRONMENT_ID,
@@ -299,6 +300,10 @@ export interface BackendInstanceSpec {
   // retries. Returns true when the callback changed configuration and the
   // manager should resolve once more; false stops the failed instance.
   readonly onPreflightFailed?: (failure: PreflightFailure) => Effect.Effect<boolean>;
+  // Fired once when the backend exits because another server already owns
+  // its state directory. The lock never clears by itself, so the instance
+  // stops instead of restarting. The primary uses this to tell the user.
+  readonly onStateDirOwned?: () => Effect.Effect<void>;
 }
 
 interface ActiveBackendRun {
@@ -828,7 +833,9 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
 
         const finalizeRun = Effect.fn("desktop.backendInstance.finalizeRun")(function* (
           reason: string,
+          exitCode?: number,
         ) {
+          const stateDirOwned = exitCode === SERVER_EXIT_CODE_STATE_DIR_OWNED;
           yield* mutex.withPermits(1)(
             Effect.gen(function* () {
               const { isCurrentRun, nextState, pid, exitObserved, stopRequested, wasReady } =
@@ -895,6 +902,18 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
                 if (wasReady) {
                   yield* spec.onShutdown?.() ?? Effect.void;
                 }
+              }
+
+              if (isCurrentRun && stateDirOwned && !stopRequested) {
+                yield* logInstanceError(
+                  "backend stopped: another server owns its state directory",
+                  {
+                    reason,
+                  },
+                );
+                yield* Ref.update(state, (latest) => ({ ...latest, desiredRunning: false }));
+                yield* (spec.onStateDirOwned?.() ?? Effect.void).pipe(Effect.ignore);
+                return;
               }
 
               if (isCurrentRun && nextState.desiredRunning) {
@@ -971,7 +990,7 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
           Scope.provide(runScope),
           Effect.matchEffect({
             onFailure: (error) => finalizeRun(error.message),
-            onSuccess: (exit) => finalizeRun(exit.reason),
+            onSuccess: (exit) => finalizeRun(exit.reason, Option.getOrUndefined(exit.code)),
           }),
           Effect.ensuring(Scope.close(runScope, Exit.void).pipe(Effect.ignore)),
         );
