@@ -4,6 +4,7 @@ import { verticalListSortingStrategy, type SortingStrategy } from "@dnd-kit/sort
 import { createSidebarCollisionDetection, createSidebarSortingStrategy } from "./Sidebar.drag";
 import {
   sidebarListItemId,
+  sidebarMarkerId,
   type SidebarListItem,
   type SidebarListMarker,
   type SidebarSection,
@@ -95,8 +96,8 @@ describe("sidebar collision detection", () => {
   }
 
   it.each([
-    [false, "marker:settled-header"],
-    [true, "marker:pinned-divider"],
+    [false, sidebarMarkerId("settled-header")],
+    [true, sidebarMarkerId("pinned-divider")],
   ] as const)(
     "rejects unsupported Active instead of selecting %s / %s",
     (blockedAboveSource, nearbyTarget) => {
@@ -120,7 +121,7 @@ describe("sidebar collision detection", () => {
 
   function clampedArgs() {
     const args = collisionArgs();
-    const pinned = args.droppableRects.get("marker:pinned-header")!;
+    const pinned = args.droppableRects.get(sidebarMarkerId("pinned-header"))!;
     const source = args.droppableRects.get("source")!;
     const collisionRect = {
       ...source,
@@ -144,9 +145,9 @@ describe("sidebar collision detection", () => {
       emptyPins: true,
       activationY: args.pointerCoordinates.y + 6,
     });
-    expect(args.droppableRects.get("marker:pinned-header")?.height).toBe(0);
+    expect(args.droppableRects.get(sidebarMarkerId("pinned-header"))?.height).toBe(0);
     expect(closestCenter(args)[0]?.id).toBe("source");
-    expect(detector(args)[0]?.id).toBe("marker:pinned-header");
+    expect(detector(args)[0]?.id).toBe(sidebarMarkerId("pinned-header"));
   });
 
   it.each([
@@ -179,7 +180,7 @@ describe("sidebar collision detection", () => {
     const args = clampedArgs();
     expect(detector(args).map((collision) => collision.id)).toEqual(["source"]);
     expect(detector(args).map((collision) => collision.id)).toEqual(["source"]);
-    expect(isValid.mock.calls).toEqual([["marker:pinned-header"]]);
+    expect(isValid.mock.calls).toEqual([[sidebarMarkerId("pinned-header")]]);
   });
 
   it("returns no collision if an unsupported target has no source fallback", () => {
@@ -216,10 +217,10 @@ describe("sidebar collision detection", () => {
     expect(
       detector({
         ...args,
-        collisionRect: args.droppableRects.get("marker:settled-placeholder")!,
+        collisionRect: args.droppableRects.get(sidebarMarkerId("settled-placeholder"))!,
       })[0]?.id,
-    ).toBe("marker:settled-placeholder");
-    expect(isValid.mock.calls).toEqual([["blocked"], ["marker:settled-placeholder"]]);
+    ).toBe(sidebarMarkerId("settled-placeholder"));
+    expect(isValid.mock.calls).toEqual([["blocked"], [sidebarMarkerId("settled-placeholder")]]);
   });
 });
 
@@ -253,11 +254,11 @@ describe("sidebar drag projection", () => {
     const result = preview(
       { items: pinned, settledOrder: [], settledExpanded: true },
       "p2",
-      "marker:pinned-header",
+      sidebarMarkerId("pinned-header"),
     );
-    expect(result.get("marker:pinned-header")).toEqual(stationary);
+    expect(result.get(sidebarMarkerId("pinned-header"))).toEqual(stationary);
     expect(result.get("p1")).toEqual({ ...stationary, y: 83 });
-    expect(result.get("marker:pinned-divider")).toEqual(stationary);
+    expect(result.get(sidebarMarkerId("pinned-divider"))).toEqual(stationary);
     expect(result.get("a1")).toEqual(stationary);
   });
 
@@ -303,7 +304,7 @@ describe("sidebar drag projection", () => {
   });
 
   it.each([
-    ["marker:pinned-divider", 0, 0],
+    [sidebarMarkerId("pinned-divider"), 0, 0],
     ["a1", -83, 0],
     ["a2", -83, -83],
   ] as const)(
@@ -319,11 +320,11 @@ describe("sidebar drag projection", () => {
         thread("s", "settled"),
       ];
       const result = preview({ items, settledOrder: [], settledExpanded: true }, "p", over);
-      expect(result.get("marker:pinned-header")).toEqual(stationary);
-      expect(result.get("marker:pinned-divider")?.y).toBe(-83);
+      expect(result.get(sidebarMarkerId("pinned-header"))).toEqual(stationary);
+      expect(result.get(sidebarMarkerId("pinned-divider"))?.y).toBe(-83);
       expect(result.get("a1")?.y).toBe(a1Offset);
       expect(result.get("a2")?.y).toBe(a2Offset);
-      expect(result.get("marker:settled-header")?.y).toBe(0);
+      expect(result.get(sidebarMarkerId("settled-header"))?.y).toBe(0);
     },
   );
 
@@ -339,12 +340,12 @@ describe("sidebar drag projection", () => {
     const result = preview(
       { items, settledOrder: [], settledExpanded: true },
       "a2",
-      "marker:pinned-header",
+      sidebarMarkerId("pinned-header"),
     );
-    expect(result.get("marker:pinned-header")).toEqual(stationary);
-    expect(result.get("marker:pinned-divider")?.y).toBe(83);
+    expect(result.get(sidebarMarkerId("pinned-header"))).toEqual(stationary);
+    expect(result.get(sidebarMarkerId("pinned-divider"))?.y).toBe(83);
     expect(result.get("a1")?.y).toBe(83);
-    expect(result.get("marker:settled-header")?.y).toBe(0);
+    expect(result.get(sidebarMarkerId("settled-header"))?.y).toBe(0);
   });
 
   it.each([
@@ -364,11 +365,11 @@ describe("sidebar drag projection", () => {
       const result = preview(
         { items, settledOrder: [], settledExpanded: true },
         active,
-        "marker:active-placeholder",
+        sidebarMarkerId("active-placeholder"),
       );
-      expect(result.get("marker:active-placeholder")?.scaleY).toBe(0);
-      expect(result.get("marker:pinned-divider")?.y).toBe(dividerOffset);
-      expect(result.get("marker:settled-header")?.y).toBe(settledOffset);
+      expect(result.get(sidebarMarkerId("active-placeholder"))?.scaleY).toBe(0);
+      expect(result.get(sidebarMarkerId("pinned-divider"))?.y).toBe(dividerOffset);
+      expect(result.get(sidebarMarkerId("settled-header"))?.y).toBe(settledOffset);
     },
   );
 
@@ -387,7 +388,7 @@ describe("sidebar drag projection", () => {
       "a",
       "s2",
     );
-    expect(result.get("marker:settled-header")?.y).toBe(-46);
+    expect(result.get(sidebarMarkerId("settled-header"))?.y).toBe(-46);
     expect(result.get("s1")?.y).toBe(-46);
     expect(result.get("s2")?.y).toBe(-9);
   });
@@ -410,7 +411,7 @@ describe("sidebar drag projection", () => {
       const result = preview({ items, settledOrder: [], settledExpanded: true }, "s", over);
       expect(result.get("a1")?.y).toBe(firstOffset);
       expect(result.get("a2")?.y).toBe(83);
-      expect(result.get("marker:settled-header")?.y).toBe(83);
+      expect(result.get(sidebarMarkerId("settled-header"))?.y).toBe(83);
     },
   );
 
@@ -426,8 +427,8 @@ describe("sidebar drag projection", () => {
       thread("s", "settled"),
     ];
     const result = preview({ items, settledOrder: [], settledExpanded: true }, "z", "a");
-    expect(result.get("marker:snoozed-header")?.scaleY).toBe(0);
-    expect(result.get("marker:settled-header")?.y).toBe(13);
+    expect(result.get(sidebarMarkerId("snoozed-header"))?.scaleY).toBe(0);
+    expect(result.get(sidebarMarkerId("settled-header"))?.y).toBe(13);
     expect(result.get("s")?.y).toBe(13);
   });
 
@@ -444,10 +445,10 @@ describe("sidebar drag projection", () => {
     const result = preview(
       { items, settledOrder: [], settledExpanded: false },
       "a2",
-      "marker:settled-placeholder",
+      sidebarMarkerId("settled-placeholder"),
     );
-    expect(result.get("marker:settled-header")?.y).toBe(-83);
-    expect(result.get("marker:settled-placeholder")).toEqual({ ...stationary, y: -83 });
+    expect(result.get(sidebarMarkerId("settled-header"))?.y).toBe(-83);
+    expect(result.get(sidebarMarkerId("settled-placeholder"))).toEqual({ ...stationary, y: -83 });
   });
 
   it("preserves a collapsed snoozed header while another section changes", () => {
@@ -463,9 +464,9 @@ describe("sidebar drag projection", () => {
     const result = preview(
       { items, settledOrder: [], settledExpanded: false },
       "a",
-      "marker:settled-placeholder",
+      sidebarMarkerId("settled-placeholder"),
     );
-    expect(result.get("marker:snoozed-header")).toEqual({ ...stationary, y: -46 });
+    expect(result.get(sidebarMarkerId("snoozed-header"))).toEqual({ ...stationary, y: -46 });
   });
 
   it("derives missing card geometry from the measured root scale", () => {
@@ -479,12 +480,12 @@ describe("sidebar drag projection", () => {
     const result = preview(
       { items, settledOrder: [], settledExpanded: true },
       "s",
-      "marker:pinned-header",
+      sidebarMarkerId("pinned-header"),
       0.75,
     );
-    expect(result.get("marker:pinned-header")).toEqual(stationary);
-    expect(result.get("marker:pinned-divider")?.y).toBe(62.5);
-    expect(result.get("marker:active-placeholder")?.y).toBe(62.5);
+    expect(result.get(sidebarMarkerId("pinned-header"))).toEqual(stationary);
+    expect(result.get(sidebarMarkerId("pinned-divider"))?.y).toBe(62.5);
+    expect(result.get(sidebarMarkerId("active-placeholder"))?.y).toBe(62.5);
   });
 
   it("updates the projection when the target or measured geometry changes", () => {
@@ -514,7 +515,7 @@ describe("sidebar drag projection", () => {
       settledOrder: [],
       settledExpanded: false,
     });
-    const args = layout(items, "a", "marker:settled-placeholder", 1, 78);
+    const args = layout(items, "a", sidebarMarkerId("settled-placeholder"), 1, 78);
     expect(strategy({ ...args, index: 4 })?.y).toBe(-42);
   });
 
@@ -560,7 +561,7 @@ describe("sidebar drag projection", () => {
       "s1",
       "a",
     );
-    expect(result.get("marker:settled-header")?.y).toBe(83);
+    expect(result.get(sidebarMarkerId("settled-header"))?.y).toBe(83);
     expect(result.get("route")?.y).toBe(83);
   });
 
@@ -582,10 +583,10 @@ describe("sidebar drag projection", () => {
         routeThreadKey: "a",
       },
       "a",
-      "marker:settled-placeholder",
+      sidebarMarkerId("settled-placeholder"),
     );
-    expect(result.get("marker:settled-placeholder")?.scaleY).toBe(0);
-    expect(result.get("marker:settled-header")?.y).toBe(-46);
+    expect(result.get(sidebarMarkerId("settled-placeholder"))?.scaleY).toBe(0);
+    expect(result.get(sidebarMarkerId("settled-header"))?.y).toBe(-46);
   });
 
   it("preserves hidden snoozed membership when the only rendered route row leaves", () => {
@@ -609,7 +610,7 @@ describe("sidebar drag projection", () => {
       "z",
       "a",
     );
-    expect(result.get("marker:snoozed-header")).toEqual({ ...stationary, y: 83 });
-    expect(result.get("marker:settled-header")?.y).toBe(46);
+    expect(result.get(sidebarMarkerId("snoozed-header"))).toEqual({ ...stationary, y: 83 });
+    expect(result.get(sidebarMarkerId("settled-header"))?.y).toBe(46);
   });
 });

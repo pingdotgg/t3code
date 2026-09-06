@@ -2442,11 +2442,7 @@ export default function Sidebar() {
       if (capabilities?.threadActiveReorder === true) activeReorderable.add(threadKey);
       // Older servers retain their existing drag actions. Active placement
       // additionally requires its own ordering capability at the drop target.
-      if (
-        supportsSettlement &&
-        capabilities?.threadPinning === true &&
-        capabilities.threadPinReorder === true
-      ) {
+      if (capabilities?.threadPinning === true && capabilities.threadPinReorder === true) {
         draggable.add(threadKey);
       }
       if (optimisticDrop?.key === threadKey) {
@@ -3233,29 +3229,42 @@ export default function Sidebar() {
       snoozedThreads.length,
     ],
   );
+  // Hidden and filtered threads keep their keys. Reserve those slots without
+  // including the rows in the visible drop order or writing to them.
+  const { pinnedKeysById, activeKeysById } = useMemo(
+    () => ({
+      pinnedKeysById: new Map(
+        threads.map((thread) => [
+          scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+          thread.pinOrderKey ?? null,
+        ]),
+      ),
+      activeKeysById: new Map(
+        threads.map((thread) => [
+          scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+          thread.activeOrderKey ?? null,
+        ]),
+      ),
+    }),
+    [threads],
+  );
   const dndCollisionDetection = useMemo(() => {
     if (dragState === null) return createSidebarCollisionDetection(() => true);
     const source = threadByKey.get(dragState.activeKey);
     if (source === undefined) return createSidebarCollisionDetection(() => false);
-    const pinnedKeysById = new Map(
-      pinnedKeys.map((key) => [key, threadByKey.get(key)?.pinOrderKey ?? null]),
-    );
-    pinnedKeysById.set(dragState.activeKey, source.pinOrderKey ?? null);
-    const activeKeysById = new Map(
-      activeKeys.map((key) => [key, threadByKey.get(key)?.activeOrderKey ?? null]),
-    );
-    activeKeysById.set(dragState.activeKey, source.activeOrderKey ?? null);
     return createSidebarCollisionDetection(
       (id) => {
         const target = resolveSidebarDropTarget(sidebarListItems, dragState.activeKey, id);
         if (target === null) return false;
-        if (target.section === "settled") return true;
         return (
           planSidebarThreadDrop({
             activeKey: dragState.activeKey,
             activeSection: dragState.activeSection,
             activePinned: source.pinnedAt != null,
             activeSettled: source.settledOverride === "settled",
+            supportsSettlement:
+              serverConfigs.get(source.environmentId)?.environment.capabilities.threadSettlement ===
+              true,
             target,
             pinnedOrder: pinnedKeys,
             pinnedKeysById,
@@ -3269,6 +3278,9 @@ export default function Sidebar() {
       { emptyPins: pinnedKeys.length === 0, activationY: dragState.activationY },
     );
   }, [
+    activeKeysById,
+    pinnedKeysById,
+    serverConfigs,
     activeKeys,
     activeReorderableThreadKeys,
     dragState,
@@ -3291,19 +3303,14 @@ export default function Sidebar() {
       const activeThread = threadByKey.get(activeKey);
       if (activeSection === undefined || target === null || activeThread === undefined) return;
       const threadRef = scopeThreadRef(activeThread.environmentId, activeThread.id);
-      const pinnedKeysById = new Map(
-        pinnedKeys.map((key) => [key, threadByKey.get(key)?.pinOrderKey ?? null]),
-      );
-      pinnedKeysById.set(activeKey, activeThread.pinOrderKey ?? null);
-      const activeKeysById = new Map(
-        activeKeys.map((key) => [key, threadByKey.get(key)?.activeOrderKey ?? null]),
-      );
-      activeKeysById.set(activeKey, activeThread.activeOrderKey ?? null);
       const plan = planSidebarThreadDrop({
         activeKey,
         activeSection,
         activePinned: activeThread.pinnedAt != null,
         activeSettled: activeThread.settledOverride === "settled",
+        supportsSettlement:
+          serverConfigs.get(activeThread.environmentId)?.environment.capabilities
+            .threadSettlement === true,
         target,
         pinnedOrder: pinnedKeys,
         pinnedKeysById,
@@ -3416,6 +3423,9 @@ export default function Sidebar() {
       })();
     },
     [
+      activeKeysById,
+      pinnedKeysById,
+      serverConfigs,
       activeKeys,
       activeReorderableThreadKeys,
       draggableThreadKeys,

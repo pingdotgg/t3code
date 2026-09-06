@@ -95,8 +95,8 @@ export const animateSidebarLayoutChanges: AnimateLayoutChanges = (args) =>
 export type SidebarSection = "pinned" | "active" | "snoozed" | "settled";
 
 /** Sortable ids: thread rows use their scoped key; structural items use a
-    prefix that cannot collide with `<environmentId>:<threadId>`. */
-const SIDEBAR_MARKER_PREFIX = "marker:";
+    colon-free prefix: scoped thread keys always contain a colon. */
+const SIDEBAR_MARKER_PREFIX = "sidebar-marker-";
 
 export type SidebarListMarker =
   /** The top boundary is also a landing target when there are no pins. */
@@ -125,10 +125,7 @@ export function sidebarListItemId(item: SidebarListItem): string {
     the top down, everything before the pinned divider is pinned, then the
     inbox until the snoozed header, the shelf until the settled header,
     then settled. */
-export function sectionAtSidebarSlot(
-  items: readonly SidebarListItem[],
-  index: number,
-): SidebarSection {
+function sectionAtSidebarSlot(items: readonly SidebarListItem[], index: number): SidebarSection {
   let section: SidebarSection = "pinned";
   for (let i = 0; i < index && i < items.length; i += 1) {
     const item = items[i]!;
@@ -206,6 +203,7 @@ export function planSidebarThreadDrop(input: {
   /** Snoozed threads can retain pinning and settlement beneath the shelf. */
   readonly activePinned?: boolean;
   readonly activeSettled?: boolean;
+  readonly supportsSettlement?: boolean;
   readonly target: SidebarDropTarget;
   /** All pinned keys in displayed order before the drop. */
   readonly pinnedOrder: readonly string[];
@@ -228,6 +226,9 @@ export function planSidebarThreadDrop(input: {
     activeKeysById,
     activeReorderableKeys,
   } = input;
+  if (input.supportsSettlement === false && (target.section === "settled" || activeSettled)) {
+    return { kind: "none" };
+  }
   switch (target.section) {
     case "active": {
       const order = target.activeOrder;

@@ -38,6 +38,7 @@ import {
   planPinnedReorder,
   planSidebarThreadDrop,
   sidebarMarkerId,
+  sidebarListItemId,
   sortPinnedThreadsForSidebar,
   sortThreadsForSidebar,
   sortProjectsForSidebar,
@@ -1056,6 +1057,22 @@ describe("resolveSidebarDropTarget", () => {
   const resolve = (activeKey: string, overId: string) =>
     resolveSidebarDropTarget(items, activeKey, overId);
 
+  it("keeps marker-like scoped thread keys draggable", () => {
+    const key = "marker:pinned-header";
+    const list: SidebarListItem[] = [
+      marker("pinned-header"),
+      thread(key, "pinned"),
+      thread("env:other", "pinned"),
+      marker("pinned-divider"),
+    ];
+    expect(new Set(list.map(sidebarListItemId)).size).toBe(list.length);
+    expect(resolveSidebarDropTarget(list, key, "env:other")).toEqual({
+      section: "pinned",
+      pinnedOrder: ["env:other", key],
+      activeOrder: [],
+    });
+  });
+
   it("reads the section off the markers above the gap", () => {
     expect(resolve("p1", "a2")).toEqual({
       section: "active",
@@ -1201,6 +1218,48 @@ describe("planSidebarThreadDrop", () => {
       ...overrides,
       target: { activeOrder: [], ...overrides.target },
     });
+
+  it("allows old-server pinned reordering while rejecting settlement", () => {
+    expect(
+      plan({
+        activeKey: "p1",
+        activeSection: "pinned",
+        supportsSettlement: false,
+        target: { section: "pinned", pinnedOrder: ["p2", "p1", "p3"] },
+      }).kind,
+    ).toBe("reorder-pinned");
+    expect(
+      plan({
+        activeKey: "p1",
+        activeSection: "pinned",
+        supportsSettlement: false,
+        target: { section: "settled", pinnedOrder: ["p2", "p3"] },
+      }),
+    ).toEqual({ kind: "none" });
+  });
+
+  it.each(["pinned", "active"] as const)("reserves hidden %s slots during a drop", (section) => {
+    const order = section === "pinned" ? ["p2", "p1", "p3"] : ["a2", "a1", "a3"];
+    const keys = new Map(section === "pinned" ? pinnedKeysById : activeKeysById);
+    const moved = section === "pinned" ? "p1" : "a1";
+    const reserved = pinOrderKeyBetween(keys.get(order[0]!)!, keys.get(order[2]!)!)!;
+    keys.set("snoozed", reserved);
+    const result = plan({
+      activeKey: moved,
+      activeSection: section,
+      pinnedKeysById: section === "pinned" ? keys : pinnedKeysById,
+      activeKeysById: section === "active" ? keys : activeKeysById,
+      target: {
+        section,
+        pinnedOrder: section === "pinned" ? order : [],
+        activeOrder: section === "active" ? order : [],
+      },
+    });
+    if (result.kind !== "reorder-pinned" && result.kind !== "move-active")
+      throw new Error("Expected reorder");
+    expect(result.assignments).toHaveLength(1);
+    expect(result.assignments[0]!.orderKey).not.toBe(reserved);
+  });
 
   it.each([
     { key: "p2", section: "pinned" as const, unpin: true, unsettle: false, unsnooze: false },
