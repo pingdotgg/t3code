@@ -12,20 +12,26 @@ import { agentSessionImport } from "../state/agentSessions";
 import { useAllEnvironmentShellsBootstrapped, useProjects } from "../state/entities";
 import { useAtomCommand } from "../state/use-atom-command";
 
+/** Stable key for a project in a specific environment. */
+export function projectReconcileKey(project: {
+  readonly environmentId: string;
+  readonly id: string;
+}): string {
+  return `${project.environmentId}\0${project.id}`;
+}
+
 /**
- * Return the subset of `projects` that have not yet been reconciled according
- * to `reconciled`. Each returned project is added to `reconciled` as a side
- * effect so the caller can track which projects still need work.
+ * Return the subset of `projects` not yet in `reconciled`.
+ * Does **not** mark them reconciled — the caller must do so after a
+ * definitive outcome so transient failures allow retry.
  */
 export function selectUnreconciledProjects(
   projects: ReadonlyArray<EnvironmentProject>,
-  reconciled: Set<string>,
+  reconciled: ReadonlySet<string>,
 ): ReadonlyArray<EnvironmentProject> {
   const pending: EnvironmentProject[] = [];
   for (const project of projects) {
-    const key = `${project.environmentId}\0${project.id}`;
-    if (reconciled.has(key)) continue;
-    reconciled.add(key);
+    if (reconciled.has(projectReconcileKey(project))) continue;
     pending.push(project);
   }
   return pending;
@@ -73,9 +79,18 @@ export function classifyImportFailure(
 }
 
 /**
+ * Whether the failure kind is definitive enough to mark the project reconciled
+ * and not retry. Transient failures (unsupported-server, unexpected, interrupted)
+ * leave the project eligible for retry after a server upgrade or remount.
+ */
+export function isDefinitiveOutcome(kind: ReturnType<typeof classifyImportFailure>): boolean {
+  return kind === "expected";
+}
+
+/**
  * Automatically imports external agent sessions (Claude Code, Codex) for every
  * known project once the environment shells are bootstrapped. Runs once per
- * project per mount cycle.
+ * project per mount cycle for successful imports; retries on transient failures.
  *
  * Reuses the existing `agentSessions.import` RPC, which is idempotent: threads
  * whose `import:` id already exists are skipped by the server, and the
@@ -103,6 +118,8 @@ export function useAgentSessionAutoReconcile(): void {
       for (const project of pending) {
         if (cancelled) return;
 
+        const key = projectReconcileKey(project);
+
         if (unsupportedServersRef.current.has(project.environmentId)) continue;
 
         const result = await importSessions({
@@ -116,11 +133,11 @@ export function useAgentSessionAutoReconcile(): void {
         if (cancelled) return;
 
         if (result._tag === "Success") {
-          if (result.value.importedCount > 0) {
-            console.info(
-              `[auto-reconcile] Imported ${result.value.importedCount} agent session(s) for project "${project.title}" (${project.id})`,
-            );
-          }
+          reconciledRef.current.add(key);
+          console.info(
+            `[auto-reconcile] project "${project.title}" (${project.id}, root "${project.workspaceRoot}"): ` +
+              `imported ${result.value.importedCount}, skipped ${result.value.skippedCount}`,
+          );
           continue;
         }
 
@@ -130,12 +147,21 @@ export function useAgentSessionAutoReconcile(): void {
 
         if (kind === "unsupported-server") {
           unsupportedServersRef.current.add(project.environmentId);
+          for (const key of reconciledRef.current) {
+            if (key.startsWith(`${project.environmentId}\0`)) {
+              reconciledRef.current.delete(key);
+            }
+          }
           console.warn(
             `[auto-reconcile] Server for environment "${project.environmentId}" does not support agentSessions.import. ` +
-              `Auto-reconcile of external agent sessions requires a server build that includes PR #5362 ` +
-              `(shipped after t3@0.0.38). Upgrade the server to enable automatic session import.`,
+              `Auto-reconcile requires a server build that includes PR #5362 (shipped after t3@0.0.38). ` +
+              `Upgrade the server to enable automatic session import.`,
           );
           continue;
+        }
+
+        if (isDefinitiveOutcome(kind)) {
+          reconciledRef.current.add(key);
         }
 
         const squashed = squashAtomCommandFailure(result);

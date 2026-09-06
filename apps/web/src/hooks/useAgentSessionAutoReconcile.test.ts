@@ -5,7 +5,12 @@ import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { RpcClientError } from "effect/unstable/rpc";
 
-import { classifyImportFailure, selectUnreconciledProjects } from "./useAgentSessionAutoReconcile";
+import {
+  classifyImportFailure,
+  isDefinitiveOutcome,
+  projectReconcileKey,
+  selectUnreconciledProjects,
+} from "./useAgentSessionAutoReconcile";
 
 function makeProject(
   environmentId: string,
@@ -34,35 +39,31 @@ describe("selectUnreconciledProjects", () => {
     expect(result[1]!.id).toBe("proj-b");
   });
 
-  it("marks returned projects as reconciled", () => {
+  it("does not mutate the reconciled set", () => {
     const reconciled = new Set<string>();
     const projects = [makeProject("env-1", "proj-a")];
     selectUnreconciledProjects(projects, reconciled);
-    expect(reconciled.has("env-1\0proj-a")).toBe(true);
+    expect(reconciled.size).toBe(0);
   });
 
-  it("skips already-reconciled projects on subsequent calls", () => {
-    const reconciled = new Set<string>();
-    const projects = [makeProject("env-1", "proj-a"), makeProject("env-1", "proj-b")];
-    selectUnreconciledProjects(projects, reconciled);
-    const result = selectUnreconciledProjects(projects, reconciled);
+  it("skips projects already in the reconciled set", () => {
+    const project = makeProject("env-1", "proj-a");
+    const reconciled = new Set([projectReconcileKey(project)]);
+    const result = selectUnreconciledProjects([project], reconciled);
     expect(result).toHaveLength(0);
   });
 
-  it("returns only newly added projects", () => {
-    const reconciled = new Set<string>();
-    const initial = [makeProject("env-1", "proj-a")];
-    selectUnreconciledProjects(initial, reconciled);
-
-    const withNew = [...initial, makeProject("env-1", "proj-b")];
-    const result = selectUnreconciledProjects(withNew, reconciled);
+  it("returns only projects not yet reconciled", () => {
+    const projA = makeProject("env-1", "proj-a");
+    const projB = makeProject("env-1", "proj-b");
+    const reconciled = new Set([projectReconcileKey(projA)]);
+    const result = selectUnreconciledProjects([projA, projB], reconciled);
     expect(result).toHaveLength(1);
     expect(result[0]!.id).toBe("proj-b");
   });
 
   it("returns empty array when projects list is empty", () => {
-    const reconciled = new Set<string>();
-    const result = selectUnreconciledProjects([], reconciled);
+    const result = selectUnreconciledProjects([], new Set());
     expect(result).toHaveLength(0);
   });
 
@@ -71,23 +72,21 @@ describe("selectUnreconciledProjects", () => {
     const projects = [makeProject("env-1", "proj-a"), makeProject("env-2", "proj-a")];
     const result = selectUnreconciledProjects(projects, reconciled);
     expect(result).toHaveLength(2);
-
-    const second = selectUnreconciledProjects(projects, reconciled);
-    expect(second).toHaveLength(0);
   });
 
-  it("handles a project removed then re-added (stays reconciled)", () => {
+  it("allows retry when a project is not marked reconciled after failure", () => {
     const reconciled = new Set<string>();
-    const projects = [makeProject("env-1", "proj-a"), makeProject("env-1", "proj-b")];
-    selectUnreconciledProjects(projects, reconciled);
+    const projects = [makeProject("env-1", "proj-a")];
 
-    const removed = [makeProject("env-1", "proj-b")];
-    const afterRemove = selectUnreconciledProjects(removed, reconciled);
-    expect(afterRemove).toHaveLength(0);
+    const first = selectUnreconciledProjects(projects, reconciled);
+    expect(first).toHaveLength(1);
 
-    const reAdded = [makeProject("env-1", "proj-a"), makeProject("env-1", "proj-b")];
-    const afterReAdd = selectUnreconciledProjects(reAdded, reconciled);
-    expect(afterReAdd).toHaveLength(0);
+    const second = selectUnreconciledProjects(projects, reconciled);
+    expect(second).toHaveLength(1);
+
+    reconciled.add(projectReconcileKey(projects[0]!));
+    const third = selectUnreconciledProjects(projects, reconciled);
+    expect(third).toHaveLength(0);
   });
 });
 
@@ -149,5 +148,23 @@ describe("classifyImportFailure", () => {
     expect(classifyImportFailure(AsyncResult.failure(Cause.fail(new Error("plain"))))).toBe(
       "unexpected",
     );
+  });
+});
+
+describe("isDefinitiveOutcome", () => {
+  it("treats expected failures as definitive (no retry)", () => {
+    expect(isDefinitiveOutcome("expected")).toBe(true);
+  });
+
+  it("treats unsupported-server as non-definitive (retry after upgrade)", () => {
+    expect(isDefinitiveOutcome("unsupported-server")).toBe(false);
+  });
+
+  it("treats unexpected failures as non-definitive (retry)", () => {
+    expect(isDefinitiveOutcome("unexpected")).toBe(false);
+  });
+
+  it("treats interrupted as non-definitive (retry)", () => {
+    expect(isDefinitiveOutcome("interrupted")).toBe(false);
   });
 });
