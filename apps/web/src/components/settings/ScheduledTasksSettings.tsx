@@ -2,6 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { Clock3Icon, PencilIcon, PlayIcon, PlusIcon, Trash2Icon } from "lucide-react";
 import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import type {
+  EnvironmentId,
   ModelSelection,
   OrchestrationV2ThreadLaunchWorkspaceStrategy,
   ProjectId,
@@ -21,17 +22,17 @@ import {
 
 import { cn } from "../../lib/utils";
 import { formatRelativeTime } from "../../timestampFormat";
-import { usePrimarySettings } from "../../hooks/useSettings";
+import { useEnvironmentSettings } from "../../hooks/useSettings";
 import { getCustomModelOptionsByInstance } from "../../modelSelection";
 import {
   applyProviderInstanceSettings,
   deriveProviderInstanceEntries,
   sortProviderInstanceEntries,
 } from "../../providerInstances";
-import { usePrimaryEnvironment } from "../../state/environments";
+import { useEnvironment, usePrimaryEnvironmentId } from "../../state/environments";
 import { useProjects } from "../../state/entities";
 import { useEnvironmentQuery } from "../../state/query";
-import { primaryServerProvidersAtom, serverEnvironment } from "../../state/server";
+import { EMPTY_SERVER_PROVIDERS, serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { Badge } from "../ui/badge";
@@ -247,12 +248,12 @@ function statusVariant(status: ScheduledTask["lastRunStatus"]) {
   return "outline";
 }
 
-export function ScheduledTasksSettings() {
-  useRelativeTimeTick(15_000);
-  const environment = usePrimaryEnvironment();
-  const projects = useProjects();
-  const settings = usePrimarySettings();
-  const providers = useAtomValue(primaryServerProvidersAtom);
+export function ScheduledTasksSettings(target: {
+  readonly environmentId?: EnvironmentId;
+  readonly taskId?: ScheduledTaskId;
+}) {
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const environment = useEnvironment(target.environmentId ?? primaryEnvironmentId);
   // Live subscription: the server pushes a fresh list after every change
   // (CRUD, run transitions, reschedules), so no manual refresh is needed.
   const tasksQuery = useEnvironmentQuery(
@@ -263,6 +264,53 @@ export function ScheduledTasksSettings() {
         })
       : null,
   );
+  if (!environment || !tasksQuery.data) {
+    return (
+      <SettingsPageContainer className="max-w-3xl">
+        <SettingsSection title="Schedule Tasks" icon={<Clock3Icon className="size-3.5" />}>
+          <p className="px-5 py-4 text-xs text-muted-foreground" role="status">
+            {tasksQuery.error ??
+              (environment
+                ? "Loading automations…"
+                : target.environmentId
+                  ? "The environment for this automation is unavailable. Reconnect to view it."
+                  : "Connect an environment to manage automations.")}
+          </p>
+        </SettingsSection>
+      </SettingsPageContainer>
+    );
+  }
+  return (
+    <EnvironmentScheduledTasksSettings
+      key={`${environment.environmentId}:${target.taskId ?? ""}`}
+      environmentId={environment.environmentId}
+      taskId={target.taskId}
+      tasks={tasksQuery.data.tasks}
+      error={tasksQuery.error}
+    />
+  );
+}
+
+function EnvironmentScheduledTasksSettings({
+  environmentId,
+  taskId,
+  tasks,
+  error,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly taskId: ScheduledTaskId | undefined;
+  readonly tasks: ReadonlyArray<ScheduledTask>;
+  readonly error: string | null;
+}) {
+  useRelativeTimeTick(15_000);
+  const allProjects = useProjects();
+  const projects = useMemo(
+    () => allProjects.filter((project) => project.environmentId === environmentId),
+    [allProjects, environmentId],
+  );
+  const settings = useEnvironmentSettings(environmentId);
+  const providers =
+    useAtomValue(serverEnvironment.providersValueAtom(environmentId)) ?? EMPTY_SERVER_PROVIDERS;
   const upsertTask = useAtomCommand(serverEnvironment.upsertScheduledTask, {
     label: "scheduled task upsert",
   });
@@ -279,10 +327,16 @@ export function ScheduledTasksSettings() {
       ),
     [providers, settings],
   );
-  const [draft, setDraft] = useState<DraftState>(() => EMPTY_DRAFT);
-  const [dialogOpen, setDialogOpen] = useState(false);
+  const linkedTask = tasks.find((task) => task.id === taskId);
+  // This component mounts after the first snapshot and is keyed by the link
+  // target. Live task updates must not overwrite an open editor's draft.
+  const [draft, setDraft] = useState<DraftState>(() =>
+    linkedTask ? taskToDraft(linkedTask) : EMPTY_DRAFT,
+  );
+  const [dialogOpen, setDialogOpen] = useState(() => linkedTask !== undefined);
   const [saving, setSaving] = useState(false);
-  const tasks = tasksQuery.data?.tasks ?? [];
+  const editingTaskMissing =
+    draft.editingId !== null && !tasks.some((task) => task.id === draft.editingId);
   const selectedProjectTitle = projects.find((project) => project.id === draft.projectId)?.title;
 
   // The real model picker is keyed by a `${instanceId}:${model}` string, which
@@ -326,7 +380,7 @@ export function ScheduledTasksSettings() {
   };
 
   const submit = useCallback(async () => {
-    if (!environment || saving) return;
+    if (saving || editingTaskMissing) return;
     const selection = splitModelKey(draft.modelKey || defaultModelKey);
     if (!draft.title.trim() || !draft.prompt.trim() || !draft.projectId || selection === null) {
       reportFailure("Schedule task is incomplete", "Add a title, prompt, project, and model.");
@@ -361,7 +415,7 @@ export function ScheduledTasksSettings() {
       creationSource: "web",
     };
     setSaving(true);
-    const result = await upsertTask({ environmentId: environment.environmentId, input });
+    const result = await upsertTask({ environmentId, input });
     setSaving(false);
     if (result._tag === "Failure") {
       if (!isAtomCommandInterrupted(result)) {
@@ -370,34 +424,32 @@ export function ScheduledTasksSettings() {
       return;
     }
     setDialogOpen(false);
-  }, [defaultModelKey, draft, environment, saving, upsertTask]);
+  }, [defaultModelKey, draft, editingTaskMissing, environmentId, saving, upsertTask]);
 
   const handleDelete = useCallback(
     async (task: ScheduledTask) => {
-      if (!environment) return;
       const result = await deleteTask({
-        environmentId: environment.environmentId,
+        environmentId,
         input: { id: task.id },
       });
       if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
         reportFailure("Could not delete schedule task", squashAtomCommandFailure(result));
       }
     },
-    [deleteTask, environment],
+    [deleteTask, environmentId],
   );
 
   const handleRunNow = useCallback(
     async (task: ScheduledTask) => {
-      if (!environment) return;
       const result = await runTaskNow({
-        environmentId: environment.environmentId,
+        environmentId,
         input: { id: task.id },
       });
       if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
         reportFailure("Could not run schedule task", squashAtomCommandFailure(result));
       }
     },
-    [environment, runTaskNow],
+    [environmentId, runTaskNow],
   );
 
   // Keep the draft pointed at a real project once projects load, so a freshly
@@ -423,8 +475,13 @@ export function ScheduledTasksSettings() {
           </Button>
         }
       >
-        {tasksQuery.error ? (
-          <div className="px-5 py-4 text-xs text-destructive">{tasksQuery.error}</div>
+        {taskId && !linkedTask ? (
+          <p className="px-5 py-4 text-xs text-muted-foreground" role="status">
+            This automation no longer exists.
+          </p>
+        ) : null}
+        {error ? (
+          <div className="px-5 py-4 text-xs text-destructive">{error}</div>
         ) : tasks.length === 0 ? (
           <div className="flex flex-col items-center gap-3 px-5 py-12 text-center">
             <div className="grid size-10 place-items-center rounded-full border border-border/70 bg-muted/40 text-muted-foreground">
@@ -512,6 +569,11 @@ export function ScheduledTasksSettings() {
           </DialogHeader>
 
           <DialogPanel className="space-y-5">
+            {editingTaskMissing ? (
+              <p className="text-xs text-destructive" role="status">
+                This automation no longer exists.
+              </p>
+            ) : null}
             <Field label="Name" htmlFor="scheduled-task-title">
               <Input
                 id="scheduled-task-title"
@@ -730,7 +792,7 @@ export function ScheduledTasksSettings() {
 
           <DialogFooter>
             <DialogClose render={<Button variant="outline" size="sm" />}>Cancel</DialogClose>
-            <Button size="sm" disabled={saving} onClick={() => void submit()}>
+            <Button size="sm" disabled={saving || editingTaskMissing} onClick={() => void submit()}>
               {draft.editingId ? "Save task" : "Create task"}
             </Button>
           </DialogFooter>
