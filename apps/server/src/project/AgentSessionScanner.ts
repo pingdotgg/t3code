@@ -38,6 +38,11 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
+import {
+  normalizeGitRemoteUrl,
+  parseGitHubRepositoryNameWithOwnerFromRemoteUrl,
+  parseOriginUrlFromGitConfig,
+} from "@t3tools/shared/git";
 import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { normalizeProjectPathForComparison } from "@t3tools/shared/path";
 
@@ -624,14 +629,28 @@ export const make = Effect.gen(function* () {
   // must case fold.
   const foldWorktreeCase = (yield* HostProcessPlatform) === "win32";
   const hostEnvironment = yield* HostProcessEnvironment;
+  const homeDir = NodeOS.homedir();
+  // `/private/tmp` is what macOS reports for sessions started in `/tmp`.
   const excludedProjectRoots = new Set(
-    [NodeOS.homedir(), NodeOS.tmpdir()].map((directory) =>
+    [homeDir, NodeOS.tmpdir(), "/tmp", "/private/tmp"].map((directory) =>
       normalizeProjectPathForComparison(path.resolve(directory)),
     ),
   );
+  // Codex creates one scratch directory per conversation under
+  // ~/Documents/Codex/<date>/<slug>. Neither those nor anything a user
+  // unpacked into Downloads is a project.
+  const excludedProjectAncestors = [
+    path.join(homeDir, "Downloads"),
+    path.join(homeDir, "Documents", "Codex"),
+  ];
 
   const isExcludedProjectPath = (candidatePath: string) =>
     excludedProjectRoots.has(normalizeProjectPathForComparison(candidatePath)) ||
+    excludedProjectAncestors.some((ancestor) =>
+      normalizeForWorktreeMatch(candidatePath, foldWorktreeCase).startsWith(
+        normalizeForWorktreeMatch(ancestor, foldWorktreeCase),
+      ),
+    ) ||
     normalizeForWorktreeMatch(candidatePath, foldWorktreeCase).startsWith(
       normalizeForWorktreeMatch(baseDir, foldWorktreeCase),
     ) ||
@@ -662,6 +681,48 @@ export const make = Effect.gen(function* () {
       .realPath(resolved)
       .pipe(Effect.orElseSucceed(() => resolved));
     return `path:${normalizeProjectPathForComparison(realPath)}`;
+  });
+
+  /**
+   * Git identity of a directory, or the reason it has none. Reads `.git`
+   * directly instead of spawning git so a scan over hundreds of candidates
+   * stays cheap. A `.git` file is a `gitdir:` pointer. When it points into a
+   * `worktrees/` directory the checkout is a linked worktree, which
+   * onboarding skips because its history belongs to the main checkout.
+   * Submodules use the same pointer shape but live under `modules/`, and
+   * are offered like any other repository.
+   */
+  const readGitIdentity = Effect.fn("AgentSessionScanner.readGitIdentity")(function* (
+    directory: string,
+  ): Effect.fn.Return<
+    | { readonly _tag: "Repository"; readonly git: AgentSessionProjectCandidate["git"] }
+    | { readonly _tag: "Worktree" }
+    | { readonly _tag: "NotGit" }
+  > {
+    const gitPath = path.join(directory, ".git");
+    const gitStats = yield* statOption(gitPath);
+    if (Option.isNone(gitStats)) return { _tag: "NotGit" } as const;
+    let gitDir = gitPath;
+    if (gitStats.value.type !== "Directory") {
+      const pointer = yield* fileSystem
+        .readFileString(gitPath)
+        .pipe(Effect.orElseSucceed(() => ""));
+      const target = /^gitdir:\s*(.+)$/m.exec(pointer)?.[1]?.trim();
+      if (target === undefined || target.length === 0) return { _tag: "NotGit" } as const;
+      gitDir = path.resolve(directory, target);
+      if (/[\\/]worktrees[\\/][^\\/]+[\\/]?$/.test(gitDir)) return { _tag: "Worktree" } as const;
+    }
+    const configText = yield* fileSystem
+      .readFileString(path.join(gitDir, "config"))
+      .pipe(Effect.orElseSucceed(() => ""));
+    const originUrl = parseOriginUrlFromGitConfig(configText);
+    return {
+      _tag: "Repository",
+      git: {
+        remoteKey: originUrl === null ? null : normalizeGitRemoteUrl(originUrl),
+        repository: parseGitHubRepositoryNameWithOwnerFromRemoteUrl(originUrl),
+      },
+    } as const;
   });
 
   // A large history snapshot can precede session metadata. Read bounded
@@ -1148,9 +1209,11 @@ export const make = Effect.gen(function* () {
         sources: Array<AgentSessionSource>;
         threadCount: number;
         lastActiveAtMs: number | null;
+        git: AgentSessionProjectCandidate["git"];
       }
     >();
     const directoryKeys = new Map<string, string>();
+    const gitIdentities = new Map<string, AgentSessionProjectCandidate["git"]>();
 
     for (const candidate of raw) {
       const expanded = expandHomePath(candidate.cwd.trim());
@@ -1173,7 +1236,13 @@ export const make = Effect.gen(function* () {
         if (isExcludedProjectPath(realPath)) {
           key = "";
         } else {
-          key = yield* directoryIdentity(resolved, stats.value);
+          const gitIdentity = yield* readGitIdentity(resolved);
+          if (gitIdentity._tag === "Worktree") {
+            key = "";
+          } else {
+            key = yield* directoryIdentity(resolved, stats.value);
+            gitIdentities.set(key, gitIdentity._tag === "Repository" ? gitIdentity.git : null);
+          }
         }
         directoryKeys.set(resolved, key);
       }
@@ -1186,6 +1255,7 @@ export const make = Effect.gen(function* () {
           sources: [candidate.source],
           threadCount: candidate.threadCount,
           lastActiveAtMs: candidate.lastActiveAtMs,
+          git: gitIdentities.get(key) ?? null,
         });
         continue;
       }
@@ -1234,6 +1304,7 @@ export const make = Effect.gen(function* () {
             ? null
             : DateTime.formatIso(DateTime.makeUnsafe(entry.lastActiveAtMs)),
         alreadyImported: importedProject !== undefined,
+        git: entry.git,
       });
     }
 

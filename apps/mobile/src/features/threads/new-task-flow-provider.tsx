@@ -96,6 +96,7 @@ import {
   resolveNewTaskLocalWorkspaceSelection,
 } from "./new-task-context-presentation";
 import { resolveEnvironmentProjectMatch } from "./new-task-project-selection";
+import { resolveProjectThreadCreationBranch } from "./projectThreadCreationValidation";
 
 type WorkspaceMode = "local" | "worktree";
 
@@ -189,7 +190,13 @@ type NewTaskFlowContextValue = {
   readonly beginEditingPendingTask: (messageId: string) => boolean;
   readonly finishEditingPendingTask: () => void;
   readonly cancelEditingPendingTask: () => void;
-  readonly buildPendingTaskMessage: (metadata: TurnCommandMetadata) => QueuedThreadMessage | null;
+  readonly buildPendingTaskMessage: (
+    metadata: TurnCommandMetadata,
+    options?: {
+      /** The live checkout, recorded as a local task's branch when it sends now. */
+      readonly currentCheckoutBranch?: string | null;
+    },
+  ) => QueuedThreadMessage | null;
   readonly setPrompt: (value: string) => void;
   readonly replaceAttachments: (attachments: ReadonlyArray<DraftComposerAttachment>) => void;
   /** Appends draft attachments; returns how many the live cap rejected. */
@@ -916,7 +923,10 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   }, []);
 
   const buildPendingTaskMessage = useCallback(
-    (metadata: TurnCommandMetadata): QueuedThreadMessage | null => {
+    (
+      metadata: TurnCommandMetadata,
+      options?: { readonly currentCheckoutBranch?: string | null },
+    ): QueuedThreadMessage | null => {
       if (!selectedProject || !selectedProjectDraftKey) {
         return null;
       }
@@ -970,11 +980,15 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
           ...(projectTitle !== undefined ? { projectTitle } : {}),
           ...(projectCwd !== undefined ? { projectCwd } : {}),
           workspaceMode: mode,
-          // Only an explicit picker choice, never the current checkout: a
-          // queued local task drains days later against whatever is checked
-          // out then, so recording a queue-time guess would pin a stale label
-          // to a thread that ran somewhere else.
-          branch: workspaceSelection?.branch ?? null,
+          // An explicit picker choice wins. Otherwise only a task sending now
+          // records the current checkout: a queued local task drains days
+          // later against whatever is checked out then, so a queue-time
+          // guess would pin a stale label to a thread that ran somewhere else.
+          branch: resolveProjectThreadCreationBranch({
+            workspaceMode: mode,
+            selectedBranch: workspaceSelection?.branch ?? null,
+            currentCheckoutBranch: options?.currentCheckoutBranch ?? null,
+          }),
           worktreePath: mode === "worktree" ? null : (workspaceSelection?.worktreePath ?? null),
           // The draft only carries the flag when the user touched it; fall
           // back to the resolved default (server settings) so queued tasks
