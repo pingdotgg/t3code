@@ -12,6 +12,8 @@ import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
 import android.widget.FrameLayout
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import expo.modules.kotlin.AppContext
 import expo.modules.kotlin.viewevent.EventDispatcher
 import expo.modules.kotlin.views.ExpoView
@@ -23,6 +25,7 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
   private val inputView = EditText(context)
   private val onInput by EventDispatcher()
   private val onResize by EventDispatcher()
+  private val onTerminalFocus by EventDispatcher()
   private var terminalHandle = 0L
   private var fedBuffer = ""
   private var cols = 0
@@ -189,6 +192,7 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
     if (isCleanedUp) return
     isCleanedUp = true
     inputView.setOnEditorActionListener(null)
+    inputView.setOnFocusChangeListener(null)
     terminalCanvas.onScrollRows = null
     terminalCanvas.onRequestKeyboard = null
     terminalCanvas.onCellMetricsChanged = null
@@ -213,6 +217,11 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
       InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD or
       InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
     inputView.setPadding(0, 0, 0, 0)
+    inputView.setOnFocusChangeListener { _, hasFocus ->
+      if (hasFocus) {
+        onTerminalFocus(emptyMap<String, Any>())
+      }
+    }
     inputView.setOnEditorActionListener { _, actionId, event ->
       val isKeyUp = event?.action == KeyEvent.ACTION_UP
       val isImeSend = actionId == EditorInfo.IME_ACTION_SEND && !isKeyUp
@@ -372,7 +381,19 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
   }
 
   private fun requestKeyboardFocus() {
+    // requestFocus on an already-focused EditText fires no focus callback, so
+    // emit it here when the window insets prove the IME is genuinely visible:
+    // the keyboard stream is live, and the JS recovery quarantine must lift
+    // even without a keyboardWillShow. Gating on the insets (not the touch
+    // that reached this call) keeps a post-resume scroll with a stale
+    // snapshot from clearing the quarantine.
+    val retainedFocus = inputView.hasFocus()
     inputView.requestFocus()
+    val imeVisible =
+      ViewCompat.getRootWindowInsets(this)?.isVisible(WindowInsetsCompat.Type.ime()) == true
+    if (retainedFocus && imeVisible) {
+      onTerminalFocus(emptyMap<String, Any>())
+    }
     val inputMethodManager = context.getSystemService(
       Context.INPUT_METHOD_SERVICE
     ) as? InputMethodManager

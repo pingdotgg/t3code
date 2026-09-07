@@ -109,6 +109,8 @@ import { useIncomingShare } from "../sharing/IncomingShareProvider";
 import { selectIncomingShareAttachmentsForServer } from "../sharing/incoming-share-model";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { serverEnvironment } from "../../state/server";
+import { isAndroidKeyboardAnimationUsable } from "../keyboard/androidKeyboardRecovery";
+import { useAndroidKeyboardRecovery } from "../keyboard/useAndroidKeyboardRecovery";
 
 function NewTaskWorkspaceIcon(props: {
   readonly workspaceMode: "local" | "worktree";
@@ -170,6 +172,12 @@ export function NewTaskDraftScreen(props: {
   } = useIncomingShare();
   const insets = useSafeAreaInsets();
   const isKeyboardVisible = useKeyboardState((state) => state.isVisible);
+  const { isQuarantined: isKeyboardStateQuarantined, markInputFocused } =
+    useAndroidKeyboardRecovery();
+  const isKeyboardAnimationUsable = isAndroidKeyboardAnimationUsable({
+    isKeyboardVisible,
+    isQuarantined: isKeyboardStateQuarantined,
+  });
   const controlsBottomPadding = Math.max(insets.bottom, 10);
   const keyboardOpenedOffset = Math.max(0, controlsBottomPadding - 8);
   const { projectScopes, selectedProject, selectedProjectKey, setProject } = flow;
@@ -1160,7 +1168,10 @@ export function NewTaskDraftScreen(props: {
       selection={composerMenu.selection}
       onChangeText={flow.setPrompt}
       onSelectionChange={composerMenu.onSelectionChange}
-      onFocus={() => setIsComposerFocused(true)}
+      onFocus={() => {
+        markInputFocused();
+        setIsComposerFocused(true);
+      }}
       onBlur={() => setIsComposerFocused(false)}
       onPasteImages={(uris) => void handleNativePasteImages(uris)}
       placeholder="Ask anything…"
@@ -1487,6 +1498,7 @@ export function NewTaskDraftScreen(props: {
         {heroViewport}
 
         <KeyboardStickyView
+          enabled={Platform.OS !== "android" || isKeyboardAnimationUsable}
           style={{ position: "absolute", bottom: 0, left: 0, right: 0 }}
           offset={{ closed: 0, opened: keyboardOpenedOffset }}
         >
@@ -1515,6 +1527,7 @@ export function NewTaskDraftScreen(props: {
 
       {heroViewport}
       <KeyboardStickyView
+        enabled={Platform.OS !== "android" || isKeyboardAnimationUsable}
         pointerEvents="box-none"
         style={{ position: "absolute", top: 0, bottom: 0, left: 0, right: 0 }}
         offset={{ closed: 0, opened: keyboardOpenedOffset }}

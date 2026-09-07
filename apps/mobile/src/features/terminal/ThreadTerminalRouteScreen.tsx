@@ -45,6 +45,8 @@ import {
 import { useThreadSelection } from "../../state/use-thread-selection";
 import { useSelectedThreadDetail } from "../../state/use-thread-detail";
 import { EnvironmentConnectionNotice } from "../connection/EnvironmentConnectionNotice";
+import { isAndroidKeyboardAnimationUsable } from "../keyboard/androidKeyboardRecovery";
+import { useAndroidKeyboardRecovery } from "../keyboard/useAndroidKeyboardRecovery";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import { TerminalSurface } from "./NativeTerminalSurface";
 import { getMobileTerminalTheme } from "./terminalTheme";
@@ -507,9 +509,15 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
     height: state.height,
     isVisible: state.isVisible,
   }));
-  const isAccessoryVisible = keyboardState.isVisible && !isAccessoryDismissed;
+  const { isQuarantined: isKeyboardStateQuarantined, markInputFocused } =
+    useAndroidKeyboardRecovery();
+  const isKeyboardAnimationUsable = isAndroidKeyboardAnimationUsable({
+    isKeyboardVisible: keyboardState.isVisible,
+    isQuarantined: isKeyboardStateQuarantined,
+  });
+  const isAccessoryVisible = isKeyboardAnimationUsable && !isAccessoryDismissed;
   const terminalBottomInset =
-    (keyboardState.isVisible ? keyboardState.height : 0) +
+    (isKeyboardAnimationUsable ? keyboardState.height : 0) +
     (isAccessoryVisible ? TERMINAL_ACCESSORY_HEIGHT : 0);
 
   useEffect(() => {
@@ -1269,6 +1277,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
                 keyboardFocusRequest={keyboardFocusRequest}
                 onInput={handleInput}
                 onResize={handleResize}
+                onTerminalFocus={markInputFocused}
                 style={{ flex: 1 }}
                 terminalKey={terminalKey}
                 theme={terminalTheme}
@@ -1277,6 +1286,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
 
             {isAccessoryVisible ? (
               <KeyboardStickyView
+                enabled={Platform.OS !== "android" || isKeyboardAnimationUsable}
                 style={{ position: "absolute", bottom: 0, left: 0, right: 0 }}
                 offset={{ closed: 0, opened: 0 }}
               >
@@ -1325,7 +1335,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
                   </ComposerToolbarRow>
                 </View>
               </KeyboardStickyView>
-            ) : !keyboardState.isVisible ? (
+            ) : !isKeyboardAnimationUsable ? (
               <Pressable
                 accessibilityLabel="Show keyboard"
                 accessibilityRole="button"
