@@ -117,6 +117,7 @@ export function ProjectDefaultsSettings({
     (target) => target.serverConfig?.settings.defaultAutoPull !== serverSettings.defaultAutoPull,
   );
 
+  /** Explains why a model cannot be used by every connected machine in the current scope. */
   function modelDisabledReason(instanceId: ProviderInstanceId, model: string): string | null {
     const sourceEntry = entries.find((entry) => entry.instanceId === instanceId);
     for (const target of targets) {
@@ -142,6 +143,7 @@ export function ProjectDefaultsSettings({
     return null;
   }
 
+  /** Saves machine defaults without changing project overrides, reporting partial failures. */
   async function save(patch: ServerSettingsPatch) {
     const keys = Object.keys(patch);
     if (targets.length === 0 || keys.some((key) => savingRef.current.has(key))) return;
@@ -173,6 +175,10 @@ export function ProjectDefaultsSettings({
     }
   }
 
+  /**
+   * Confirms and clears scoped project overrides so they inherit future machine defaults.
+   * Failed updates leave their overrides available for retry; existing threads are untouched.
+   */
   async function resetProjectModels() {
     const api = readLocalApi();
     if (

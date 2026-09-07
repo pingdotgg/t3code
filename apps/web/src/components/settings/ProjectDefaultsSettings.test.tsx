@@ -84,6 +84,7 @@ const override: ModelSelection = {
   model: "project-model",
 };
 
+/** Builds a physical project fixture, allowing the same project ID on different machines. */
 function project(environmentId: EnvironmentId, id: string, inherits = false) {
   return {
     environmentId,
@@ -93,6 +94,7 @@ function project(environmentId: EnvironmentId, id: string, inherits = false) {
   };
 }
 
+/** Renders the scoped reset control while retaining hook state across simulated rerenders. */
 function resetButton(environmentId: EnvironmentId | null = null) {
   hooks.beginRender();
   const panel = ProjectDefaultsSettings({ environmentId });
