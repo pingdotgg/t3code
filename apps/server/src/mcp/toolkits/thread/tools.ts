@@ -1,4 +1,6 @@
 import {
+  OrchestrationSearchThreadsInput,
+  OrchestrationSearchThreadsResult,
   OrchestrationV2ThreadForkSourcePoint,
   OrchestrationV2ContextTransfer,
   TrimmedNonEmptyString,
@@ -18,6 +20,7 @@ import * as Crypto from "effect/Crypto";
 import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/unstable/ai";
 
+import { ProjectionSnapshotQuery } from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { ThreadManagementService } from "../../../orchestration-v2/ThreadManagementService.ts";
 import { McpInvocationContext } from "../../McpInvocationContext.ts";
 
@@ -216,7 +219,19 @@ export const ThreadTransfersTool = Tool.make("t3_thread_transfers", {
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false);
 
+export const ThreadSearchTool = Tool.make("t3_thread_search", {
+  ...commandTool,
+  description:
+    "Search active thread titles and content with the app's existing bounded search. Returns matches in the calling project from the global top matches; other-project matches are omitted, so this may return fewer than limit. No pagination or exhaustive-result guarantee.",
+  parameters: OrchestrationSearchThreadsInput,
+  success: OrchestrationSearchThreadsResult,
+  dependencies: [...commandTool.dependencies, ProjectionSnapshotQuery],
+})
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false);
+
 export const ThreadToolkit = Toolkit.make(
+  ThreadSearchTool,
   ThreadForkTool,
   ThreadMergeBackTool,
   ThreadTransfersTool,
