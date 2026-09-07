@@ -1342,7 +1342,7 @@ function ImportCandidateList({
             <CollapsibleTrigger className="group flex min-w-0 flex-1 items-center gap-1.5 text-left">
               <ChevronRightIcon className="size-3.5 shrink-0 text-muted-foreground transition-transform group-data-panel-open:rotate-90" />
               <span className="truncate text-sm text-muted-foreground">Other folders</span>
-              <span className="ml-auto shrink-0 text-xs text-muted-foreground">
+              <span className="ml-auto shrink-0 text-xs text-muted-foreground tabular-nums">
                 {other.length} {other.length === 1 ? "folder" : "folders"}
               </span>
             </CollapsibleTrigger>
@@ -1400,11 +1400,11 @@ function ImportRepositoryGroup({
         <CollapsibleTrigger className="group flex min-w-0 flex-1 items-center gap-1.5 text-left">
           <ChevronRightIcon className="size-3.5 shrink-0 text-muted-foreground transition-transform group-data-panel-open:rotate-90" />
           <span className="truncate text-sm font-medium">{group.label}</span>
-          <span className="ml-auto flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
-            <SourceIcons sources={[...new Set(group.candidates.flatMap((c) => c.sources))]} />
-            <span className="tabular-nums">{group.threadCount}</span>
-            <ActiveAgo lastActiveAt={group.lastActiveAt} />
-          </span>
+          <ImportRowMeta
+            sources={[...new Set(group.candidates.flatMap((c) => c.sources))]}
+            threadCount={group.threadCount}
+            lastActiveAt={group.lastActiveAt}
+          />
         </CollapsibleTrigger>
       </div>
       <CollapsiblePanel>
@@ -1461,31 +1461,46 @@ function ImportCandidateRow({
         </TooltipTrigger>
         <TooltipPopup className="max-w-96 break-all font-mono">{candidate.path}</TooltipPopup>
       </Tooltip>
-      <span className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
-        {nested ? <span className="w-8" /> : <SourceIcons sources={candidate.sources} />}
-        <span className="w-8 text-right tabular-nums">{candidate.threadCount}</span>
-        <ActiveAgo lastActiveAt={candidate.lastActiveAt} />
-      </span>
+      <ImportRowMeta
+        sources={nested ? null : candidate.sources}
+        threadCount={candidate.threadCount}
+        lastActiveAt={candidate.lastActiveAt}
+      />
     </label>
   );
 }
 
-function SourceIcons({ sources }: { readonly sources: ReadonlyArray<"claudeAgent" | "codex"> }) {
-  return (
-    <span className="flex w-8 items-center justify-end gap-1">
-      {sources.includes("claudeAgent") ? (
-        <ClaudeAI className="size-3" aria-label="Claude Code" />
-      ) : null}
-      {sources.includes("codex") ? <OpenAI className="size-3" aria-label="Codex" /> : null}
-    </span>
-  );
-}
-
-function ActiveAgo({ lastActiveAt }: { readonly lastActiveAt: string | null }) {
+/**
+ * Trailing columns shared by every import row: source icons, thread count,
+ * last activity. Each column has a fixed width and each icon has its own slot
+ * so nothing shifts between rows that differ in sources or digit count.
+ */
+function ImportRowMeta({
+  sources,
+  threadCount,
+  lastActiveAt,
+}: {
+  readonly sources: ReadonlyArray<"claudeAgent" | "codex"> | null;
+  readonly threadCount: number;
+  readonly lastActiveAt: string | null;
+}) {
   const relative = lastActiveAt === null ? null : formatRelativeTime(lastActiveAt);
   // "just now" does not fit the fixed column, so collapse it.
-  const value = relative === null ? "" : relative.suffix === null ? "now" : relative.value;
-  return <span className="w-8 shrink-0 text-right tabular-nums whitespace-nowrap">{value}</span>;
+  const age = relative === null ? "" : relative.suffix === null ? "now" : relative.value;
+  return (
+    <span className="ml-auto grid shrink-0 grid-cols-[1rem_1rem_2.5rem_2.25rem] items-center gap-x-1 text-xs text-muted-foreground tabular-nums">
+      <span className="flex size-4 items-center justify-center">
+        {sources?.includes("claudeAgent") ? (
+          <ClaudeAI className="size-3" aria-label="Claude Code" />
+        ) : null}
+      </span>
+      <span className="flex size-4 items-center justify-center">
+        {sources?.includes("codex") ? <OpenAI className="size-3" aria-label="Codex" /> : null}
+      </span>
+      <span className="text-right">{threadCount}</span>
+      <span className="text-right whitespace-nowrap">{age}</span>
+    </span>
+  );
 }
 
 // ── Shared bits ──────────────────────────────────────────────
