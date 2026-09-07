@@ -4327,6 +4327,7 @@ export default function Sidebar() {
       openProjectSettings,
       projectScopeKey,
       projectByKey,
+      providerEntriesByEnvironment,
       serverConfigs,
       setProjectScopeKey,
       startThreadRename,
