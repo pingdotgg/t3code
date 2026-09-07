@@ -7,13 +7,11 @@ import * as Option from "effect/Option";
 import type * as Electron from "electron";
 import { beforeEach, vi } from "vite-plus/test";
 
-const { buildFromTemplateMock, createFromNamedImageMock, setApplicationMenuMock } = vi.hoisted(
-  () => ({
-    buildFromTemplateMock: vi.fn(),
-    createFromNamedImageMock: vi.fn(),
-    setApplicationMenuMock: vi.fn(),
-  }),
-);
+const { buildFromTemplateMock, createMenuSymbolMock, setApplicationMenuMock } = vi.hoisted(() => ({
+  buildFromTemplateMock: vi.fn(),
+  createMenuSymbolMock: vi.fn(),
+  setApplicationMenuMock: vi.fn(),
+}));
 
 vi.mock("electron", () => ({
   Menu: {
@@ -21,7 +19,7 @@ vi.mock("electron", () => ({
     setApplicationMenu: setApplicationMenuMock,
   },
   nativeImage: {
-    createFromNamedImage: createFromNamedImageMock,
+    createMenuSymbol: createMenuSymbolMock,
   },
 }));
 
@@ -29,6 +27,9 @@ import * as ElectronMenu from "./ElectronMenu.ts";
 
 const TestLayer = ElectronMenu.layer.pipe(
   Layer.provide(Layer.succeed(HostProcessPlatform, "linux")),
+);
+const MacTestLayer = ElectronMenu.layer.pipe(
+  Layer.provide(Layer.succeed(HostProcessPlatform, "darwin")),
 );
 
 const makeWindow = (zoomFactor = 1): Electron.BrowserWindow =>
@@ -40,9 +41,46 @@ const makeWindow = (zoomFactor = 1): Electron.BrowserWindow =>
 describe("ElectronMenu", () => {
   beforeEach(() => {
     buildFromTemplateMock.mockReset();
-    createFromNamedImageMock.mockReset();
+    createMenuSymbolMock.mockReset();
     setApplicationMenuMock.mockReset();
   });
+
+  it.effect("maps icon keywords to macOS menu symbols and keeps the trash fallback", () =>
+    Effect.gen(function* () {
+      const icons = new Map<string, Electron.NativeImage>();
+      createMenuSymbolMock.mockImplementation((symbolName: string) => {
+        const icon = { isEmpty: () => false } as Electron.NativeImage;
+        icons.set(symbolName, icon);
+        return icon;
+      });
+      buildFromTemplateMock.mockReturnValue({
+        popup: (options: Electron.PopupOptions) => options.callback?.(),
+      });
+
+      const electronMenu = yield* ElectronMenu.ElectronMenu;
+      yield* electronMenu.showContextMenu({
+        window: makeWindow(),
+        items: [
+          {
+            id: "copy",
+            label: "Copy",
+            icon: "copy",
+            children: [{ id: "copy-path", label: "Path", icon: "folder" }],
+          },
+          { id: "delete", label: "Delete", destructive: true },
+        ],
+        position: Option.none(),
+      });
+
+      const template = buildFromTemplateMock.mock.calls[0]?.[0] as
+        | Electron.MenuItemConstructorOptions[]
+        | undefined;
+      assert.strictEqual(template?.[0]?.icon, icons.get("doc.on.doc"));
+      const submenu = template?.[0]?.submenu as Electron.MenuItemConstructorOptions[] | undefined;
+      assert.strictEqual(submenu?.[0]?.icon, icons.get("folder"));
+      assert.strictEqual(template?.at(-1)?.icon, icons.get("trash"));
+    }).pipe(Effect.provide(MacTestLayer)),
+  );
 
   it.effect("returns none without building a menu when there are no valid items", () =>
     Effect.gen(function* () {
