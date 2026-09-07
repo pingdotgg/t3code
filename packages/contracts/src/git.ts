@@ -367,6 +367,21 @@ export class TextGenerationError extends Schema.TaggedError<TextGenerationError>
   }
 }
 
+export class TextGenerationUnavailableError extends Schema.TaggedError<TextGenerationUnavailableError>()(
+  "TextGenerationUnavailableError",
+  {
+    operation: Schema.String,
+    detail: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    return `Text generation is unavailable in ${this.operation}: ${this.detail}`;
+  }
+}
+
+export type TextGenerationServiceError = TextGenerationError | TextGenerationUnavailableError;
+
 export class GitManagerError extends Schema.TaggedError<GitManagerError>()("GitManagerError", {
   operation: Schema.String,
   cwd: Schema.String,
@@ -400,6 +415,7 @@ export const GitManagerServiceError = Schema.Union([
   GitCommandError,
   SourceControlProviderError,
   TextGenerationError,
+  TextGenerationUnavailableError,
 ]);
 export type GitManagerServiceError = typeof GitManagerServiceError.Type;
 

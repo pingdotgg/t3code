@@ -236,7 +236,7 @@ export const make = Effect.gen(function* () {
     }).pipe(
       Effect.retry({
         times: input.kind.type === "initial" ? 2 : 0,
-        while: (error) => error._tag === "TextGenerationError" && error.retryable !== false,
+        while: (error) => error._tag === "TextGenerationError",
         schedule: Schedule.exponential("1 second"),
       }),
       Effect.catchCause((cause) =>

@@ -11,6 +11,7 @@ import {
   DEFAULT_TEXT_GENERATION_REASONING_EFFORT,
   type ModelSelection,
   TextGenerationError,
+  type TextGenerationServiceError,
 } from "@t3tools/contracts";
 import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@t3tools/shared/git";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
@@ -59,7 +60,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
   const readStreamAsString = <E>(
     operation: string,
     stream: Stream.Stream<Uint8Array, E>,
-  ): Effect.Effect<string, TextGenerationError> =>
+  ): Effect.Effect<string, TextGenerationServiceError> =>
     stream.pipe(
       Stream.decodeText(),
       Stream.runFold(
@@ -181,7 +182,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
     imagePaths?: ReadonlyArray<string>;
     cleanupPaths?: ReadonlyArray<string>;
     modelSelection: ModelSelection;
-  }): Effect.fn.Return<S["Type"], TextGenerationError, S["DecodingServices"]> {
+  }): Effect.fn.Return<S["Type"], TextGenerationServiceError, S["DecodingServices"]> {
     const schemaJson = yield* encodeJsonForOperation(
       operation,
       toJsonSchemaObject(outputSchemaJson),

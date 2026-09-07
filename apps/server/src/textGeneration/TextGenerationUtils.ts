@@ -1,11 +1,12 @@
-import { TextGenerationError } from "@t3tools/contracts";
-import * as Option from "effect/Option";
+import {
+  TextGenerationError,
+  TextGenerationUnavailableError,
+  type TextGenerationServiceError,
+} from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
 const isTextGenerationError = Schema.is(TextGenerationError);
-const decodeJsonThreadTitle = Schema.decodeOption(
-  Schema.fromJsonString(Schema.Struct({ title: Schema.String })),
-);
+const isTextGenerationUnavailableError = Schema.is(TextGenerationUnavailableError);
 
 /** Convert an Effect Schema to a flat JSON Schema object, inlining `$defs` when present. */
 export function toJsonSchemaObject(schema: Schema.Top): unknown {
@@ -48,10 +49,7 @@ export function sanitizePrTitle(raw: string): string {
 
 /** Normalise a raw thread title to a compact single-line sidebar-safe label. */
 export function sanitizeThreadTitle(raw: string): string {
-  // Unwrap a JSON-formatted title before truncation can cut off the closing brace.
-  const decoded = decodeJsonThreadTitle(raw);
-  const title = Option.isSome(decoded) ? decoded.value.title : raw;
-  const normalized = title
+  const normalized = raw
     .trim()
     .split(/\r?\n/g)[0]
     ?.trim()
@@ -78,16 +76,16 @@ function cliLabel(cliName: string): string {
 
 /**
  * Normalize an unknown error from a CLI text generation process into a
- * typed `TextGenerationError`. Parameterized by CLI name so both Codex
- * and Claude (and future providers) can share the same logic.
+ * typed text-generation error. Parameterized by CLI name so both Codex and
+ * Claude (and future providers) can share the same logic.
  */
 export function normalizeCliError(
   cliName: string,
   operation: string,
   error: unknown,
   fallback: string,
-): TextGenerationError {
-  if (isTextGenerationError(error)) {
+): TextGenerationServiceError {
+  if (isTextGenerationError(error) || isTextGenerationUnavailableError(error)) {
     return error;
   }
 
@@ -98,7 +96,7 @@ export function normalizeCliError(
       lower.includes(`spawn ${cliName}`) ||
       lower.includes("enoent")
     ) {
-      return new TextGenerationError({
+      return new TextGenerationUnavailableError({
         operation,
         detail: `${cliLabel(cliName)} is required but not available on PATH.`,
         retryable: false,

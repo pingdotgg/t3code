@@ -95,7 +95,7 @@ describe("makeTextGenerationFromRegistry", () => {
     }),
   );
 
-  it.effect("fails with TextGenerationError when the instance is unknown", () =>
+  it.effect("fails with TextGenerationUnavailableError when the instance is unknown", () =>
     Effect.gen(function* () {
       const tg = TextGeneration.makeTextGenerationFromRegistry(makeStubRegistry([]));
 
@@ -112,7 +112,7 @@ describe("makeTextGenerationFromRegistry", () => {
 
       expect(Result.isFailure(result)).toBe(true);
       if (Result.isFailure(result)) {
-        expect(result.failure._tag).toBe("TextGenerationError");
+        expect(result.failure._tag).toBe("TextGenerationUnavailableError");
         expect(result.failure.operation).toBe("generateBranchName");
         expect(result.failure.detail).toContain("missing_instance");
         expect(result.failure.retryable).toBe(false);

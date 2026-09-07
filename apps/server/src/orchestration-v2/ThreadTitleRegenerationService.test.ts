@@ -8,6 +8,7 @@ import {
   ProviderInstanceId,
   ThreadId,
   TextGenerationError,
+  TextGenerationUnavailableError,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -409,13 +410,13 @@ describe("ThreadTitleRegenerationService", () => {
     }),
   );
 
-  for (const [recover, retryable] of [
-    [true, true],
-    [false, true],
+  for (const [recover, unavailable] of [
+    [true, false],
     [false, false],
+    [false, true],
   ] as const) {
     it.effect(
-      `retries initial title failures within a bounded budget (recover=${recover}, retryable=${retryable})`,
+      `retries transient initial title failures within a bounded budget (recover=${recover}, unavailable=${unavailable})`,
       () =>
         Effect.gen(function* () {
           let attempts = 0;
@@ -426,13 +427,15 @@ describe("ThreadTitleRegenerationService", () => {
                 return recover && attempts === 3
                   ? Effect.succeed({ title: "Recovered title" })
                   : Effect.fail(
-                      new TextGenerationError({
-                        operation: "generateThreadTitle",
-                        detail: retryable
-                          ? "temporarily unavailable"
-                          : "No provider instance registered.",
-                        retryable,
-                      }),
+                      unavailable
+                        ? new TextGenerationUnavailableError({
+                            operation: "generateThreadTitle",
+                            detail: "No provider instance registered.",
+                          })
+                        : new TextGenerationError({
+                            operation: "generateThreadTitle",
+                            detail: "temporarily unavailable",
+                          }),
                     );
               }),
           });
@@ -462,9 +465,9 @@ describe("ThreadTitleRegenerationService", () => {
                 },
               })
               .pipe(Effect.forkScoped);
-            if (retryable) yield* TestClock.adjust("3 seconds");
+            if (!unavailable) yield* TestClock.adjust("3 seconds");
             yield* Fiber.join(fiber);
-            assert.equal(attempts, retryable ? 3 : 1);
+            assert.equal(attempts, unavailable ? 1 : 3);
             const projection = yield* threads.getThreadProjection(threadId);
             assert.equal(projection.thread.title, recover ? "Recovered title" : "Seed title");
             assert.isNotOk(projection.thread.titleRegeneration);

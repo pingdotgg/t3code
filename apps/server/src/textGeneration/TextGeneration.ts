@@ -2,7 +2,10 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import type { ChatAttachment, ModelSelection, ProviderInstanceId } from "@t3tools/contracts";
-import { TextGenerationError } from "@t3tools/contracts";
+import {
+  TextGenerationUnavailableError,
+  type TextGenerationServiceError,
+} from "@t3tools/contracts";
 
 import * as ProviderInstanceRegistry from "../provider/Services/ProviderInstanceRegistry.ts";
 import type { ProviderInstance } from "../provider/ProviderDriver.ts";
@@ -84,26 +87,26 @@ export class TextGeneration extends Context.Service<
      */
     readonly generateCommitMessage: (
       input: CommitMessageGenerationInput,
-    ) => Effect.Effect<CommitMessageGenerationResult, TextGenerationError>;
+    ) => Effect.Effect<CommitMessageGenerationResult, TextGenerationServiceError>;
 
     /**
      * Generate change request title/body from branch and diff context.
      */
     readonly generatePrContent: (
       input: PrContentGenerationInput,
-    ) => Effect.Effect<PrContentGenerationResult, TextGenerationError>;
+    ) => Effect.Effect<PrContentGenerationResult, TextGenerationServiceError>;
 
     /**
      * Generate a concise branch name from a user message.
      */
     readonly generateBranchName: (
       input: BranchNameGenerationInput,
-    ) => Effect.Effect<BranchNameGenerationResult, TextGenerationError>;
+    ) => Effect.Effect<BranchNameGenerationResult, TextGenerationServiceError>;
 
     /** Generate a concise thread title from a first message or thread history. */
     readonly generateThreadTitle: (
       input: ThreadTitleGenerationInput,
-    ) => Effect.Effect<ThreadTitleGenerationResult, TextGenerationError>;
+    ) => Effect.Effect<ThreadTitleGenerationResult, TextGenerationServiceError>;
   }
 >()("t3/textGeneration/TextGeneration") {}
 
@@ -117,13 +120,13 @@ const resolveInstance = (
   registry: ProviderInstanceRegistry.ProviderInstanceRegistry["Service"],
   operation: TextGenerationOp,
   instanceId: ProviderInstanceId,
-): Effect.Effect<ProviderInstance["textGeneration"], TextGenerationError> =>
+): Effect.Effect<ProviderInstance["textGeneration"], TextGenerationUnavailableError> =>
   registry.getInstance(instanceId).pipe(
     Effect.flatMap((instance) =>
       instance
         ? Effect.succeed(instance.textGeneration)
         : Effect.fail(
-            new TextGenerationError({
+            new TextGenerationUnavailableError({
               operation,
               detail: `No provider instance registered for id '${instanceId}'.`,
               retryable: false,

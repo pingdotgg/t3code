@@ -7,7 +7,7 @@ import {
   buildThreadTitlePrompt,
 } from "./TextGenerationPrompts.ts";
 import { normalizeCliError, sanitizeThreadTitle } from "./TextGenerationUtils.ts";
-import { TextGenerationError } from "@t3tools/contracts";
+import { TextGenerationError, TextGenerationUnavailableError } from "@t3tools/contracts";
 
 describe("buildCommitMessagePrompt", () => {
   it("includes staged patch and summary in the prompt", () => {
@@ -263,7 +263,7 @@ describe("normalizeCliError", () => {
       "Something went wrong",
     );
 
-    expect(error).toBeInstanceOf(TextGenerationError);
+    expect(error).toBeInstanceOf(TextGenerationUnavailableError);
     expect(error.detail).toContain("Claude CLI");
     expect(error.detail).toContain("not available on PATH");
   });
@@ -276,7 +276,7 @@ describe("normalizeCliError", () => {
       "Something went wrong",
     );
 
-    expect(error).toBeInstanceOf(TextGenerationError);
+    expect(error).toBeInstanceOf(TextGenerationUnavailableError);
     expect(error.detail).toContain("Codex CLI");
     expect(error.detail).toContain("not available on PATH");
   });
@@ -288,6 +288,17 @@ describe("normalizeCliError", () => {
     });
 
     const result = normalizeCliError("claude", "generatePrContent", existing, "fallback");
+
+    expect(result).toBe(existing);
+  });
+
+  it("returns an existing TextGenerationUnavailableError as-is", () => {
+    const existing = new TextGenerationUnavailableError({
+      operation: "generateThreadTitle",
+      detail: "Provider is unavailable",
+    });
+
+    const result = normalizeCliError("codex", "generateThreadTitle", existing, "fallback");
 
     expect(result).toBe(existing);
   });
