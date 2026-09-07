@@ -1,7 +1,8 @@
+import type { OrchestrationSessionErrorClass } from "@t3tools/contracts";
 import { memo } from "react";
 import { Alert, AlertAction, AlertDescription } from "../ui/alert";
 import { Button } from "../ui/button";
-import { CircleAlertIcon, XIcon } from "lucide-react";
+import { CircleAlertIcon, TriangleAlertIcon, XIcon } from "lucide-react";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 export function getThreadErrorBannerKey(threadKey: string, error: string | null): string | null {
@@ -35,21 +36,25 @@ export function isThreadErrorBannerDismissedForSession(bannerKey: string | null)
 
 export const ThreadErrorBanner = memo(function ThreadErrorBanner({
   error,
+  errorClass,
   onDismiss,
 }: {
   error: string | null;
+  /** A usage limit is a wait, not a break, so it takes the warning tone. */
+  errorClass?: OrchestrationSessionErrorClass | null | undefined;
   onDismiss?: () => void;
 }) {
   if (!error) return null;
+  const variant = errorClass === "usage_limit" ? "warning" : "error";
   return (
     <div className="pointer-events-auto mx-auto w-fit max-w-[min(48rem,calc(100%-2rem))] pt-3">
       <Alert
-        variant="error"
+        variant={variant}
         controlAlignment="first-line"
         className="alert-glass"
-        data-variant="error"
+        data-variant={variant}
       >
-        <CircleAlertIcon />
+        {variant === "warning" ? <TriangleAlertIcon /> : <CircleAlertIcon />}
         <AlertDescription>
           <Tooltip>
             <TooltipTrigger render={<div className="line-clamp-3" />}>{error}</TooltipTrigger>
@@ -61,7 +66,7 @@ export const ThreadErrorBanner = memo(function ThreadErrorBanner({
         {onDismiss && (
           <AlertAction>
             <Button variant="ghost" size="icon-xs" aria-label="Dismiss error" onClick={onDismiss}>
-              <XIcon className="text-destructive" />
+              <XIcon className={variant === "warning" ? "text-warning" : "text-destructive"} />
             </Button>
           </AlertAction>
         )}
