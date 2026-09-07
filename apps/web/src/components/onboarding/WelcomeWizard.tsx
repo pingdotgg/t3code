@@ -42,6 +42,7 @@ import {
 } from "../../onboarding/projectImport.logic";
 import {
   getOnboardingProviderState,
+  resolveOnboardingProviderInstallCommand,
   resolveOnboardingProviderLoginCommand,
   selectOnboardingProvidersByDriver,
 } from "../../onboarding/providerReadiness.logic";
@@ -51,7 +52,6 @@ import {
 } from "../../onboarding/targetEnvironment.logic";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { newProjectId, randomUUID } from "../../lib/utils";
-import { resolveDefaultProviderModelSelection } from "../../providerInstances";
 import { agentSessionImport, agentSessionScan } from "../../state/agentSessions";
 import { readProjects, useProjects } from "../../state/entities";
 import { useEnvironments, usePrimaryEnvironment } from "../../state/environments";
@@ -178,7 +178,7 @@ export function WelcomeWizard({
   );
 
   return (
-    <div className="flex h-dvh min-h-0 flex-col overflow-hidden bg-black text-foreground">
+    <div className="flex h-dvh min-h-0 flex-col overflow-hidden bg-background text-foreground">
       {isElectron ? (
         <div
           aria-hidden
@@ -642,11 +642,6 @@ function PairDirectStep({
 const PRIMARY_AGENT_DRIVERS = ["claudeAgent", "codex"] as const;
 type OnboardingAgentDriver = (typeof PRIMARY_AGENT_DRIVERS)[number];
 
-const AGENT_INSTALL_COMMANDS: Record<OnboardingAgentDriver, string> = {
-  claudeAgent: "npm install -g @anthropic-ai/claude-code",
-  codex: "npm install -g @openai/codex",
-};
-
 /** Setup values stay fixed while provider probes refresh the surrounding cards. */
 interface AgentTerminalSession {
   readonly environmentId: EnvironmentId;
@@ -658,10 +653,11 @@ interface AgentTerminalSession {
 }
 
 /**
- * Claude Code and Codex use live probe status. Install opens the built-in terminal inline
- * with the command pre-typed — the update RPC can't install a binary that
- * isn't there yet (it infers the package manager from the installed binary's
- * path), and the terminal also handles the interactive login that follows.
+ * Claude Code and Codex use live probe status. Install opens the built-in
+ * terminal inline with the vendor's standalone installer pre-typed. The update
+ * RPC can't install a binary that isn't there yet (it infers the installer from
+ * the installed binary's path), and the terminal also handles the interactive
+ * login that follows.
  */
 function AgentsStep({
   mode,
@@ -762,7 +758,10 @@ function ConnectedAgentsStep({
                       serverConfig.settings,
                       serverConfig.environment.platform.os,
                     )
-                  : AGENT_INSTALL_COMMANDS[driver],
+                  : resolveOnboardingProviderInstallCommand(
+                      driver,
+                      serverConfig.environment.platform.os,
+                    ),
                 keybindings: serverConfig.keybindings,
               });
             }}
@@ -1029,9 +1028,6 @@ function ImportStep({
   const targetEnvironment = useOnboardingTargetEnvironment(mode, pairedEnvironmentId);
   const environmentId = targetEnvironment?.environmentId ?? null;
   const machineLabel = targetEnvironment?.label ?? "this machine";
-  const providers = useAtomValue(
-    serverEnvironment.providersValueAtom(environmentId ?? ("" as EnvironmentId)),
-  );
   const scan = useEnvironmentQuery(
     environmentId === null ? null : agentSessionScan({ environmentId, input: {} }),
   );
@@ -1123,7 +1119,6 @@ function ImportStep({
     const importGeneration = importGenerationRef.current;
     const importedProjects = importedProjectsRef.current;
     const projectAttempts = projectAttemptsRef.current;
-    const defaultModelSelection = resolveDefaultProviderModelSelection(providers ?? [], null);
     // Interrupted imports are neither failures nor successes — the command was
     // superseded or the environment dropped — but they still didn't land, so
     // they must not read as "imported everything". Retries skip paths that
@@ -1164,7 +1159,7 @@ function ImportStep({
             title: candidate.title,
             workspaceRoot: candidate.path,
             createWorkspaceRootIfMissing: false,
-            defaultModelSelection,
+            defaultModelSelection: null,
           },
         });
         if (

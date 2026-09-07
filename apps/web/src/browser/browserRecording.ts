@@ -238,17 +238,29 @@ export function findActiveBrowserRecordingRuntimeTabId(
 }
 
 const preferredMimeTypes = [
-  "video/webm;codecs=av1",
-  "video/webm;codecs=vp9",
+  "video/mp4;codecs=avc1",
   "video/mp4;codecs=avc1.640028",
   "video/mp4;codecs=avc1.42e01e",
+  "video/webm;codecs=vp9",
   "video/webm;codecs=vp8",
   "video/webm",
 ] as const;
 
 const createMediaRecorder = (stream: MediaStream): MediaRecorder => {
   const mimeType = preferredMimeTypes.find((candidate) => MediaRecorder.isTypeSupported(candidate));
-  return mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+  const settings = stream.getVideoTracks()[0]?.getSettings();
+  // Browser defaults under-budget native-resolution text and motion. Scale with captured pixels
+  // and frames, while bounding storage and encoder load for very large displays.
+  const videoBitsPerSecond = Math.round(
+    Math.min(
+      50_000_000,
+      Math.max(
+        2_500_000,
+        (settings?.width ?? 1920) * (settings?.height ?? 1080) * (settings?.frameRate ?? 30) * 0.05,
+      ),
+    ),
+  );
+  return new MediaRecorder(stream, { ...(mimeType ? { mimeType } : {}), videoBitsPerSecond });
 };
 
 const captureTabMediaStream = (frameRate: number): Promise<MediaStream> =>
@@ -256,7 +268,7 @@ const captureTabMediaStream = (frameRate: number): Promise<MediaStream> =>
   // stream already arrives at that tab's native size and needs no source or dimension constraints.
   navigator.mediaDevices.getDisplayMedia({
     audio: false,
-    video: { frameRate: { max: frameRate } },
+    video: { frameRate: { ideal: frameRate, max: frameRate } },
   });
 
 const stopMediaRecorder = async (recorder: MediaRecorder | null): Promise<void> => {
@@ -680,6 +692,9 @@ const finalizeBrowserRecording = async (
           cause,
         });
       }
+      // Encoding has flushed; release native capture before materializing and saving the file.
+      stopMediaStream(recording.stream);
+      recording.stream = null;
       const mimeType =
         recording.recorder.mimeType ||
         recording.chunks.find((chunk) => chunk.type.length > 0)?.type;

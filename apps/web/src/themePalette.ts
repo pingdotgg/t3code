@@ -22,15 +22,10 @@ export { EMBER_THEME, GROVE_THEME, IRIS_THEME, OCEAN_THEME, T3_CHAT_THEME, THEME
 export type { ThemeAppearance, ThemeColorRole, ThemeColors, ThemeDefinition, ThemeVariants };
 
 export const T3_CHAT_THEME_ID = "t3-chat" as const;
-export const T3_CHAT_THEME_LABEL = "T3 Chat";
-export const GROVE_THEME_ID = "grove" as const;
-export const GROVE_THEME_LABEL = "Grove";
+const GROVE_THEME_ID = "grove" as const;
 export const OCEAN_THEME_ID = "ocean" as const;
-export const OCEAN_THEME_LABEL = "Ocean";
-export const EMBER_THEME_ID = "ember" as const;
-export const EMBER_THEME_LABEL = "Ember";
-export const IRIS_THEME_ID = "iris" as const;
-export const IRIS_THEME_LABEL = "Iris";
+const EMBER_THEME_ID = "ember" as const;
+const IRIS_THEME_ID = "iris" as const;
 export const THEME_FILE_VERSION = 1 as const;
 export const CUSTOM_THEMES_STORAGE_KEY = "t3code:themes:v1";
 export const THEME_FOLLOW_SYSTEM_STORAGE_KEY = "t3code:theme-follow-system";
