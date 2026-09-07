@@ -37,8 +37,8 @@ WebEngineView {
 
     profile: WebProfile
     lifecycleState: sleepsWhenHidden && !visible && !loading ? WebEngineView.LifecycleState.Frozen : WebEngineView.LifecycleState.Active
-    settings.javascriptCanAccessClipboard: true
-    settings.javascriptCanPaste: true
+    settings.javascriptCanAccessClipboard: false
+    settings.javascriptCanPaste: false
 
     webChannel: WebChannel {
         id: channel
@@ -156,7 +156,7 @@ WebEngineView {
     // Nothing else (notifications, media, location) is granted: the page has
     // no presenter for them here and falls back to its in-app affordances.
     onPermissionRequested: function (permission) {
-        if (permission.permissionType === WebEnginePermission.PermissionType.ClipboardReadWrite) {
+        if (permission.permissionType === WebEnginePermission.PermissionType.ClipboardReadWrite && Shell.isAppOrigin(permission.origin)) {
             permission.grant();
         } else {
             permission.deny();

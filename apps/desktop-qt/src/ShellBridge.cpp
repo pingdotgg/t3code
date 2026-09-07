@@ -57,6 +57,15 @@ void ShellBridge::setPageUrl(const QUrl& url) {
   emit pageUrlChanged();
 }
 
+bool ShellBridge::isAppOrigin(const QUrl& url) const {
+  const auto scheme = m_pageUrl.scheme();
+  const int defaultPort = scheme == QStringLiteral("https") ? 443 : 80;
+  return url.isValid() && m_pageUrl.isValid() && !m_pageUrl.host().isEmpty() &&
+         (scheme == QStringLiteral("http") || scheme == QStringLiteral("https")) &&
+         url.scheme() == scheme && url.host() == m_pageUrl.host() &&
+         url.port(defaultPort) == m_pageUrl.port(defaultPort);
+}
+
 QUrl ShellBridge::webChannelScriptUrl() const {
   return QUrl(QStringLiteral(T3_WEBCHANNEL_SCRIPT_URL));
 }

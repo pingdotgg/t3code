@@ -20,6 +20,23 @@ signals:
   void scriptFinished(const QVariant& result);
 
 private slots:
+  void appPermissionsRequireMatchingHttpOrigin() {
+    ShellBridge bridge;
+    bridge.setPageUrl(QUrl("https://EXAMPLE.com/thread?id=1"));
+    QVERIFY(bridge.isAppOrigin(QUrl("https://example.com:443/")));
+    QVERIFY(!bridge.isAppOrigin(QUrl("http://example.com/")));
+    QVERIFY(!bridge.isAppOrigin(QUrl("https://example.com:8443/")));
+    QVERIFY(!bridge.isAppOrigin(QUrl("https://example.com.evil.test/")));
+    QVERIFY(!bridge.isAppOrigin(QUrl("https://example.com@evil.test/")));
+    bridge.setPageUrl(QUrl("http://127.0.0.1:6182/thread"));
+    QVERIFY(bridge.isAppOrigin(QUrl("http://127.0.0.1:6182/")));
+    QVERIFY(!bridge.isAppOrigin(QUrl("http://127.0.0.1:6183/")));
+    bridge.setPageUrl(QUrl("file:///tmp/shell.html"));
+    QVERIFY(!bridge.isAppOrigin(bridge.pageUrl()));
+    bridge.setPageUrl(QUrl());
+    QVERIFY(!bridge.isAppOrigin(QUrl()));
+  }
+
   void themeRecoversAfterReadFailureWithoutAcceptingInvalidJson() {
     QTemporaryDir directory;
     QVERIFY(directory.isValid());

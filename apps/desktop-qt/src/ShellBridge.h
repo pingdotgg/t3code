@@ -50,6 +50,8 @@ public:
   Q_INVOKABLE QVariantList readImageFiles(const QList<QUrl>& urls) const;
   // Called by WebSurface when a top-level navigation finishes.
   Q_INVOKABLE void notifyPageLoaded(bool ok, const QUrl& url);
+  // Permissions belong only to the configured app origin, including its port.
+  Q_INVOKABLE bool isAppOrigin(const QUrl& url) const;
 
 signals:
   void stateEntryChanged(const QString& key, const QVariant& value);
