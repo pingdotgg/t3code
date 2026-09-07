@@ -299,6 +299,12 @@ its actions — snooze and settle on live rows, wake on snoozed rows, un-settle
 on settled rows — and a right-click anywhere on the row opens the thread
 menu on press.
 
+The HTML sidebar and native row actions share `threadParking.ts` for navigation
+planning and pending commands. The plan is captured before a settle or snooze;
+successful commands navigate only if the same thread is still open. HTML keeps
+separate settle/snooze pending scopes and batch exclusions; native row actions
+share one pending scope. Menus, Undo, and batch feedback stay with their callers.
+
 The thread list is a Tab stop. Up/Down move a cursor (a ring in the `focus`
 theme role) over rows and section headers, Home/End jump to the ends, Enter
 or Space open the row or fold the header, and Menu or Shift+F10 open the

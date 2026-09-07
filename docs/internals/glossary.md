@@ -19,6 +19,8 @@ Terms whose meaning matters across T3 Code. Architecture and lifecycle constrain
 
 ## Orchestration
 
+Parking a thread means settling or snoozing it to move it out of active work.
+
 | Term                    | Meaning                                                                                      |
 | ----------------------- | -------------------------------------------------------------------------------------------- |
 | Command                 | A request to change domain state. Accepting it does not mean its side effects have finished. |

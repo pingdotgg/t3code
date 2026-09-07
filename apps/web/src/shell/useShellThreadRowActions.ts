@@ -24,6 +24,7 @@ import { readThreadShell } from "../state/entities";
 import { buildThreadRouteParams } from "../threadRoutes";
 import { useUiStateStore } from "../uiStateStore";
 import { showShellContextMenu } from "./shellContextMenu";
+import { useThreadParking } from "../threadParking";
 
 interface ShellThreadRowActionsInput {
   readonly partition: SidebarThreadPartition;
@@ -62,7 +63,6 @@ export function useShellThreadRowActions(input: ShellThreadRowActionsInput) {
   inputRef.current = input;
   const timestampFormatRef = useRef(timestampFormat);
   timestampFormatRef.current = timestampFormat;
-  const parkingKeysRef = useRef(new Set<string>());
 
   const navigateToKey = useCallback(
     (key: string) => {
@@ -76,61 +76,40 @@ export function useShellThreadRowActions(input: ShellThreadRowActionsInput) {
     [router],
   );
 
-  const planForwardNavigation = useCallback(
-    (threadKey: string): (() => void) | null => {
-      const { partition, activeThreadKey } = inputRef.current;
-      if (activeThreadKey !== threadKey) return null;
-      const orderedKeys = [
+  const parking = useThreadParking(() => {
+    const { partition, activeThreadKey } = inputRef.current;
+    const parked = new Set([...partition.snoozedThreads, ...partition.settledThreads].map(keyOf));
+    return {
+      activeThreadKey,
+      orderedThreadKeys: [
         ...partition.pinnedThreads,
         ...partition.activeThreads,
         ...partition.snoozedThreads,
         ...partition.settledThreads,
-      ].map(keyOf);
-      const parked = new Set([...partition.snoozedThreads, ...partition.settledThreads].map(keyOf));
-      const currentIndex = orderedKeys.indexOf(threadKey);
-      const nextKey =
-        currentIndex === -1
-          ? null
-          : ([...orderedKeys.slice(currentIndex + 1), ...orderedKeys.slice(0, currentIndex)].find(
-              (key) => !parked.has(key),
-            ) ?? null);
-      if (nextKey !== null) return () => navigateToKey(nextKey);
-      const threadRef = parseScopedThreadKey(threadKey);
-      const shell = threadRef ? readThreadShell(threadRef) : undefined;
-      return shell
-        ? () => void handleNewThread(scopeProjectRef(shell.environmentId, shell.projectId))
-        : () => void router.navigate({ to: "/" });
-    },
-    [handleNewThread, navigateToKey, router],
-  );
+      ].map(keyOf),
+      isParked: (key) => parked.has(key),
+      planNext: (key) => () => navigateToKey(key),
+      planFallback: (key) => {
+        const threadRef = parseScopedThreadKey(key);
+        const shell = threadRef ? readThreadShell(threadRef) : undefined;
+        return shell
+          ? () => void handleNewThread(scopeProjectRef(shell.environmentId, shell.projectId))
+          : () => void router.navigate({ to: "/" });
+      },
+    };
+  });
 
-  /** Runs one parking mutation with the forward-navigation plan around it. */
   const park = useCallback(
     async (
       threadKey: string,
       failureTitle: string,
       run: () => Promise<AtomCommandResult<unknown, unknown>>,
     ): Promise<boolean> => {
-      if (parkingKeysRef.current.has(threadKey)) return false;
-      parkingKeysRef.current.add(threadKey);
-      try {
-        const navigateAfter = planForwardNavigation(threadKey);
-        const result = await run();
-        if (result._tag === "Failure") {
-          // Never navigate away from a thread that did not park.
-          if (!isAtomCommandInterrupted(result)) {
-            failureToast(failureTitle, squashAtomCommandFailure(result));
-          }
-          return false;
-        }
-        // A navigation made during the await wins over ours.
-        if (inputRef.current.activeThreadKey === threadKey) navigateAfter?.();
-        return true;
-      } finally {
-        parkingKeysRef.current.delete(threadKey);
-      }
+      const outcome = await parking.run(threadKey, run);
+      if (outcome.status === "failure") failureToast(failureTitle, outcome.error);
+      return outcome.status === "success";
     },
-    [planForwardNavigation],
+    [parking],
   );
 
   const settle = useCallback(
