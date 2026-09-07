@@ -57,8 +57,12 @@ export const AgentSessionProjectCandidate = Schema.Struct({
   threadCount: NonNegativeInt,
   lastActiveAt: Schema.NullOr(IsoDateTime),
   alreadyImported: Schema.Boolean,
-  /** `null` when the directory is not the root of a git repository. */
-  git: Schema.NullOr(AgentSessionProjectGit),
+  /**
+   * `null` when the directory is not the root of a git repository. Missing on
+   * servers that predate the git scan, where the client cannot tell repositories
+   * from plain folders and should treat every candidate as a standalone project.
+   */
+  git: Schema.optionalKey(Schema.NullOr(AgentSessionProjectGit)),
 });
 export type AgentSessionProjectCandidate = typeof AgentSessionProjectCandidate.Type;
 
