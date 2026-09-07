@@ -294,6 +294,42 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
     }),
   );
 
+  it.effect("retires a crashed process so a deliberate retry can resume", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("grok-crash-recovery");
+      const wrapper = yield* Effect.promise(() =>
+        makeMockGrokWrapper({ T3_ACP_CRASH_PROMPT: "1" }),
+      );
+      const adapter = yield* makeTestAdapter(wrapper);
+      const exited =
+        yield* Deferred.make<Extract<ProviderRuntimeEvent, { type: "session.exited" }>>();
+      const events = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        event.type === "session.exited"
+          ? Deferred.succeed(exited, event).pipe(Effect.asVoid)
+          : Effect.void,
+      ).pipe(Effect.forkChild);
+      const input = {
+        threadId,
+        provider: ProviderDriverKind.make("grok"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access" as const,
+      };
+      const session = yield* adapter.startSession(input);
+      const failure = yield* Effect.flip(
+        adapter.sendTurn({ threadId, input: "crash now", attachments: [] }),
+      );
+      assert.isDefined(failure);
+      assert.isFalse(yield* adapter.hasSession(threadId));
+      assert.equal((yield* Deferred.await(exited)).payload.exitKind, "error");
+      assert.deepStrictEqual(yield* adapter.listSessions(), []);
+      yield* Fiber.interrupt(events);
+      yield* adapter.startSession({ ...input, resumeCursor: session.resumeCursor });
+      const turn = yield* adapter.sendTurn({ threadId, input: "retry now", attachments: [] });
+      assert.equal(turn.threadId, threadId);
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
   it.effect("starts a session and maps mock ACP prompt flow to runtime events", () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("grok-mock-thread");
