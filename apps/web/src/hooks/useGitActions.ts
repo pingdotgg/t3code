@@ -10,7 +10,15 @@ import type {
   GitStackedAction,
   VcsStatusResult,
 } from "@t3tools/contracts";
-import { type MouseEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type MouseEvent,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 import {
   buildGitActionProgressStages,
@@ -243,7 +251,9 @@ export function useGitActions({
     () => ({ environmentId: activeEnvironmentId, cwd: gitCwd }),
     [activeEnvironmentId, gitCwd],
   );
-  let runGitActionWithToast: (input: RunGitActionWithToastInput) => Promise<void>;
+  const latestGitAction = useRef<((input: RunGitActionWithToastInput) => Promise<void>) | null>(
+    null,
+  );
 
   const updateActiveProgressToast = useCallback(() => {
     const progress = activeGitActionProgressRef.current;
@@ -490,7 +500,7 @@ export function useGitActions({
     });
   }, [gitStatusForActions, onOpenPullRequest, openLink, threadToastData]);
 
-  runGitActionWithToast = async ({
+  const runGitActionWithToast = async ({
     action,
     commitMessage,
     onConfirmed,
@@ -678,7 +688,7 @@ export function useGitActions({
         children: toastCta.label,
         onClick: () => {
           closeResultToast();
-          void runGitActionWithToast({
+          void latestGitAction.current?.({
             action: toastCta.action.kind,
           });
         },
@@ -720,6 +730,13 @@ export function useGitActions({
       });
     }
   };
+
+  useLayoutEffect(() => {
+    latestGitAction.current = runGitActionWithToast;
+    return () => {
+      latestGitAction.current = null;
+    };
+  });
 
   const continuePendingDefaultBranchAction = () => {
     if (!pendingDefaultBranchAction) return;
