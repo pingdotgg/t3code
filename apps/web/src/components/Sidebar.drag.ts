@@ -30,52 +30,64 @@ export function restrictBelowSidebarLabel(
 export function createSidebarCollisionDetection(
   isValidTarget: (id: string) => boolean,
   options: {
-    emptyPins?: boolean;
+    items?: readonly SidebarListItem[];
     activationY?: number | null;
-    emptyPinCardId?: string | null;
-    boundaryLabelHeight?: number;
   } = {},
 ): CollisionDetection {
   const validity = new Map<string, boolean>();
-  const pinnedHeaderId = sidebarMarkerId("pinned-header");
-  let overEmptyPins = false;
+  const sections = new Map<string, SidebarSection | null>();
+  let previousPointerY = options.activationY;
+  let boundarySection: "pinned" | "active" | undefined;
   return (args) => {
     let collisions = closestCenter(args);
-    const pinnedRect = options.emptyPins ? args.droppableRects.get(pinnedHeaderId) : undefined;
     const pointer = args.pointerCoordinates;
-    const cardHeight = options.emptyPinCardId
-      ? args.droppableRects.get(options.emptyPinCardId)?.height
-      : undefined;
-    // Once Pins opens a slot, keep it selected until the pointer leaves that
-    // slot. Reusing the original 8px cue makes tiny movements collapse it.
-    const pinTargetHeight = overEmptyPins
-      ? (cardHeight ?? 82) + (options.boundaryLabelHeight ?? 0) * ((cardHeight ?? 82) / 82) + 1
-      : 8;
-    // The card itself is clamped by the scroll container. An upward pointer
-    // gesture can still reach the empty pinned boundary without reserving a row.
-    if (
-      pinnedRect &&
-      pointer &&
-      options.activationY != null &&
-      (overEmptyPins || pointer.y <= options.activationY - 6) &&
-      pointer.y <= pinnedRect.top + pinTargetHeight &&
-      pointer.x >= pinnedRect.left &&
-      pointer.x <= pinnedRect.right
-    ) {
-      const pinned = collisions.find((collision) => collision.id === pinnedHeaderId);
-      if (pinned) {
-        collisions = [pinned, ...collisions.filter((collision) => collision !== pinned)];
+    const items = options.items;
+    const source = items?.find((item) => item.kind === "thread" && item.key === args.active.id);
+    const boundary = args.droppableContainers
+      .find((container) => container.id === sidebarMarkerId("pinned-divider"))
+      ?.node.current?.querySelector(".sidebar-drag-boundary-label")
+      ?.getBoundingClientRect();
+    if (items && boundary && source?.kind === "thread" && pointer) {
+      boundarySection ??= source.section === "pinned" ? "pinned" : "active";
+      // Use the visible divider row, including its sortable translation.
+      // Only pointer movement can change sections: opening the destination
+      // moves this row, but must not toggle a stationary gesture back.
+      const previousY = previousPointerY ?? pointer.y;
+      previousPointerY = pointer.y;
+      if (pointer.x >= boundary.left && pointer.x <= boundary.right) {
+        if (pointer.y < previousY && pointer.y <= boundary.bottom) boundarySection = "pinned";
+        else if (pointer.y > previousY && pointer.y >= boundary.top) boundarySection = "active";
+        const nextHeader =
+          args.droppableContainers.find(
+            (container) => container.id === sidebarMarkerId("snoozed-header"),
+          ) ??
+          args.droppableContainers.find(
+            (container) => container.id === sidebarMarkerId("settled-header"),
+          );
+        const activeBottom = nextHeader?.node.current?.getBoundingClientRect().top;
+        if (boundarySection === "pinned" || (activeBottom != null && pointer.y < activeBottom)) {
+          const target = collisions.find((collision) => {
+            const id = String(collision.id);
+            if (!sections.has(id)) {
+              sections.set(
+                id,
+                resolveSidebarDropTarget(items, String(args.active.id), id)?.section ?? null,
+              );
+            }
+            return sections.get(id) === boundarySection;
+          });
+          if (target)
+            collisions = [target, ...collisions.filter((collision) => collision !== target)];
+        }
       }
     }
     const nearest = collisions[0];
     if (!nearest || nearest.id === args.active.id) {
-      overEmptyPins = false;
       return collisions;
     }
     const id = String(nearest.id);
     const valid = validity.get(id) ?? isValidTarget(id);
     validity.set(id, valid);
-    overEmptyPins = valid && id === pinnedHeaderId;
     return valid ? collisions : collisions.filter((collision) => collision.id === args.active.id);
   };
 }

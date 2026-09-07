@@ -7,6 +7,7 @@ import {
   restrictBelowSidebarLabel,
 } from "./Sidebar.drag";
 import {
+  resolveSidebarDropTarget,
   sidebarListItemId,
   sidebarMarkerId,
   type SidebarListItem,
@@ -123,92 +124,92 @@ describe("sidebar collision detection", () => {
     expect(detector(collisionArgs())[0]?.id).toBe("blocked");
   });
 
-  function clampedArgs() {
-    const args = collisionArgs();
-    const pinned = args.droppableRects.get(sidebarMarkerId("pinned-header"))!;
-    const source = args.droppableRects.get("source")!;
-    const collisionRect = {
-      ...source,
-      top: pinned.top - 8,
-      bottom: pinned.top - 8 + source.height,
-    };
-    return {
-      ...args,
-      active: {
-        ...args.active,
-        rect: { current: { initial: source, translated: collisionRect } },
-      },
-      collisionRect,
-      pointerCoordinates: { x: pinned.left + pinned.width / 2, y: pinned.top + 8 },
-    };
-  }
-
-  it("reaches empty Pins with an upward pointer while the card is clamped at the top", () => {
-    const args = clampedArgs();
-    const detector = createSidebarCollisionDetection(() => true, {
-      emptyPins: true,
-      activationY: args.pointerCoordinates.y + 6,
-    });
-    expect(args.droppableRects.get(sidebarMarkerId("pinned-header"))?.height).toBe(0);
-    expect(closestCenter(args)[0]?.id).toBe("source");
-    expect(detector(args)[0]?.id).toBe(sidebarMarkerId("pinned-header"));
-  });
-
-  it.each([114, 400])(
-    "keeps empty Pins selected across its opened slot from pickup y=%s",
-    (activationY) => {
-      const args = clampedArgs();
+  it.each([
+    { sourceSection: "active", pins: 0 },
+    { sourceSection: "active", pins: 1 },
+    { sourceSection: "pinned", pins: 1 },
+    { sourceSection: "settled", pins: 1 },
+  ] as const)(
+    "switches on crossing the divider row from $sourceSection with $pins pins",
+    ({ sourceSection, pins }) => {
+      const items = [
+        pinnedHeader,
+        ...(pins ? [thread("p", "pinned")] : []),
+        ...(sourceSection === "pinned" ? [thread("source", "pinned")] : []),
+        divider,
+        thread("a", "active"),
+        ...(sourceSection === "active" ? [thread("source", "active")] : []),
+        settledHeader,
+        ...(sourceSection === "settled" ? [thread("source", "settled")] : []),
+      ];
+      const { rects, activeIndex } = layout(items, "source", "a");
+      const sourceRect = rects[activeIndex]!;
+      let boundaryTop = 300;
+      const boundaryNode = {
+        querySelector: () => ({
+          getBoundingClientRect: () => ({
+            top: boundaryTop,
+            bottom: boundaryTop + 16,
+            left: 0,
+            right: 260,
+          }),
+        }),
+      } as unknown as HTMLElement;
       const detector = createSidebarCollisionDetection(() => true, {
-        emptyPins: true,
-        activationY,
-        emptyPinCardId: "source",
-        boundaryLabelHeight: 24,
+        items,
+        activationY: sourceSection === "pinned" ? 200 : 600,
       });
-      const at = (y: number) => detector({ ...args, pointerCoordinates: { x: 130, y } })[0]?.id;
-      expect(at(108)).toBe(sidebarMarkerId("pinned-header"));
-      // The pointer crosses the old 8px cue, then moves through the visible slot.
-      expect(at(109)).toBe(sidebarMarkerId("pinned-header"));
-      expect(at(160)).toBe(sidebarMarkerId("pinned-header"));
-      expect(at(207)).toBe(sidebarMarkerId("pinned-header"));
-      expect(at(208)).toBe("source");
-      // Returning to the ordinary list does not immediately re-open Pins.
-      expect(at(160)).toBe("source");
-      expect(at(108)).toBe(sidebarMarkerId("pinned-header"));
+      const at = (center: number) => {
+        const collisionRect = {
+          ...sourceRect,
+          top: center - sourceRect.height / 2,
+          bottom: center + sourceRect.height / 2,
+        };
+        const args = {
+          ...collisionArgs(),
+          active: {
+            id: "source",
+            data: { current: {} },
+            rect: { current: { initial: sourceRect, translated: collisionRect } },
+          },
+          collisionRect,
+          pointerCoordinates: { x: 130, y: center },
+          droppableRects: new Map(
+            items.map((item, index) => [sidebarListItemId(item), rects[index]!]),
+          ),
+          droppableContainers: items.map((item, index) => ({
+            id: sidebarListItemId(item),
+            key: sidebarListItemId(item),
+            disabled: false,
+            data: { current: {} },
+            node: {
+              current:
+                item === divider
+                  ? boundaryNode
+                  : item === settledHeader
+                    ? ({ getBoundingClientRect: () => ({ top: 600 }) } as unknown as HTMLElement)
+                    : null,
+            },
+            rect: { current: rects[index]! },
+          })),
+        };
+        const over = detector(args)[0];
+        return over ? resolveSidebarDropTarget(items, "source", String(over.id))?.section : null;
+      };
+      expect(at(330)).toBe("active");
+      expect(at(317)).toBe("active");
+      expect(at(316)).toBe("pinned");
+      // The preview moves the divider; a stationary pointer must not undo the drop target.
+      boundaryTop = 400;
+      expect(at(316)).toBe("pinned");
+      expect(at(399)).toBe("pinned");
+      expect(at(400)).toBe("active");
+      boundaryTop = 300;
+      expect(at(400)).toBe("active");
+      expect(at(317)).toBe("active");
+      expect(at(316)).toBe("pinned");
     },
   );
-
-  it.each([
-    { reason: "below the boundary cue", x: 130, y: 109, activationY: 140, emptyPins: true },
-    { reason: "left of the list", x: -1, y: 108, activationY: 140, emptyPins: true },
-    { reason: "right of the list", x: 261, y: 108, activationY: 140, emptyPins: true },
-    { reason: "less than 6px upward", x: 130, y: 108, activationY: 113, emptyPins: true },
-    { reason: "without an activation point", x: 130, y: 108, activationY: null, emptyPins: true },
-    { reason: "with populated Pins", x: 130, y: 108, activationY: 140, emptyPins: false },
-  ])("keeps ordinary collision behavior $reason", ({ x, y, activationY, emptyPins }) => {
-    const detector = createSidebarCollisionDetection(() => true, { emptyPins, activationY });
-    const args = { ...clampedArgs(), pointerCoordinates: { x, y } };
-    expect(detector(args)[0]?.id).toBe("source");
-  });
-
-  it("keeps ordinary collision behavior without pointer coordinates", () => {
-    const detector = createSidebarCollisionDetection(() => true, {
-      emptyPins: true,
-      activationY: 140,
-    });
-    expect(detector({ ...clampedArgs(), pointerCoordinates: null })[0]?.id).toBe("source");
-  });
-
-  it("validates the empty Pins override and caches an unsupported result", () => {
-    const isValid = vi.fn(() => false);
-    const detector = createSidebarCollisionDetection(isValid, {
-      emptyPins: true,
-      activationY: 140,
-    });
-    const args = clampedArgs();
-    expect(detector(args).map((collision) => collision.id)).toEqual(["source"]);
-    expect(detector(args).map((collision) => collision.id)).toEqual(["source"]);
-    expect(isValid.mock.calls).toEqual([[sidebarMarkerId("pinned-header")]]);
-  });
 
   it("returns no collision if an unsupported target has no source fallback", () => {
     const args = collisionArgs();

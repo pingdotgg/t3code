@@ -3392,10 +3392,8 @@ export default function Sidebar() {
         );
       },
       {
-        emptyPins: pinnedKeys.length === 0,
+        items: sidebarListItems,
         activationY: dragActivationY ?? null,
-        emptyPinCardId: activeKeys[0] ?? null,
-        boundaryLabelHeight: SIDEBAR_DRAG_LABEL_HEIGHT,
       },
     );
   }, [
