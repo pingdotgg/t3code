@@ -225,13 +225,24 @@ export const make = Effect.gen(function* () {
     const secretPath = resolveSecretPath(name);
     return Effect.scoped(
       Effect.gen(function* () {
-        const file = yield* fileSystem.open(secretPath, {
-          flag: "wx",
-          mode: 0o600,
+        const temporaryDirectory = yield* fileSystem.makeTempDirectoryScoped({
+          directory: serverConfig.secretsDir,
+          prefix: ".create-",
         });
-        yield* file.writeAll(value);
-        yield* file.sync;
-        yield* fileSystem.chmod(secretPath, 0o600);
+        const temporaryPath = path.join(temporaryDirectory, "secret.bin");
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const file = yield* fileSystem.open(temporaryPath, {
+              flag: "wx",
+              mode: 0o600,
+            });
+            yield* file.writeAll(value);
+            yield* file.sync;
+            yield* fileSystem.chmod(temporaryPath, 0o600);
+          }),
+        );
+        // Publish complete bytes without replacing a concurrent creator's secret.
+        yield* fileSystem.link(temporaryPath, secretPath);
       }),
     ).pipe(
       Effect.mapError(
