@@ -957,11 +957,12 @@ export function HomeScreen(props: HomeScreenProps) {
 
   const extraData = useMemo(
     () => ({
+      projectByKey,
       savedConnectionsById: props.savedConnectionsById,
       searchQuery: props.searchQuery,
       threadSearchMatchByKey,
     }),
-    [props.savedConnectionsById, props.searchQuery, threadSearchMatchByKey],
+    [projectByKey, props.savedConnectionsById, props.searchQuery, threadSearchMatchByKey],
   );
 
   const renderItem = useCallback(
