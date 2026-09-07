@@ -150,6 +150,29 @@ describe("sidebar collision detection", () => {
     expect(detector(args)[0]?.id).toBe(sidebarMarkerId("pinned-header"));
   });
 
+  it.each([114, 400])(
+    "keeps empty Pins selected across its opened slot from pickup y=%s",
+    (activationY) => {
+      const args = clampedArgs();
+      const detector = createSidebarCollisionDetection(() => true, {
+        emptyPins: true,
+        activationY,
+        emptyPinCardId: "source",
+        boundaryLabelHeight: 24,
+      });
+      const at = (y: number) => detector({ ...args, pointerCoordinates: { x: 130, y } })[0]?.id;
+      expect(at(108)).toBe(sidebarMarkerId("pinned-header"));
+      // The pointer crosses the old 8px cue, then moves through the visible slot.
+      expect(at(109)).toBe(sidebarMarkerId("pinned-header"));
+      expect(at(160)).toBe(sidebarMarkerId("pinned-header"));
+      expect(at(207)).toBe(sidebarMarkerId("pinned-header"));
+      expect(at(208)).toBe("source");
+      // Returning to the ordinary list does not immediately re-open Pins.
+      expect(at(160)).toBe("source");
+      expect(at(108)).toBe(sidebarMarkerId("pinned-header"));
+    },
+  );
+
   it.each([
     { reason: "below the boundary cue", x: 130, y: 109, activationY: 140, emptyPins: true },
     { reason: "left of the list", x: -1, y: 108, activationY: 140, emptyPins: true },

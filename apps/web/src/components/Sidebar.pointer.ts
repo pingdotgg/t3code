@@ -85,6 +85,7 @@ export class SidebarPointerSensor {
       this.document.addEventListener("selectionchange", this.clearSelection);
       this.clearSelection();
       this.props.onStart(this.coordinates());
+      return;
     }
     if (this.phase === "dragging") {
       if (event.cancelable) event.preventDefault();

@@ -501,8 +501,6 @@ function SortableThreadRow(props: {
     id: props.id,
     disabled: { draggable: props.disabled },
     animateLayoutChanges: animateSidebarLayoutChanges,
-    // Apply label clearance and row positions together, without tweening through content.
-    transition: null,
   });
   // dnd-kit memoizes each field but not the bag, so the memoized row would
   // rerender on every shell update without this.
@@ -533,7 +531,6 @@ function SortableSidebarMarker(props: {
     id: sidebarMarkerId(props.marker),
     disabled: { draggable: true },
     animateLayoutChanges: animateSidebarLayoutChanges,
-    transition: null,
   });
   return (
     <li
@@ -592,7 +589,7 @@ function SidebarDragBoundary(props: {
       className="pointer-events-none relative mx-0.5 h-0"
     >
       {props.visible ? (
-        <div className="absolute inset-x-2 top-1 flex h-4 items-center gap-1.5">
+        <div className="sidebar-drag-boundary-label absolute inset-x-2 top-1 flex h-4 items-center gap-1.5">
           <span
             className={cn(
               "inline-flex h-4 shrink-0 items-center rounded-sm border bg-sidebar px-1.5 text-[10px] leading-none font-medium",
@@ -3341,18 +3338,22 @@ export default function Sidebar() {
     }),
     [threads],
   );
+  const draggedThreadKey = dragState?.activeKey;
+  const draggedFromSection = dragState?.activeSection;
+  const dragActivationY = dragState?.activationY;
   const dndCollisionDetection = useMemo(() => {
-    if (dragState === null) return createSidebarCollisionDetection(() => true);
-    const source = threadByKey.get(dragState.activeKey);
+    if (draggedThreadKey === undefined || draggedFromSection === undefined)
+      return createSidebarCollisionDetection(() => true);
+    const source = threadByKey.get(draggedThreadKey);
     if (source === undefined) return createSidebarCollisionDetection(() => false);
     return createSidebarCollisionDetection(
       (id) => {
-        const target = resolveSidebarDropTarget(sidebarListItems, dragState.activeKey, id);
+        const target = resolveSidebarDropTarget(sidebarListItems, draggedThreadKey, id);
         if (target === null) return false;
         return (
           planSidebarThreadDrop({
-            activeKey: dragState.activeKey,
-            activeSection: dragState.activeSection,
+            activeKey: draggedThreadKey,
+            activeSection: draggedFromSection,
             activePinned: source.pinnedAt != null,
             activeSettled: source.settledOverride === "settled",
             supportsSettlement:
@@ -3368,7 +3369,12 @@ export default function Sidebar() {
           }).kind !== "none"
         );
       },
-      { emptyPins: pinnedKeys.length === 0, activationY: dragState.activationY },
+      {
+        emptyPins: pinnedKeys.length === 0,
+        activationY: dragActivationY ?? null,
+        emptyPinCardId: activeKeys[0] ?? null,
+        boundaryLabelHeight: SIDEBAR_DRAG_LABEL_HEIGHT,
+      },
     );
   }, [
     activeKeysById,
@@ -3376,7 +3382,9 @@ export default function Sidebar() {
     serverConfigs,
     activeKeys,
     activeReorderableThreadKeys,
-    dragState,
+    draggedThreadKey,
+    draggedFromSection,
+    dragActivationY,
     draggableThreadKeys,
     pinnedKeys,
     sidebarListItems,
