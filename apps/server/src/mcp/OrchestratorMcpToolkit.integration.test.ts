@@ -1047,7 +1047,7 @@ describe("orchestrator MCP toolkit", () => {
               commandId: CommandId.make("command:mcp-parent:queue-race:user"),
               threadId: parentThreadId,
               messageId: queuedUserMessageId,
-              text: "Queue user follow-up work.",
+              text: "🙂".repeat(16001),
               attachments: [],
               modelSelection: codexSelection,
               dispatchMode: { type: "queue_after_active" },
@@ -1067,6 +1067,24 @@ describe("orchestrator MCP toolkit", () => {
             if (queuedUserRun === undefined) {
               return yield* Effect.die(new Error("Queued user follow-up missing."));
             }
+            const queueFirstPage = yield* invoke("t3_queue_list", { limit: 1 });
+            expect(queueFirstPage.structuredContent).toMatchObject({
+              items: [{ queuedRunId: queueRace.queuedRun.id }],
+              nextCursor: 1,
+            });
+            const queueSecondPage = yield* invoke("t3_queue_list", { cursor: 1, limit: 1 });
+            expect(queueSecondPage.structuredContent).toEqual({
+              items: [{ queuedRunId: queuedUserRun.id, text: "🙂".repeat(1000), truncated: true }],
+              nextCursor: null,
+            });
+            const queueRead = yield* invoke("t3_queue_read", { queuedRunId: queuedUserRun.id });
+            expect(queueRead.structuredContent).toEqual({
+              queuedRunId: queuedUserRun.id,
+              text: "🙂".repeat(16000),
+              truncated: true,
+            });
+            const missingQueueRead = yield* invoke("t3_queue_read", { queuedRunId: parentRun.id });
+            expect(missingQueueRead.structuredContent).toMatchObject({ code: "invalid_request" });
             const queueRaceStatus = yield* invoke("task_status", { taskId: queueRace.task.id });
             expect(queueRaceStatus.isError).toBe(false);
             yield* waitForProjection(
