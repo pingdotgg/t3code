@@ -100,15 +100,14 @@ describe("when: ref is clean, up to date, and has no open PR", () => {
 });
 
 describe("when: on default ref without open PR", () => {
-  it("resolveQuickAction returns commit only when local changes exist", () => {
+  it("resolveQuickAction opens the commit dialog when local changes exist", () => {
     const quick = resolveQuickAction(
       status({ refName: "main", hasWorkingTreeChanges: true }),
       false,
       true,
     );
-    assert.deepInclude(quick, {
-      kind: "run_action",
-      action: "commit",
+    assert.deepEqual(quick, {
+      kind: "open_commit_dialog",
       label: "Commit",
       disabled: false,
     });
