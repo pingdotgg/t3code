@@ -1802,6 +1802,12 @@ export default function ChatView(props: ChatViewProps) {
   const threadError = isServerThread
     ? (localServerError ?? activeServerThread?.session?.lastError ?? null)
     : localDraftError;
+  // The class describes the session's error; a newer local error shown in
+  // its place is an ordinary failure.
+  const threadErrorClass =
+    isServerThread && localServerError === null
+      ? (activeServerThread?.session?.lastErrorClass ?? null)
+      : null;
   // Dismissals can only mask the shown error, never clear it: a server thread
   // keeps its error in session.lastError, so clearing the local shadow would
   // just fall through to the persisted one. Mask the current error until a
@@ -8210,7 +8216,7 @@ export default function ChatView(props: ChatViewProps) {
               />
               <ThreadErrorBanner
                 error={visibleThreadError}
-                errorClass={activeServerThread?.session?.lastErrorClass}
+                errorClass={threadErrorClass}
                 onDismiss={() => {
                   setThreadError(activeThread.id, null);
                   dismissThreadErrorBannerForSession(threadErrorBannerKey);
