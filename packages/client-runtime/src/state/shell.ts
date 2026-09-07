@@ -135,10 +135,9 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
       ),
     );
 
-  // The server coalesces shell events into one chunk per window, and each
-  // chunk arrives here as one array. Folding the whole chunk into a single
-  // state write keeps one bulk action (snoozing 50 threads) at one sidebar
-  // render instead of one per thread.
+  // Apply each received batch with one state write. The RPC client's bounded
+  // buffer can split a server chunk, so a bulk action can still need several
+  // writes, but each write includes every event in that batch.
   const applyItems = Effect.fn("EnvironmentShellState.applyItems")(function* (
     items: ReadonlyArray<OrchestrationShellStreamItem>,
   ) {

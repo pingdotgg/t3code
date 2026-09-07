@@ -152,9 +152,13 @@ describe("environment shell synchronization", () => {
     }),
   );
 
-  it.live("applies one chunk of live events as one state change", () =>
+  it.live.each([
+    { bufferSize: Infinity, expectedSequences: [51] },
+    // RpcClient defaults to a 16-event buffer, which splits larger server chunks.
+    { bufferSize: 16, expectedSequences: [17, 33, 49, 51] },
+  ])("batches live events with a $bufferSize event buffer", ({ bufferSize, expectedSequences }) =>
     Effect.gen(function* () {
-      const events = yield* Queue.unbounded<OrchestrationShellStreamItem>();
+      const events = yield* Queue.bounded<OrchestrationShellStreamItem>(bufferSize);
       const client = {
         [ORCHESTRATION_WS_METHODS.subscribeShell]: () => Stream.fromQueue(events),
       } as unknown as WsRpcProtocolClient;
@@ -210,27 +214,29 @@ describe("environment shell synchronization", () => {
         Stream.runHead,
       );
 
-      // A bulk action (snooze 30 threads) reaches the client as one server
-      // coalesced chunk. The shell state must change once for it, not 30 times.
+      // Observe before publishing so no batch can arrive before the subscription.
       const observed = yield* SubscriptionRef.changes(shellState).pipe(
         Stream.drop(1),
         Stream.takeUntil(
-          (state) => Option.isSome(state.snapshot) && state.snapshot.value.threads.length === 30,
+          (state) => Option.isSome(state.snapshot) && state.snapshot.value.threads.length === 50,
         ),
         Stream.runCollect,
-        Effect.forkScoped,
+        Effect.forkScoped({ startImmediately: true }),
       );
       yield* Queue.offerAll(
         events,
-        Array.from({ length: 30 }, (_, index) => ({
+        Array.from({ length: 50 }, (_, index) => ({
           kind: "thread-upserted" as const,
           sequence: 2 + index,
           thread: { id: `thread-${index}` } as never,
         })),
       );
       const states = yield* Fiber.join(observed);
-      expect(states).toHaveLength(1);
-      expect(Option.getOrThrow(states[0]!.snapshot).snapshotSequence).toBe(31);
+      const snapshots = states.map((state) => Option.getOrThrow(state.snapshot));
+      expect(snapshots.map((snapshot) => snapshot.snapshotSequence)).toEqual(expectedSequences);
+      expect(snapshots.at(-1)!.threads.map((thread) => thread.id)).toEqual(
+        Array.from({ length: 50 }, (_, index) => `thread-${index}`),
+      );
     }).pipe(Effect.scoped),
   );
 
