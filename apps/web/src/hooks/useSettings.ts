@@ -546,7 +546,11 @@ export function useSharedSettingsSync() {
     }
   }, [environments, mismatches, persistServerSettings, primarySettings, primaryCapabilities]);
 
-  return { mismatches, applyToAll };
+  return {
+    mismatches,
+    applyToAll,
+    sourceLabel: primaryEnvironment?.label ?? "Primary environment",
+  };
 }
 
 export function useUpdateEnvironmentSettings(environmentId: EnvironmentId) {

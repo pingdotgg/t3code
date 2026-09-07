@@ -30,6 +30,42 @@ const SHARED_SERVER_SETTING_KEYS = [
 
 export type SharedServerSettingKey = (typeof SHARED_SERVER_SETTING_KEYS)[number];
 
+export const sharedServerSettingLabels: Record<SharedServerSettingKey, string> = {
+  continueThreadsAfterServerUpdate: "Continue threads after server updates",
+  sidebarAutoSettleAfterDays: "Auto-settle inactive threads",
+  sidebarAutoSettleOnMerge: "Auto-settle merged threads",
+  newWorktreesStartFromOrigin: "Start new worktrees from origin",
+  sourceControlWritingStyle: "Source control writing style",
+};
+
+export function formatSharedServerSettingValue(
+  key: SharedServerSettingKey,
+  value: ServerSettings[SharedServerSettingKey],
+): string {
+  if (value === null) return "Off";
+  if (typeof value === "boolean") return value ? "On" : "Off";
+  if (typeof value === "object") {
+    const modes = {
+      conventional_commits: "Conventional commits",
+      custom: "Custom",
+      repo_conventions: "Repository conventions",
+    };
+    return `${modes[value.mode]}\nCustom instructions: ${value.customInstructions || "None"}\nFollow change request templates: ${value.followChangeRequestTemplates ? "On" : "Off"}`;
+  }
+  if (key === "sidebarAutoSettleAfterDays") return `After ${value} ${value === 1 ? "day" : "days"}`;
+  return String(value);
+}
+
+export interface SharedSettingsMismatch {
+  readonly environmentId: EnvironmentId;
+  readonly label: string;
+  readonly differences: ReadonlyArray<{
+    readonly key: SharedServerSettingKey;
+    readonly currentValue: ServerSettings[SharedServerSettingKey];
+    readonly incomingValue: ServerSettings[SharedServerSettingKey];
+  }>;
+}
+
 const SHARED_KEY_SET = new Set<string>(SHARED_SERVER_SETTING_KEYS);
 
 /** Split a server patch into the keys every environment should receive and the primary-only rest. */
@@ -113,12 +149,13 @@ export function findSharedSettingsMismatches(input: {
     | Pick<ExecutionEnvironmentCapabilities, "threadRestartContinuation">
     | undefined;
   readonly environments: ReadonlyArray<SharedSettingsEnvironment>;
-}): ReadonlyArray<{ readonly environmentId: EnvironmentId; readonly label: string }> {
+}): ReadonlyArray<SharedSettingsMismatch> {
   if (input.primaryEnvironmentId === null || input.primarySettings === null) {
     return [];
   }
+  const loadedPrimarySettings = input.primarySettings;
   const primarySettings = pickSharedServerSettings(
-    input.primarySettings,
+    loadedPrimarySettings,
     input.primaryCapabilities,
   );
   return input.environments.flatMap((environment) => {
@@ -130,12 +167,22 @@ export function findSharedSettingsMismatches(input: {
       return [];
     }
     const expected = filterSharedServerPatch(primarySettings, environment.capabilities);
+    const loadedSettings = environment.settings;
     const actual = filterSharedServerPatch(
       pickSharedServerSettings(environment.settings, environment.capabilities),
       input.primaryCapabilities,
     );
-    return Equal.equals(actual, expected)
+    const differences = SHARED_SERVER_SETTING_KEYS.flatMap((key) => {
+      const currentValue = actual[key];
+      const incomingValue = expected[key];
+      return currentValue === undefined ||
+        incomingValue === undefined ||
+        Equal.equals(currentValue, incomingValue)
+        ? []
+        : [{ key, currentValue: loadedSettings[key], incomingValue: loadedPrimarySettings[key] }];
+    });
+    return differences.length === 0
       ? []
-      : [{ environmentId: environment.environmentId, label: environment.label }];
+      : [{ environmentId: environment.environmentId, label: environment.label, differences }];
   });
 }

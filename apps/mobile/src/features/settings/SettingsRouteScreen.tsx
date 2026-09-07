@@ -46,6 +46,8 @@ import {
 import {
   filterSharedServerPatch,
   findSharedSettingsMismatches,
+  formatSharedServerSettingValue,
+  sharedServerSettingLabels,
   pickSharedServerSettings,
   supportsSharedSettingsSync,
 } from "@t3tools/client-runtime/state/shared-settings";
@@ -571,6 +573,7 @@ function AutoSettleSettingsRows() {
   const referenceSettings = reference?.serverConfig?.settings ?? null;
 
   const [daysDraft, setDaysDraft] = useState<string | null>(null);
+  const [reviewDifferences, setReviewDifferences] = useState(false);
 
   if (reference === null || referenceSettings === null) {
     return null;
@@ -645,7 +648,7 @@ function AutoSettleSettingsRows() {
         </View>
       ) : null}
       {mismatches.length > 0 ? (
-        <View className="flex-row items-center gap-4 border-t border-border-subtle p-4">
+        <View className="gap-4 border-t border-border-subtle p-4">
           <View className="min-w-0 flex-1">
             <Text className="text-lg text-foreground">Settings differ</Text>
             <Text className="text-sm text-foreground-muted">
@@ -654,30 +657,69 @@ function AutoSettleSettingsRows() {
           </View>
           <Pressable
             accessibilityRole="button"
-            onPress={() => {
-              const patch = pickSharedServerSettings(
-                referenceSettings,
-                reference.serverConfig?.environment.capabilities,
-              );
-              for (const mismatch of mismatches) {
-                const target = environments.find(
-                  (candidate) => candidate.environmentId === mismatch.environmentId,
-                );
-                void updateSettings({
-                  environmentId: mismatch.environmentId,
-                  input: {
-                    patch: filterSharedServerPatch(
-                      patch,
-                      target?.serverConfig?.environment.capabilities,
-                    ),
-                  },
-                });
-              }
-            }}
-            className="rounded-full bg-subtle px-4 py-2 active:opacity-70"
+            accessibilityState={{ expanded: reviewDifferences }}
+            onPress={() => setReviewDifferences((value) => !value)}
+            className="rounded-xl bg-subtle px-4 py-3 active:opacity-70"
           >
-            <Text className="text-base font-t3-medium text-foreground">Apply to all</Text>
+            <Text className="text-base font-t3-medium text-foreground">
+              {reviewDifferences ? "Hide differences" : "Review differences"}
+            </Text>
           </Pressable>
+          {reviewDifferences ? (
+            <View className="gap-4">
+              <Text className="text-sm text-foreground-muted">
+                Apply to all copies shared preferences from {reference.label} to the environments
+                below. These values will change; matching values stay the same.
+              </Text>
+              {mismatches.map((mismatch) => (
+                <View
+                  key={mismatch.environmentId}
+                  className="gap-3 rounded-xl border border-border-subtle p-3"
+                >
+                  <Text className="text-base font-t3-medium text-foreground">{mismatch.label}</Text>
+                  {mismatch.differences.map(({ key, currentValue, incomingValue }) => (
+                    <View key={key} className="gap-1">
+                      <Text className="text-base font-t3-medium text-foreground">
+                        {sharedServerSettingLabels[key]}
+                      </Text>
+                      <Text className="text-sm text-foreground-muted">
+                        Current: {formatSharedServerSettingValue(key, currentValue)}
+                      </Text>
+                      <Text className="text-sm text-foreground">
+                        From {reference.label}: {formatSharedServerSettingValue(key, incomingValue)}
+                      </Text>
+                    </View>
+                  ))}
+                </View>
+              ))}
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => {
+                  const patch = pickSharedServerSettings(
+                    referenceSettings,
+                    reference.serverConfig?.environment.capabilities,
+                  );
+                  for (const mismatch of mismatches) {
+                    const target = environments.find(
+                      (candidate) => candidate.environmentId === mismatch.environmentId,
+                    );
+                    void updateSettings({
+                      environmentId: mismatch.environmentId,
+                      input: {
+                        patch: filterSharedServerPatch(
+                          patch,
+                          target?.serverConfig?.environment.capabilities,
+                        ),
+                      },
+                    });
+                  }
+                }}
+                className="rounded-full bg-subtle px-4 py-2 active:opacity-70"
+              >
+                <Text className="text-base font-t3-medium text-foreground">Apply to all</Text>
+              </Pressable>
+            </View>
+          ) : null}
         </View>
       ) : null}
     </>

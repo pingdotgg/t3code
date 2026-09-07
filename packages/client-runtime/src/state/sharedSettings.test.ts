@@ -4,6 +4,7 @@ import { describe, expect, it } from "@effect/vitest";
 import {
   filterSharedServerPatch,
   findSharedSettingsMismatches,
+  formatSharedServerSettingValue,
   pickSharedServerSettings,
   splitSharedServerPatch,
   supportsSharedSettingsSync,
@@ -118,7 +119,19 @@ describe("findSharedSettingsMismatches", () => {
           primaryCapabilities: restartCapabilities,
           environments: [environment],
         }),
-      ).toEqual([{ environmentId: boxId, label: "Remote Box" }]);
+      ).toEqual([
+        {
+          environmentId: boxId,
+          label: "Remote Box",
+          differences: [
+            {
+              key: "continueThreadsAfterServerUpdate",
+              currentValue: !enabled,
+              incomingValue: enabled,
+            },
+          ],
+        },
+      ]);
       expect(
         findSharedSettingsMismatches({
           primaryEnvironmentId: primaryId,
@@ -170,7 +183,13 @@ describe("findSharedSettingsMismatches", () => {
             },
           ],
         }),
-      ).toEqual([{ environmentId: boxId, label: "Remote Box" }]);
+      ).toEqual([
+        {
+          environmentId: boxId,
+          label: "Remote Box",
+          differences: [{ key: "sidebarAutoSettleAfterDays", currentValue: 14, incomingValue: 7 }],
+        },
+      ]);
     },
   );
 
@@ -199,7 +218,19 @@ describe("findSharedSettingsMismatches", () => {
         },
       ],
     });
-    expect(mismatches).toEqual([{ environmentId: boxId, label: "Remote Box" }]);
+    expect(mismatches).toEqual([
+      {
+        environmentId: boxId,
+        label: "Remote Box",
+        differences: [
+          {
+            key: "sidebarAutoSettleAfterDays",
+            currentValue: DEFAULT_SERVER_SETTINGS.sidebarAutoSettleAfterDays,
+            incomingValue: 7,
+          },
+        ],
+      },
+    ]);
   });
 
   it("ignores machine-only differences", () => {
@@ -221,6 +252,43 @@ describe("findSharedSettingsMismatches", () => {
       ],
     });
     expect(mismatches).toEqual([]);
+  });
+
+  it("preserves disabled values and multiline writing styles in the overwrite preview", () => {
+    const writingStyle = {
+      ...primarySettings.sourceControlWritingStyle,
+      mode: "custom" as const,
+      customInstructions: "Use short titles.\nExplain the why.",
+    };
+    const mismatches = findSharedSettingsMismatches({
+      primaryEnvironmentId: primaryId,
+      primarySettings: {
+        ...primarySettings,
+        sidebarAutoSettleAfterDays: null,
+        sourceControlWritingStyle: writingStyle,
+      },
+      environments: [
+        {
+          environmentId: boxId,
+          label: "Remote",
+          syncEligible: true,
+          settings: primarySettings,
+        },
+      ],
+    });
+    expect(mismatches[0]?.differences).toEqual([
+      { key: "sidebarAutoSettleAfterDays", currentValue: 7, incomingValue: null },
+      {
+        key: "sourceControlWritingStyle",
+        currentValue: primarySettings.sourceControlWritingStyle,
+        incomingValue: writingStyle,
+      },
+    ]);
+    expect(formatSharedServerSettingValue("sourceControlWritingStyle", writingStyle)).toContain(
+      "Custom\nCustom instructions: Use short titles.\nExplain the why.",
+    );
+    expect(formatSharedServerSettingValue("sidebarAutoSettleAfterDays", null)).toBe("Off");
+    expect(formatSharedServerSettingValue("sidebarAutoSettleAfterDays", 1)).toBe("After 1 day");
   });
 
   it("reports nothing until the primary environment's settings are loaded", () => {

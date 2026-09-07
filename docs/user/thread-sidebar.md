@@ -79,8 +79,12 @@ resumed after it closed.
 Change these rules in **Settings → General**. They continue to run when your apps
 are closed. Changes apply to connected environments that support shared settings;
 offline environments and older servers keep their previous values. If connected
-environments disagree, **Apply to all** copies your current settings to those named
-in the warning. Changing a rule does not reopen already settled threads.
+environments disagree, **Review differences** shows each differing preference, its
+current value, and the value from the named source environment. **Apply to all**
+copies the source's shared preferences to the listed environments. On web and
+desktop the source is the primary environment; on mobile it is the first connected
+environment that supports shared settings. Changing a rule does not reopen already
+settled threads.
 
 ## Link a pull request
 
