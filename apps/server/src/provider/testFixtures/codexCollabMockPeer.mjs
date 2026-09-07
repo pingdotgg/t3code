@@ -151,6 +151,51 @@ rl.on("line", (line) => {
     }
     return;
   }
+  if (method === "thread/goal/get") {
+    const status = script.goalStatus;
+    write({
+      id,
+      result: {
+        goal: status
+          ? {
+              createdAt: 1,
+              objective: "Keep working",
+              status,
+              threadId: script.rootThreadId,
+              timeUsedSeconds: 0,
+              tokenBudget: null,
+              tokensUsed: 0,
+              updatedAt: 1,
+            }
+          : null,
+      },
+    });
+    return;
+  }
+  if (method === "thread/goal/set") {
+    if (script.recordControlRequests) {
+      NodeFS.appendFileSync(
+        `${process.env.T3_CODEX_COLLAB_SCRIPT}.control`,
+        `${JSON.stringify({ method, params: message.params })}\n`,
+      );
+    }
+    write({
+      id,
+      result: {
+        goal: {
+          createdAt: 1,
+          objective: "Keep working",
+          status: message.params?.status ?? script.goalStatus ?? "active",
+          threadId: script.rootThreadId,
+          timeUsedSeconds: 0,
+          tokenBudget: null,
+          tokensUsed: 0,
+          updatedAt: 2,
+        },
+      },
+    });
+    return;
+  }
   if (method === "turn/interrupt") {
     // Record which thread/turn was interrupted (append-only sidecar file the
     // test reads) so Stop coverage can assert every live child was reached.
@@ -160,6 +205,12 @@ rl.on("line", (line) => {
       `${process.env.T3_CODEX_COLLAB_SCRIPT}.interrupts`,
       `${JSON.stringify({ threadId: target, turnId: message.params?.turnId })}\n`,
     );
+    if (script.recordControlRequests) {
+      NodeFS.appendFileSync(
+        `${process.env.T3_CODEX_COLLAB_SCRIPT}.control`,
+        `${JSON.stringify({ method, params: message.params })}\n`,
+      );
+    }
     if (
       script.expectedActiveTurnId &&
       message.params?.threadId === script.rootThreadId &&
