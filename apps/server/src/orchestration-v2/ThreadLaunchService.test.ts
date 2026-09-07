@@ -1,5 +1,12 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as FileSystem from "effect/FileSystem";
+import * as ServerConfig from "../config.ts";
+import { createPendingAttachmentId, resolveAttachmentPath } from "../attachmentStore.ts";
+import * as ThreadMessageIntake from "./ThreadMessageIntake.ts";
 import { assert, it, vi } from "@effect/vitest";
 import {
+  ChatAttachmentId,
+  type ChatAttachment,
   CommandId,
   DEFAULT_SERVER_SETTINGS,
   GitCommandError,
@@ -1285,4 +1292,140 @@ it.effect("does not depend on the legacy launch workflow table", () => {
     );
     assert.equal(launched.projection.messages[0]?.text, "No private workflow state");
   }).pipe(Effect.provide(harness.layer));
+});
+
+it.effect("shared intake preserves durable attachment bytes after a lost launch result", () => {
+  const harness = makeHarness();
+  const files = ServerConfig.layerTest(process.cwd(), { prefix: "t3-message-intake-" }).pipe(
+    Layer.provideMerge(NodeServices.layer),
+  );
+  return Effect.gen(function* () {
+    const config = yield* ServerConfig.ServerConfig;
+    const fs = yield* FileSystem.FileSystem;
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    const pendingId = createPendingAttachmentId();
+    assert.isNotNull(pendingId);
+    const attachment: ChatAttachment = {
+      type: "image",
+      id: ChatAttachmentId.make(pendingId),
+      name: "image.png",
+      mimeType: "image/png",
+      sizeBytes: 4,
+    };
+    const pendingPath = resolveAttachmentPath({
+      attachmentsDir: config.attachmentsDir,
+      attachment,
+    });
+    assert.isNotNull(pendingPath);
+    yield* fs.makeDirectory(config.attachmentsDir, { recursive: true });
+    yield* fs.writeFile(pendingPath, new Uint8Array([1, 2, 3, 4]));
+    const input = {
+      ...launchInput({ command: "intake-launch", thread: "intake-thread" }),
+      initialMessage: {
+        messageId: MessageId.make("intake-first"),
+        text: "First",
+        attachments: [attachment],
+      },
+    };
+    const failed = yield* ThreadMessageIntake.launchThread(input).pipe(
+      Effect.provideService(ThreadLaunch.ThreadLaunchService, {
+        launch: (request) =>
+          launches.launch(request).pipe(
+            Effect.andThen(
+              new ThreadLaunch.ThreadLaunchError({
+                operation: "create-thread",
+                commandId: request.commandId,
+                projectId,
+                cause: "lost result after acceptance",
+              }),
+            ),
+          ),
+      }),
+      Effect.flip,
+    );
+    assert.equal(failed._tag, "ThreadLaunchError");
+    // The observer failed, but the real V2 message and its bytes were accepted.
+    const accepted = yield* threads.getThreadProjection(input.threadId);
+    const stored = accepted.messages.find(
+      (message) => message.id === input.initialMessage.messageId,
+    );
+    assert.isDefined(stored);
+    assert.notEqual(stored.attachments[0]?.id, attachment.id);
+    const storedPath = resolveAttachmentPath({
+      attachmentsDir: config.attachmentsDir,
+      attachment: stored.attachments[0]!,
+    });
+    assert.isNotNull(storedPath);
+    assert.deepEqual(yield* fs.readFile(storedPath), new Uint8Array([1, 2, 3, 4]));
+    assert.deepEqual(yield* fs.readFile(pendingPath), new Uint8Array([1, 2, 3, 4]));
+
+    const replayed = yield* ThreadMessageIntake.launchThread(input);
+    assert.equal(replayed.projection.messages[0]?.id, stored.id);
+    assert.deepEqual(replayed.projection.messages[0]?.attachments, stored.attachments);
+    const claimedFiles = Effect.map(fs.readDirectory(config.attachmentsDir), (files) =>
+      files.filter((name) => !name.startsWith("pending-")),
+    );
+    assert.equal((yield* claimedFiles).length, 1);
+
+    const missingProject = yield* ThreadMessageIntake.launchThread({
+      ...input,
+      commandId: CommandId.make("intake-no-project"),
+      projectId: ProjectId.make("missing-project"),
+    }).pipe(Effect.flip);
+    assert.equal(missingProject._tag, "ThreadLaunchError");
+    assert.equal((yield* claimedFiles).length, 1);
+    const missingThread = yield* ThreadMessageIntake.dispatchCommand({
+      type: "message.dispatch",
+      commandId: CommandId.make("intake-no-thread"),
+      threadId: ThreadId.make("missing-thread"),
+      messageId: MessageId.make("intake-missing"),
+      text: "Missing",
+      attachments: [attachment],
+      dispatchMode: { type: "start_immediately" },
+      createdBy: "user",
+      creationSource: "web",
+    }).pipe(Effect.flip);
+    assert.equal(missingThread._tag, "OrchestratorProjectionError");
+    assert.equal((yield* claimedFiles).length, 1);
+
+    // Both ordinary command intake (RPC) and send intake (MCP) use the same store.
+    const dispatch = ThreadMessageIntake.dispatchCommand({
+      type: "message.dispatch",
+      commandId: CommandId.make("intake-dispatch"),
+      threadId: input.threadId,
+      messageId: MessageId.make("intake-second"),
+      text: "Second",
+      attachments: [attachment],
+      dispatchMode: { type: "queue_after_active" },
+      createdBy: "user",
+      creationSource: "web",
+    });
+    yield* dispatch;
+    yield* dispatch;
+    const send = ThreadMessageIntake.sendToThread({
+      commandId: CommandId.make("intake-send"),
+      projectId,
+      threadId: input.threadId,
+      messageId: MessageId.make("intake-third"),
+      text: "Third",
+      attachments: [attachment],
+      mode: "queue",
+      createdBy: "agent",
+      creationSource: "mcp",
+    });
+    yield* send;
+    yield* send;
+    assert.equal((yield* claimedFiles).length, 3);
+    const final = yield* threads.getThreadProjection(input.threadId);
+    assert.equal(final.messages.length, 3);
+    for (const message of final.messages) {
+      const path = resolveAttachmentPath({
+        attachmentsDir: config.attachmentsDir,
+        attachment: message.attachments[0]!,
+      });
+      assert.isNotNull(path);
+      assert.deepEqual(yield* fs.readFile(path), new Uint8Array([1, 2, 3, 4]));
+    }
+  }).pipe(Effect.provide(Layer.mergeAll(harness.layer, files)));
 });
