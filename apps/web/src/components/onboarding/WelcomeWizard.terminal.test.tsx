@@ -341,7 +341,7 @@ describe("welcome agent terminal setup", () => {
       input: {
         threadId: "onboarding-agent-setup",
         terminalId: state.open.mock.calls[0]![0].input.terminalId,
-        data: "npm install -g @anthropic-ai/claude-code",
+        data: "curl -fsSL https://claude.ai/install.sh | bash",
       },
     });
     expect(hasViewport()).toBe(true);
@@ -420,7 +420,7 @@ describe("welcome agent terminal setup", () => {
     expect(state.open).toHaveBeenCalledOnce();
     expect(state.write).not.toHaveBeenCalled();
     expect(text(renderer!.root)).toContain(
-      "Run npm install -g @anthropic-ai/claude-code in this terminal.",
+      "Run curl -fsSL https://claude.ai/install.sh | bash in this",
     );
     await act(async () => setAccess(remoteId, false));
     await click("Close");
