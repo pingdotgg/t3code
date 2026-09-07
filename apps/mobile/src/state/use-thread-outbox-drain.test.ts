@@ -133,8 +133,13 @@ vi.mock("./thread-outbox", async () => {
 });
 
 import { appAtomRegistry } from "./atom-registry";
+import {
+  clearPendingThreadCreationOutcome,
+  pendingThreadCreationOutcomesAtom,
+} from "./pending-thread-creation";
 import type { QueuedThreadMessage } from "./thread-outbox-model";
 import * as composerDrafts from "./use-composer-drafts";
+import { recoverFailedThreadDraft } from "./recover-failed-thread-draft";
 import { editingQueuedMessageIdsAtom } from "./use-thread-outbox";
 import {
   completeQueuedMessageDelivery,
@@ -203,6 +208,7 @@ afterEach(() => {
   appAtomRegistry.set(composerDrafts.composerDraftsAtom, {});
   appAtomRegistry.set(composerDrafts.composerCloudDraftsAtom, { accountId: null, signedOut: {} });
   appAtomRegistry.set(editingQueuedMessageIdsAtom, {});
+  appAtomRegistry.set(pendingThreadCreationOutcomesAtom, {});
   harness.draftFile.setWriteError(null);
   harness.removePersistedFile.mockClear();
   harness.removeOutboxMessage.mockClear();
@@ -585,6 +591,55 @@ describe("thread outbox delivered creation recovery", () => {
 });
 
 describe("thread outbox recovery rollback", () => {
+  it("reopens a rejected task with setup edits and every attachment, even above the send cap", async () => {
+    const message = queuedMessage({ messageId: "failed-setup", text: "Original prompt" });
+    const sourceKey = `${message.environmentId}:${message.threadId}`;
+    const targetKey = "new-task:restored-failed-setup";
+    const files = Array.from(
+      { length: 10 },
+      (_, index) =>
+        queuedMessage({
+          messageId: `attachment-${index}`,
+          text: "",
+          fileUri: `file:///file-${index}`,
+        }).attachments[0]!,
+    );
+    appAtomRegistry.set(composerDrafts.composerDraftsAtom, {
+      [targetKey]: { text: message.text, attachments: files.slice(0, 8) },
+      [sourceKey]: { text: "Please include tests", attachments: files.slice(8) },
+    });
+    await recoverFailedThreadDraft(message);
+    expect(composerDrafts.getComposerDraftSnapshot(targetKey)).toMatchObject({
+      text: "Original prompt\n\nPlease include tests",
+      attachments: files,
+    });
+    expect(composerDrafts.getComposerDraftSnapshot(sourceKey)).toMatchObject({
+      text: "",
+      attachments: [],
+    });
+    await recoverFailedThreadDraft(message);
+    expect(composerDrafts.getComposerDraftSnapshot(targetKey).text).toBe(
+      "Original prompt\n\nPlease include tests",
+    );
+  });
+
+  it("keeps setup edits recoverable when saving their recovery draft fails", async () => {
+    const message = queuedMessage({ messageId: "failed-save", text: "Original prompt" });
+    const sourceKey = `${message.environmentId}:${message.threadId}`;
+    appAtomRegistry.set(composerDrafts.composerDraftsAtom, {
+      "new-task:restored-failed-save": { text: message.text, attachments: [] },
+      [sourceKey]: { text: "Follow-up", attachments: [] },
+    });
+    harness.draftFile.setWriteError(new Error("disk full"));
+    await expect(recoverFailedThreadDraft(message)).rejects.toThrow("Composer draft persistence");
+    expect(composerDrafts.getComposerDraftSnapshot(sourceKey).text).toBe("Follow-up");
+    harness.draftFile.setWriteError(null);
+    await recoverFailedThreadDraft(message);
+    expect(composerDrafts.getComposerDraftSnapshot("new-task:restored-failed-save").text).toBe(
+      "Original prompt\n\nFollow-up",
+    );
+  });
+
   it("restores a rejected new task as its own draft for the project", async () => {
     const message: QueuedThreadMessage = {
       ...queuedMessage({ messageId: "message-creation-restore", text: "new task text" }),
@@ -618,6 +673,42 @@ describe("thread outbox recovery rollback", () => {
     });
     expect(remainingMessages()).toEqual([]);
     expect(harness.setPendingConnectionError).toHaveBeenCalledWith("rejected by server");
+    // The thread screen opened for this creation reads the failure from here.
+    expect(
+      appAtomRegistry.get(pendingThreadCreationOutcomesAtom)[
+        `${message.environmentId}:${message.threadId}`
+      ],
+    ).toEqual({ kind: "failed", message, reason: "rejected by server" });
+  });
+
+  it("keeps a failed outcome until its thread screen consumes it", async () => {
+    const message: QueuedThreadMessage = {
+      ...queuedMessage({ messageId: "message-creation-kept", text: "new task text" }),
+      modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.6-sol" },
+      creation: {
+        projectId: ProjectId.make("project-1"),
+        workspaceMode: "local",
+        branch: null,
+        worktreePath: null,
+      },
+    };
+    await harness.manager.enqueue(message);
+    await restoreRejectedQueuedMessage(message, "rejected by server");
+
+    const key = `${message.environmentId}:${message.threadId}`;
+    expect(appAtomRegistry.get(pendingThreadCreationOutcomesAtom)[key]?.kind).toBe("failed");
+
+    clearPendingThreadCreationOutcome(key);
+    expect(appAtomRegistry.get(pendingThreadCreationOutcomesAtom)[key]).toBeUndefined();
+  });
+
+  it("does not record a creation outcome for a rejected follow-up message", async () => {
+    const message = queuedMessage({ messageId: "message-followup-restore", text: "follow up" });
+    await harness.manager.enqueue(message);
+
+    await expect(restoreRejectedQueuedMessage(message, "rejected")).resolves.toBe("restored");
+
+    expect(appAtomRegistry.get(pendingThreadCreationOutcomesAtom)).toEqual({});
   });
 
   it("rolls a failed recovery merge back so the retry cannot duplicate the text", async () => {

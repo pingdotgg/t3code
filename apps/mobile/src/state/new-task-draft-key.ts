@@ -10,6 +10,15 @@ export function isNewTaskDraftKey(draftKey: string): boolean {
 }
 
 /**
+ * The draft a rejected queued task's content is restored into. The outbox
+ * drain writes it and the thread screen's "Edit task" action opens it, so both
+ * sides derive the key here rather than rebuilding the string.
+ */
+export function restoredNewTaskDraftKey(messageId: string): string {
+  return newTaskDraftKey(`restored-${messageId}`);
+}
+
+/**
  * Builds before drafts were id-keyed used `new-task:<environmentId>:<projectId>`,
  * one slot per project. Ids are UUIDs and never contain a colon, so a colon
  * after the prefix marks the legacy shape. Returns the split scope, or null

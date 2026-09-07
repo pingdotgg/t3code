@@ -27,7 +27,13 @@ import {
   forgetAcknowledgedThreadMessage,
 } from "./acknowledged-thread-messages";
 import { appAtomRegistry } from "./atom-registry";
+import { restoredNewTaskDraftKey } from "./new-task-draft-key";
 import { useProjects, useServerConfigs, useThreadShells } from "./entities";
+import {
+  clearPendingThreadCreationOutcome,
+  pendingThreadCreationOutcomesAtom,
+  recordPendingThreadCreationOutcome,
+} from "./pending-thread-creation";
 import { serverEnvironment } from "./server";
 import {
   confirmThreadOutboxMessageQueued,
@@ -57,7 +63,6 @@ import {
   type ComposerDraft,
   getComposerDraftSnapshot,
   mergeComposerDraftContent,
-  newTaskDraftKey,
   replaceComposerDraftAttachments,
   removeDeliveredCloudQueuedMessage,
   undoComposerDraftMerge,
@@ -439,6 +444,15 @@ export async function restoreRejectedQueuedMessage(
     // The queued message is gone; from here the draft owns the content and
     // must never be rolled back.
     rollback = null;
+    if (queuedMessage.creation) {
+      // The thread screen for this creation is likely open; it reads the
+      // outcome to offer reopening the restored draft.
+      recordPendingThreadCreationOutcome({
+        kind: "failed",
+        message: queuedMessage,
+        reason: message,
+      });
+    }
     setPendingConnectionError(message);
     return "restored";
   } catch (error) {
@@ -468,7 +482,7 @@ export async function restoreRejectedQueuedMessage(
  */
 function recoveryDraftKey(queuedMessage: QueuedThreadMessage): string {
   return queuedMessage.creation
-    ? newTaskDraftKey(`restored-${queuedMessage.messageId}`)
+    ? restoredNewTaskDraftKey(queuedMessage.messageId)
     : scopedThreadKey(queuedMessage.environmentId, queuedMessage.threadId);
 }
 
@@ -538,6 +552,7 @@ export function useThreadOutboxDrain(): void {
   const queuedMessagesByThreadKey = useThreadOutboxMessages();
   const shellStatuses = useThreadOutboxShellStatuses();
   const threads = useThreadShells();
+  const creationOutcomes = useAtomValue(pendingThreadCreationOutcomesAtom);
   const projects = useProjects();
   const serverConfigs = useServerConfigs();
   const { connectedEnvironments } = useRemoteConnectionStatus();
@@ -927,6 +942,9 @@ export function useThreadOutboxDrain(): void {
       if (failure?.action === "restore") {
         return restoreQueuedMessage(persistedMessage, failure.message);
       }
+      // Recorded before the queue entry goes so the thread screen never sees a
+      // gap between the queued creation and the server's shell.
+      recordPendingThreadCreationOutcome({ kind: "delivered", message: persistedMessage });
       const outcome = await completeQueuedMessageDelivery(persistedMessage, deliveryRevision);
       if (outcome === "edited") {
         if (appAtomRegistry.get(editingQueuedMessageIdsAtom)[queuedMessage.messageId]) {
@@ -943,6 +961,30 @@ export function useThreadOutboxDrain(): void {
     },
     [makeDeliveryHelpers, restoreQueuedMessage, startTurn],
   );
+
+  // A creation outcome bridges setup until the server's shell has a turn.
+  // Drop it once that happens so the map cannot grow for a whole session; a
+  // failed outcome stays until its thread screen consumes it.
+  // Subscribed, not read once: the shell often lands before the outcome is
+  // recorded, and a non-reactive read would leave that entry uncollected
+  // because `threads` never changes again.
+  useEffect(() => {
+    for (const [threadKey, outcome] of Object.entries(creationOutcomes)) {
+      if (
+        outcome.kind === "delivered" &&
+        threads.some(
+          (thread) =>
+            scopedThreadKey(thread.environmentId, thread.id) === threadKey &&
+            (thread.latestTurn !== null ||
+              thread.session?.status === "error" ||
+              thread.session?.status === "stopped" ||
+              thread.session?.status === "interrupted"),
+        )
+      ) {
+        clearPendingThreadCreationOutcome(threadKey);
+      }
+    }
+  }, [creationOutcomes, threads]);
 
   useEffect(() => {
     if (dispatchingQueuedMessageId !== null) {
