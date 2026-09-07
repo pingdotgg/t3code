@@ -136,10 +136,15 @@ export function FloatingWorkingControl(props: {
 
   // The label swaps between connection, syncing, compacting, and working while
   // the capsule stays mounted. A layout transition on the capsule would move
-  // its left edge, and children laid out from that edge slide with it, so the
-  // pill reads as shifting sideways. Instead the labels hang off a fixed
-  // midpoint anchor and the capsule animates its width to the measured label,
-  // shrinking and growing symmetrically under text that stays put.
+  // its left edge, and labels laid out from that edge slide with it, so the pill
+  // reads as shifting sideways. Instead an in-flow sizer animates to the
+  // measured label width and the capsule takes its size from that, while the
+  // labels sit centered on top. The row re-centers as the capsule grows, so its
+  // midpoint never moves and the text underneath stays put.
+  //
+  // The sizer has to carry the width rather than the capsule itself: the native
+  // glass view only picks up a size from a real layout pass, so an animated
+  // width set straight on it leaves the glass stuck at its mounted size.
   const capsuleWidth = useSharedValue<number | null>(null);
   const measuredWidthRef = useRef<number | null>(null);
   const handleLabelLayout = (event: LayoutChangeEvent) => {
@@ -160,13 +165,12 @@ export function FloatingWorkingControl(props: {
       capsuleWidth.value = null;
     }
   }, [capsuleWidth, hasStatus]);
-  // Hidden until the first measurement lands so the capsule never paints at
-  // zero width around a clipped label.
   const capsuleStyle = useAnimatedStyle(() => ({
-    width: capsuleWidth.value ?? CONTROL_HEIGHT,
-    opacity: capsuleWidth.value === null ? 0 : 1,
     transform: [{ translateX: CONTROL_SEPARATION * (1 - separationProgress.value) }],
   }));
+  // Zero until the first measurement lands, so the capsule never paints around
+  // a label it has not sized to yet.
+  const capsuleSizerStyle = useAnimatedStyle(() => ({ width: capsuleWidth.value ?? 0 }));
 
   if (props.status === null && !props.showScrollToEnd) {
     return null;
@@ -175,18 +179,16 @@ export function FloatingWorkingControl(props: {
   // Only the connection label is a button (tap to reconnect); the others
   // pass touches through to the feed like before.
   const statusInteractive = props.status?.kind === "connection";
-  // A zero-width anchor at the capsule's midpoint. Yoga centers an absolute
-  // child with no insets on the parent's justify-content, so every label row
-  // lands centered on the anchor without measuring itself, and the capsule
-  // clips whatever the label overhangs while it catches up.
-  const statusLabel =
+  // Yoga centers an absolute child that has no insets on its parent's align and
+  // justify, so each label row lands centered on the capsule without measuring
+  // itself, and the capsule clips whatever a wider label overhangs while it
+  // catches up.
+  const statusContent =
     props.status !== null ? (
-      <View
-        pointerEvents="box-none"
-        className="absolute inset-y-0 left-1/2 w-0 flex-row items-center justify-center"
-      >
+      <>
+        <Animated.View className="h-11" style={capsuleSizerStyle} />
         <FloatingStatusLabel status={props.status} onLayout={handleLabelLayout} />
-      </View>
+      </>
     ) : null;
 
   return (
@@ -203,22 +205,16 @@ export function FloatingWorkingControl(props: {
           pointerEvents="box-none"
           className="flex-row items-center gap-4"
         >
-          {/* A plain animated wrapper owns the animated width; the native glass
-              view only fills it, since it does not follow animated layout props. */}
-          <Animated.View
+          <AnimatedGlassView
+            colorScheme={props.colorScheme}
+            glassEffectStyle="regular"
+            isInteractive={statusInteractive}
             pointerEvents={statusInteractive ? "box-none" : "none"}
-            className="h-11 overflow-hidden rounded-full"
+            className="h-11 items-center justify-center overflow-hidden rounded-full"
             style={capsuleStyle}
           >
-            <UniwindGlassView
-              colorScheme={props.colorScheme}
-              glassEffectStyle="regular"
-              isInteractive={statusInteractive}
-              pointerEvents="none"
-              className="absolute inset-0 rounded-full"
-            />
-            {statusLabel}
-          </Animated.View>
+            {statusContent}
+          </AnimatedGlassView>
 
           <AnimatedGlassView
             colorScheme={props.colorScheme}
@@ -239,10 +235,10 @@ export function FloatingWorkingControl(props: {
         <View pointerEvents="box-none" className="flex-row items-center gap-4">
           <Animated.View
             pointerEvents={statusInteractive ? "box-none" : "none"}
-            className="h-11 overflow-hidden rounded-full border border-border bg-card shadow-md shadow-black/10"
+            className="h-11 items-center justify-center overflow-hidden rounded-full border border-border bg-card shadow-md shadow-black/10"
             style={capsuleStyle}
           >
-            {statusLabel}
+            {statusContent}
           </Animated.View>
 
           <Animated.View
@@ -345,7 +341,7 @@ function FloatingStatusLabel(props: {
   );
 }
 
-// Each row is absolutely centered on the capsule's midpoint anchor, so an
+// Rows are absolute with no insets, so the capsule centers them on itself and an
 // exiting row fading out never shifts the incoming one.
 function StatusLabelRow(props: {
   readonly accessibilityLabel: string;
