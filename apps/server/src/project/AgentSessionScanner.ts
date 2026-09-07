@@ -94,6 +94,12 @@ const MAX_IMPORT_BYTES = 4 * 1024 * 1024 * 1024;
 const MAX_IMPORT_TRANSCRIPTS = 100;
 const MAX_IMPORT_RECORDS = 100_000;
 
+const CODEX_TITLE_PREAMBLE_TAGS = new Set([
+  "environment_context",
+  "recommended_plugins",
+  "user_instructions",
+]);
+
 const TranscriptContentBlock = Schema.Struct({
   type: Schema.optional(Schema.String),
   text: Schema.optional(Schema.String),
@@ -123,6 +129,8 @@ const TranscriptRecord = Schema.Struct({
     Schema.Struct({
       id: Schema.optional(Schema.String),
       session_id: Schema.optional(Schema.String),
+      name: Schema.optional(Schema.String),
+      threadName: Schema.optional(Schema.String),
       type: Schema.optional(Schema.String),
       role: Schema.optional(Schema.String),
       message: Schema.optional(Schema.String),
@@ -282,6 +290,37 @@ function codexTurnId(metadata: unknown): string | null {
   return decoded.value.turn_id;
 }
 
+function stripCodexTitlePreamble(text: string): string {
+  let remaining = text.trim();
+  while (remaining.length > 0) {
+    const opening = /^<([A-Za-z][A-Za-z0-9_.:-]*)(?:\s[^>]*)?>/.exec(remaining);
+    const tagName = opening?.[1];
+    if (tagName === undefined || !CODEX_TITLE_PREAMBLE_TAGS.has(tagName)) break;
+    const closingTag = `</${tagName}>`;
+    const closingIndex = remaining.indexOf(closingTag, opening[0].length);
+    if (closingIndex === -1) break;
+    remaining = remaining.slice(closingIndex + closingTag.length).trimStart();
+  }
+  return remaining;
+}
+
+function deriveImportedThreadTitle(
+  source: AgentSessionSource,
+  messages: ReadonlyArray<AgentSessionThreadMessage>,
+): string | null {
+  for (const message of messages) {
+    if (message.role !== "user") continue;
+    const text = source === "codex" ? stripCodexTitlePreamble(message.text) : message.text.trim();
+    const firstVisibleLine = text
+      .split("\n")
+      .find((line) => line.trim().length > 0)
+      ?.slice(0, 100)
+      .trim();
+    if (firstVisibleLine && firstVisibleLine.length > 0) return firstVisibleLine;
+  }
+  return null;
+}
+
 /** Keep visible user and assistant text while ignoring tools, reasoning, and malformed records. */
 export function parseAgentSessionTranscript(
   input: AgentSessionTranscriptMetadata & {
@@ -429,6 +468,8 @@ function parseAgentSessionRecords(
         providerSessionId = sessionId;
         hasCodexSessionId = true;
       }
+      const savedTitle = record.payload?.name?.trim() || record.payload?.threadName?.trim();
+      if (title === null && savedTitle) title = savedTitle;
       continue;
     }
     if (record.type === "turn_context" && record.payload?.model?.trim()) {
@@ -491,13 +532,13 @@ function parseAgentSessionRecords(
   const retainedMessages = firstUserMessageRetained
     ? visibleMessages
     : [visibleFirstUserMessage, ...visibleMessages.slice(-(MAX_IMPORTED_MESSAGES - 1))];
-  const derivedTitle = visibleFirstUserMessage.text.trim().split("\n")[0]?.slice(0, 100).trim();
+  const derivedTitle = deriveImportedThreadTitle(input.source, retainedMessages);
 
   return {
     source: input.source,
     providerInstanceId: input.providerInstanceId,
     providerSessionId,
-    title: title ?? (derivedTitle && derivedTitle.length > 0 ? derivedTitle : "Imported thread"),
+    title: title ?? derivedTitle ?? "Imported thread",
     model,
     createdAt: retainedMessages[0]?.createdAt ?? fallbackTimestamp,
     updatedAt: fallbackTimestamp,
