@@ -208,21 +208,22 @@ ShellWindow {
         property alias kind: chipGlyph.name
         property color tint: root.accentDeep
 
-        implicitWidth: chipRow.implicitWidth + 16
+        implicitWidth: Math.min(Math.ceil(chipRow.implicitWidth) + 16, parent.width)
         implicitHeight: 22
         radius: 11
         color: root.raised
 
-        Row {
+        RowLayout {
             id: chipRow
 
             anchors.centerIn: parent
+            width: chip.width - 16
             spacing: 5
 
             ShellIcon {
                 id: chipGlyph
 
-                anchors.verticalCenter: parent.verticalCenter
+                Layout.alignment: Qt.AlignVCenter
                 size: 12
                 visible: name.length > 0
                 color: chip.tint
@@ -231,7 +232,9 @@ ShellWindow {
             Text {
                 id: chipText
 
-                anchors.verticalCenter: parent.verticalCenter
+                Layout.fillWidth: true
+                Layout.minimumWidth: 0
+                elide: Text.ElideMiddle
                 color: chip.tint
                 font.family: Theme.fontUi
                 font.pixelSize: 11
@@ -551,12 +554,13 @@ ShellWindow {
                     // and leaves faster than it came.
                     Item {
                         id: drawer
+                        objectName: "drawer"
 
                         anchors.top: parent.top
                         anchors.topMargin: 12
                         anchors.horizontalCenter: parent.horizontalCenter
                         width: Math.min(parent.width - 24, 1040)
-                        height: 336
+                        height: Math.min(drawerGrid.columns === 4 ? 336 : 660, parent.height - 24)
                         visible: opacity > 0
                         opacity: root.drawerOpen ? 1 : 0
 
@@ -613,446 +617,474 @@ ShellWindow {
                             }
                         }
 
-                        RowLayout {
+                        ScrollView {
+                            id: drawerScroll
+                            objectName: "drawerScroll"
                             anchors.fill: parent
                             anchors.margins: 12
-                            spacing: 10
+                            clip: true
+                            // Bound vector-icon painting to the scroll viewport
+                            // as well; some Shape renderers ignore ancestor clips.
+                            layer.enabled: drawerGrid.implicitHeight > height
+                            contentWidth: availableWidth
+                            contentHeight: drawerGrid.implicitHeight
+                            ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
 
-                            ColumnLayout {
-                                Layout.preferredWidth: 196
-                                Layout.maximumWidth: 196
-                                Layout.fillWidth: false
-                                Layout.fillHeight: true
-                                spacing: 10
+                            GridLayout {
+                                id: drawerGrid
+                                objectName: "drawerGrid"
+                                width: drawerScroll.availableWidth
+                                columns: width >= 920 ? 4 : width >= 460 ? 2 : 1
+                                rowSpacing: 10
+                                columnSpacing: 10
 
-                                // Where you are: project, thread, branch, git.
-                                DashCard {
+                                ColumnLayout {
+                                    Layout.preferredWidth: 196
                                     Layout.fillWidth: true
-                                    Layout.preferredHeight: whereColumn.implicitHeight + 26
-                                    order: 0
-
-                                    ColumnLayout {
-                                        id: whereColumn
-
-                                        anchors.left: parent.left
-                                        anchors.right: parent.right
-                                        anchors.top: parent.top
-                                        spacing: 4
-
-                                        Text {
-                                            Layout.fillWidth: true
-                                            text: root.workspace && root.workspace.projectTitle ? root.workspace.projectTitle : qsTr("No thread open")
-                                            color: root.ink
-                                            elide: Text.ElideRight
-                                            font.family: Theme.fontUi
-                                            font.pixelSize: 14
-                                            font.weight: Font.Bold
-                                        }
-
-                                        Text {
-                                            Layout.fillWidth: true
-                                            text: root.workspace ? root.workspace.threadTitle : qsTr("Pick one in the sidebar")
-                                            color: root.muted
-                                            elide: Text.ElideRight
-                                            font.family: Theme.fontUi
-                                            font.pixelSize: 11
-                                        }
-
-                                        Flow {
-                                            Layout.fillWidth: true
-                                            Layout.topMargin: 4
-                                            spacing: 6
-
-                                            Chip {
-                                                visible: root.workspace !== null && root.workspace.branch !== null
-                                                kind: "git-branch"
-                                                text: root.workspace && root.workspace.branch ? root.workspace.branch : ""
-                                            }
-
-                                            Chip {
-                                                visible: root.git !== null && root.git.hasUpstream && (root.git.aheadCount > 0 || root.git.behindCount > 0)
-                                                text: root.git ? "↑%1 ↓%2".arg(root.git.aheadCount).arg(root.git.behindCount) : ""
-                                                tint: root.warm
-                                            }
-
-                                            Chip {
-                                                visible: root.git !== null && root.git.hasWorkingTreeChanges
-                                                kind: "file-diff"
-                                                text: qsTr("Edits")
-                                                tint: root.leaf
-                                            }
-
-                                            Chip {
-                                                visible: root.git !== null && root.git.pullRequest !== null
-                                                kind: "git-pull-request"
-                                                text: root.git && root.git.pullRequest ? "#" + root.git.pullRequest.number : ""
-                                            }
-                                        }
-                                    }
-                                }
-
-                                // Today, in the big numerals the rail deserves.
-                                DashCard {
-                                    Layout.fillWidth: true
+                                    Layout.preferredHeight: 312
                                     Layout.fillHeight: true
-                                    order: 1
+                                    spacing: 10
 
-                                    ColumnLayout {
-                                        anchors.centerIn: parent
-                                        spacing: 0
+                                    // Where you are: project, thread, branch, git.
+                                    DashCard {
+                                        objectName: "workspaceCard"
+                                        Layout.fillWidth: true
+                                        Layout.preferredHeight: whereColumn.implicitHeight + 26
+                                        order: 0
 
-                                        Text {
-                                            Layout.alignment: Qt.AlignHCenter
-                                            text: Qt.formatDate(root.now, "dd")
-                                            color: root.accentDeep
-                                            font.family: Theme.fontUi
-                                            font.pixelSize: 44
-                                            font.weight: Font.Bold
-                                            font.letterSpacing: -1
-                                            lineHeight: 0.9
-                                        }
+                                        ColumnLayout {
+                                            id: whereColumn
 
-                                        Row {
-                                            Layout.alignment: Qt.AlignHCenter
+                                            anchors.left: parent.left
+                                            anchors.right: parent.right
+                                            anchors.top: parent.top
                                             spacing: 4
 
-                                            Repeater {
-                                                model: 3
-
-                                                Rectangle {
-                                                    width: 4
-                                                    height: 4
-                                                    radius: 2
-                                                    color: root.accent
-                                                }
+                                            Text {
+                                                Layout.fillWidth: true
+                                                text: root.workspace && root.workspace.projectTitle ? root.workspace.projectTitle : qsTr("No thread open")
+                                                color: root.ink
+                                                elide: Text.ElideRight
+                                                font.family: Theme.fontUi
+                                                font.pixelSize: 14
+                                                font.weight: Font.Bold
                                             }
-                                        }
-
-                                        Text {
-                                            Layout.alignment: Qt.AlignHCenter
-                                            text: Qt.formatDate(root.now, "MM")
-                                            color: root.accentDeep
-                                            font.family: Theme.fontUi
-                                            font.pixelSize: 44
-                                            font.weight: Font.Bold
-                                            font.letterSpacing: -1
-                                            lineHeight: 0.9
-                                        }
-
-                                        Text {
-                                            Layout.alignment: Qt.AlignHCenter
-                                            Layout.topMargin: 6
-                                            text: qsTr("%1, wk %2").arg(Qt.formatDate(root.now, "ddd")).arg(root.isoWeek(root.now))
-                                            color: root.muted
-                                            font.family: Theme.fontUi
-                                            font.pixelSize: 11
-                                            font.weight: Font.Medium
-                                        }
-
-                                        Text {
-                                            Layout.alignment: Qt.AlignHCenter
-                                            Layout.topMargin: 2
-                                            text: Qt.formatTime(root.now, "HH:mm")
-                                            color: root.ink
-                                            font.family: Theme.fontMono
-                                            font.pixelSize: 12
-                                        }
-                                    }
-                                }
-                            }
-
-                            // The month, today circled.
-                            DashCard {
-                                Layout.preferredWidth: 280
-                                Layout.fillHeight: true
-                                order: 2
-
-                                ColumnLayout {
-                                    anchors.fill: parent
-                                    spacing: 6
-
-                                    Text {
-                                        Layout.alignment: Qt.AlignHCenter
-                                        text: Qt.formatDate(root.now, "MMMM yyyy")
-                                        color: root.accentDeep
-                                        font.family: Theme.fontUi
-                                        font.pixelSize: 12
-                                        font.weight: Font.Bold
-                                        font.letterSpacing: 0.4
-                                    }
-
-                                    GridLayout {
-                                        Layout.fillWidth: true
-                                        Layout.fillHeight: true
-                                        columns: 7
-                                        rowSpacing: 0
-                                        columnSpacing: 0
-
-                                        Repeater {
-                                            model: 7
 
                                             Text {
-                                                required property int index
-
                                                 Layout.fillWidth: true
-                                                text: Qt.locale().dayName(index === 6 ? 7 : index + 1, Locale.ShortFormat)
-                                                color: root.accentDeep
-                                                horizontalAlignment: Text.AlignHCenter
+                                                text: root.workspace ? root.workspace.threadTitle : qsTr("Pick one in the sidebar")
+                                                color: root.muted
+                                                elide: Text.ElideRight
                                                 font.family: Theme.fontUi
-                                                font.pixelSize: 10
-                                                font.weight: Font.DemiBold
+                                                font.pixelSize: 11
                                             }
-                                        }
 
-                                        Repeater {
-                                            model: root.calendarCells
-
-                                            Item {
-                                                required property var modelData
-
+                                            Flow {
                                                 Layout.fillWidth: true
-                                                Layout.fillHeight: true
+                                                Layout.topMargin: 4
+                                                spacing: 6
 
-                                                Rectangle {
-                                                    anchors.centerIn: parent
-                                                    width: 24
-                                                    height: 24
-                                                    radius: 12
-                                                    color: root.accent
-                                                    visible: parent.modelData.today
+                                                Chip {
+                                                    objectName: "branchChip"
+                                                    visible: root.workspace !== null && root.workspace.branch !== null
+                                                    kind: "git-branch"
+                                                    text: root.workspace && root.workspace.branch ? root.workspace.branch : ""
                                                 }
 
-                                                Text {
-                                                    anchors.centerIn: parent
-                                                    text: parent.modelData.day
-                                                    color: parent.modelData.today ? root.accentInk : parent.modelData.inMonth ? root.ink : root.line
-                                                    font.family: Theme.fontUi
-                                                    font.pixelSize: 11
-                                                    font.weight: parent.modelData.today ? Font.Bold : Font.Medium
+                                                Chip {
+                                                    visible: root.git !== null && root.git.hasUpstream && (root.git.aheadCount > 0 || root.git.behindCount > 0)
+                                                    text: root.git ? "↑%1 ↓%2".arg(root.git.aheadCount).arg(root.git.behindCount) : ""
+                                                    tint: root.warm
+                                                }
+
+                                                Chip {
+                                                    visible: root.git !== null && root.git.hasWorkingTreeChanges
+                                                    kind: "file-diff"
+                                                    text: qsTr("Edits")
+                                                    tint: root.leaf
+                                                }
+
+                                                Chip {
+                                                    visible: root.git !== null && root.git.pullRequest !== null
+                                                    kind: "git-pull-request"
+                                                    text: root.git && root.git.pullRequest ? "#" + root.git.pullRequest.number : ""
                                                 }
                                             }
                                         }
                                     }
-                                }
-                            }
 
-                            // Thread meters: what is moving, what is waiting on you.
-                            DashCard {
-                                Layout.preferredWidth: 208
-                                Layout.fillHeight: true
-                                order: 3
-
-                                RowLayout {
-                                    anchors.fill: parent
-                                    anchors.topMargin: 4
-                                    spacing: 4
-
-                                    Meter {
+                                    // Today, in the big numerals the rail deserves.
+                                    DashCard {
                                         Layout.fillWidth: true
                                         Layout.fillHeight: true
-                                        label: qsTr("Active")
-                                        order: 0
-                                        value: root.threadCount
-                                        peak: root.meterPeak
-                                        tint: root.accent
-                                    }
-
-                                    Meter {
-                                        Layout.fillWidth: true
-                                        Layout.fillHeight: true
-                                        label: qsTr("Waiting")
                                         order: 1
-                                        value: root.attentionCount
-                                        peak: Math.max(1, root.attentionCount)
-                                        tint: root.warm
-                                    }
 
-                                    Meter {
-                                        Layout.fillWidth: true
-                                        Layout.fillHeight: true
-                                        label: qsTr("Snoozed")
-                                        order: 2
-                                        value: root.sidebarState ? root.sidebarState.snoozed.length : 0
-                                        peak: root.meterPeak
-                                        tint: root.muted
-                                    }
-
-                                    Meter {
-                                        Layout.fillWidth: true
-                                        Layout.fillHeight: true
-                                        label: qsTr("Settled")
-                                        order: 3
-                                        value: root.sidebarState ? root.sidebarState.settledTotal : 0
-                                        peak: root.meterPeak
-                                        tint: root.leaf
-                                    }
-                                }
-                            }
-
-                            // The agent behind the composer, and its transport controls.
-                            DashCard {
-                                Layout.preferredWidth: 200
-                                Layout.minimumWidth: 160
-                                Layout.fillWidth: true
-                                Layout.fillHeight: true
-                                order: 4
-
-                                ColumnLayout {
-                                    anchors.fill: parent
-                                    spacing: 6
-
-                                    // The cat at play while the drawer is up; the agent's
-                                    // initial when Qt Lottie is not installed.
-                                    Item {
-                                        id: mascot
-
-                                        Layout.fillWidth: true
-                                        Layout.preferredHeight: cat.status === Loader.Ready ? cat.item.implicitHeight : 84
-
-                                        Loader {
-                                            id: cat
-
-                                            anchors.fill: parent
-                                            active: drawer.visible
-                                            source: "CatPlaying.qml"
-                                        }
-
-                                        Item {
+                                        ColumnLayout {
                                             anchors.centerIn: parent
-                                            width: 84
-                                            height: 84
-                                            visible: cat.status !== Loader.Ready
+                                            spacing: 0
 
-                                            Rectangle {
-                                                anchors.fill: parent
-                                                radius: 42
-                                                color: root.accentSoft
+                                            Text {
+                                                Layout.alignment: Qt.AlignHCenter
+                                                text: Qt.formatDate(root.now, "dd")
+                                                color: root.accentDeep
+                                                font.family: Theme.fontUi
+                                                font.pixelSize: 44
+                                                font.weight: Font.Bold
+                                                font.letterSpacing: -1
+                                                lineHeight: 0.9
                                             }
 
-                                            Rectangle {
-                                                anchors.fill: parent
-                                                anchors.margins: 5
-                                                radius: 37
-                                                color: root.raised
+                                            Row {
+                                                Layout.alignment: Qt.AlignHCenter
+                                                spacing: 4
 
-                                                Text {
-                                                    anchors.centerIn: parent
-                                                    text: root.instance ? root.initialOf(root.instance.displayName) : "T3"
-                                                    color: root.accentDeep
-                                                    font.family: Theme.fontUi
-                                                    font.pixelSize: 30
-                                                    font.weight: Font.Bold
+                                                Repeater {
+                                                    model: 3
+
+                                                    Rectangle {
+                                                        width: 4
+                                                        height: 4
+                                                        radius: 2
+                                                        color: root.accent
+                                                    }
                                                 }
                                             }
+
+                                            Text {
+                                                Layout.alignment: Qt.AlignHCenter
+                                                text: Qt.formatDate(root.now, "MM")
+                                                color: root.accentDeep
+                                                font.family: Theme.fontUi
+                                                font.pixelSize: 44
+                                                font.weight: Font.Bold
+                                                font.letterSpacing: -1
+                                                lineHeight: 0.9
+                                            }
+
+                                            Text {
+                                                Layout.alignment: Qt.AlignHCenter
+                                                Layout.topMargin: 6
+                                                text: qsTr("%1, wk %2").arg(Qt.formatDate(root.now, "ddd")).arg(root.isoWeek(root.now))
+                                                color: root.muted
+                                                font.family: Theme.fontUi
+                                                font.pixelSize: 11
+                                                font.weight: Font.Medium
+                                            }
+
+                                            Text {
+                                                Layout.alignment: Qt.AlignHCenter
+                                                Layout.topMargin: 2
+                                                text: Qt.formatTime(root.now, "HH:mm")
+                                                color: root.ink
+                                                font.family: Theme.fontMono
+                                                font.pixelSize: 12
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // The month, today circled.
+                                DashCard {
+                                    objectName: "calendarCard"
+                                    Layout.preferredWidth: 280
+                                    Layout.preferredHeight: 312
+                                    Layout.fillWidth: true
+                                    Layout.fillHeight: true
+                                    order: 2
+
+                                    ColumnLayout {
+                                        anchors.fill: parent
+                                        spacing: 6
+
+                                        Text {
+                                            Layout.alignment: Qt.AlignHCenter
+                                            text: Qt.formatDate(root.now, "MMMM yyyy")
+                                            color: root.accentDeep
+                                            font.family: Theme.fontUi
+                                            font.pixelSize: 12
+                                            font.weight: Font.Bold
+                                            font.letterSpacing: 0.4
                                         }
 
-                                        Rectangle {
-                                            anchors.right: parent.right
-                                            anchors.bottom: parent.bottom
-                                            width: 18
-                                            height: 18
-                                            radius: 9
-                                            color: root.card
-                                            border.color: root.line
-                                            border.width: 1
+                                        GridLayout {
+                                            Layout.fillWidth: true
+                                            Layout.fillHeight: true
+                                            columns: 7
+                                            rowSpacing: 0
+                                            columnSpacing: 0
 
-                                            Rectangle {
-                                                anchors.centerIn: parent
-                                                width: 10
-                                                height: 10
-                                                radius: 5
-                                                color: root.attentionCount > 0 ? root.warm : root.composerReady && root.composerState.isRunning ? root.accent : root.leaf
+                                            Repeater {
+                                                model: 7
 
-                                                Behavior on color {
-                                                    ColorAnimation {
-                                                        duration: 160
+                                                Text {
+                                                    required property int index
+
+                                                    Layout.fillWidth: true
+                                                    text: Qt.locale().dayName(index === 6 ? 7 : index + 1, Locale.ShortFormat)
+                                                    color: root.accentDeep
+                                                    horizontalAlignment: Text.AlignHCenter
+                                                    font.family: Theme.fontUi
+                                                    font.pixelSize: 10
+                                                    font.weight: Font.DemiBold
+                                                }
+                                            }
+
+                                            Repeater {
+                                                model: root.calendarCells
+
+                                                Item {
+                                                    required property var modelData
+
+                                                    Layout.fillWidth: true
+                                                    Layout.fillHeight: true
+
+                                                    Rectangle {
+                                                        anchors.centerIn: parent
+                                                        width: 24
+                                                        height: 24
+                                                        radius: 12
+                                                        color: root.accent
+                                                        visible: parent.modelData.today
+                                                    }
+
+                                                    Text {
+                                                        anchors.centerIn: parent
+                                                        text: parent.modelData.day
+                                                        color: parent.modelData.today ? root.accentInk : parent.modelData.inMonth ? root.ink : root.line
+                                                        font.family: Theme.fontUi
+                                                        font.pixelSize: 11
+                                                        font.weight: parent.modelData.today ? Font.Bold : Font.Medium
                                                     }
                                                 }
                                             }
                                         }
                                     }
+                                }
 
-                                    Text {
-                                        Layout.fillWidth: true
-                                        Layout.topMargin: 4
-                                        text: root.composerReady && root.composerState.selectedModel ? root.composerState.selectedModel : qsTr("No model picked")
-                                        color: root.accent
-                                        horizontalAlignment: Text.AlignHCenter
-                                        elide: Text.ElideMiddle
-                                        font.family: Theme.fontUi
-                                        font.pixelSize: 13
-                                        font.weight: Font.Bold
-                                    }
-
-                                    Text {
-                                        Layout.fillWidth: true
-                                        text: root.instance ? root.instance.displayName : qsTr("Open a thread to pick an agent")
-                                        color: root.ink
-                                        horizontalAlignment: Text.AlignHCenter
-                                        elide: Text.ElideRight
-                                        font.family: Theme.fontUi
-                                        font.pixelSize: 11
-                                    }
-
-                                    Text {
-                                        Layout.fillWidth: true
-                                        text: {
-                                            if (!root.composerReady) {
-                                                return "";
-                                            }
-                                            if (root.attentionCount > 0) {
-                                                return qsTr("%n request(s) waiting on you", "", root.attentionCount);
-                                            }
-                                            if (root.composerState.isRunning) {
-                                                return qsTr("Working");
-                                            }
-                                            return root.composerState.runtimeMode.length > 0 ? root.composerState.runtimeMode : qsTr("Ready");
-                                        }
-                                        color: root.attentionCount > 0 ? root.warm : root.muted
-                                        horizontalAlignment: Text.AlignHCenter
-                                        elide: Text.ElideRight
-                                        font.family: Theme.fontUi
-                                        font.pixelSize: 11
-                                        font.weight: Font.Medium
-                                    }
-
-                                    Item {
-                                        Layout.fillHeight: true
-                                    }
+                                // Thread meters: what is moving, what is waiting on you.
+                                DashCard {
+                                    objectName: "metersCard"
+                                    Layout.preferredWidth: 208
+                                    Layout.preferredHeight: 312
+                                    Layout.fillWidth: true
+                                    Layout.fillHeight: true
+                                    order: 3
 
                                     RowLayout {
-                                        Layout.alignment: Qt.AlignHCenter
-                                        spacing: 10
+                                        anchors.fill: parent
+                                        anchors.topMargin: 4
+                                        spacing: 4
 
-                                        RailButton {
-                                            round: true
-                                            kind: "plus"
-                                            text: qsTr("New thread")
-                                            enabled: root.workspace !== null
-                                            opacity: enabled ? 1 : 0.4
-                                            onClicked: {
-                                                Shell.dispatch("workspace.newThread");
-                                                root.drawerOpen = false;
+                                        Meter {
+                                            Layout.fillWidth: true
+                                            Layout.fillHeight: true
+                                            label: qsTr("Active")
+                                            order: 0
+                                            value: root.threadCount
+                                            peak: root.meterPeak
+                                            tint: root.accent
+                                        }
+
+                                        Meter {
+                                            Layout.fillWidth: true
+                                            Layout.fillHeight: true
+                                            label: qsTr("Waiting")
+                                            order: 1
+                                            value: root.attentionCount
+                                            peak: Math.max(1, root.attentionCount)
+                                            tint: root.warm
+                                        }
+
+                                        Meter {
+                                            Layout.fillWidth: true
+                                            Layout.fillHeight: true
+                                            label: qsTr("Snoozed")
+                                            order: 2
+                                            value: root.sidebarState ? root.sidebarState.snoozed.length : 0
+                                            peak: root.meterPeak
+                                            tint: root.muted
+                                        }
+
+                                        Meter {
+                                            Layout.fillWidth: true
+                                            Layout.fillHeight: true
+                                            label: qsTr("Settled")
+                                            order: 3
+                                            value: root.sidebarState ? root.sidebarState.settledTotal : 0
+                                            peak: root.meterPeak
+                                            tint: root.leaf
+                                        }
+                                    }
+                                }
+
+                                // The agent behind the composer, and its transport controls.
+                                DashCard {
+                                    objectName: "agentCard"
+                                    Layout.preferredWidth: 200
+                                    Layout.preferredHeight: 312
+                                    Layout.minimumWidth: 160
+                                    Layout.fillWidth: true
+                                    Layout.fillHeight: true
+                                    order: 4
+
+                                    ColumnLayout {
+                                        anchors.fill: parent
+                                        spacing: 6
+
+                                        // The cat at play while the drawer is up; the agent's
+                                        // initial when Qt Lottie is not installed.
+                                        Item {
+                                            id: mascot
+
+                                            Layout.fillWidth: true
+                                            Layout.preferredHeight: cat.status === Loader.Ready ? cat.item.implicitHeight : 84
+
+                                            Loader {
+                                                id: cat
+
+                                                anchors.fill: parent
+                                                active: drawer.visible
+                                                source: "CatPlaying.qml"
+                                            }
+
+                                            Item {
+                                                anchors.centerIn: parent
+                                                width: 84
+                                                height: 84
+                                                visible: cat.status !== Loader.Ready
+
+                                                Rectangle {
+                                                    anchors.fill: parent
+                                                    radius: 42
+                                                    color: root.accentSoft
+                                                }
+
+                                                Rectangle {
+                                                    anchors.fill: parent
+                                                    anchors.margins: 5
+                                                    radius: 37
+                                                    color: root.raised
+
+                                                    Text {
+                                                        anchors.centerIn: parent
+                                                        text: root.instance ? root.initialOf(root.instance.displayName) : "T3"
+                                                        color: root.accentDeep
+                                                        font.family: Theme.fontUi
+                                                        font.pixelSize: 30
+                                                        font.weight: Font.Bold
+                                                    }
+                                                }
+                                            }
+
+                                            Rectangle {
+                                                anchors.right: parent.right
+                                                anchors.bottom: parent.bottom
+                                                width: 18
+                                                height: 18
+                                                radius: 9
+                                                color: root.card
+                                                border.color: root.line
+                                                border.width: 1
+
+                                                Rectangle {
+                                                    anchors.centerIn: parent
+                                                    width: 10
+                                                    height: 10
+                                                    radius: 5
+                                                    color: root.attentionCount > 0 ? root.warm : root.composerReady && root.composerState.isRunning ? root.accent : root.leaf
+
+                                                    Behavior on color {
+                                                        ColorAnimation {
+                                                            duration: 160
+                                                        }
+                                                    }
+                                                }
                                             }
                                         }
 
-                                        RailButton {
-                                            round: true
-                                            kind: "square"
-                                            text: qsTr("Stop the agent")
-                                            active: true
-                                            enabled: root.composerReady && root.composerState.isRunning
-                                            opacity: enabled ? 1 : 0.4
-                                            onClicked: Shell.dispatch("composer.interrupt")
+                                        Text {
+                                            Layout.fillWidth: true
+                                            Layout.topMargin: 4
+                                            text: root.composerReady && root.composerState.selectedModel ? root.composerState.selectedModel : qsTr("No model picked")
+                                            color: root.accent
+                                            horizontalAlignment: Text.AlignHCenter
+                                            elide: Text.ElideMiddle
+                                            font.family: Theme.fontUi
+                                            font.pixelSize: 13
+                                            font.weight: Font.Bold
                                         }
 
-                                        RailButton {
-                                            round: true
-                                            kind: "code"
-                                            text: qsTr("Open in editor")
-                                            enabled: root.workspace !== null && root.workspace.editors.length > 0
-                                            opacity: enabled ? 1 : 0.4
-                                            onClicked: Shell.dispatch("workspace.openInEditor", {})
+                                        Text {
+                                            Layout.fillWidth: true
+                                            text: root.instance ? root.instance.displayName : qsTr("Open a thread to pick an agent")
+                                            color: root.ink
+                                            horizontalAlignment: Text.AlignHCenter
+                                            elide: Text.ElideRight
+                                            font.family: Theme.fontUi
+                                            font.pixelSize: 11
+                                        }
+
+                                        Text {
+                                            Layout.fillWidth: true
+                                            text: {
+                                                if (!root.composerReady) {
+                                                    return "";
+                                                }
+                                                if (root.attentionCount > 0) {
+                                                    return qsTr("%n request(s) waiting on you", "", root.attentionCount);
+                                                }
+                                                if (root.composerState.isRunning) {
+                                                    return qsTr("Working");
+                                                }
+                                                return root.composerState.runtimeMode.length > 0 ? root.composerState.runtimeMode : qsTr("Ready");
+                                            }
+                                            color: root.attentionCount > 0 ? root.warm : root.muted
+                                            horizontalAlignment: Text.AlignHCenter
+                                            elide: Text.ElideRight
+                                            font.family: Theme.fontUi
+                                            font.pixelSize: 11
+                                            font.weight: Font.Medium
+                                        }
+
+                                        Item {
+                                            Layout.fillHeight: true
+                                        }
+
+                                        RowLayout {
+                                            objectName: "agentActions"
+                                            Layout.alignment: Qt.AlignHCenter
+                                            spacing: 10
+
+                                            RailButton {
+                                                round: true
+                                                kind: "plus"
+                                                text: qsTr("New thread")
+                                                enabled: root.workspace !== null
+                                                opacity: enabled ? 1 : 0.4
+                                                onClicked: {
+                                                    Shell.dispatch("workspace.newThread");
+                                                    root.drawerOpen = false;
+                                                }
+                                            }
+
+                                            RailButton {
+                                                round: true
+                                                kind: "square"
+                                                text: qsTr("Stop the agent")
+                                                active: true
+                                                enabled: root.composerReady && root.composerState.isRunning
+                                                opacity: enabled ? 1 : 0.4
+                                                onClicked: Shell.dispatch("composer.interrupt")
+                                            }
+
+                                            RailButton {
+                                                round: true
+                                                kind: "code"
+                                                text: qsTr("Open in editor")
+                                                enabled: root.workspace !== null && root.workspace.editors.length > 0
+                                                opacity: enabled ? 1 : 0.4
+                                                onClicked: Shell.dispatch("workspace.openInEditor", {})
+                                            }
                                         }
                                     }
                                 }

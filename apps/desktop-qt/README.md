@@ -18,3 +18,8 @@ cmake -S apps/desktop-qt/tests/native -B apps/desktop-qt/build/tests/native
 cmake --build apps/desktop-qt/build/tests/native
 ctest --test-dir apps/desktop-qt/build/tests/native --output-on-failure
 ```
+
+`ShellRuntime` covers reload and theme ownership. `ShellExamples` loads all
+four examples at 640, 1000, and 1400 pixels, checking header text and dashboard
+card bounds, long branch names, clipped icons, and scrolling to the last card. It uses a local
+view-model fixture and a blank web page; no running server or pairing is needed.
