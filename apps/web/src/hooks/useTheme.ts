@@ -99,13 +99,6 @@ function themeHalvesSignature(halves: ThemeHalves | null): string {
   return `${halves?.light ?? ""}|${halves?.dark ?? ""}`;
 }
 
-function isOnboardingThemeActive(): boolean {
-  return (
-    typeof document !== "undefined" &&
-    document.documentElement.dataset?.onboardingSurface !== undefined
-  );
-}
-
 const THEME_COLOR_META_NAME = "theme-color";
 const DYNAMIC_THEME_COLOR_SELECTOR = `meta[name="${THEME_COLOR_META_NAME}"][data-dynamic-theme-color="true"]`;
 
@@ -300,22 +293,15 @@ function resolveBrowserChromeSurface(): HTMLElement {
 
 export function syncBrowserChromeTheme() {
   if (typeof document === "undefined" || typeof getComputedStyle === "undefined") return;
-  const onboardingActive = isOnboardingThemeActive();
   const rootStyles = getComputedStyle(document.documentElement);
-  const themeChromeColor =
-    !onboardingActive && document.documentElement.dataset.themeId
-      ? normalizeThemeColor(rootStyles.getPropertyValue("--app-chrome-background"))
-      : null;
+  const themeChromeColor = document.documentElement.dataset.themeId
+    ? normalizeThemeColor(rootStyles.getPropertyValue("--app-chrome-background"))
+    : null;
   const surfaceColor = normalizeThemeColor(
     getComputedStyle(resolveBrowserChromeSurface()).backgroundColor,
   );
   const fallbackColor = normalizeThemeColor(getComputedStyle(document.body).backgroundColor);
-  // Dark onboarding pins a true-black canvas; light onboarding uses the
-  // default light palette and reads it back from the document like the app.
-  const backgroundColor =
-    onboardingActive && document.documentElement.classList.contains("dark")
-      ? "#000"
-      : (themeChromeColor ?? surfaceColor ?? fallbackColor);
+  const backgroundColor = themeChromeColor ?? surfaceColor ?? fallbackColor;
   if (!backgroundColor) return;
 
   document.documentElement.style.backgroundColor = backgroundColor;
@@ -336,13 +322,8 @@ export function syncBrowserChromeTheme() {
 
 function applyTheme(theme: Theme, { suppressTransitions = false, preservePreview = true } = {}) {
   if (typeof document === "undefined" || typeof window === "undefined") return;
-  const onboardingActive = isOnboardingThemeActive();
   // Keep the editor's draft visible until an explicit refresh restores the selection.
-  if (
-    preservePreview &&
-    !onboardingActive &&
-    document.documentElement.dataset?.themeId === THEME_PREVIEW_ID
-  ) {
+  if (preservePreview && document.documentElement.dataset?.themeId === THEME_PREVIEW_ID) {
     return;
   }
   const appearanceMode = readAppearanceModePreference(theme);
@@ -370,11 +351,7 @@ function applyTheme(theme: Theme, { suppressTransitions = false, preservePreview
     appearanceMode,
     themeHalves,
   );
-  // Onboarding follows the saved light/dark appearance but never applies a
-  // custom palette, so the wizard keeps its fixed neutral tokens.
-  if (!onboardingActive) {
-    applyThemePalette(resolveThemeHalf(theme, themeHalves, resolvedAppearance), resolvedAppearance);
-  }
+  applyThemePalette(resolveThemeHalf(theme, themeHalves, resolvedAppearance), resolvedAppearance);
   document.documentElement.classList.toggle("dark", resolvedAppearance === "dark");
   lastAppliedTheme = { theme, systemDark, followSystem, appearanceMode, themeHalves };
   syncBrowserChromeTheme();
@@ -386,32 +363,6 @@ function applyTheme(theme: Theme, { suppressTransitions = false, preservePreview
       document.documentElement.classList.remove("no-transitions");
     });
   }
-}
-
-/**
- * Own the document-wide palette used by the first-run wizard and its portals.
- * The wizard follows the saved light or dark appearance (and system changes)
- * but drops any custom theme palette until the returned cleanup runs.
- */
-export function mountOnboardingTheme(): () => void {
-  if (typeof document === "undefined" || typeof window === "undefined") return () => {};
-
-  const root = document.documentElement;
-  // "system" is a reserved id with no palette, so this clears theme variables.
-  applyThemePalette("system");
-  root.dataset.onboardingSurface = "";
-  lastAppliedTheme = null;
-  applyTheme(getStored(), { preservePreview: false });
-  emitChange();
-
-  return () => {
-    delete root.dataset.onboardingSurface;
-    root.style.backgroundColor = "";
-    document.body.style.backgroundColor = "";
-    lastAppliedTheme = null;
-    applyTheme(getStored(), { suppressTransitions: true, preservePreview: false });
-    emitChange();
-  };
 }
 
 export async function syncDesktopThemePreference(
