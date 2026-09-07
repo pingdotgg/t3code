@@ -813,6 +813,39 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
   });
 
   describe("review diff previews", () => {
+    for (const objectFormat of ["sha1", "sha256"]) {
+      it.effect(
+        `includes staged files and their current contents before the first ${objectFormat} commit`,
+        () =>
+          Effect.gen(function* () {
+            const cwd = yield* makeTmpDir();
+            const driver = yield* GitVcsDriver.GitVcsDriver;
+            yield* git(cwd, ["init", `--object-format=${objectFormat}`]);
+            yield* writeTextFile(cwd, "staged.txt", "staged version\n");
+            yield* writeTextFile(cwd, "deleted.txt", "removed after staging\n");
+            yield* git(cwd, ["add", "."]);
+            yield* writeTextFile(cwd, "staged.txt", "current version\n");
+            const fileSystem = yield* FileSystem.FileSystem;
+            const path = yield* Path.Path;
+            yield* fileSystem.remove(path.join(cwd, "deleted.txt"));
+            yield* writeTextFile(cwd, "untracked.txt", "untracked version\n");
+
+            const preview = yield* driver.getReviewDiffPreview({ cwd, ignoreWhitespace: false });
+            const workingTree = preview.sources.find((source) => source.kind === "working-tree");
+            assert.include(workingTree?.diff, "+++ b/staged.txt");
+            assert.include(workingTree?.diff, "+current version");
+            assert.include(workingTree?.diff, "+++ b/untracked.txt");
+            assert.notInclude(workingTree?.diff, "staged version");
+            assert.notInclude(workingTree?.diff, "deleted.txt");
+            assert.equal(workingTree?.truncated, false);
+            assert.equal(
+              preview.sources.find((source) => source.kind === "branch-range")?.diff,
+              "",
+            );
+          }),
+      );
+    }
+
     it.effect("drops an unterminated path from truncated NUL-separated git output", () =>
       Effect.sync(() => {
         const paths = splitNullSeparatedGitStdoutPaths({

@@ -2289,26 +2289,44 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           )
         : null);
 
-    const dirtyTrackedResult = yield* executeGit(
-      "GitVcsDriver.getReviewDiffPreview.dirtyTracked",
-      input.cwd,
-      [
-        "diff",
-        "--patch",
-        "--no-color",
-        "--no-ext-diff",
-        "--no-textconv",
-        "--minimal",
-        ...PATCH_RENDER_PREFIX_ARGS,
-        ...(input.ignoreWhitespace ? ["--ignore-all-space"] : []),
-        "HEAD",
-        "--",
-      ],
-      {
-        maxOutputBytes: REVIEW_DIFF_PATCH_MAX_OUTPUT_BYTES,
-        appendTruncationMarker: true,
-      },
-    ).pipe(
+    const readTrackedDiff = (revision: string, allowNonZeroExit = false) =>
+      executeGitWithStableDiagnostics(
+        "GitVcsDriver.getReviewDiffPreview.dirtyTracked",
+        input.cwd,
+        [
+          "diff",
+          "--patch",
+          "--no-color",
+          "--no-ext-diff",
+          "--no-textconv",
+          "--minimal",
+          ...PATCH_RENDER_PREFIX_ARGS,
+          ...(input.ignoreWhitespace ? ["--ignore-all-space"] : []),
+          revision,
+          "--",
+        ],
+        {
+          allowNonZeroExit,
+          maxOutputBytes: REVIEW_DIFF_PATCH_MAX_OUTPUT_BYTES,
+          appendTruncationMarker: true,
+        },
+      );
+    const dirtyTrackedResult = yield* readTrackedDiff("HEAD", true).pipe(
+      Effect.flatMap(
+        Effect.fn(function* (result) {
+          if (result.exitCode === 0) return result;
+          if (!isUnbornHeadStderr(result.stderr)) return { ...result, stdout: "" };
+          // An unborn branch has no HEAD, but staged files still need a combined
+          // index/worktree diff. Derive the empty tree for the repo's object format.
+          const emptyTree = yield* runGitStdoutWithOptions(
+            "GitVcsDriver.getReviewDiffPreview.emptyTree",
+            input.cwd,
+            ["hash-object", "-t", "tree", "--stdin"],
+            { stdin: "" },
+          );
+          return yield* readTrackedDiff(emptyTree.trim());
+        }),
+      ),
       Effect.orElseSucceed(() => ({
         exitCode: 0,
         stdout: "",
