@@ -1,6 +1,5 @@
 import {
   CommandId,
-  ModelSelection,
   ProjectId,
   type Project,
   type ProjectCreatePayload,

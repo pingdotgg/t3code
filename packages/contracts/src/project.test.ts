@@ -13,6 +13,9 @@ import {
   ProjectWriteFileError,
 } from "./project.ts";
 
+const decodeProjectCreatePayload = Schema.decodeUnknownSync(ProjectCreatePayload);
+const decodeProjectUpdatePayload = Schema.decodeUnknownSync(ProjectUpdatePayload);
+const decodeProjectMutation = Schema.decodeUnknownSync(ProjectMutation);
 const decodeSearchEntriesInput = Schema.decodeUnknownSync(ProjectSearchEntriesInput);
 const decodeSearchContentsInput = Schema.decodeUnknownSync(ProjectSearchContentsInput);
 
@@ -113,26 +116,25 @@ describe("project RPC errors", () => {
 
 describe("shared project payloads", () => {
   it("preserves omitted, false, and null values through RPC envelopes", () => {
-    const create = Schema.decodeUnknownSync(ProjectCreatePayload)({
+    const create = decodeProjectCreatePayload({
       title: " Example ",
       workspaceRoot: "/workspace",
       createWorkspaceRootIfMissing: false,
     });
-    const update = Schema.decodeUnknownSync(ProjectUpdatePayload)({
+    const update = decodeProjectUpdatePayload({
       autoPull: false,
       defaultModelSelection: null,
       faviconPath: null,
     });
     const envelope = { commandId: "command", projectId: "project" };
-    const decode = Schema.decodeUnknownSync(ProjectMutation);
-    expect(decode({ type: "project.create", ...envelope, ...create })).toEqual({
+    expect(decodeProjectMutation({ type: "project.create", ...envelope, ...create })).toEqual({
       type: "project.create",
       ...envelope,
       title: "Example",
       workspaceRoot: "/workspace",
       createWorkspaceRootIfMissing: false,
     });
-    expect(decode({ type: "project.update", ...envelope, ...update })).toEqual({
+    expect(decodeProjectMutation({ type: "project.update", ...envelope, ...update })).toEqual({
       type: "project.update",
       ...envelope,
       autoPull: false,
@@ -142,9 +144,8 @@ describe("shared project payloads", () => {
     expect(Object.hasOwn(create, "scripts")).toBe(false);
     expect(Object.hasOwn(update, "title")).toBe(false);
     // Internal RPC callers may explicitly supply undefined, as before the extraction.
-    expect(decode({ type: "project.update", ...envelope, title: undefined })).toHaveProperty(
-      "title",
-      undefined,
-    );
+    expect(
+      decodeProjectMutation({ type: "project.update", ...envelope, title: undefined }),
+    ).toHaveProperty("title", undefined);
   });
 });
