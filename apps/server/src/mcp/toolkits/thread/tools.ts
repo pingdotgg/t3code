@@ -1,4 +1,6 @@
 import {
+  RuntimeRequestId,
+  ProviderUserInputAnswers,
   IsoDateTime,
   OrchestratorMcpFailure,
   OrchestrationV2DispatchCommandResult,
@@ -101,7 +103,57 @@ export const QueuePromoteTool = Tool.make("t3_queue_promote_to_steer", {
   parameters: Schema.Struct({ ...queueTarget, targetRunId: RunId }),
 }).annotate(Tool.Destructive, true);
 
+const requestTarget = { threadId: Schema.optional(ThreadId), requestId: RuntimeRequestId };
+const question = Schema.Struct({
+  id: Schema.String,
+  header: Schema.String,
+  question: Schema.String,
+  options: Schema.Array(
+    Schema.Struct({
+      label: Schema.String,
+      description: Schema.String,
+      value: Schema.optional(Schema.String),
+    }),
+  ),
+  multiSelect: Schema.optional(Schema.Boolean),
+  allowCustomAnswer: Schema.optional(Schema.Boolean),
+  required: Schema.optional(Schema.Boolean),
+});
+const pendingRequest = Schema.Struct({
+  requestId: RuntimeRequestId,
+  questions: Schema.Array(question),
+});
+export const PendingRequestListTool = Tool.make("t3_pending_request_list", {
+  ...commandTool,
+  description:
+    "List pending user questions in a thread in the calling project. Approval requests are not included.",
+  parameters: Schema.Struct({ threadId: Schema.optional(ThreadId) }),
+  success: Schema.Struct({ requestIds: Schema.Array(RuntimeRequestId) }),
+})
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false);
+export const PendingRequestReadTool = Tool.make("t3_pending_request_read", {
+  ...commandTool,
+  description:
+    "Read a pending user question. Answer with t3_pending_request_respond; existing live or message response handling is used.",
+  parameters: Schema.Struct(requestTarget),
+  success: pendingRequest,
+})
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false);
+export const PendingRequestRespondTool = Tool.make("t3_pending_request_respond", {
+  ...commandTool,
+  description:
+    "Answer a pending user-input request using the existing runtime response command. This cannot approve a permission request.",
+  parameters: Schema.Struct({ ...requestTarget, answers: ProviderUserInputAnswers }),
+})
+  .annotate(Tool.Destructive, true)
+  .annotate(Tool.OpenWorld, true);
+
 export const ThreadToolkit = Toolkit.make(
+  PendingRequestListTool,
+  PendingRequestReadTool,
+  PendingRequestRespondTool,
   ThreadOrganizeTool,
   QueueListTool,
   QueueReadTool,
