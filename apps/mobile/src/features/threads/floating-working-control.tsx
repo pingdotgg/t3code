@@ -6,6 +6,7 @@ import {
   type LayoutChangeEvent,
   Pressable,
   Text as SystemText,
+  useWindowDimensions,
   View,
 } from "react-native";
 import Animated, {
@@ -65,6 +66,9 @@ export function FloatingWorkingControl(props: {
   readonly showScrollToEnd: boolean;
   readonly onScrollToEnd: () => void;
 }) {
+  const { width: windowWidth } = useWindowDimensions();
+  const [overlayWidth, setOverlayWidth] = useState(windowWidth);
+  const labelWidth = Math.max(0, Math.min(overlayWidth, windowWidth) - CONTROL_HEIGHT - 16);
   const separationProgress = useSharedValue(props.showScrollToEnd ? 1 : 0);
 
   useEffect(() => {
@@ -78,17 +82,10 @@ export function FloatingWorkingControl(props: {
     opacity: separationProgress.value,
   }));
 
-  // The label swaps between connection, syncing, compacting, and working while
-  // the capsule stays mounted. A layout transition on the capsule would move
-  // its left edge, and labels laid out from that edge slide with it, so the pill
-  // reads as shifting sideways. Instead an in-flow sizer animates to the
-  // measured label width and the capsule takes its size from that, while the
-  // labels sit centered on top. The row re-centers as the capsule grows, so its
-  // midpoint never moves and the text underneath stays put.
-  //
-  // The sizer has to carry the width rather than the capsule itself: the native
-  // glass view only picks up a size from a real layout pass, so an animated
-  // width set straight on it leaves the glass stuck at its mounted size.
+  // Animate an in-flow sizer so native glass receives real layout updates.
+  // Measure labels in a separate, fixed-width host: measuring against the
+  // animated capsule constrains the incoming text to each intermediate width
+  // and repeatedly retargets the animation as it grows.
   const capsuleWidth = useSharedValue<number | null>(null);
   const measuredWidthRef = useRef<number | null>(null);
   const handleLabelLayout = (event: LayoutChangeEvent) => {
@@ -123,15 +120,27 @@ export function FloatingWorkingControl(props: {
   // Only the connection label is a button (tap to reconnect); the others
   // pass touches through to the feed like before.
   const statusInteractive = props.status?.kind === "connection";
-  // Yoga centers an absolute child that has no insets on its parent's align and
-  // justify, so each label row lands centered on the capsule without measuring
-  // itself, and the capsule clips whatever a wider label overhangs while it
-  // catches up.
+  // The host stays centered on the capsule, but its measurement constraint
+  // comes from the overlay, independent of the capsule's current width.
   const statusContent =
     props.status !== null ? (
       <>
         <Animated.View className="h-11" style={capsuleSizerStyle} />
-        <FloatingStatusLabel status={props.status} onLayout={handleLabelLayout} />
+        <View
+          pointerEvents="box-none"
+          className="absolute h-11 items-center justify-center"
+          style={{ width: labelWidth }}
+        >
+          <FloatingStatusLabel
+            key={
+              props.status.kind === "working" || props.status.kind === "compacting"
+                ? props.status.kind
+                : `${props.status.kind}:${props.status.label}`
+            }
+            status={props.status}
+            onLayout={handleLabelLayout}
+          />
+        </View>
       </>
     ) : null;
 
@@ -140,6 +149,7 @@ export function FloatingWorkingControl(props: {
       pointerEvents="box-none"
       className="absolute left-0 right-0 z-20 items-center"
       style={{ top: -CONTROL_OVERLAY_OFFSET }}
+      onLayout={(event) => setOverlayWidth(event.nativeEvent.layout.width)}
       entering={NATIVE_LIQUID_GLASS_SUPPORTED ? undefined : CONTROL_ENTERING}
       exiting={NATIVE_LIQUID_GLASS_SUPPORTED ? undefined : CONTROL_EXITING}
     >
@@ -252,7 +262,9 @@ function FloatingStatusLabel(props: {
         onLayout={props.onLayout}
       >
         <ActivityIndicator size="small" colorClassName="accent-icon-muted" />
-        <Text className="font-t3-medium text-xs text-foreground">{props.status.label}</Text>
+        <Text className="shrink font-t3-medium text-xs text-foreground" numberOfLines={1}>
+          {props.status.label}
+        </Text>
       </StatusLabelRow>
     );
   }
@@ -274,7 +286,10 @@ function FloatingStatusLabel(props: {
         ) : (
           <View className="h-2 w-2 rounded-full bg-red-500" />
         )}
-        <Text className="max-w-[260px] font-t3-medium text-xs text-foreground" numberOfLines={1}>
+        <Text
+          className="max-w-[260px] shrink font-t3-medium text-xs text-foreground"
+          numberOfLines={1}
+        >
           {props.status.label}
         </Text>
       </StatusLabelRow>
@@ -311,8 +326,7 @@ function FloatingStatusLabel(props: {
   );
 }
 
-// Rows are absolute with no insets, so the capsule centers them on itself and an
-// exiting row fading out never shifts the incoming one.
+// Absolute rows cross-fade around the same center without affecting each other.
 function StatusLabelRow(props: {
   readonly accessibilityLabel: string;
   readonly accessibilityRole?: "button";
@@ -324,7 +338,7 @@ function StatusLabelRow(props: {
   const rowClassName = `h-11 flex-row items-center px-4 ${props.className ?? ""}`;
   return (
     <Animated.View
-      className="absolute"
+      className="absolute max-w-full"
       entering={LABEL_ENTERING}
       exiting={LABEL_EXITING}
       onLayout={props.onLayout}
