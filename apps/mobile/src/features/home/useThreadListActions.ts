@@ -5,6 +5,7 @@ import * as Haptics from "expo-haptics";
 import { useCallback, useRef } from "react";
 import { Alert } from "react-native";
 
+import { withThreadDismissal } from "./thread-dismissal";
 import { showConfirmDialog } from "../../components/ConfirmDialogHost";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { refreshArchivedThreadsForEnvironment } from "../archive/useArchivedThreadSnapshots";
@@ -131,26 +132,30 @@ function useThreadActionExecutor(
           );
           return false;
         }
-        const result =
-          action === "unsettle"
-            ? // reason "user" pins the thread active: auto-settle stays
-              // suppressed until real activity clears the pin server-side.
-              await unsettleMutation({
-                environmentId: thread.environmentId,
-                input: { threadId: thread.id, reason: "user" },
-              })
-            : await (
-                action === "settle"
-                  ? settleMutation
-                  : action === "archive"
-                    ? archiveMutation
-                    : action === "unarchive"
-                      ? unarchiveMutation
-                      : deleteMutation
-              )({
-                environmentId: thread.environmentId,
-                input: { threadId: thread.id },
-              });
+        const result = await withThreadDismissal(
+          key,
+          async () =>
+            action === "unsettle"
+              ? // reason "user" pins the thread active: auto-settle stays
+                // suppressed until real activity clears the pin server-side.
+                await unsettleMutation({
+                  environmentId: thread.environmentId,
+                  input: { threadId: thread.id, reason: "user" },
+                })
+              : await (
+                  action === "settle"
+                    ? settleMutation
+                    : action === "archive"
+                      ? archiveMutation
+                      : action === "unarchive"
+                        ? unarchiveMutation
+                        : deleteMutation
+                )({
+                  environmentId: thread.environmentId,
+                  input: { threadId: thread.id },
+                }),
+          (result) => result._tag === "Success",
+        );
         if (result._tag === "Failure") {
           Alert.alert(actionFailureTitle(action), actionFailureMessage(action, result.cause));
           return false;
@@ -275,13 +280,18 @@ export function useThreadListActions(): {
         }
 
         selectionHaptic();
-        const result = await snoozeMutation({
-          environmentId: thread.environmentId,
-          input: {
-            threadId: thread.id,
-            snoozedUntil,
-          },
-        });
+        const result = await withThreadDismissal(
+          key,
+          () =>
+            snoozeMutation({
+              environmentId: thread.environmentId,
+              input: {
+                threadId: thread.id,
+                snoozedUntil,
+              },
+            }),
+          (result) => result._tag === "Success",
+        );
         if (result._tag === "Failure") {
           const error = Cause.squash(result.cause);
           Alert.alert(
@@ -316,10 +326,15 @@ export function useThreadListActions(): {
         }
 
         selectionHaptic();
-        const result = await unsnoozeMutation({
-          environmentId: thread.environmentId,
-          input: { threadId: thread.id, reason: "user" },
-        });
+        const result = await withThreadDismissal(
+          key,
+          () =>
+            unsnoozeMutation({
+              environmentId: thread.environmentId,
+              input: { threadId: thread.id, reason: "user" },
+            }),
+          (result) => result._tag === "Success",
+        );
         if (result._tag === "Failure") {
           const error = Cause.squash(result.cause);
           Alert.alert(
