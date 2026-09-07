@@ -20,7 +20,7 @@ afterEach(async () => {
 });
 
 describe("retained shell embed navigation", () => {
-  it.each(["terminal", "rightPanel"] as const)(
+  it.each(["terminal", "panel"] as const)(
     "follows %s thread publications without a document reload",
     async (surface) => {
       const first = {
