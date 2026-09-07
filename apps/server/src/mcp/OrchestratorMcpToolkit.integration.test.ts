@@ -613,7 +613,10 @@ describe("orchestrator MCP toolkit", () => {
               runNow: () => Effect.die("ScheduledTaskService.runNow is unused in this test"),
             }),
           );
-          const testLayer = McpHttpServer.OrchestratorToolkitRegistrationLive.pipe(
+          const testLayer = Layer.merge(
+            McpHttpServer.OrchestratorToolkitRegistrationLive,
+            McpHttpServer.ThreadToolkitRegistrationLive,
+          ).pipe(
             Layer.provideMerge(McpServer.McpServer.layer),
             Layer.provideMerge(orchestrationLayer),
             Layer.provide(providerRegistryLayer),
@@ -682,6 +685,12 @@ describe("orchestrator MCP toolkit", () => {
                 );
             const invoke = (name: string, args: Record<string, unknown>) =>
               invokeAs(invocation, name, args);
+
+            const pinned = yield* invoke("t3_thread_organize", { action: "pin" });
+            expect(pinned.structuredContent).toHaveProperty("sequence");
+            expect((yield* orchestrator.getThreadShell(parentThreadId))?.pinnedAt).not.toBeNull();
+            yield* invoke("t3_thread_organize", { action: "unpin" });
+            expect((yield* orchestrator.getThreadShell(parentThreadId))?.pinnedAt).toBeNull();
 
             if (parentRun === undefined || parentRun.rootNodeId === null) {
               return yield* Effect.die(new Error("Parent run missing."));
@@ -2126,6 +2135,15 @@ describe("orchestrator MCP toolkit", () => {
               branch: null,
               worktreePath: cwd,
             });
+            const foreignOrganizeCall = yield* invoke("t3_thread_organize", {
+              threadId: foreignThreadId,
+              action: "pin",
+            });
+            expect(foreignOrganizeCall.structuredContent).toMatchObject({
+              code: "thread_not_found",
+            });
+            expect((yield* orchestrator.getThreadShell(foreignThreadId))?.pinnedAt).toBeNull();
+
             const foreignReadCall = yield* invoke("t3_thread_read", {
               threadId: foreignThreadId,
             });
