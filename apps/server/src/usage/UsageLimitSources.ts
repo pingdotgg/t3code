@@ -13,15 +13,16 @@
  */
 import {
   DEFAULT_PROVIDER_HEALTH_REFRESH_INTERVAL,
+  UsageLimitSourceError,
+  type UsageLimitSourceConsumeResetCreditInput,
+  type ProviderConsumeResetCreditResult,
   type ServerSettings,
   type UsageLimitSourceConfig,
   type UsageLimitSourceId,
   type UsageLimitSourceSnapshot,
 } from "@t3tools/contracts";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
-import type * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
-import * as Data from "effect/Data";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -30,16 +31,11 @@ import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Semaphore from "effect/Semaphore";
-import type * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { HttpClient, type HttpClientError, HttpClientResponse } from "effect/unstable/http";
 
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
-import { cliproxyStatusToAccounts, decodeCliproxyQuotaStatus } from "./cliproxyUsageLimits.ts";
-
-const FETCH_TIMEOUT = "10 seconds";
-const QUOTA_STATUS_PATH = "/v0/management/quota-scheduler/status";
+import { makeCliproxyApi } from "./cliproxyApi.ts";
 
 export class UsageLimitSources extends Context.Service<
   UsageLimitSources,
@@ -49,34 +45,11 @@ export class UsageLimitSources extends Context.Service<
     readonly streamChanges: Stream.Stream<ReadonlyArray<UsageLimitSourceSnapshot>>;
     /** Re-read every source now. Never fails; failures land on the snapshot. */
     readonly refresh: Effect.Effect<void>;
+    readonly consumeResetCredit: (
+      input: UsageLimitSourceConsumeResetCreditInput,
+    ) => Effect.Effect<ProviderConsumeResetCreditResult, UsageLimitSourceError>;
   }
 >()("t3/usage/UsageLimitSources") {}
-
-/**
- * A bounded, client-safe reason for a failed hub read. The exact failure
- * (which can carry the request URL and response body) goes to the log.
- */
-function readFailureMessage(
-  error: HttpClientError.HttpClientError | Schema.SchemaError | Cause.TimeoutError | InvalidUrl,
-): string {
-  switch (error._tag) {
-    case "InvalidUrl":
-      return "The hub URL is not valid.";
-    case "TimeoutError":
-      return "The hub did not answer in time.";
-    case "SchemaError":
-      return "The hub answered with an unexpected shape.";
-    case "HttpClientError":
-      return error.reason._tag === "StatusCodeError"
-        ? `The hub refused the request (HTTP ${error.reason.response.status}).`
-        : "The hub could not be reached.";
-  }
-}
-
-class InvalidUrl extends Data.TaggedError("InvalidUrl")<{
-  readonly url: string;
-  readonly cause: unknown;
-}> {}
 
 function sourceLabel(id: string, config: UsageLimitSourceConfig): string {
   if (config.label) return config.label;
@@ -88,7 +61,7 @@ function sourceLabel(id: string, config: UsageLimitSourceConfig): string {
 }
 
 export const make = Effect.gen(function* () {
-  const httpClient = yield* HttpClient.HttpClient;
+  const api = yield* makeCliproxyApi;
   const settingsService = yield* ServerSettingsService;
   const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
   const stateRef = yield* Ref.make<ReadonlyArray<UsageLimitSourceSnapshot>>([]);
@@ -106,23 +79,10 @@ export const make = Effect.gen(function* () {
     if (config.managementKey.length === 0) {
       return { ...base, accounts: [], error: "No management key configured." };
     }
-    const accounts = yield* Effect.try({
-      try: () => new URL(QUOTA_STATUS_PATH, config.url).toString(),
-      catch: (cause) => new InvalidUrl({ url: config.url, cause }),
-    }).pipe(
-      Effect.flatMap((url) =>
-        httpClient.get(url, { headers: { Authorization: `Bearer ${config.managementKey}` } }),
-      ),
-      Effect.flatMap(HttpClientResponse.filterStatusOk),
-      Effect.flatMap((response) => response.json),
-      Effect.flatMap(decodeCliproxyQuotaStatus),
-      Effect.map((status) => cliproxyStatusToAccounts(status, checkedAt)),
-      Effect.timeout(FETCH_TIMEOUT),
-      Effect.result,
-    );
+    const accounts = yield* api.readAccounts(config).pipe(Effect.result);
     if (accounts._tag === "Failure") {
       yield* Effect.logDebug("usage limit source read failed", { id, cause: accounts.failure });
-      return { ...base, accounts: [], error: readFailureMessage(accounts.failure) };
+      return { ...base, accounts: [], error: accounts.failure.detail };
     }
     return { ...base, accounts: accounts.success };
   });
@@ -154,6 +114,27 @@ export const make = Effect.gen(function* () {
     yield* publish(snapshots);
   }).pipe(refreshLock.withPermits(1), Effect.ignoreCause({ log: true }));
 
+  // Shares the refresh lock so a stale in-flight read cannot overwrite a redemption.
+  const consumeResetCredit = (input: UsageLimitSourceConsumeResetCreditInput) =>
+    Effect.gen(function* () {
+      const settings = yield* settingsService.getSettings.pipe(
+        Effect.mapError(
+          () => new UsageLimitSourceError({ detail: "Could not read hub settings." }),
+        ),
+      );
+      const config = settings.usageLimitSources[input.sourceId];
+      if (!config?.enabled || !config.managementKey) {
+        return yield* new UsageLimitSourceError({
+          detail: "The usage limit source is missing or disabled.",
+        });
+      }
+      const result = yield* api.consume(config, input.accountId, input.creditId);
+      const snapshot = yield* readSource(input.sourceId, config);
+      const previous = yield* Ref.get(stateRef);
+      yield* publish(previous.map((source) => (source.id === input.sourceId ? snapshot : source)));
+      return result;
+    }).pipe(refreshLock.withPermits(1));
+
   // Settings edits re-read straight away so a new hub shows up without
   // waiting for the interval, and a removed one leaves the list.
   yield* settingsService.streamChanges.pipe(
@@ -184,6 +165,7 @@ export const make = Effect.gen(function* () {
 
   return {
     current: Ref.get(stateRef),
+    consumeResetCredit,
     refresh,
     get streamChanges() {
       return Stream.unwrap(

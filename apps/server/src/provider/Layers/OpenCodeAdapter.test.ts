@@ -16,7 +16,7 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
-import { beforeEach } from "vite-plus/test";
+import { beforeEach, vi } from "vite-plus/test";
 import type {
   Event as OpenCodeEvent,
   PermissionRequest,
@@ -578,6 +578,18 @@ function promiseWithResolvers<T>() {
   return { promise, resolve, reject };
 }
 
+function makeOpenCodeEventQueue() {
+  let pending = promiseWithResolvers<unknown>();
+  const events = [pending.promise];
+  runtimeMock.state.subscribedEvents = events;
+  return (event: unknown) => {
+    const current = pending;
+    pending = promiseWithResolvers<unknown>();
+    events.push(pending.promise);
+    current.resolve(event);
+  };
+}
+
 const permissionRequest = (id: string, sessionID: string): PermissionRequest => ({
   id,
   sessionID,
@@ -1068,7 +1080,8 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
         threadId,
         runtimeMode: "full-access",
       });
-      yield* adapter.compactThread!(
+      NodeAssert.ok(adapter.compaction?.type === "native");
+      yield* adapter.compaction.start(
         threadId,
         createModelSelection(ProviderInstanceId.make("opencode"), "openai/gpt-5"),
       );
@@ -6705,6 +6718,301 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
           .map((event) => event.payload.delta),
         ["Tool results received"],
       );
+    }),
+  );
+
+  it.effect("processes late assistant metadata without visiting completed turns", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-indexed-opencode-parts");
+      const sessionID = "http://127.0.0.1:9999/session";
+      const enqueue = makeOpenCodeEventQueue();
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+
+      for (let index = 0; index < 24; index += 1) {
+        const completed = yield* adapter.streamEvents.pipe(
+          Stream.filter((event) => event.threadId === threadId && event.type === "turn.completed"),
+          Stream.runHead,
+          Effect.forkChild,
+        );
+        yield* adapter.sendTurn({
+          threadId,
+          input: `Complete turn ${index}`,
+          modelSelection: createModelSelection(
+            ProviderInstanceId.make("opencode"),
+            "opencode/kimi-k3",
+          ),
+        });
+        enqueue({
+          type: "message.updated",
+          properties: { sessionID, info: { id: `history-message-${index}`, role: "assistant" } },
+        });
+        enqueue({
+          type: "message.part.updated",
+          properties: {
+            sessionID,
+            part: {
+              id: `history-part-${index}`,
+              messageID: `history-message-${index}`,
+              sessionID,
+              type: "text",
+              text: `Completed turn ${index}`,
+              time: { start: 1, end: 2 },
+            },
+          },
+        });
+        enqueue({
+          type: "session.status",
+          properties: { sessionID, status: { type: "idle" } },
+        });
+        yield* Fiber.join(completed);
+      }
+
+      let visitedHistoryParts = 0;
+      const values = Map.prototype.values;
+      yield* Effect.acquireRelease(
+        Effect.sync(() =>
+          vi
+            .spyOn(Map.prototype, "values")
+            .mockImplementation(function (this: Map<unknown, unknown>) {
+              const iterator = values.call(this);
+              const next = iterator.next.bind(iterator);
+              iterator.next = () => {
+                const result = next();
+                const value: unknown = result.value;
+                if (
+                  typeof value === "object" &&
+                  value !== null &&
+                  "id" in value &&
+                  typeof value.id === "string" &&
+                  value.id.startsWith("history-part-")
+                ) {
+                  visitedHistoryParts += 1;
+                }
+                return result;
+              };
+              return iterator;
+            }),
+        ),
+        (spy) => Effect.sync(() => spy.mockRestore()),
+      );
+
+      const stepProcessed = yield* Deferred.make<void>();
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId),
+        Stream.tap((event) =>
+          event.type === "thread.state.changed"
+            ? Deferred.succeed(stepProcessed, undefined)
+            : Effect.void,
+        ),
+        Stream.takeUntil((event) => event.type === "turn.completed"),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      yield* adapter.sendTurn({
+        threadId,
+        input: "Process late metadata",
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("opencode"),
+          "opencode/kimi-k3",
+        ),
+      });
+      const promptMessageId = (runtimeMock.state.promptCalls.at(-1) as { messageID: string })
+        .messageID;
+      const part = {
+        id: "current-part",
+        messageID: "current-message",
+        sessionID,
+        type: "text",
+        text: "Current response",
+        time: { start: 3, end: 4 },
+      };
+      const step = {
+        id: "current-step",
+        messageID: "current-message",
+        sessionID,
+        type: "step-finish",
+        reason: "stop",
+        cost: 0,
+        tokens: { input: 40, output: 10, reasoning: 2, cache: { read: 5, write: 1 } },
+      };
+      enqueue({ type: "message.part.updated", properties: { sessionID, part } });
+      enqueue({ type: "message.part.updated", properties: { sessionID, part: step } });
+      enqueue({ type: "session.compacted", properties: { sessionID } });
+      yield* Deferred.await(stepProcessed);
+      yield* adapter.sendTurn({
+        threadId,
+        input: "Steer before metadata arrives",
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("opencode"),
+          "opencode/kimi-k3",
+        ),
+      });
+      for (const parentID of ["", promptMessageId]) {
+        enqueue({
+          type: "message.updated",
+          properties: { sessionID, info: { id: "current-message", role: "assistant", parentID } },
+        });
+      }
+      enqueue({ type: "message.part.updated", properties: { sessionID, part } });
+      enqueue({ type: "message.part.updated", properties: { sessionID, part: step } });
+      enqueue({
+        type: "message.part.updated",
+        properties: {
+          sessionID,
+          part: {
+            id: "history-part-0",
+            messageID: "history-message-0",
+            sessionID,
+            type: "text",
+            text: "Completed turn zero",
+            time: { start: 1, end: 2 },
+          },
+        },
+      });
+      enqueue({ type: "session.status", properties: { sessionID, status: { type: "idle" } } });
+
+      const events = yield* Fiber.join(eventsFiber);
+      NodeAssert.equal(visitedHistoryParts, 0);
+      NodeAssert.deepEqual(
+        events
+          .filter((event) => event.type === "content.delta")
+          .map((event) => event.payload.delta),
+        ["Current response", "zero"],
+      );
+      NodeAssert.equal(events.filter((event) => event.type === "item.completed").length, 1);
+      const completed = events.find((event) => event.type === "turn.completed");
+      NodeAssert.deepEqual(completed?.payload.tokenUsage, {
+        usageStatus: "complete",
+        usageScope: "main_agent",
+        inputTokens: 46,
+        cachedInputTokens: 5,
+        cacheCreationTokens: 1,
+        outputTokens: 12,
+        reasoningTokens: 2,
+        hasSubagents: false,
+      });
+      yield* adapter.stopSession(threadId);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("keeps completed text edits and clears removed parts across reconnects", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-text-retention");
+      const sessionID = "http://127.0.0.1:9999/session";
+      const messageID = "retained-message";
+      const metadata = {
+        type: "message.updated",
+        properties: {
+          sessionID,
+          info: { id: messageID, role: "assistant", time: { created: 1, completed: 2 } },
+        },
+      };
+      const snapshot = (
+        text: string,
+        id = "retained-part",
+        type: "text" | "reasoning" = "text",
+      ) => ({
+        type: "message.part.updated",
+        properties: {
+          sessionID,
+          part: { id, sessionID, messageID, type, text, time: { start: 1, end: 2 } },
+        },
+      });
+      const delta = (text: string) => ({
+        type: "message.part.delta",
+        properties: { sessionID, messageID, partID: "retained-part", field: "text", delta: text },
+      });
+      const nonTextReplacement = {
+        type: "message.part.updated",
+        properties: {
+          sessionID,
+          part: {
+            id: "retained-part",
+            sessionID,
+            messageID,
+            type: "file",
+            mime: "text/plain",
+            url: "file:///repo/result.txt",
+          },
+        },
+      };
+      runtimeMock.state.subscribedEvents = [
+        snapshot("Replaced before metadata"),
+        nonTextReplacement,
+        metadata,
+        snapshot("Thinking", "reasoning-part", "reasoning"),
+        snapshot("Hello world"),
+        { type: "server.connected", properties: {} },
+        metadata,
+        snapshot("Thinking", "reasoning-part", "reasoning"),
+        snapshot("Thinking more", "reasoning-part", "reasoning"),
+        snapshot("Hello world"),
+        snapshot("Hello"),
+        snapshot("Hello there"),
+        delta(" again"),
+        snapshot("Hello there again"),
+        nonTextReplacement,
+        delta("ignored while file"),
+        metadata,
+        snapshot("Hello there again!"),
+        {
+          type: "message.part.removed",
+          properties: { sessionID, messageID, partID: "retained-part" },
+        },
+        delta("removed part"),
+        metadata,
+        snapshot("Fresh"),
+        snapshot("Second", "second-part"),
+        { type: "message.removed", properties: { sessionID, messageID } },
+        delta("removed message"),
+        metadata,
+        snapshot("New thoughts", "reasoning-part", "reasoning"),
+        snapshot("New"),
+        { type: "session.compacted", properties: { sessionID } },
+      ];
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId),
+        Stream.takeUntil((event) => event.type === "thread.state.changed"),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+
+      const events = yield* Fiber.join(eventsFiber);
+      NodeAssert.deepEqual(
+        events
+          .filter((event) => event.type === "content.delta")
+          .map((event) => [event.payload.streamKind, event.payload.delta]),
+        [
+          ["reasoning_text", "Thinking"],
+          ["assistant_text", "Hello world"],
+          ["reasoning_text", " more"],
+          ["assistant_text", "there"],
+          ["assistant_text", " again"],
+          ["assistant_text", "!"],
+          ["assistant_text", "Fresh"],
+          ["assistant_text", "Second"],
+          ["reasoning_text", "New thoughts"],
+          ["assistant_text", "New"],
+        ],
+      );
+      NodeAssert.deepEqual(
+        events
+          .filter((event) => event.type === "item.completed")
+          .map((event) => event.payload.detail),
+        ["Hello world", "Fresh", "Second", "New"],
+      );
+      yield* adapter.stopSession(threadId);
     }),
   );
 

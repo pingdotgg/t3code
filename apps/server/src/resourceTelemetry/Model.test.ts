@@ -39,7 +39,7 @@ function nativeSnapshot(
   sequence = 1,
 ): ResourceMonitorSnapshotEvent {
   return {
-    version: 2,
+    version: 3,
     type: "snapshot",
     sequence,
     sampledAtUnixMs,
