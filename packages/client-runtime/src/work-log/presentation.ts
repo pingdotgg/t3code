@@ -56,11 +56,14 @@ export function turnItemToolActivityPresentation(item: OrchestrationV2TurnItem) 
         data: item,
       });
     case "file_search":
-      return deriveToolActivityPresentation({
-        status,
-        title: item.title,
-        data: { ...item, kind: "search" },
-      });
+      return {
+        ...deriveToolActivityPresentation({
+          status,
+          title: item.title,
+          data: { ...item, kind: "search" },
+        }),
+        ...(item.title?.trim() ? { summary: item.title.trim() } : {}),
+      };
     case "web_search":
       return deriveToolActivityPresentation({
         itemType: item.type,

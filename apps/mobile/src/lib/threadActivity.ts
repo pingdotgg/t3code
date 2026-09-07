@@ -1161,7 +1161,7 @@ function deriveThreadFeedRunFolds(
       group.entries
         .filter(
           (entry) =>
-            entry.id !== terminalAssistantId &&
+            entry.type !== "message" &&
             entry.type !== "html-render" &&
             entry.type !== "mcp-app" &&
             !(entry.type === "activity-group" && isContextCompactionActivityGroup(entry)) &&

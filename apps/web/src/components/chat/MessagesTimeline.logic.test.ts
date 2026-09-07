@@ -981,6 +981,7 @@ describe("deriveMessagesTimelineRows", () => {
     expect(collapsedRows.map((row) => row.id)).toEqual([
       "user-entry",
       "turn-fold:turn-1",
+      "assistant-first-entry",
       "assistant-final-entry",
     ]);
 
@@ -1103,6 +1104,67 @@ describe("deriveMessagesTimelineRows", () => {
     expect(
       pendingRows.some((row) => row.kind === "work-live" && row.entry.id === "work-after-text-0"),
     ).toBe(true);
+  });
+
+  it("keeps all assistant messages visible without a redundant fold", () => {
+    const timelineEntries = [
+      {
+        id: "assistant-first-entry",
+        kind: "message" as const,
+        createdAt: "2026-01-01T00:00:01Z",
+        message: {
+          id: "assistant-first" as never,
+          role: "assistant" as const,
+          text: "The main result is ready.",
+          runId: "turn-1" as never,
+          createdAt: "2026-01-01T00:00:01Z",
+          updatedAt: "2026-01-01T00:00:02Z",
+          streaming: false,
+        },
+      },
+      {
+        id: "assistant-middle-entry",
+        kind: "message" as const,
+        createdAt: "2026-01-01T00:00:03Z",
+        message: {
+          id: "assistant-middle" as never,
+          role: "assistant" as const,
+          text: "I am checking one more detail.",
+          runId: "turn-1" as never,
+          createdAt: "2026-01-01T00:00:03Z",
+          updatedAt: "2026-01-01T00:00:04Z",
+          streaming: false,
+        },
+      },
+      {
+        id: "assistant-final-entry",
+        kind: "message" as const,
+        createdAt: "2026-01-01T00:00:05Z",
+        message: {
+          id: "assistant-final" as never,
+          role: "assistant" as const,
+          text: "Verification finished.",
+          runId: "turn-1" as never,
+          createdAt: "2026-01-01T00:00:05Z",
+          updatedAt: "2026-01-01T00:00:06Z",
+          streaming: false,
+        },
+      },
+    ];
+
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries,
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+    });
+
+    expect(rows.map((row) => row.id)).toEqual([
+      "assistant-first-entry",
+      "assistant-middle-entry",
+      "assistant-final-entry",
+    ]);
   });
 
   it("derives a sane duration for a steer-superseded turn with one instant commentary message", () => {
@@ -2131,41 +2193,17 @@ describe("deriveMessagesTimelineRows", () => {
         row.kind === "message" ? `${row.message.role}:${row.message.id}` : row.kind,
       );
 
-    expect(rows([message("new-prompt", "user", 20, "run-1")]).slice(0, 4)).toEqual([
+    // V2 work starts from a sent prompt, or with no new prompt (a wake or a resume).
+    expect(rows([message("new-prompt", "user", 20, "run-1")]).slice(0, 5)).toEqual([
       "user:imported-prompt",
       "turn-fold",
+      "assistant:imported-update",
       "assistant:imported-answer",
       "user:new-prompt",
     ]);
     const withoutPrompt = rows([]);
     expect(withoutPrompt).toContain("turn-fold");
-    expect(withoutPrompt).not.toContain("assistant:imported-update");
-
-    const timelineEntries = [
-      message("imported-prompt", "user", 0),
-      message("imported-update", "assistant", 4),
-      message("imported-answer", "assistant", 8),
-    ];
-    const foldInput = { timelineEntries, latestRun: null, isWorking: false };
-    const foldRunIds = timelineTurnFoldRunIdsByEntryId(foldInput);
-    const foldRunId = foldRunIds.get("imported-update") ?? null;
-    expect(foldRunId).not.toBeNull();
-    const foldRow = deriveMessagesTimelineRows({
-      ...foldInput,
-      turnDiffSummaries: [],
-      supportsConversationRollback: false,
-    }).find((row) => row.kind === "turn-fold");
-    expect(foldRow?.kind === "turn-fold" ? foldRow.runId : null).toBe(foldRunId);
-    expect(foldRunIds.get("imported-answer") ?? null).toBeNull();
-    const expanded = deriveMessagesTimelineRows({
-      ...foldInput,
-      expandedRunIds: new Set([foldRunId!]),
-      turnDiffSummaries: [],
-      supportsConversationRollback: false,
-    });
-    expect(
-      expanded.some((row) => row.kind === "message" && row.message.id === "imported-update"),
-    ).toBe(true);
+    expect(withoutPrompt).toContain("assistant:imported-update");
   });
 
   it("does not treat runless entries as live work on a thread with runs", () => {
@@ -2655,6 +2693,7 @@ describe("v2 run and attempt history", () => {
     expect(collapsedRows.map((row) => row.id)).toEqual([
       "user-entry",
       "turn-fold:turn-1",
+      "assistant-thought-entry",
       "thread-created-entry",
       "assistant-final-entry",
     ]);
@@ -3753,7 +3792,8 @@ describe("linked timeline resources", () => {
     ];
     const collapsed = deriveMessagesTimelineRows({ ...common, timelineEntries });
     expect(collapsed.map((row) => row.id)).toEqual([
-      "turn-fold:resource-run",
+      "intro",
+      "created",
       "final",
       "summary:created",
       "assistant-meta:final",
@@ -3767,7 +3807,6 @@ describe("linked timeline resources", () => {
       expandedRunIds: new Set([runId]),
     });
     expect(expanded.map((row) => row.id)).toEqual([
-      "turn-fold:resource-run",
       "intro",
       "created",
       "final",
