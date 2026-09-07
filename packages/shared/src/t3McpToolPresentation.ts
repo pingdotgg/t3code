@@ -75,6 +75,7 @@ const T3_MCP_TOOLS: Record<
   t3_preview_close: { displayName: "Close a preview tab" },
   t3_environment_read: { displayName: "Read environment preferences" },
   t3_environment_preferences_update: { displayName: "Update environment preferences" },
+  t3_thread_launch: { displayName: "Launch a project thread" },
   t3_project_list: { displayName: "List projects" },
   t3_project_read: { displayName: "Read a project" },
   t3_project_create: { displayName: "Create a project" },

@@ -1,5 +1,15 @@
 import {
   NonNegativeInt,
+  ModelSelection,
+  TrimmedNonEmptyString,
+  ThreadId,
+  RunId,
+  OrchestrationV2RunStatus,
+  OrchestrationV2ThreadLaunchWorkspaceStrategy,
+  RuntimeMode,
+  ProviderInteractionMode,
+  ChatImageAttachment,
+  ChatFileAttachment,
   Project,
   ProjectCreatePayload,
   ProjectUpdatePayload,
@@ -8,6 +18,9 @@ import {
   SourceControlCloneRepositoryInput,
   SourceControlCloneRepositoryResult,
 } from "@t3tools/contracts";
+import * as FileSystem from "effect/FileSystem";
+import { ServerConfig } from "../../../config.ts";
+import { ThreadLaunchService } from "../../../orchestration-v2/ThreadLaunchService.ts";
 import * as Crypto from "effect/Crypto";
 import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/unstable/ai";
@@ -73,7 +86,38 @@ export const ProjectCloneTool = Tool.make("t3_project_clone", {
 })
   .annotate(Tool.Destructive, true)
   .annotate(Tool.OpenWorld, true);
+export const ThreadLaunchTool = Tool.make("t3_thread_launch", {
+  ...shared,
+  description:
+    "Launch a thread in a registered project using the same launch service as the app. Omit projectId/modelSelection/modes to inherit from the caller. Supports root, existing_worktree, or a new worktree. Each call is a new launch, with no retry key. Preparation can continue after acceptance; failures may leave a created thread. Attachments must be pending uploads. Requires a full-access/default caller.",
+  parameters: Schema.Struct({
+    projectId: Schema.optional(ProjectId),
+    title: TrimmedNonEmptyString,
+    modelSelection: Schema.optional(ModelSelection),
+    runtimeMode: Schema.optional(RuntimeMode),
+    interactionMode: Schema.optional(ProviderInteractionMode),
+    workspaceStrategy: Schema.optional(OrchestrationV2ThreadLaunchWorkspaceStrategy),
+    message: Schema.optional(Schema.String.check(Schema.isMaxLength(120000))),
+    attachments: Schema.optional(
+      Schema.Array(Schema.Union([ChatImageAttachment, ChatFileAttachment])).check(
+        Schema.isMaxLength(8),
+      ),
+    ),
+  }),
+  success: Schema.Struct({
+    threadId: ThreadId,
+    projectId: ProjectId,
+    modelSelection: ModelSelection,
+    runId: Schema.NullOr(RunId),
+    status: Schema.NullOr(OrchestrationV2RunStatus),
+  }),
+  dependencies: [...shared.dependencies, ThreadLaunchService, FileSystem.FileSystem, ServerConfig],
+})
+  .annotate(Tool.Destructive, true)
+  .annotate(Tool.OpenWorld, true);
+
 export const ProjectToolkit = Toolkit.make(
+  ThreadLaunchTool,
   ProjectListTool,
   ProjectReadTool,
   ProjectCreateTool,
