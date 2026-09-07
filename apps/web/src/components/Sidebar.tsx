@@ -567,7 +567,7 @@ function SidebarSectionPlaceholder(props: {
     <SortableSidebarMarker
       marker={props.marker}
       data-testid={`sidebar-${props.marker}`}
-      className="relative mx-0.5 h-0"
+      className="relative mx-0.5 -mb-px h-0"
     >
       {props.showHint ? (
         <div
@@ -597,7 +597,7 @@ function SidebarDragBoundary(props: {
     <SortableSidebarMarker
       marker={props.marker}
       data-testid={`sidebar-${props.marker}`}
-      className="pointer-events-none relative mx-0.5 h-0"
+      className="pointer-events-none relative mx-0.5 -mb-px h-0"
     >
       {props.visible ? (
         <div className="sidebar-drag-boundary-label absolute inset-x-2 top-1 flex h-4 items-center gap-2">
@@ -4607,7 +4607,7 @@ export default function Sidebar() {
                   <ul
                     ref={attachListMotionRef}
                     role="list"
-                    className="relative flex flex-col gap-px pt-2"
+                    className="relative flex flex-col gap-px"
                   >
                     {(() => {
                       const renderThreadRowInner = (
