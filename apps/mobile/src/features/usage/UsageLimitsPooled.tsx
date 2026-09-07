@@ -235,25 +235,24 @@ export function UsageLimitsSection({
         </View>
       ))}
       {notices.length > 0 ? (
-        <View className="gap-2">
-          {notices.map((notice) => (
-            <View
-              key={notice}
-              accessible
-              accessibilityRole="alert"
-              accessibilityLiveRegion="polite"
-              className="flex-row items-start gap-2 rounded-xl border border-warning-border bg-warning px-3.5 py-3"
-            >
-              <SymbolView
-                name="exclamationmark.triangle"
-                size={16}
-                tintColorClassName="accent-warning-foreground"
-              />
-              <Text className="min-w-0 flex-1 text-sm font-t3-medium text-warning-foreground">
+        <View
+          accessible
+          accessibilityRole="alert"
+          accessibilityLiveRegion="polite"
+          className="flex-row items-start gap-2 rounded-xl border border-warning-border bg-warning px-3.5 py-3"
+        >
+          <SymbolView
+            name="exclamationmark.triangle"
+            size={16}
+            tintColorClassName="accent-warning-foreground"
+          />
+          <View className="min-w-0 flex-1 gap-0.5">
+            {notices.map((notice) => (
+              <Text key={notice} className="text-sm font-t3-medium text-warning-foreground">
                 {notice}
               </Text>
-            </View>
-          ))}
+            ))}
+          </View>
         </View>
       ) : null}
       {failedLabels.length ? (

@@ -562,13 +562,13 @@ export function UsageLimitsPooled({
 function LimitNotices({ notices }: { readonly notices: readonly string[] }) {
   if (notices.length === 0) return null;
   return (
-    <div className="flex flex-col gap-2">
+    <Alert variant="warning" controlAlignment="first-line">
+      <AlertTriangleIcon />
       {notices.map((notice) => (
-        <Alert key={notice} variant="warning" controlAlignment="first-line">
-          <AlertTriangleIcon />
-          <AlertTitle className="break-words">{notice}</AlertTitle>
-        </Alert>
+        <AlertTitle key={notice} className="break-words">
+          {notice}
+        </AlertTitle>
       ))}
-    </div>
+    </Alert>
   );
 }
