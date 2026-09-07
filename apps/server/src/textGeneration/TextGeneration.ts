@@ -3,7 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import type { ChatAttachment, ModelSelection, ProviderInstanceId } from "@t3tools/contracts";
 import {
-  TextGenerationUnavailableError,
+  TextGenerationProviderUnavailableError,
   type TextGenerationServiceError,
 } from "@t3tools/contracts";
 
@@ -120,16 +120,15 @@ const resolveInstance = (
   registry: ProviderInstanceRegistry.ProviderInstanceRegistry["Service"],
   operation: TextGenerationOp,
   instanceId: ProviderInstanceId,
-): Effect.Effect<ProviderInstance["textGeneration"], TextGenerationUnavailableError> =>
+): Effect.Effect<ProviderInstance["textGeneration"], TextGenerationProviderUnavailableError> =>
   registry.getInstance(instanceId).pipe(
     Effect.flatMap((instance) =>
       instance
         ? Effect.succeed(instance.textGeneration)
         : Effect.fail(
-            new TextGenerationUnavailableError({
+            new TextGenerationProviderUnavailableError({
               operation,
-              detail: `No provider instance registered for id '${instanceId}'.`,
-              retryable: false,
+              providerInstanceId: instanceId,
             }),
           ),
     ),

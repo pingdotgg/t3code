@@ -1,12 +1,14 @@
 import {
+  TextGenerationCliUnavailableError,
   TextGenerationError,
-  TextGenerationUnavailableError,
+  TextGenerationProviderUnavailableError,
   type TextGenerationServiceError,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
 const isTextGenerationError = Schema.is(TextGenerationError);
-const isTextGenerationUnavailableError = Schema.is(TextGenerationUnavailableError);
+const isTextGenerationCliUnavailableError = Schema.is(TextGenerationCliUnavailableError);
+const isTextGenerationProviderUnavailableError = Schema.is(TextGenerationProviderUnavailableError);
 
 /** Convert an Effect Schema to a flat JSON Schema object, inlining `$defs` when present. */
 export function toJsonSchemaObject(schema: Schema.Top): unknown {
@@ -68,24 +70,22 @@ export function sanitizeThreadTitle(raw: string): string {
   return `${normalized.slice(0, 47).trimEnd()}...`;
 }
 
-/** CLI name to human-readable label, e.g. "codex" → "Codex CLI (`codex`)" */
-function cliLabel(cliName: string): string {
-  const capitalized = cliName.charAt(0).toUpperCase() + cliName.slice(1);
-  return `${capitalized} CLI (\`${cliName}\`)`;
-}
-
 /**
  * Normalize an unknown error from a CLI text generation process into a
  * typed text-generation error. Parameterized by CLI name so both Codex and
  * Claude (and future providers) can share the same logic.
  */
 export function normalizeCliError(
-  cliName: string,
+  cliName: "codex" | "claude",
   operation: string,
   error: unknown,
   fallback: string,
 ): TextGenerationServiceError {
-  if (isTextGenerationError(error) || isTextGenerationUnavailableError(error)) {
+  if (
+    isTextGenerationError(error) ||
+    isTextGenerationCliUnavailableError(error) ||
+    isTextGenerationProviderUnavailableError(error)
+  ) {
     return error;
   }
 
@@ -96,10 +96,9 @@ export function normalizeCliError(
       lower.includes(`spawn ${cliName}`) ||
       lower.includes("enoent")
     ) {
-      return new TextGenerationUnavailableError({
+      return new TextGenerationCliUnavailableError({
         operation,
-        detail: `${cliLabel(cliName)} is required but not available on PATH.`,
-        retryable: false,
+        cliName,
         cause: error,
       });
     }

@@ -8,7 +8,7 @@ import {
   ProviderInstanceId,
   ThreadId,
   TextGenerationError,
-  TextGenerationUnavailableError,
+  TextGenerationProviderUnavailableError,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -428,9 +428,9 @@ describe("ThreadTitleRegenerationService", () => {
                   ? Effect.succeed({ title: "Recovered title" })
                   : Effect.fail(
                       unavailable
-                        ? new TextGenerationUnavailableError({
+                        ? new TextGenerationProviderUnavailableError({
                             operation: "generateThreadTitle",
-                            detail: "No provider instance registered.",
+                            providerInstanceId: ProviderInstanceId.make("missing_instance"),
                           })
                         : new TextGenerationError({
                             operation: "generateThreadTitle",

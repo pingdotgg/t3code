@@ -1,6 +1,7 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { NonNegativeInt, PositiveInt, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { ProviderInstanceId } from "./providerInstance.ts";
 import { SourceControlProviderError, SourceControlProviderInfo } from "./sourceControl.ts";
 import { VcsDriverKind } from "./vcs.ts";
 
@@ -367,20 +368,44 @@ export class TextGenerationError extends Schema.TaggedError<TextGenerationError>
   }
 }
 
-export class TextGenerationUnavailableError extends Schema.TaggedError<TextGenerationUnavailableError>()(
-  "TextGenerationUnavailableError",
+export class TextGenerationProviderUnavailableError extends Schema.TaggedError<TextGenerationProviderUnavailableError>()(
+  "TextGenerationProviderUnavailableError",
   {
     operation: Schema.String,
-    detail: Schema.String,
-    cause: Schema.optional(Schema.Defect()),
+    providerInstanceId: ProviderInstanceId,
   },
 ) {
+  get detail(): string {
+    return `No provider instance is registered for '${this.providerInstanceId}'.`;
+  }
+
   override get message(): string {
     return `Text generation is unavailable in ${this.operation}: ${this.detail}`;
   }
 }
 
-export type TextGenerationServiceError = TextGenerationError | TextGenerationUnavailableError;
+export class TextGenerationCliUnavailableError extends Schema.TaggedError<TextGenerationCliUnavailableError>()(
+  "TextGenerationCliUnavailableError",
+  {
+    operation: Schema.String,
+    cliName: Schema.Literals(["codex", "claude"]),
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  get detail(): string {
+    const label = this.cliName === "codex" ? "Codex" : "Claude";
+    return `${label} CLI (\`${this.cliName}\`) is not available on PATH.`;
+  }
+
+  override get message(): string {
+    return `Text generation is unavailable in ${this.operation}: ${this.detail}`;
+  }
+}
+
+export type TextGenerationServiceError =
+  | TextGenerationError
+  | TextGenerationProviderUnavailableError
+  | TextGenerationCliUnavailableError;
 
 export class GitManagerError extends Schema.TaggedError<GitManagerError>()("GitManagerError", {
   operation: Schema.String,
@@ -415,7 +440,8 @@ export const GitManagerServiceError = Schema.Union([
   GitCommandError,
   SourceControlProviderError,
   TextGenerationError,
-  TextGenerationUnavailableError,
+  TextGenerationProviderUnavailableError,
+  TextGenerationCliUnavailableError,
 ]);
 export type GitManagerServiceError = typeof GitManagerServiceError.Type;
 

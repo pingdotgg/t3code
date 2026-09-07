@@ -7,7 +7,12 @@ import {
   buildThreadTitlePrompt,
 } from "./TextGenerationPrompts.ts";
 import { normalizeCliError, sanitizeThreadTitle } from "./TextGenerationUtils.ts";
-import { TextGenerationError, TextGenerationUnavailableError } from "@t3tools/contracts";
+import {
+  ProviderInstanceId,
+  TextGenerationCliUnavailableError,
+  TextGenerationError,
+  TextGenerationProviderUnavailableError,
+} from "@t3tools/contracts";
 
 describe("buildCommitMessagePrompt", () => {
   it("includes staged patch and summary in the prompt", () => {
@@ -263,9 +268,13 @@ describe("normalizeCliError", () => {
       "Something went wrong",
     );
 
-    expect(error).toBeInstanceOf(TextGenerationUnavailableError);
-    expect(error.detail).toContain("Claude CLI");
-    expect(error.detail).toContain("not available on PATH");
+    expect(error).toBeInstanceOf(TextGenerationCliUnavailableError);
+    expect(error._tag).toBe("TextGenerationCliUnavailableError");
+    if (error._tag === "TextGenerationCliUnavailableError") {
+      expect(error.cliName).toBe("claude");
+    }
+    expect(error.message).toContain("Claude CLI");
+    expect(error.message).toContain("not available on PATH");
   });
 
   it("uses the CLI name from the first argument for codex", () => {
@@ -276,9 +285,13 @@ describe("normalizeCliError", () => {
       "Something went wrong",
     );
 
-    expect(error).toBeInstanceOf(TextGenerationUnavailableError);
-    expect(error.detail).toContain("Codex CLI");
-    expect(error.detail).toContain("not available on PATH");
+    expect(error).toBeInstanceOf(TextGenerationCliUnavailableError);
+    expect(error._tag).toBe("TextGenerationCliUnavailableError");
+    if (error._tag === "TextGenerationCliUnavailableError") {
+      expect(error.cliName).toBe("codex");
+    }
+    expect(error.message).toContain("Codex CLI");
+    expect(error.message).toContain("not available on PATH");
   });
 
   it("returns the error as-is if it is already a TextGenerationError", () => {
@@ -292,10 +305,21 @@ describe("normalizeCliError", () => {
     expect(result).toBe(existing);
   });
 
-  it("returns an existing TextGenerationUnavailableError as-is", () => {
-    const existing = new TextGenerationUnavailableError({
+  it("returns an existing TextGenerationCliUnavailableError as-is", () => {
+    const existing = new TextGenerationCliUnavailableError({
       operation: "generateThreadTitle",
-      detail: "Provider is unavailable",
+      cliName: "codex",
+    });
+
+    const result = normalizeCliError("codex", "generateThreadTitle", existing, "fallback");
+
+    expect(result).toBe(existing);
+  });
+
+  it("returns an existing TextGenerationProviderUnavailableError as-is", () => {
+    const existing = new TextGenerationProviderUnavailableError({
+      operation: "generateThreadTitle",
+      providerInstanceId: ProviderInstanceId.make("missing_instance"),
     });
 
     const result = normalizeCliError("codex", "generateThreadTitle", existing, "fallback");
