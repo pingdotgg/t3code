@@ -543,6 +543,8 @@ export const isPreviewEditingShortcut = (
   if (isMac ? !input.meta || input.control : !input.control || input.meta) return false;
 
   const key = input.key.toLowerCase();
+  // Option changes the DOM key for macOS Paste and Match Style (for example, to ◊).
+  if (isMac && input.alt && input.shift && input.code === "KeyV") return true;
   if (key === "v" && input.shift) return input.alt === isMac;
   if (input.alt) return false;
   if (key === "z") return !input.shift || platform !== "win32";
