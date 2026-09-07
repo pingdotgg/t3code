@@ -74,7 +74,7 @@ const PIERRE_DARK_THEME: TerminalTheme = {
   ],
 };
 
-export function getPierreTerminalTheme(scheme: TerminalAppearanceScheme): TerminalTheme {
+function getPierreTerminalTheme(scheme: TerminalAppearanceScheme): TerminalTheme {
   return scheme === "light" ? PIERRE_LIGHT_THEME : PIERRE_DARK_THEME;
 }
 

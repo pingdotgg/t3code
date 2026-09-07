@@ -131,31 +131,6 @@ const GENERIC_PROJECT_ICONS: ReadonlyArray<ProjectIconName> = [
   "layers",
 ];
 
-const PROJECT_ICON_EMOJIS: Record<ProjectIconName, string> = {
-  ai: "🤖",
-  book: "📚",
-  braces: "🧩",
-  circuit: "⚡",
-  cloud: "☁️",
-  code: "💻",
-  database: "🗄️",
-  desktop: "🖥️",
-  "folder-code": "🛠️",
-  game: "🎮",
-  image: "🖼️",
-  layers: "✨",
-  mobile: "📱",
-  music: "🎵",
-  package: "📦",
-  security: "🔒",
-  server: "⚙️",
-  shopping: "🛍️",
-  terminal: "⌨️",
-  test: "🧪",
-  video: "🎬",
-  web: "🌐",
-};
-
 const projectIconCache = new Map<string, ProjectIconSelection>();
 
 function projectNameTokens(value: string): ReadonlyArray<string> {
@@ -211,11 +186,7 @@ export function selectProjectIcon(
 
   const iconName =
     bestIcon ?? GENERIC_PROJECT_ICONS[stableIndex(cacheKey, GENERIC_PROJECT_ICONS.length)]!;
-  const icon: ProjectIconSelection = {
-    kind: "emoji",
-    icon: iconName,
-    emoji: PROJECT_ICON_EMOJIS[iconName],
-  };
+  const icon: ProjectIconSelection = { kind: "lucide", icon: iconName };
   projectIconCache.set(cacheKey, icon);
   return icon;
 }

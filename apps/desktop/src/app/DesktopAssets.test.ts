@@ -1,3 +1,4 @@
+import * as NodePath from "@effect/platform-node/NodePath";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -20,7 +21,11 @@ const environmentLayer = DesktopEnvironment.layer({
   isPackaged: true,
   resourcesPath: "/Applications/T3 Code.app/Contents/Resources",
   runningUnderArm64Translation: false,
-}).pipe(Layer.provide(Layer.mergeAll(NodeServices.layer, DesktopConfig.layerTest({}))));
+}).pipe(
+  Layer.provide(
+    Layer.mergeAll(NodeServices.layer, NodePath.layerPosix, DesktopConfig.layerTest({})),
+  ),
+);
 
 describe("DesktopAssets", () => {
   it.effect("uses canonical source-tree icons for unpackaged development", () =>
@@ -39,6 +44,7 @@ describe("DesktopAssets", () => {
         Layer.provide(
           Layer.mergeAll(
             NodeServices.layer,
+            NodePath.layerPosix,
             DesktopConfig.layerTest({ VITE_DEV_SERVER_URL: "http://localhost:5733" }),
           ),
         ),

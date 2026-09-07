@@ -349,3 +349,34 @@ export function normalizeAntigravityToolCall(toolCall: AcpToolCallState): AcpToo
 export function isAntigravityOpenCommand(toolCall: AcpToolCallState): boolean {
   return toolCall.kind === "execute" && toolCall.status === "inProgress";
 }
+
+/** ACP 1.1.1 exposes subagent invocations as ordinary tools, without child IDs or models. */
+export function classifyAntigravitySubagentToolCall(
+  toolCall: AcpToolCallState,
+  rawPayload: unknown,
+): "subagent" | "mcp" | undefined {
+  if (
+    (toolCall.kind !== undefined && toolCall.kind !== "other") ||
+    (toolCall.title !== "Running start_subagent" && toolCall.title !== "Run start_subagent?")
+  )
+    return undefined;
+  const update = Predicate.isObject(rawPayload) ? rawPayload.update : undefined;
+  const meta = Predicate.isObject(update) ? update._meta : undefined;
+  return Predicate.isObject(meta) && meta.is_mcp_tool_call === true ? "mcp" : "subagent";
+}
+
+/** History sends a completed start before the separate result and its final status. */
+export function isAntigravitySubagentReplayStart(rawPayload: unknown): boolean {
+  const update = Predicate.isObject(rawPayload) ? rawPayload.update : undefined;
+  return (
+    Predicate.isObject(update) &&
+    update.sessionUpdate === "tool_call" &&
+    update.status === "completed" &&
+    (update.rawOutput === undefined || update.rawOutput === null)
+  );
+}
+
+export function antigravitySubagentOutput(toolCall: AcpToolCallState): string | undefined {
+  const output = toolCall.data.rawOutput;
+  return typeof output === "string" && output.trim() ? boundText(output.trim()) : undefined;
+}

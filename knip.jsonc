@@ -1,0 +1,84 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  // Exported types are part of our contracts even before they have consumers.
+  "rules": { "types": "off", "nsTypes": "off" },
+  // These executables are supplied by the OS or installed separately from npm.
+  "ignoreBinaries": ["eas", "file", "mkfifo", "pkill", "pkg-config", "plutil", "sips"],
+  "workspaces": {
+    ".": {
+      // Keep vendored reference repositories outside the root project.
+      "project": ["*.{js,mjs,cjs,ts,mts,cts}", ".github/**/*.cjs"],
+      "entry": [".github/scripts/thread-transfer-report.cjs"],
+      "vite": { "entry": [".github/**/*.test.cjs"] },
+      "vitest": { "entry": [".github/**/*.test.cjs"] },
+    },
+    "scripts": {
+      // Knip loads its preprocessor through a CLI option, not a source import.
+      "entry": ["knip-schemas.ts"],
+    },
+    "apps/server": {
+      // Vite+ pack entries and the launcher used by installed background services.
+      "entry": [
+        "src/bin.ts!",
+        "src/service-launcher.ts!",
+        "scripts/cli.ts",
+        "src/provider/testFixtures/*.mjs",
+      ],
+      // Native msgpack acceleration and the Vite+ web build prerequisite.
+      "ignoreDependencies": ["msgpackr-extract", "@t3tools/web"],
+    },
+    "apps/desktop": {
+      // Electron loads these bundles by filename rather than importing them.
+      "entry": [
+        "src/main.ts!",
+        "src/preload.ts!",
+        "src/preview-pick-preload.ts!",
+        "src/preview-pip-preload.ts!",
+        "src/preview/Annotation.css!",
+      ],
+      // The injected runtime resolves Playwright by string; release tooling runs
+      // electron-builder from this workspace, outside its package scripts.
+      "ignoreDependencies": ["playwright-core", "electron-builder"],
+    },
+    "apps/web": {
+      // Worktree setup invokes this directly from t3.json.
+      "entry": ["scripts/warm-dep-cache.ts"],
+      // UI component modules are copied and adapted as cohesive sets. Keep their
+      // named subcomponents even before they have callers; the file audit still
+      // reports an entire component module when nothing imports it.
+      "ignoreIssues": { "src/components/ui/*.tsx": ["exports", "nsExports", "duplicates"] },
+    },
+    "apps/mobile": {
+      // Expo loads local config plugins by string; Metro handles platform variants.
+      "entry": ["index.ts!", "plugins/*.cjs"],
+      // Fonts are configured as asset paths; Expo autolinks the native packages.
+      "ignoreDependencies": [
+        "@expo-google-fonts/dm-sans",
+        "@t3tools/mobile-review-diff-native",
+        "@t3tools/mobile-terminal-native",
+      ],
+    },
+    "apps/mobile/modules/t3-markdown-text": {
+      // React Native codegen discovers component specifications by filename.
+      "entry": ["src/*NativeComponent.ts!"],
+    },
+    "infra/relay": {
+      "entry": ["alchemy.run.ts!", "src/persistence/schema.ts!"],
+    },
+    "packages/*": {
+      // These workspace packages are private to this monorepo.
+      "includeEntryExports": true,
+    },
+    "packages/effect-acp": {
+      "includeEntryExports": true,
+      "entry": ["test/fixtures/*.ts"],
+      // Generated upstream protocol definitions are retained as a complete set.
+      "ignoreIssues": { "src/_generated/**": ["exports", "types"] },
+    },
+    "packages/effect-codex-app-server": {
+      "includeEntryExports": true,
+      "entry": ["test/fixtures/*.ts"],
+      "ignoreIssues": { "src/_generated/**": ["exports", "types"] },
+    },
+  },
+}

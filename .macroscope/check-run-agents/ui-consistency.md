@@ -1,6 +1,6 @@
 ---
 title: UI Consistency
-model: claude-opus-5
+model: gpt-5-6-terra
 effort: medium
 input: full_diff
 tools:
@@ -15,9 +15,9 @@ labels:
   - vouch:trusted
 requires:
   - Check
-maxBudgetPerPR: 25
+maxBudgetPerRun: 2
+maxBudgetPerPR: 10
 conclusion: failure
-maxBudgetPerRun: 10
 ---
 
 # UI consistency review

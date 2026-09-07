@@ -1,4 +1,4 @@
-import type { FunctionComponent, ReactElement } from "react";
+import { isValidElement, type FunctionComponent, type ReactElement } from "react";
 import {
   EnvironmentId,
   ProviderDriverKind,
@@ -139,6 +139,23 @@ function button(view: unknown, label: string) {
   return visitElements(
     view,
     (element) => element.props.children === label && typeof element.props.onClick === "function",
+  );
+}
+
+function countElements(
+  node: unknown,
+  predicate: (element: ReactElement<Record<string, unknown>>) => boolean,
+): number {
+  if (Array.isArray(node)) {
+    return node.reduce((total, child) => total + countElements(child, predicate), 0);
+  }
+  if (!isValidElement<Record<string, unknown>>(node)) return 0;
+  return (
+    Number(predicate(node)) +
+    Object.values(node.props).reduce<number>(
+      (total, value) => total + countElements(value, predicate),
+      0,
+    )
   );
 }
 
@@ -283,6 +300,23 @@ describe("Antigravity setup", () => {
     expect(setup.startAuth).toHaveBeenCalledWith({ environmentId, input: { instanceId } });
     completeStart({ _tag: "Success", value: undefined });
     await flushPromises();
+  });
+
+  it("shows a repeated runtime status message only once", () => {
+    setup.installation = {
+      ...setup.installation!,
+      operationId: "install-1",
+      phase: "verifying",
+      message: "Checking the downloaded runtime.",
+    };
+
+    const view = renderSetup();
+    expect(
+      countElements(
+        view,
+        (element) => element.props.children === "Checking the downloaded runtime.",
+      ),
+    ).toBe(1);
   });
 
   it("removes an owned damaged runtime only after confirmation", async () => {

@@ -2,7 +2,7 @@ export type LoopbackAuthorizationStage = "dev" | "nightly" | "latest";
 
 declare const __T3CODE_BUILD_CHANNEL__: "nightly" | "latest" | undefined;
 
-export function resolveLoopbackAuthorizationStage(): LoopbackAuthorizationStage {
+function resolveLoopbackAuthorizationStage(): LoopbackAuthorizationStage {
   return typeof __T3CODE_BUILD_CHANNEL__ === "undefined" ? "dev" : __T3CODE_BUILD_CHANNEL__;
 }
 

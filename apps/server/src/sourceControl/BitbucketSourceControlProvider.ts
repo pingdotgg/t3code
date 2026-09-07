@@ -17,6 +17,7 @@ function toChangeRequest(summary: NormalizedBitbucketPullRequestRecord): ChangeR
     baseRefName: summary.baseRefName,
     headRefName: summary.headRefName,
     state: summary.state,
+    ...(summary.isDraft === true ? { isDraft: true } : {}),
     updatedAt: summary.updatedAt ?? Option.none(),
     ...(summary.isCrossRepository !== undefined
       ? { isCrossRepository: summary.isCrossRepository }

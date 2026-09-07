@@ -44,7 +44,7 @@ const CLOUD_CLI_OAUTH_CALLBACK_TIMEOUT = Duration.minutes(10);
 const CLOUD_CLI_OAUTH_REFRESH_EARLY_MS = Duration.toMillis(Duration.minutes(5));
 const boldTerminalText = (value: string): string => `\u001b[1m${value}\u001b[22m`;
 
-export function formatLoopbackAuthorizationPrompt(authorizationUrl: string): string {
+function formatLoopbackAuthorizationPrompt(authorizationUrl: string): string {
   return [
     "Open this URL to authorize T3 Connect:",
     `  ${authorizationUrl}`,

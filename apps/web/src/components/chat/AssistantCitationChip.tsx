@@ -41,7 +41,9 @@ export function AssistantCitationChip({
     open: boolean;
     sourceAnchor?: AssistantCitationSourceAnchor | undefined;
     onOpenChange: (open: boolean) => void;
+    onCancel?: () => void;
     onSave: (comment: string) => boolean;
+    onSaveAndSend?: (comment: string) => boolean;
   };
 }) {
   const navigate = useNavigate();
@@ -158,7 +160,22 @@ export function AssistantCitationChip({
                   commentEditor.onOpenChange(false);
                   return true;
                 }}
-                onCancel={() => commentEditor.onOpenChange(false)}
+                {...(commentEditor.onSaveAndSend
+                  ? {
+                      onSubmitAndSend: (comment: string) => {
+                        if (!commentEditor.onSaveAndSend?.(comment)) return false;
+                        commentEditor.onOpenChange(false);
+                        return true;
+                      },
+                    }
+                  : {})}
+                onCancel={() => {
+                  if (commentEditor.onCancel) {
+                    commentEditor.onCancel();
+                  } else {
+                    commentEditor.onOpenChange(false);
+                  }
+                }}
               />
             </PopoverPopup>
           ) : null}

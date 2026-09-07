@@ -19,6 +19,13 @@ export type ProviderUpdateCandidate = ServerProvider & {
   };
 };
 
+export type ProviderSettingsUpdateCandidate = ServerProvider & {
+  readonly versionAdvisory: NonNullable<ServerProvider["versionAdvisory"]> & {
+    readonly canUpdate: true;
+    readonly updateCommand: string;
+  };
+};
+
 export type ProviderUpdateToastType = "warning" | "loading" | "error" | "success";
 export type ProviderUpdateToastPhase = "initial" | "running" | "failed" | "unchanged" | "succeeded";
 
@@ -149,6 +156,17 @@ export function collectProviderUpdateCandidates(
   return dedupeProvidersByDriver(providers.filter(isProviderUpdateCandidate));
 }
 
+export function isProviderSettingsUpdateCandidate(
+  provider: ServerProvider,
+): provider is ProviderSettingsUpdateCandidate {
+  return (
+    provider.enabled &&
+    provider.versionAdvisory?.status === "behind_latest" &&
+    provider.versionAdvisory.canUpdate === true &&
+    provider.versionAdvisory.updateCommand !== null
+  );
+}
+
 export function hasOneClickUpdateProviderCandidate(
   candidate: ProviderUpdateCandidate,
   providers: ReadonlyArray<ServerProvider>,
@@ -202,7 +220,7 @@ export function providerUpdateNotificationKey(
   return parts.length > 0 ? parts.join("|") : null;
 }
 
-export function formatProviderList(providers: ReadonlyArray<Pick<ServerProvider, "driver">>) {
+function formatProviderList(providers: ReadonlyArray<Pick<ServerProvider, "driver">>) {
   const names = providers.map(
     (provider) => PROVIDER_DISPLAY_NAMES[provider.driver] ?? provider.driver,
   );
@@ -231,7 +249,7 @@ export function shouldShowPrimaryProviderUpdateToast(view: ProviderUpdateToastVi
   return view.phase !== "running";
 }
 
-export function getProviderUpdateRunningToastView(providerCount: number): ProviderUpdateToastView {
+function getProviderUpdateRunningToastView(providerCount: number): ProviderUpdateToastView {
   return {
     phase: "running",
     type: "loading",
@@ -306,41 +324,6 @@ export function getProviderUpdateProgressToastView(input: {
   }
 
   return getProviderUpdateRunningToastView(input.providerCount);
-}
-
-export function getSingleProviderUpdateProgressToastView(
-  provider: ServerProvider,
-): ProviderUpdateToastView {
-  const view = getProviderUpdateProgressToastView({
-    providers: [provider],
-    providerCount: 1,
-  });
-  const providerName = PROVIDER_DISPLAY_NAMES[provider.driver] ?? provider.driver;
-
-  switch (view.phase) {
-    case "running":
-      return {
-        ...view,
-        title: `Updating ${providerName}`,
-      };
-    case "failed":
-      return {
-        ...view,
-        title: getProviderFailedUpdateTitle(provider),
-      };
-    case "unchanged":
-      return {
-        ...view,
-        title: `${providerName} still needs an update`,
-      };
-    case "succeeded":
-      return {
-        ...view,
-        title: getProviderUpdatedTitle(provider),
-      };
-    default:
-      return view;
-  }
 }
 
 export function collectUpdatedProviderSnapshots(input: {
@@ -629,42 +612,6 @@ export function collectProviderUpdateOutcomeSnapshots(
     }
   }
   return [...worstByDriver.values()];
-}
-
-/**
- * The first secondary (non-primary) backend whose update resolved without
- * succeeding. The primary's own failed/unchanged state is already surfaced
- * inline in settings, so only secondaries (which have no inline row) need an
- * explicit callout.
- */
-export function firstUnsuccessfulSecondaryProviderOutcome(
-  results: ReadonlyArray<PromiseSettledResult<LocalProviderUpdateOutcome>>,
-): { readonly provider: ServerProvider; readonly status: "failed" | "unchanged" } | null {
-  for (const result of results) {
-    if (result.status !== "fulfilled") {
-      continue;
-    }
-    const outcome = result.value;
-    if (outcome.isPrimary || outcome.provider === null) {
-      continue;
-    }
-    const status = outcome.provider.updateState?.status;
-    if (status === "failed" || status === "unchanged") {
-      return { provider: outcome.provider, status };
-    }
-  }
-  return null;
-}
-
-const WSL_INSTANCE_ID_PREFIX = "wsl:";
-
-/** The distro name from a WSL backend instance id ("wsl:ubuntu" -> "ubuntu"), or null for the default. */
-export function parseWslDistroFromInstanceId(instanceId: string | undefined): string | null {
-  if (!instanceId || !instanceId.startsWith(WSL_INSTANCE_ID_PREFIX)) {
-    return null;
-  }
-  const distro = instanceId.slice(WSL_INSTANCE_ID_PREFIX.length).trim();
-  return distro.length === 0 || distro === "default" ? null : distro;
 }
 
 /**

@@ -20,7 +20,7 @@ export function toFileViewedStates(
  * as unseen: the point of the tick is that the code behind it has been looked at, and it is not
  * the same code any more.
  */
-export function isViewedState(state: PullRequestFileViewedState | undefined): boolean {
+function isViewedState(state: PullRequestFileViewedState | undefined): boolean {
   return state === "viewed";
 }
 
