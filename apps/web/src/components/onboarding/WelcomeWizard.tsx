@@ -178,7 +178,7 @@ export function WelcomeWizard({
   );
 
   return (
-    <div className="flex h-dvh min-h-0 flex-col overflow-hidden bg-black text-foreground">
+    <div className="flex h-dvh min-h-0 flex-col overflow-hidden bg-background text-foreground">
       {isElectron ? (
         <div
           aria-hidden
