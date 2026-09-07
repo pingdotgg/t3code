@@ -2260,11 +2260,18 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   );
   const markdownStyles = useMarkdownStyles(onMarkdownLinkPress, renderMarkdownImage);
   const reviewCommentColors = useReviewCommentColors();
+  const unsettledTurnId =
+    props.latestTurn &&
+    (props.latestTurn.completedAt === null || props.latestTurn.state === "running")
+      ? props.latestTurn.turnId
+      : null;
   // LegendList does not invalidate visible rows when only the renderItem closure changes.
-  // Keep row-local interaction props in extraData so disclosures and copy feedback repaint.
+  // Include turn completion so unchanged message rows reveal their footer and spacing
+  // even when the final message update arrives before the turn settles.
   const listAppearanceData = useMemo(
     () => ({
       dispatchingMessageId: props.dispatchingMessageId,
+      unsettledTurnId,
       copiedRowId,
       expandedWorkRows,
       workRowSizing,
@@ -2277,6 +2284,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     }),
     [
       props.dispatchingMessageId,
+      unsettledTurnId,
       copiedRowId,
       expandedWorkRows,
       workRowSizing,
@@ -2472,12 +2480,6 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     }
     return new Set(terminalIdsByTurn.values());
   }, [props.feed]);
-  const unsettledTurnId =
-    props.latestTurn &&
-    (props.latestTurn.completedAt === null || props.latestTurn.state === "running")
-      ? props.latestTurn.turnId
-      : null;
-
   useEffect(() => {
     const previous = previousLatestTurnRef.current;
     previousLatestTurnRef.current = props.latestTurn;
