@@ -84,6 +84,8 @@ Item {
                     anchors.top: parent.top
                     anchors.bottom: parent.bottom
                     anchors.margins: 1
+                    anchors.topMargin: Math.max(card.border.width, Math.min(card.radius, card.height / 2))
+                    anchors.bottomMargin: anchors.topMargin
                     width: 3
                     radius: 2
                     color: host.typeColor(card.modelData.type)
