@@ -205,9 +205,11 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
         yield* setSynchronizing;
 
         // Foreground resubscriptions on the same live session can resume from
-        // the in-memory cursor. A new session reloads the authoritative HTTP
-        // snapshot so a valid cursor cannot preserve incomplete cached data.
-        const hasAuthoritativeSnapshot = (yield* Ref.get(lastAuthoritativeSession)) === session;
+        // the in-memory cursor when the server marks replay completion. Older
+        // servers need another authoritative HTTP snapshot because they report
+        // the resumed subscription as live before its replay can arrive.
+        const hasAuthoritativeSnapshot =
+          supportsCompletionMarker && (yield* Ref.get(lastAuthoritativeSession)) === session;
         let canResume = hasAuthoritativeSnapshot;
         let current = yield* SubscriptionRef.get(state);
         if (!hasAuthoritativeSnapshot || Option.isNone(current.snapshot)) {

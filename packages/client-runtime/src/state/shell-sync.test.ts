@@ -48,10 +48,15 @@ const LIVE_SHELL_SNAPSHOT: OrchestrationShellSnapshot = {
   updatedAt: "2026-06-06T00:00:00.000Z",
 };
 
-function session(client: WsRpcProtocolClient): RpcSession.RpcSession {
+function session(
+  client: WsRpcProtocolClient,
+  options?: { readonly completionMarker?: boolean },
+): RpcSession.RpcSession {
   return {
     client,
-    initialConfig: Effect.succeed({ shellResumeCompletionMarker: true } as never),
+    initialConfig: Effect.succeed(
+      (options?.completionMarker === false ? {} : { shellResumeCompletionMarker: true }) as never,
+    ),
     subscribeServerConfig: (input) => client.subscribeServerConfig(input),
     ready: Effect.void,
     probe: Effect.void,
@@ -448,6 +453,75 @@ describe("environment shell synchronization", () => {
         yield* Effect.yieldNow;
       }
       expect(yield* Ref.get(capturedAfterSequences)).toEqual([10, 40, 40, 20]);
+      expect(yield* Ref.get(loaderCalls)).toBe(2);
+    }),
+  );
+
+  it.effect("refreshes the shell before resuming against servers without completion markers", () =>
+    Effect.gen(function* () {
+      const events = yield* Queue.unbounded<OrchestrationShellStreamItem>();
+      const wakeups = yield* Queue.unbounded<ConnectionWakeups.ConnectionWakeup>();
+      const subscribeInputs = yield* Queue.unbounded<{ readonly afterSequence?: number }>();
+      const loaderCalls = yield* Ref.make(0);
+      const client = {
+        [ORCHESTRATION_WS_METHODS.subscribeShell]: (input: { readonly afterSequence?: number }) =>
+          Stream.unwrap(
+            Queue.offer(subscribeInputs, input).pipe(Effect.as(Stream.fromQueue(events))),
+          ),
+      } as unknown as WsRpcProtocolClient;
+      const supervisorState = yield* SubscriptionRef.make(AVAILABLE_CONNECTION_STATE);
+      const activeSession = yield* SubscriptionRef.make(
+        Option.some(session(client, { completionMarker: false })),
+      );
+      const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
+        target: TARGET,
+        state: supervisorState,
+        session: activeSession,
+        prepared: yield* SubscriptionRef.make(Option.some(PREPARED)),
+        connect: Effect.void,
+        disconnect: Effect.void,
+        retryNow: Effect.void,
+      } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
+      const cache = Persistence.EnvironmentCacheStore.of({
+        loadShell: () => Effect.succeed(Option.none()),
+        saveShell: () => Effect.void,
+        loadThread: () => Effect.succeed(Option.none()),
+        saveThread: () => Effect.void,
+        removeThread: () => Effect.void,
+        loadServerConfig: () => Effect.succeed(Option.none()),
+        saveServerConfig: () => Effect.void,
+        loadVcsRefs: () => Effect.succeed(Option.none()),
+        saveVcsRefs: () => Effect.void,
+        removeVcsRefs: () => Effect.void,
+        clearVcsRefs: () => Effect.void,
+        clear: () => Effect.void,
+      });
+      const snapshotLoader = ShellSnapshotLoader.of({
+        load: () =>
+          Ref.updateAndGet(loaderCalls, (count) => count + 1).pipe(
+            Effect.map((count) =>
+              Option.some({ ...LIVE_SHELL_SNAPSHOT, snapshotSequence: count * 10 }),
+            ),
+          ),
+      });
+      const shellState = yield* makeEnvironmentShellState().pipe(
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+        Effect.provideService(Persistence.EnvironmentCacheStore, cache),
+        Effect.provideService(ShellSnapshotLoader, snapshotLoader),
+        Effect.provideService(
+          ConnectionWakeups.ConnectionWakeups,
+          ConnectionWakeups.ConnectionWakeups.of({ changes: Stream.fromQueue(wakeups) }),
+        ),
+      );
+
+      expect(yield* Queue.take(subscribeInputs)).toEqual({ afterSequence: 10 });
+      expect((yield* SubscriptionRef.get(shellState)).status).toBe("live");
+
+      yield* Queue.offer(wakeups, "application-active");
+      expect(yield* Queue.take(subscribeInputs)).toEqual({ afterSequence: 20 });
+      const resumed = yield* SubscriptionRef.get(shellState);
+      expect(resumed.status).toBe("live");
+      expect(Option.getOrThrow(resumed.snapshot).snapshotSequence).toBe(20);
       expect(yield* Ref.get(loaderCalls)).toBe(2);
     }),
   );
