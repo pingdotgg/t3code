@@ -267,17 +267,17 @@ describe("MessagesTimeline", () => {
         getState: () => ({ isAtEnd: timelineIsAtEnd }),
         getScrollableNode: () => null,
       } as unknown as LegendListRef;
-      let isResting = true;
+      let isResting = false;
+      let composerState: ReturnType<typeof useComposerFocusState> | undefined;
       function ThreadProbe() {
-        const composer = useComposerFocusState(false);
+        const composer = useComposerFocusState();
         useLayoutEffect(() => {
+          composerState = composer;
           isResting = shouldUseRestingComposerLayout({
             isExistingThread: true,
             isMobileViewport: false,
-            isFocused: composer.isComposerFocused,
             isScrollCollapsed: composer.isComposerScrollCollapsed,
             hasExpandedChrome: false,
-            collapseOnBlur: true,
             timelineOverflows: true,
           });
         });
@@ -309,6 +309,8 @@ describe("MessagesTimeline", () => {
         await act(() => {
           renderer = create(<ThreadProbe />);
         });
+        // The user scrolled up to read, so the composer is resting.
+        await act(() => composerState!.setIsComposerScrollCollapsed(true));
         const toggle = renderer!.root.findByProps({ "aria-expanded": false });
         await act(() => toggle.props.onClick());
         await flushFrame();

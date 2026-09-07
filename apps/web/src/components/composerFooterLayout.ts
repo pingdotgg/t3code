@@ -26,10 +26,8 @@ export function shouldUseCompactComposerFooter(
 export function shouldUseRestingComposerLayout(input: {
   isExistingThread: boolean;
   isMobileViewport: boolean;
-  isFocused: boolean;
   isScrollCollapsed: boolean;
   hasExpandedChrome: boolean;
-  collapseOnBlur: boolean;
   /** Whether the timeline has more content than fits above the composer. */
   timelineOverflows: boolean;
 }): boolean {
@@ -42,20 +40,19 @@ export function shouldUseRestingComposerLayout(input: {
   // desktop width, and where the strip is missing or too narrow the controls
   // simply return when the composer is focused.
   //
-  // A scroll collapse rests the composer regardless of the blur preference:
-  // the user asked for it with the gesture, and it lifts on the next
-  // composer interaction. With blur collapse off, losing focus alone never
-  // rests the composer.
+  // Only a timeline scroll rests the composer: the user asked for it with the
+  // gesture, and it lifts on the next composer interaction. Losing focus never
+  // rests it, so clicking a message, copying output, or selecting text for a
+  // citation leaves the composer where it was.
   //
   // Resting exists to give reading space back to the timeline. A thread that
   // fits above the composer has nothing to reclaim, so it stays expanded and
   // never shows the collapsed row that a fresh thread would otherwise open on.
-  const collapsed = input.isScrollCollapsed || (input.collapseOnBlur && !input.isFocused);
   return (
     input.isExistingThread &&
     !input.isMobileViewport &&
     input.timelineOverflows &&
-    collapsed &&
+    input.isScrollCollapsed &&
     !input.hasExpandedChrome
   );
 }
