@@ -56,9 +56,7 @@ export function usePreferredEditor(availableEditors: ReadonlyArray<EditorId>) {
   return [effectiveEditor, setLastEditor] as const;
 }
 
-export function resolveAndPersistPreferredEditor(
-  availableEditors: readonly EditorId[],
-): EditorId | null {
+function resolveAndPersistPreferredEditor(availableEditors: readonly EditorId[]): EditorId | null {
   const availableEditorIds = new Set(availableEditors);
   const stored = getLocalStorageItem(LAST_EDITOR_KEY, EditorId);
   if (stored && availableEditorIds.has(stored)) return stored;

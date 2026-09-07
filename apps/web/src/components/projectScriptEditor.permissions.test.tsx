@@ -1,5 +1,6 @@
 import {
   AuthOrchestrationOperateScope,
+  AuthSettingsWriteScope,
   EnvironmentId,
   type AuthEnvironmentScope,
 } from "@t3tools/contracts";
@@ -86,11 +87,15 @@ describe("ProjectScriptEditorDialog", () => {
     onSubmit = vi.fn().mockResolvedValue(AsyncResult.success(undefined)),
     editorRequest = request,
     actions = { onDelete: vi.fn(), onClose: vi.fn() },
+    editScope:
+      | typeof AuthOrchestrationOperateScope
+      | typeof AuthSettingsWriteScope = AuthOrchestrationOperateScope,
   ) {
     await act(() => {
       renderer = create(
         <ProjectScriptEditorDialog
           environmentId={EnvironmentId.make("script-editor-test")}
+          editScope={editScope}
           request={editorRequest}
           scripts={[]}
           onSubmit={onSubmit}
@@ -101,6 +106,52 @@ describe("ProjectScriptEditorDialog", () => {
     });
     return renderer!.root;
   }
+
+  it.each([null, "test"])(
+    "saves a settings action without task access (id: %s)",
+    async (scriptId) => {
+      permissions.canEditProject = false;
+      permissions.canWriteSettings = true;
+      const onSubmit = vi.fn().mockResolvedValue(AsyncResult.success(undefined));
+      const root = await openEditor(
+        onSubmit,
+        { ...request, scriptId },
+        undefined,
+        AuthSettingsWriteScope,
+      );
+      const submit = root.findByType("form").props.onSubmit;
+      permissions.canWriteSettings = false;
+      await act(async () => {
+        await submit({ preventDefault() {} });
+      });
+      expect(onSubmit).not.toHaveBeenCalled();
+      permissions.canWriteSettings = true;
+      await act(async () => {
+        await submit({ preventDefault() {} });
+      });
+      expect(onSubmit).toHaveBeenCalledExactlyOnceWith(
+        scriptId,
+        expect.objectContaining({ command: "vp test" }),
+      );
+    },
+  );
+
+  it("rechecks settings access before deleting a settings action", async () => {
+    permissions.canEditProject = false;
+    permissions.canWriteSettings = true;
+    const actions = { onDelete: vi.fn(), onClose: vi.fn() };
+    const root = await openEditor(undefined, request, actions, AuthSettingsWriteScope);
+    await act(() => {
+      root.findByProps({ variant: "destructive-outline" }).props.onClick();
+    });
+    const confirmDelete = root.findByProps({ variant: "destructive" }).props.onClick;
+    permissions.canWriteSettings = false;
+    await act(() => confirmDelete());
+    expect(actions.onDelete).not.toHaveBeenCalled();
+    permissions.canWriteSettings = true;
+    await act(() => confirmDelete());
+    expect(actions.onDelete).toHaveBeenCalledExactlyOnceWith(request.scriptId);
+  });
 
   it("clears an old shortcut when adding an action with no shortcut", async () => {
     permissions.canWriteSettings = true;
