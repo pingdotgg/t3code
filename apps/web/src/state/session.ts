@@ -35,17 +35,25 @@ export function useEnvironmentsWithScope(
   environments: ReadonlyArray<{ readonly environmentId: EnvironmentId }>,
   scope: AuthEnvironmentScope,
 ): ReadonlySet<EnvironmentId> {
-  const permitted = useMemo(() => Atom.make((get) => {
-    const ids = new Set<EnvironmentId>();
-    for (const { environmentId } of environments) {
-      const result = get(environmentSession.sessionStateAtom(environmentId));
-      const session = Option.getOrNull(AsyncResult.value(result));
-      if (result._tag !== "Failure" && session?.authenticated === true && session.scopes?.includes(scope)) {
-        ids.add(environmentId);
-      }
-    }
-    return ids;
-  }), [environments, scope]);
+  const permitted = useMemo(
+    () =>
+      Atom.make((get) => {
+        const ids = new Set<EnvironmentId>();
+        for (const { environmentId } of environments) {
+          const result = get(environmentSession.sessionStateAtom(environmentId));
+          const session = Option.getOrNull(AsyncResult.value(result));
+          if (
+            result._tag !== "Failure" &&
+            session?.authenticated === true &&
+            session.scopes?.includes(scope)
+          ) {
+            ids.add(environmentId);
+          }
+        }
+        return ids;
+      }),
+    [environments, scope],
+  );
   return useAtomValue(permitted);
 }
 
