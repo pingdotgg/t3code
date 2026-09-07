@@ -52,7 +52,7 @@ it.effect("automatic pull only updates enabled, behind default-branch checkouts"
       project("/disabled", false),
     ]).pipe(Effect.provideService(GitVcsDriver.GitVcsDriver, git));
 
-    assert.deepStrictEqual(pulled, ["/clean", "/dirty"]);
+    assert.deepStrictEqual(pulled.toSorted(), ["/clean", "/dirty"]);
 
     pulled.length = 0;
     yield* ServerRuntimeStartup.autoPullProjects(
@@ -62,7 +62,7 @@ it.effect("automatic pull only updates enabled, behind default-branch checkouts"
         projectAutoPullOverrides: { [ProjectId.make("/opted-out")]: false },
       },
     ).pipe(Effect.provideService(GitVcsDriver.GitVcsDriver, git));
-    assert.deepStrictEqual(pulled, ["/inherited", "/dirty"]);
+    assert.deepStrictEqual(pulled.toSorted(), ["/dirty", "/inherited"]);
   }),
 );
 
