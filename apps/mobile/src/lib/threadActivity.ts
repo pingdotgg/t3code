@@ -1918,7 +1918,7 @@ function appendActivityGroupRows(
     }
     result.push({
       type: "activity-group",
-      id: activity.id,
+      id: `activity:${activity.id}`,
       createdAt: activity.createdAt,
       turnId: activity.turnId,
       activities: [activity],
@@ -1963,7 +1963,7 @@ function appendToolGroupRows(
   if (singleActivity && !singleActivity.toolLike && !active) {
     result.push({
       type: "activity-group",
-      id: singleActivity.id,
+      id: `activity:${singleActivity.id}`,
       createdAt: singleActivity.createdAt,
       turnId: singleActivity.turnId,
       activities,
@@ -2226,7 +2226,7 @@ function toThreadFeedActivityEntry(
   });
   return {
     type: "activity",
-    id: entry.id,
+    id: `activity:${entry.id}`,
     createdAt: entry.createdAt,
     turnId: entry.turnId,
     activity: {

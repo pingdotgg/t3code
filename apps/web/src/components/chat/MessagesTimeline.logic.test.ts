@@ -42,6 +42,42 @@ import {
 import { isImageAttachment, type ChatMessage, type TurnDiffSummary } from "../../types";
 
 describe("single status rows", () => {
+  it.each([false, true])("preserves an async answer with its turn expanded=%s", (expanded) => {
+    const createdAt = "2026-09-07T12:00:00.000Z";
+    const turnId = TurnId.make("answer-turn");
+    const message: ChatMessage = {
+      id: MessageId.make("async-answer:question"),
+      role: "user",
+      text: "Which option?\nAlpha",
+      turnId: null,
+      createdAt,
+      updatedAt: createdAt,
+      streaming: false,
+    };
+    const entry: WorkLogEntry = {
+      id: message.id,
+      turnId,
+      createdAt,
+      label: "User input submitted",
+      tone: "info",
+      sourceActivityKind: "user-input.resolved",
+    };
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: deriveTimelineEntries([message], [], [entry]),
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+      expandedTurnIds: new Set(expanded ? [turnId] : []),
+    });
+
+    expect(rows.filter((row) => row.kind === "message")).toEqual([
+      expect.objectContaining({ message }),
+    ]);
+    expect(new Set(rows.map((row) => row.id)).size).toBe(rows.length);
+    expect(rows.filter((row) => row.kind === "work")).toHaveLength(expanded ? 1 : 0);
+  });
+
   it.each([false, true])("renders an answered question once with group expanded=%s", (expanded) => {
     const entry: WorkLogEntry = {
       id: "answer",
