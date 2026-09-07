@@ -172,7 +172,7 @@ describe("GhosttyTerminalSurface visibility", () => {
         canvas.dispatchEvent(
           Object.assign(new Event(type, { cancelable: true }), {
             clientX,
-            clientY: 5,
+            clientY: 13,
             pointerId: 1,
             button: 0,
             buttons,
@@ -210,6 +210,27 @@ describe("GhosttyTerminalSurface visibility", () => {
     vi.restoreAllMocks();
   });
 
+  it("insets the rendered grid and bottom prompt while fitting all cells inside the viewport", async () => {
+    const harness = createHarness();
+    const surface = await harness.create();
+    surface.write("hello");
+    harness.flushFrame();
+    expect(harness.renderedSnapshot).toMatchObject({ cols: 18, rows: 5 });
+    expect(harness.paint.mock.calls).toContainEqual(["fillText", ["hello", 12, 23, 40]]);
+
+    surface.focus();
+    surface.write("\r\n".repeat(10) + "prompt");
+    harness.flushFrame();
+    expect(harness.renderedSnapshot).toMatchObject({ cursorX: 6, cursorY: 4 });
+    expect(harness.paint.mock.calls).toContainEqual(["fillRect", [60, 76, 8, 16]]);
+
+    surface.write("\x1b[?1000h\x1b[?1006h");
+    harness.pointer("pointerdown", 13, 1);
+    expect(harness.onData).toHaveBeenCalledWith("\x1b[<0;1;1M");
+    harness.pointer("pointerup", 13, 0);
+    expect(harness.onData).toHaveBeenCalledWith("\x1b[<0;1;1m");
+  });
+
   it("stops hidden snapshots and paint while preserving live VT replies and the next cursor", async () => {
     const harness = createHarness();
     const surface = await harness.create();
@@ -243,7 +264,7 @@ describe("GhosttyTerminalSurface visibility", () => {
     expect(harness.snapshot).toHaveBeenCalledTimes(1);
     expect(harness.renderedSnapshot).toMatchObject({ cursorX: 10, cursorY: 0 });
     expect(harness.renderedSnapshot.rowData[0]?.text).toContain("hidden");
-    expect(harness.paint.mock.calls).toContainEqual(["fillRect", [84, 4, 8, 16]]);
+    expect(harness.paint.mock.calls).toContainEqual(["fillRect", [92, 12, 8, 16]]);
     expect(harness.frames.size).toBe(0);
   });
 
@@ -252,9 +273,9 @@ describe("GhosttyTerminalSurface visibility", () => {
     const surface = await harness.create();
     surface.write("hello world");
     harness.flushFrame();
-    harness.pointer("pointerdown", 5, 1);
-    harness.pointer("pointermove", 37, 1);
-    harness.pointer("pointerup", 37, 0);
+    harness.pointer("pointerdown", 13, 1);
+    harness.pointer("pointermove", 45, 1);
+    harness.pointer("pointerup", 45, 0);
     harness.flushFrame();
     expect(surface.getSelection()).toBe("hello");
     const position = surface.getSelectionPosition();

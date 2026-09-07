@@ -33,7 +33,7 @@ const TERMINAL_GLYPH_FALLBACKS =
 // reject the whole string.
 export const DEFAULT_TERMINAL_FONT_FAMILY =
   '"SF Mono", "SFMono-Regular", Menlo, Consolas, "Liberation Mono", ' + TERMINAL_GLYPH_FALLBACKS;
-const CONTENT_PADDING = 4;
+const CONTENT_PADDING = 12;
 const MIN_SCROLLBAR_THUMB_HEIGHT = 18;
 /** Half a blink cycle: the visible and hidden phases are equally long. */
 const CURSOR_BLINK_INTERVAL_MS = 500;
