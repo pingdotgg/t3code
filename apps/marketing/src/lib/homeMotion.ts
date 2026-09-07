@@ -1,13 +1,11 @@
-/** Runs homepage motion only while its content is visible. Manual scrolling stops paging. */
+/** Runs homepage motion only while its content is visible. */
 export function startHomeMotion({
   hero,
   field,
-  endorsements,
   caret,
 }: {
   hero: HTMLElement;
   field: HTMLElement;
-  endorsements: HTMLElement;
   caret: HTMLElement;
 }) {
   if (typeof IntersectionObserver === "undefined") return () => {};
@@ -19,12 +17,6 @@ export function startHomeMotion({
   const events = new AbortController();
   const eventOptions = { signal: events.signal };
   let disposed = false;
-  let hovered = endorsements.matches(":hover");
-  let focused = endorsements.contains(document.activeElement);
-  let userControlled = false;
-  let direction = 1;
-  let automaticScroll = false;
-  let pageTimer: ReturnType<typeof setTimeout> | undefined;
   let pointerFrame: number | undefined;
   let pointer: { x: number; y: number } | null = null;
 
@@ -34,47 +26,12 @@ export function startHomeMotion({
     document.visibilityState === "visible" &&
     !reducedMotion.matches;
   const canParallax = () => finePointer.matches && marks.some(canMove);
-  const canPage = () =>
-    canMove(endorsements) &&
-    !hovered &&
-    !focused &&
-    !userControlled &&
-    endorsements.scrollWidth > endorsements.clientWidth;
-
   function resetPointer() {
     if (pointerFrame !== undefined) cancelAnimationFrame(pointerFrame);
     pointerFrame = undefined;
     pointer = null;
     field.style.setProperty("--px", "0px");
     field.style.setProperty("--py", "0px");
-  }
-
-  function updatePaging() {
-    if (canPage()) {
-      pageTimer ??= setTimeout(advancePage, 8_000);
-      return;
-    }
-    if (pageTimer !== undefined) clearTimeout(pageTimer);
-    pageTimer = undefined;
-    if (automaticScroll) {
-      automaticScroll = false;
-      endorsements.scrollTo({ left: endorsements.scrollLeft, behavior: "instant" });
-    }
-  }
-
-  function advancePage() {
-    pageTimer = undefined;
-    if (!canPage()) return;
-    const end = endorsements.scrollWidth - endorsements.clientWidth;
-    const current = endorsements.scrollLeft;
-    if (current >= end - 1) direction = -1;
-    else if (current <= 1) direction = 1;
-    automaticScroll = true;
-    endorsements.scrollTo({
-      left: Math.max(0, Math.min(end, current + direction * endorsements.clientWidth)),
-      behavior: "smooth",
-    });
-    updatePaging();
   }
 
   function update() {
@@ -85,7 +42,6 @@ export function startHomeMotion({
     const parallax = canParallax();
     field.style.setProperty("--parallax-duration", parallax ? "0.7s" : "0s");
     if (!parallax) resetPointer();
-    updatePaging();
   }
 
   const observer = new IntersectionObserver((entries) => {
@@ -96,7 +52,7 @@ export function startHomeMotion({
     }
     update();
   });
-  for (const element of [...marks, endorsements, caret]) observer.observe(element);
+  for (const element of [...marks, caret]) observer.observe(element);
 
   hero.addEventListener(
     "pointermove",
@@ -121,45 +77,6 @@ export function startHomeMotion({
     eventOptions,
   );
   hero.addEventListener("pointerleave", resetPointer, eventOptions);
-  endorsements.addEventListener(
-    "pointerenter",
-    () => {
-      hovered = true;
-      updatePaging();
-    },
-    eventOptions,
-  );
-  endorsements.addEventListener(
-    "pointerleave",
-    () => {
-      hovered = false;
-      updatePaging();
-    },
-    eventOptions,
-  );
-  endorsements.addEventListener(
-    "focusin",
-    () => {
-      focused = true;
-      updatePaging();
-    },
-    eventOptions,
-  );
-  endorsements.addEventListener(
-    "focusout",
-    (event) => {
-      focused = event.relatedTarget instanceof Node && endorsements.contains(event.relatedTarget);
-      updatePaging();
-    },
-    eventOptions,
-  );
-  const takeControl = () => {
-    userControlled = true;
-    updatePaging();
-  };
-  endorsements.addEventListener("wheel", takeControl, { ...eventOptions, passive: true });
-  endorsements.addEventListener("pointerdown", takeControl, eventOptions);
-  endorsements.addEventListener("keydown", takeControl, eventOptions);
   document.addEventListener("visibilitychange", update, eventOptions);
   window.addEventListener("resize", update, eventOptions);
   reducedMotion.addEventListener("change", update, eventOptions);
