@@ -208,12 +208,32 @@ export function UsageLimitsSection({
   const colors = useProviderColors();
   return (
     <View className="gap-6">
+      {notices.length > 0 ? (
+        <View className="gap-2">
+          {notices.map((notice) => (
+            <View
+              key={notice}
+              accessibilityRole="alert"
+              className="flex-row items-start gap-2 rounded-xl border border-warning-border bg-warning px-3.5 py-3"
+            >
+              <SymbolView
+                name="exclamationmark.triangle"
+                size={16}
+                tintColorClassName="accent-warning-foreground"
+              />
+              <Text className="min-w-0 flex-1 text-sm font-t3-medium text-warning-foreground">
+                {notice}
+              </Text>
+            </View>
+          ))}
+        </View>
+      ) : null}
       {failedLabels.length ? (
         <Text className="text-sm text-foreground-muted">
           {failedLabels.join(", ")} could not refresh limits. Showing the last known values.
         </Text>
       ) : null}
-      {pools.length === 0 ? (
+      {pools.length === 0 && notices.length === 0 ? (
         <Text className="py-12 text-center text-base text-foreground-muted">
           {selected.size === 0
             ? "Select an environment to see limits."
@@ -238,11 +258,6 @@ export function UsageLimitsSection({
             />
           ))}
         </View>
-      ))}
-      {notices.map((notice) => (
-        <Text key={notice} className="text-sm text-foreground-muted">
-          {notice}
-        </Text>
       ))}
     </View>
   );
