@@ -20,7 +20,7 @@ export interface ThreadPrPresentation {
 const PR_STATE_TEXT_CLASS: Record<ThreadPr["state"], string> = {
   open: "text-adaptive-emerald-600-400",
   merged: "text-adaptive-violet-600-400",
-  closed: "text-adaptive-zinc-500-400",
+  closed: "text-foreground-muted",
 };
 
 export function presentThreadPr(
@@ -37,6 +37,6 @@ export function presentThreadPr(
     url: pr.url,
     label: String(pr.number),
     accessibilityLabel: `#${pr.number} ${presentation.longName} ${isDraft ? "draft" : pr.state}`,
-    textClassName: isDraft ? "text-adaptive-zinc-500-400" : PR_STATE_TEXT_CLASS[pr.state],
+    textClassName: isDraft ? "text-foreground-muted" : PR_STATE_TEXT_CLASS[pr.state],
   };
 }

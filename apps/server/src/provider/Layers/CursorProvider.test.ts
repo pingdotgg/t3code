@@ -16,6 +16,7 @@ import {
   buildCursorCapabilitiesFromConfigOptions,
   checkCursorProviderStatus,
   discoverCursorModelsViaAcp,
+  makeCursorModelDiscovery,
   getCursorParameterizedModelPickerUnsupportedMessage,
   parseCursorAboutOutput,
   parseCursorCliConfigChannel,
@@ -627,6 +628,42 @@ describe("checkCursorProviderStatus", () => {
 });
 
 describe("discoverCursorModelsViaAcp", () => {
+  it("reuses successful discovery until the CLI version or account changes", async () => {
+    await runNode(
+      Effect.gen(function* () {
+        const { requestLogPath, wrapperPath } = yield* makeProviderStatusEnvFixture();
+        const fileSystem = yield* FileSystem.FileSystem;
+        const settings = {
+          enabled: true,
+          binaryPath: wrapperPath,
+          apiEndpoint: "",
+          customModels: [],
+        };
+        const discover = yield* makeCursorModelDiscovery(settings, {
+          ...process.env,
+          T3_ACP_REQUEST_LOG_PATH: requestLogPath,
+        });
+        const about = {
+          version: "2026.08.11",
+          auth: { status: "authenticated" as const, label: "first@example.test" },
+        };
+        const first = yield* discover(about);
+        expect(first.length).toBeGreaterThan(0);
+        yield* fileSystem.writeFileString(requestLogPath, "");
+        expect(yield* discover(about)).toEqual(first);
+        expect(yield* fileSystem.readFileString(requestLogPath)).toBe("");
+        yield* discover({ ...about, version: "2026.08.12" });
+        expect(yield* fileSystem.readFileString(requestLogPath)).toContain("initialize");
+        yield* fileSystem.writeFileString(requestLogPath, "");
+        yield* discover({
+          version: "2026.08.12",
+          auth: { ...about.auth, label: "second@example.test" },
+        });
+        expect(yield* fileSystem.readFileString(requestLogPath)).toContain("initialize");
+      }),
+    );
+  });
+
   it("keeps the ACP probe runtime alive long enough to discover models", async () => {
     const wrapperPath = await runNode(makeMockAgentWrapper());
 

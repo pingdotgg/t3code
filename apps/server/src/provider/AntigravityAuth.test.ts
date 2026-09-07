@@ -61,7 +61,7 @@ const makeHarness = Effect.fn("makeAuthTestHarness")(function* (
   } = {},
 ) {
   const authenticated = yield* Deferred.make<void, AcpErrors.AcpError>();
-  const discovered = yield* Deferred.make<void>();
+  const discovered = yield* Deferred.make<void, AcpErrors.AcpError>();
   const closed = yield* Deferred.make<void>();
   const events: string[] = [];
   let receiveAuthorizationUrl:
@@ -222,6 +222,33 @@ it.layer(NodeServices.layer)("AntigravityAuth", (it) => {
       assert.isNull(succeeded.expiresAt);
       assert.equal(harness.events.at(-1), "process-close");
     }),
+  );
+
+  it.effect(
+    "distinguishes a post-authentication session failure without exposing its payload",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* makeHarness();
+        yield* harness.auth.controller.start(owner);
+        yield* phase(harness.auth, "waiting");
+        yield* Deferred.succeed(harness.authenticated, undefined);
+        yield* Deferred.fail(
+          harness.discovered,
+          new AcpErrors.AcpRequestError({
+            code: -32603,
+            errorMessage: `Internal error ${callbackUrl}`,
+            method: "session/new",
+          }),
+        );
+        const failed = yield* phase(harness.auth, "failed");
+        assert.equal(
+          failed.message,
+          "Antigravity authenticated, but could not initialize a session or load models.",
+        );
+        assert.isNull(failed.authorizationUrl);
+        assert.deepEqual(harness.catalog(), ["previous-account-model"]);
+        yield* Deferred.await(harness.closed);
+      }),
   );
 
   it.effect("does not call callback HTTP success a successful Google sign-in", () =>
