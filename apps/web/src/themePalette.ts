@@ -2,6 +2,7 @@ import * as Equal from "effect/Equal";
 import * as Schema from "effect/Schema";
 import "culori/css";
 import { converter, parse } from "culori/fn";
+import { applyDocumentThemeOverride } from "./documentThemeOverride";
 import {
   BUILT_IN_THEMES,
   EMBER_THEME,
@@ -1634,6 +1635,7 @@ export function applyThemeColorPreview(colors: ThemeColors, appearance: ThemeApp
     // A half-typed hex keeps the last good value instead of blanking the role.
     if (isThemeColor(value)) root.style.setProperty(APP_THEME_VARIABLES[role], value);
   }
+  applyDocumentThemeOverride();
 }
 
 export function applyThemePalette(theme: ThemePreference, appearance?: ThemeAppearance): void {
@@ -1652,6 +1654,7 @@ export function applyThemePalette(theme: ThemePreference, appearance?: ThemeAppe
     for (const [role, value] of Object.entries(colors) as Array<[ThemeColorRole, string]>) {
       root.style.setProperty(APP_THEME_VARIABLES[role], value);
     }
+    applyDocumentThemeOverride();
     return;
   }
 
@@ -1659,6 +1662,7 @@ export function applyThemePalette(theme: ThemePreference, appearance?: ThemeAppe
   for (const variable of Object.values(APP_THEME_VARIABLES)) {
     root.style.removeProperty(variable);
   }
+  applyDocumentThemeOverride();
 }
 
 export function resolveThemeAppearance(

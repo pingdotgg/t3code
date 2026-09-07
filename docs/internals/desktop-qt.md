@@ -194,11 +194,12 @@ the Settings → Theme editor exports it) plus a shell-only `window` section:
   `text`, `textMuted`, `accent`, `sidebar`, `terminalBackground`, … — the
   `ThemeColorRole` list in `packages/shared/src/themePalettes.ts`).
   `variants.<appearance>` overrides `colors` for that appearance.
-- The shell applies them to the page exactly as the web app applies its own
-  themes: `data-theme-id` on `<html>` plus inline `--app-theme-<role>`
-  variables, re-asserted if the web app's stored preference overwrites them.
-  Until the SPA applies shell themes itself, supply the full role set
-  (the files under `examples/*/` do) — a missing role has no fallback on this path.
+- The native document-creation script applies the first-paint colors, then
+  hands its override to the web theme module through `window.__t3ShellTheme`.
+  The web module applies the override after stored palettes and editor previews,
+  without changing saved preferences. Native reinjections deliver data only;
+  older pages retain the DOM-observer fallback. Supply the full role set
+  (the files under `examples/*/` do) for consistent colors during startup.
 - QML reads the same roles: `Theme.colors`, `Theme.color("chrome", fallback)`,
   `Theme.appearance`, `Theme.id`.
 - `window.*` is shell-only: `opacity` (whole-window), `transparent` (window and

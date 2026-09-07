@@ -3,6 +3,10 @@ import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
 import * as Schema from "effect/Schema";
 import { useCallback, useEffect, useSyncExternalStore } from "react";
 import {
+  applyDocumentThemeOverride,
+  subscribeToDocumentThemeOverride,
+} from "../documentThemeOverride";
+import {
   applyThemePalette,
   CUSTOM_THEMES_STORAGE_KEY,
   invalidateCustomThemes,
@@ -138,6 +142,11 @@ let snapshotStale = true;
 let lastDesktopTheme: "light" | "dark" | "system" | null = null;
 let lastAppliedTheme: Omit<ThemeSnapshot, "resolvedTheme"> | null = null;
 let themeStorageReadFailure: ThemeStorageError | null = null;
+
+// A removed host override must not leave an unchanged stored selection cached out.
+subscribeToDocumentThemeOverride(() => {
+  lastAppliedTheme = null;
+});
 
 function emitChange() {
   snapshotStale = true;
@@ -353,6 +362,7 @@ function applyTheme(theme: Theme, { suppressTransitions = false, preservePreview
   );
   applyThemePalette(resolveThemeHalf(theme, themeHalves, resolvedAppearance), resolvedAppearance);
   document.documentElement.classList.toggle("dark", resolvedAppearance === "dark");
+  applyDocumentThemeOverride();
   lastAppliedTheme = { theme, systemDark, followSystem, appearanceMode, themeHalves };
   syncBrowserChromeTheme();
   syncDesktopTheme(theme, followSystem, appearanceMode);

@@ -1,16 +1,20 @@
 import { useEffect } from "react";
 
 import { readShellThemeState } from "./shellThemeState";
+import { claimShellThemeOverride } from "./shellThemeOverride";
 
 /**
  * Publishes the page's resolved theme to the Qt shell whenever it changes
  * (theme preference, appearance, custom theme edits, shell theme.json
  * injection), so native chrome matches the page by default.
  */
-export function ShellThemeBridge() {
+export function ShellThemeBridge({ publishToShell = true }: { publishToShell?: boolean }) {
   useEffect(() => {
     const shell = window.t3Shell;
     if (!shell) return;
+    claimShellThemeOverride();
+    // Embedded documents consume overrides; only the primary publishes native colors.
+    if (!publishToShell) return;
     const root = document.documentElement;
     let frame: number | null = null;
     let lastJson = "";
@@ -42,6 +46,6 @@ export function ShellThemeBridge() {
       window.clearTimeout(settle);
       if (frame !== null) window.cancelAnimationFrame(frame);
     };
-  }, []);
+  }, [publishToShell]);
   return null;
 }

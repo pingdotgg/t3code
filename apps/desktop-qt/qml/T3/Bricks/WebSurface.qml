@@ -47,14 +47,14 @@ WebEngineView {
     function syncThemeScript() {
         const source = Theme.loaded ? Theme.injectionScript : "";
         if (source === view.installedThemeScript) {
-            return;
+            return false;
         }
         view.installedThemeScript = source;
         for (const stale of view.userScripts.find("t3-theme")) {
             view.userScripts.remove(stale);
         }
         if (source.length === 0) {
-            return;
+            return true;
         }
         const script = WebEngine.script();
         script.name = "t3-theme";
@@ -62,6 +62,7 @@ WebEngineView {
         script.injectionPoint = WebEngineScript.DocumentCreation;
         script.worldId = WebEngineScript.MainWorld;
         view.userScripts.insert(script);
+        return true;
     }
 
     function radiusScript() {
@@ -165,8 +166,8 @@ WebEngineView {
     Connections {
         target: Theme
         function onThemeChanged() {
-            view.syncThemeScript();
-            if (!view.loading) {
+            const changed = view.syncThemeScript();
+            if (changed && !view.loading) {
                 view.runJavaScript(Theme.injectionScript);
             }
         }

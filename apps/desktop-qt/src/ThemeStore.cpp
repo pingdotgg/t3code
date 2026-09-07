@@ -167,10 +167,9 @@ QString ThemeStore::injectionScript() const {
   // (applyThemeColorPreview in themePalette.ts): `data-theme-id` on <html>
   // plus inline `--app-theme-*` variables. It runs as a user script at
   // document creation so the first paint is already in the shell's colours,
-  // and again on theme changes. The web app re-applies its stored preference
-  // on boot and on changes (and paints its own chrome colour behind the
-  // page), so an observer re-asserts ours until the SPA takes shell themes
-  // over itself. An empty theme removes the hook.
+  // and again on theme changes. Once the page claims the bootstrap mailbox,
+  // subsequent injections deliver the override to its theme module. Older
+  // pages retain the observer fallback. An empty theme removes the override.
   QJsonObject vars;
   for (auto it = m_colors.cbegin(); it != m_colors.cend(); ++it) {
     vars.insert(cssVariableForRole(it.key()), it.value().toString());
@@ -197,6 +196,8 @@ QString ThemeStore::injectionScript() const {
              "    const root = document.documentElement;"
              "    const state = (window.__t3ShellTheme ||= {});"
              "    if (state.observer) { state.observer.disconnect(); state.observer = null; }"
+             "    state.override = theme;"
+             "    if (state.applyOverride) { state.applyOverride(theme); return; }"
              "    if (!theme.id) {"
              "      for (const name of state.applied || []) root.style.removeProperty(name);"
              "      state.applied = [];"

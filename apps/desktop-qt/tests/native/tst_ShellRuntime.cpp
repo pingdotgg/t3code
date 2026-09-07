@@ -1,9 +1,12 @@
 #include <QFile>
 #include <QPointer>
+#include <QSignalSpy>
 #include <QQuickWebEngineProfile>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QtWebEngineQuick>
+#include <QWebEnginePage>
+#include <QWebEngineProfile>
 
 #include "ShellBridge.h"
 #include "ShellRuntime.h"
@@ -13,7 +16,54 @@
 class ShellRuntimeTest : public QObject {
   Q_OBJECT
 
+signals:
+  void scriptFinished(const QVariant& result);
+
 private slots:
+  void themeBootstrapHandsOffWithoutRewritingThePage() {
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    QFile file(directory.filePath("theme.json"));
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.write("{\"id\":\"shell-night\",\"appearance\":\"dark\",\"colors\":{\"canvas\":\"#123456\"}}");
+    file.close();
+    ThemeStore theme(directory.path());
+    QWebEngineProfile profile;
+    QWebEnginePage page(&profile);
+    QSignalSpy loaded(&page, &QWebEnginePage::loadFinished);
+    page.setHtml("<!doctype html><html><body>Theme test</body></html>");
+    QVERIFY(loaded.wait());
+    QVERIFY(loaded.first().first().toBool());
+    const auto evaluate = [&](const QString& source) {
+      QSignalSpy completed(this, &ShellRuntimeTest::scriptFinished);
+      page.runJavaScript(source, [this](const QVariant& result) { emit scriptFinished(result); });
+      if (completed.isEmpty() && !completed.wait()) return QVariant();
+      return completed.first().first();
+    };
+    evaluate(theme.injectionScript());
+    QCOMPARE(evaluate("document.documentElement.dataset.themeId").toString(), QString("shell-night"));
+    // Unclaimed/older pages still recover when their own palette overwrites the bootstrap.
+    evaluate("document.documentElement.dataset.themeId = 'page';");
+    QCOMPARE(evaluate("document.documentElement.dataset.themeId").toString(), QString("shell-night"));
+    evaluate(R"(
+      window.__t3ShellTheme.observer.disconnect();
+      window.__t3ShellTheme.observer = null;
+      window.__t3ShellTheme.applyOverride = value => { window.deliveredTheme = value; };
+      document.documentElement.dataset.themeId = 'page-owned';
+    )");
+    evaluate(theme.injectionScript());
+    QCOMPARE(evaluate("window.deliveredTheme.id").toString(), QString("shell-night"));
+    QCOMPARE(evaluate("document.documentElement.dataset.themeId").toString(), QString("page-owned"));
+    QCOMPARE(evaluate("window.__t3ShellTheme.observer === null").toBool(), true);
+    const QString beforePublication = theme.injectionScript();
+    theme.applyPageTheme(QVariantMap{{"appearance", "light"}, {"colors", QVariantMap{{"canvas", "#ffffff"}}}});
+    QCOMPARE(theme.injectionScript(), beforePublication);
+    QVERIFY(file.remove());
+    theme.reload();
+    evaluate(theme.injectionScript());
+    QCOMPARE(evaluate("window.deliveredTheme.id").toString(), QString());
+  }
+
   void reloadKeepsSingletonsAndRecoversFromInvalidSource() {
     QTemporaryDir directory;
     QVERIFY(directory.isValid());
