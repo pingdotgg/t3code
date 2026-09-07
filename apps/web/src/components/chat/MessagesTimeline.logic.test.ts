@@ -41,6 +41,34 @@ import {
 } from "../../session-logic";
 import { isImageAttachment, type ChatMessage, type TurnDiffSummary } from "../../types";
 
+describe("single status rows", () => {
+  it.each([false, true])("renders an answered question once with group expanded=%s", (expanded) => {
+    const entry: WorkLogEntry = {
+      id: "answer",
+      createdAt: "2026-09-07T12:00:00.000Z",
+      label: "User input submitted",
+      tone: "info",
+      sourceActivityKind: "user-input.resolved",
+    };
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: [{ kind: "work", id: "answer", createdAt: entry.createdAt, entry }],
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+      expandedWorkGroupIds: new Set(expanded ? ["work-group:answer"] : []),
+    });
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      kind: "work",
+      groupedEntries: [entry],
+      isExpandedToolGroup: false,
+      displayLabel: "User input submitted",
+    });
+  });
+});
+
 describe("streaming row projection", () => {
   function fixture(text = "") {
     const turnId = TurnId.make("live-turn");

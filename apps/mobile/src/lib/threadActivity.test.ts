@@ -274,6 +274,35 @@ function makeThread(
 }
 
 describe("buildThreadFeed", () => {
+  it.each([false, true])("renders an answered question once with group expanded=%s", (expanded) => {
+    const thread = makeThread({
+      id: ThreadId.make("single-answer"),
+      projectId: ProjectId.make("project-1"),
+      title: "Answered question",
+      activities: [
+        makeActivity({
+          id: EventId.make("answer"),
+          kind: "user-input.resolved",
+          summary: "User input submitted",
+          createdAt: "2026-09-07T12:00:00.000Z",
+          payload: { requestId: "question", answers: { choice: "Yes" } },
+        }),
+      ],
+    });
+    const rows = deriveThreadFeedPresentation(
+      buildThreadFeed(thread),
+      null,
+      new Set(),
+      new Set(expanded ? ["work-group:answer"] : []),
+    );
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      type: "activity-group",
+      activities: [{ id: "answer", icon: "message", summary: "User input submitted" }],
+    });
+  });
+
   it("reuses unchanged feed and presentation rows during an assistant text update", () => {
     const completedTurnId = TurnId.make("completed-turn");
     const activeTurnId = TurnId.make("active-turn");
