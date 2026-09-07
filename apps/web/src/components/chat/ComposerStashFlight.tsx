@@ -133,13 +133,12 @@ export function ComposerStashFlight(props: {
       ref={cardRef}
       aria-hidden="true"
       data-stash-flight="true"
-      className="pointer-events-none fixed z-[100] overflow-hidden whitespace-pre-wrap break-words rounded-md bg-popover text-sm leading-relaxed text-popover-foreground shadow-sm motion-reduce:hidden"
+      className="pointer-events-none fixed z-[100] overflow-hidden whitespace-pre-wrap break-words rounded-md bg-popover text-sm leading-relaxed text-popover-foreground shadow-sm opacity-0 motion-reduce:hidden"
       style={{
         left: flight.x,
         top: flight.y,
         width: flight.width,
         height: flight.height,
-        opacity: 0,
       }}
     >
       {flight.text}
