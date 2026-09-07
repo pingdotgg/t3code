@@ -62,6 +62,9 @@ export function createSidebarSortingStrategy(input: {
   snoozedThreadCount?: number;
   cardHeight?: number;
   slimHeight?: number;
+  /** Space each pinned boundary opens for its label while dragging. The
+   * markers stay zero height at rest, so nothing is reserved until pickup. */
+  boundaryLabelHeight?: number;
 }): SortingStrategy {
   const { items } = input;
   const indices = new Map(items.map((item, index) => [sidebarListItemId(item), index]));
@@ -74,8 +77,10 @@ export function createSidebarSortingStrategy(input: {
     if (active?.kind !== "thread" || !over || !rects[0]) return [];
     const target = resolveSidebarDropTarget(items, active.key, sidebarListItemId(over));
     if (!target) return [];
-    if (target.section === active.section && over.kind === "thread")
-      return target.section === "settled" ? [] : null;
+    // Settled keeps time order, so a reorder inside it previews nothing.
+    // Every other drag projects so the boundary labels get their space.
+    if (target.section === active.section && over.kind === "thread" && target.section === "settled")
+      return [];
     const groups: Record<SidebarSection, ThreadItem[]> = {
       pinned: [],
       active: [],
@@ -98,6 +103,7 @@ export function createSidebarSortingStrategy(input: {
     const scale = slimHeight !== undefined ? slimHeight / 36 : (cardHeight ?? 82) / 82;
     cardHeight ??= 82 * scale;
     slimHeight ??= 36 * scale;
+    const labelHeight = (input.boundaryLabelHeight ?? 0) * scale;
     const group = groups[target.section];
     const order =
       target.section === "pinned"
@@ -153,7 +159,14 @@ export function createSidebarSortingStrategy(input: {
           ? cardHeight
           : slimHeight;
       const moved = item.kind === "thread" && item.key === active.key;
-      top += (moved ? fallback : (rect?.height ?? fallback)) + 1;
+      const height =
+        item.kind === "marker" &&
+        (item.marker === "pinned-header" || item.marker === "pinned-divider")
+          ? labelHeight
+          : moved
+            ? fallback
+            : (rect?.height ?? fallback);
+      top += height + 1;
     }
     result[activeIndex] = stationary;
     return result;

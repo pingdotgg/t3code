@@ -197,6 +197,23 @@ export type SidebarThreadDropPlan =
     }
   | { readonly kind: "settle" };
 
+/** What dropping in `to` does to a thread lifted from `from`, for the badge
+    on the lifted row. Null while reordering inside one section and for the
+    snoozed shelf, which cannot be a drop target. */
+export type SidebarDropVerb = "pin" | "unpin" | "settle" | "unsettle" | "wake";
+
+export function resolveSidebarDropVerb(
+  from: SidebarSection,
+  to: SidebarSection | null,
+): SidebarDropVerb | null {
+  if (to === null || to === from || to === "snoozed") return null;
+  if (to === "pinned") return "pin";
+  if (to === "settled") return "settle";
+  if (from === "pinned") return "unpin";
+  if (from === "settled") return "unsettle";
+  return "wake";
+}
+
 export function planSidebarThreadDrop(input: {
   readonly activeKey: string;
   readonly activeSection: SidebarSection;

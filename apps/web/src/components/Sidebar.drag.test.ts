@@ -245,7 +245,9 @@ describe("sidebar drag projection", () => {
       settledExpanded: true,
     });
     const args = layout(pinned, active, over);
+    // dnd-kit moves the lifted row by the pointer delta, so only peers matter.
     for (let index = 0; index < pinned.length; index += 1) {
+      if (index === args.activeIndex) continue;
       expect(strategy({ ...args, index })).toEqual(verticalListSortingStrategy({ ...args, index }));
     }
   });
@@ -282,6 +284,7 @@ describe("sidebar drag projection", () => {
     });
     const args = layout(items, active, over);
     for (let index = 0; index < items.length; index += 1) {
+      if (index === args.activeIndex) continue;
       expect(strategy({ ...args, index })).toEqual(verticalListSortingStrategy({ ...args, index }));
     }
   });
@@ -327,6 +330,63 @@ describe("sidebar drag projection", () => {
       expect(result.get(sidebarMarkerId("settled-header"))?.y).toBe(0);
     },
   );
+
+  it("opens label space below each pinned boundary while dragging", () => {
+    const items = [
+      pinnedHeader,
+      thread("p", "pinned"),
+      divider,
+      thread("a1", "active"),
+      thread("a2", "active"),
+      settledHeader,
+      thread("s", "settled"),
+    ];
+    // Reorder inside active: the header gap shifts every row, the divider
+    // gap shifts the active rows and the shelf below by a second label.
+    const result = preview(
+      { items, settledOrder: [], settledExpanded: true, boundaryLabelHeight: 16 },
+      "a2",
+      "a1",
+    );
+    expect(result.get(sidebarMarkerId("pinned-header"))).toEqual(stationary);
+    expect(result.get("p")?.y).toBe(16);
+    expect(result.get(sidebarMarkerId("pinned-divider"))?.y).toBe(16);
+    expect(result.get("a2")).toEqual(stationary);
+    expect(result.get("a1")?.y).toBe(32 + 83);
+    expect(result.get(sidebarMarkerId("settled-header"))?.y).toBe(32);
+    expect(result.get("s")?.y).toBe(32);
+  });
+
+  it("stacks the labels with their gaps when the pinned section is empty", () => {
+    const items = [
+      pinnedHeader,
+      divider,
+      thread("a1", "active"),
+      thread("a2", "active"),
+      settledHeader,
+      thread("s", "settled"),
+    ];
+    const result = preview(
+      { items, settledOrder: [], settledExpanded: true, boundaryLabelHeight: 16 },
+      "a2",
+      "a1",
+    );
+    expect(result.get(sidebarMarkerId("pinned-header"))).toEqual(stationary);
+    expect(result.get(sidebarMarkerId("pinned-divider"))?.y).toBe(16);
+    expect(result.get("a1")?.y).toBe(32 + 83);
+    expect(result.get(sidebarMarkerId("settled-header"))?.y).toBe(32);
+  });
+
+  it("scales the label space with the measured root scale", () => {
+    const items = [pinnedHeader, thread("p", "pinned"), divider, thread("a1", "active")];
+    const result = preview(
+      { items, settledOrder: [], settledExpanded: true, boundaryLabelHeight: 16 },
+      "a1",
+      "p",
+      2,
+    );
+    expect(result.get(sidebarMarkerId("pinned-divider"))?.y).toBe(32 + 165);
+  });
 
   it("keeps the pinned header above the first arriving pin", () => {
     const items = [
