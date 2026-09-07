@@ -155,20 +155,14 @@ import {
   type TimelineLatestRun,
   type WorkGroupScrollAnchor,
 } from "./MessagesTimeline.logic";
+import { type ThreadFindMatch } from "./threadFind";
+import { useThreadFindHighlights } from "./threadFindHighlights";
 import { TerminalContextInlineChip } from "./TerminalContextInlineChip";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import {
-  deriveDisplayedUserMessageState,
-  type ParsedTerminalContextEntry,
-} from "~/lib/terminalContext";
-import {
-  extractTrailingElementContexts,
-  type ParsedElementContextEntry,
-} from "~/lib/elementContext";
-import {
-  extractTrailingPreviewAnnotation,
-  type ParsedPreviewAnnotation,
-} from "~/lib/previewAnnotation";
+import { type ParsedTerminalContextEntry } from "~/lib/terminalContext";
+import { type ParsedElementContextEntry } from "~/lib/elementContext";
+import { type ParsedPreviewAnnotation } from "~/lib/previewAnnotation";
+import { deriveDisplayedUserMessageContent } from "~/lib/visibleMessageText";
 import { cn } from "~/lib/utils";
 import { useUiStateStore } from "~/uiStateStore";
 import { type TimestampFormat } from "@t3tools/contracts/settings";
@@ -214,6 +208,7 @@ interface TimelineRowSharedState {
   /** Projection runs, for recovering handoff models on legacy items. */
   runs: ReadonlyArray<HandoffTimelineRun>;
   activeThreadEnvironmentId: EnvironmentId;
+  findActive: boolean;
   onRevertUserMessage: (messageId: MessageId) => void;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   onOpenTurnDiff: (runId: RunId, filePath?: string) => void;
@@ -284,6 +279,7 @@ const TIMELINE_MAINTAIN_SCROLL_AT_END = {
 } as const satisfies MaintainScrollAtEndOptions;
 const EMPTY_TIMELINE_PROVIDERS: ReadonlyArray<ServerProvider> = [];
 const EMPTY_TIMELINE_RUNS: ReadonlyArray<HandoffTimelineRun> = [];
+const FIND_MATCH_VIEW_MARGIN = 96;
 
 // ---------------------------------------------------------------------------
 // Props (public API)
@@ -362,6 +358,9 @@ interface MessagesTimelineProps {
   historyControls?: MessagesTimelineHistoryControls;
   /** Non-null when older turns exist beyond the loaded window. */
   loadEarlier?: CitationHistoryPage | null;
+  findQuery?: string;
+  activeFindMatch?: ThreadFindMatch | null;
+  findNavigationId?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -415,6 +414,9 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   topFadeEnabled = false,
   historyControls,
   loadEarlier = null,
+  findQuery = "",
+  activeFindMatch = null,
+  findNavigationId = 0,
 }: MessagesTimelineProps) {
   const [expandedRunIds, setExpandedRunIds] = useState<ReadonlySet<RunId>>(new Set());
   const [expandedAttemptIds, setExpandedAttemptIds] = useState<ReadonlySet<RunAttemptId>>(
@@ -435,6 +437,9 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   const disclosureAnchorKeyRef = useRef<string | null>(null);
   const disclosureSettleFrameRef = useRef<number | null>(null);
   const disclosureSettleSecondFrameRef = useRef<number | null>(null);
+  const normalizedFindQuery = findQuery.trim();
+  const findActive = normalizedFindQuery.length > 0;
+
   useEffect(() => {
     return () => {
       if (disclosureSettleFrameRef.current !== null) {
@@ -553,6 +558,21 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     });
   }, [latestRun]);
 
+  const activeFindRunId = activeFindMatch?.runId;
+  const activeFindAttemptId = activeFindMatch?.attemptId;
+  const visibleExpandedRunIds = useMemo(() => {
+    if (!activeFindRunId || expandedRunIds.has(activeFindRunId)) {
+      return expandedRunIds;
+    }
+    return new Set(expandedRunIds).add(activeFindRunId);
+  }, [activeFindRunId, expandedRunIds]);
+  const visibleExpandedAttemptIds = useMemo(() => {
+    if (!activeFindAttemptId || expandedAttemptIds.has(activeFindAttemptId)) {
+      return expandedAttemptIds;
+    }
+    return new Set(expandedAttemptIds).add(activeFindAttemptId);
+  }, [activeFindAttemptId, expandedAttemptIds]);
+
   const rowsProjectionRef = useRef<{
     readonly threadKey: string;
     readonly workspaceRoot: string | undefined;
@@ -565,8 +585,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
         timelineEntries,
         latestRun,
         runningRunId,
-        expandedRunIds,
-        expandedAttemptIds,
+        expandedRunIds: visibleExpandedRunIds,
+        expandedAttemptIds: visibleExpandedAttemptIds,
         expandedWorkGroupIds,
         isWorking,
         activeTurnStartedAt,
@@ -586,8 +606,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     timelineEntries,
     latestRun,
     runningRunId,
-    expandedRunIds,
-    expandedAttemptIds,
+    visibleExpandedRunIds,
+    visibleExpandedAttemptIds,
     expandedWorkGroupIds,
     isWorking,
     activeTurnStartedAt,
@@ -740,6 +760,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       providerStatuses,
       runs,
       activeThreadEnvironmentId,
+      findActive,
       onRevertUserMessage,
       onImageExpand,
       onFileOpen,
@@ -768,6 +789,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       providerStatuses,
       runs,
       activeThreadEnvironmentId,
+      findActive,
       onRevertUserMessage,
       onImageExpand,
       onFileOpen,
@@ -802,6 +824,64 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       latestRun?.runId,
     ],
   );
+
+  const activeFindMatchKey = activeFindMatch
+    ? `${findNavigationId}:${normalizedFindQuery}:${activeFindMatch.entryId}:${activeFindMatch.occurrence}`
+    : null;
+  const revealActiveFindRange = useCallback(
+    (range: Range | null) => {
+      if (!range) return;
+
+      const matchRect = range.getBoundingClientRect();
+      const viewportRect = timelineViewportElement?.getBoundingClientRect();
+      if (!viewportRect || matchRect.height === 0) return;
+
+      const topBoundary = viewportRect.top + FIND_MATCH_VIEW_MARGIN;
+      const bottomBoundary =
+        viewportRect.bottom - FIND_MATCH_VIEW_MARGIN - contentInsetEndAdjustment;
+      let delta = 0;
+      if (matchRect.top < topBoundary) delta = matchRect.top - topBoundary;
+      else if (matchRect.bottom > bottomBoundary) delta = matchRect.bottom - bottomBoundary;
+      if (Math.abs(delta) < 1) return;
+
+      const currentScroll = listRef.current?.getState?.().scroll;
+      if (typeof currentScroll === "number") {
+        listRef.current?.scrollToOffset({ offset: currentScroll + delta, animated: false });
+      }
+    },
+    [contentInsetEndAdjustment, listRef, timelineViewportElement],
+  );
+
+  const navigatedFindMatchKeyRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!activeFindMatch || !activeFindMatchKey) {
+      navigatedFindMatchKeyRef.current = null;
+      return;
+    }
+
+    const rowIndex = rows.findIndex((row) => row.id === activeFindMatch.entryId);
+    if (rowIndex === -1) return;
+
+    if (navigatedFindMatchKeyRef.current === activeFindMatchKey) return;
+    navigatedFindMatchKeyRef.current = activeFindMatchKey;
+
+    onManualNavigation();
+    void listRef.current?.scrollToIndex({
+      index: rowIndex,
+      animated: false,
+      viewOffset: FIND_MATCH_VIEW_MARGIN,
+    });
+  }, [activeFindMatch, activeFindMatchKey, listRef, onManualNavigation, rows]);
+
+  useThreadFindHighlights({
+    container: timelineViewportElement,
+    query: normalizedFindQuery,
+    activeRowId: activeFindMatch?.entryId ?? null,
+    activeOccurrence: activeFindMatch?.occurrence ?? 0,
+    onActiveRange: revealActiveFindRange,
+  });
+
   const listHeader = useMemo(() => {
     const leadingContent =
       parentThreadLink === null ? (
@@ -1414,21 +1494,10 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
     (attachment) => !isImageAttachment(attachment) && !isFileAttachment(attachment),
   );
   const userMessage = resolveUserMessagePresentation(row.message);
-  const displayedUserMessage = deriveDisplayedUserMessageState(userMessage.text);
-  const terminalContexts = displayedUserMessage.contexts;
-  const previewAnnotations: ParsedPreviewAnnotation[] = [];
-  let visibleText = displayedUserMessage.visibleText;
-  while (true) {
-    const extracted = extractTrailingPreviewAnnotation(visibleText);
-    if (!extracted.annotation) break;
-    previewAnnotations.unshift(extracted.annotation);
-    visibleText = extracted.promptText;
-  }
-  const elementContextState = extractTrailingElementContexts(visibleText);
-  const elementContexts = [
-    ...displayedUserMessage.elementContexts,
-    ...elementContextState.contexts,
-  ];
+  const displayedUserMessage = deriveDisplayedUserMessageContent(userMessage.text);
+  const terminalContexts = displayedUserMessage.terminalContexts;
+  const previewAnnotations = displayedUserMessage.previewAnnotations;
+  const elementContexts = displayedUserMessage.elementContexts;
   const previewImages = userImages.filter((image) => image.name.startsWith("preview-annotation-"));
   const regularImages = userImages.filter((image) => !image.name.startsWith("preview-annotation-"));
   const canRevertAgentWork = typeof row.revertTurnCount === "number";
@@ -1607,10 +1676,11 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
           </div>
         ) : null}
         <CollapsibleUserMessageBody
-          text={elementContextState.promptText}
+          text={displayedUserMessage.visibleText}
           terminalContexts={terminalContexts}
           skills={ctx.skills}
           markdownCwd={ctx.markdownCwd}
+          expandForFind={ctx.findActive}
         />
       </div>
       {row.projectedItem &&
@@ -1762,24 +1832,26 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
   return (
     <>
       <div className="relative min-w-0 px-1 py-0.5">
-        <AssistantCitationSource
-          messageId={row.message.id}
-          {...(ctx.threadRef ? { threadRef: ctx.threadRef } : {})}
-          itemKey={row.id}
-          request={ctx.citationRequest}
-          listRef={ctx.listRef}
-        >
-          <ChatMarkdown
-            text={messageText}
-            cwd={ctx.markdownCwd}
-            threadRef={ctx.threadRef ?? undefined}
-            isStreaming={Boolean(row.message.streaming)}
-            lineBreaks={shouldPreserveAssistantLineBreaks(messageText)}
-            skills={ctx.skills}
-            onUseArtifactTemplate={ctx.onUseArtifactTemplate}
-            onImageExpand={ctx.onImageExpand}
-          />
-        </AssistantCitationSource>
+        <div data-thread-find-text="true">
+          <AssistantCitationSource
+            messageId={row.message.id}
+            {...(ctx.threadRef ? { threadRef: ctx.threadRef } : {})}
+            itemKey={row.id}
+            request={ctx.citationRequest}
+            listRef={ctx.listRef}
+          >
+            <ChatMarkdown
+              text={messageText}
+              cwd={ctx.markdownCwd}
+              threadRef={ctx.threadRef ?? undefined}
+              isStreaming={Boolean(row.message.streaming)}
+              lineBreaks={shouldPreserveAssistantLineBreaks(messageText)}
+              skills={ctx.skills}
+              onUseArtifactTemplate={ctx.onUseArtifactTemplate}
+              onImageExpand={ctx.onImageExpand}
+            />
+          </AssistantCitationSource>
+        </div>
         <AssistantChangedFilesSection
           turnSummary={row.assistantTurnDiffSummary}
           routeThreadKey={ctx.routeThreadKey}
@@ -1956,6 +2028,7 @@ function ProposedPlanTimelineRow({
         threadRef={ctx.threadRef ?? undefined}
         cwd={ctx.markdownCwd}
         workspaceRoot={ctx.workspaceRoot}
+        expandForFind={ctx.findActive}
       />
     </div>
   );
@@ -2792,7 +2865,11 @@ const UserMessageTerminalContextInlineLabel = memo(
         ? `${props.context.header}\n${props.context.body}`
         : props.context.header;
 
-    return <TerminalContextInlineChip label={props.context.header} tooltipText={tooltipText} />;
+    return (
+      <span data-thread-find-ignore="true">
+        <TerminalContextInlineChip label={props.context.header} tooltipText={tooltipText} />
+      </span>
+    );
   },
 );
 
@@ -2889,15 +2966,17 @@ function shouldCollapseUserMessage(text: string): boolean {
 
 const CollapsibleUserMessageBody = memo(function CollapsibleUserMessageBody(props: {
   text: string;
-  terminalContexts: ParsedTerminalContextEntry[];
+  terminalContexts: ReadonlyArray<ParsedTerminalContextEntry>;
   skills: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
   markdownCwd: string | undefined;
+  expandForFind?: boolean;
   footer?: ReactNode;
 }) {
   const [expanded, setExpanded] = useState(false);
   const hasVisibleBody = props.text.trim().length > 0 || props.terminalContexts.length > 0;
   const canCollapse = hasVisibleBody && shouldCollapseUserMessage(props.text);
-  const isCollapsed = canCollapse && !expanded;
+  const isCollapsed = canCollapse && !expanded && !props.expandForFind;
+  const showCollapseControl = canCollapse && !props.expandForFind;
 
   return (
     <div>
@@ -2905,6 +2984,7 @@ const CollapsibleUserMessageBody = memo(function CollapsibleUserMessageBody(prop
         <div
           className={cn("relative", isCollapsed && "max-h-44 overflow-hidden")}
           data-user-message-body="true"
+          data-thread-find-text="true"
           data-user-message-collapsed={isCollapsed ? "true" : "false"}
           data-user-message-collapsible={canCollapse ? "true" : "false"}
           data-user-message-fade={isCollapsed ? "true" : "false"}
@@ -2925,15 +3005,15 @@ const CollapsibleUserMessageBody = memo(function CollapsibleUserMessageBody(prop
           />
         </div>
       ) : null}
-      {canCollapse || props.footer ? (
+      {showCollapseControl || props.footer ? (
         <div
           className={cn(
             "mt-1.5 flex items-center gap-2",
-            canCollapse && props.footer ? "justify-between" : "justify-end",
+            showCollapseControl && props.footer ? "justify-between" : "justify-end",
           )}
           data-user-message-footer="true"
         >
-          {canCollapse ? (
+          {showCollapseControl ? (
             <Button
               type="button"
               size="xs"
@@ -2957,7 +3037,7 @@ const CollapsibleUserMessageBody = memo(function CollapsibleUserMessageBody(prop
 
 const UserMessageBody = memo(function UserMessageBody(props: {
   text: string;
-  terminalContexts: ParsedTerminalContextEntry[];
+  terminalContexts: ReadonlyArray<ParsedTerminalContextEntry>;
   skills: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
   markdownCwd: string | undefined;
 }) {

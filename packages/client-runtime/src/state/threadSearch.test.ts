@@ -10,12 +10,29 @@ import { expect, it } from "vite-plus/test";
 
 import {
   createThreadSearchResultsAtomFamily,
+  findThreadSearchOccurrences,
   makeThreadSearchKey,
+  splitThreadSearchText,
   threadSearchMatchKey,
 } from "./threadSearch.ts";
 
 const envA = EnvironmentId.make("env-a");
 const envB = EnvironmentId.make("env-b");
+
+it("finds non-overlapping occurrences without invalidating Unicode offsets", () => {
+  expect(findThreadSearchOccurrences("Deploy the Deployment", "deploy")).toEqual([0, 11]);
+  expect(findThreadSearchOccurrences("aaaa", "aa")).toEqual([0, 2]);
+  expect(findThreadSearchOccurrences("İİİ needle", "needle")).toEqual([4]);
+});
+
+it("splits search text into highlighted and unhighlighted parts", () => {
+  expect(splitThreadSearchText("one TWO three two", " two ")).toEqual([
+    { text: "one ", highlighted: false, start: 0 },
+    { text: "TWO", highlighted: true, start: 4 },
+    { text: " three ", highlighted: false, start: 7 },
+    { text: "two", highlighted: true, start: 14 },
+  ]);
+});
 
 it("creates stable keys regardless of environment order", () => {
   expect(makeThreadSearchKey([envB, envA], "needle")).toBe(

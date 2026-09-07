@@ -112,6 +112,101 @@ describe("VS Code theme import", () => {
     );
   });
 
+  it("imports current and other find matches as independent background/text pairs", () => {
+    const { colors } = parseVsCodeThemeFile({
+      type: "dark",
+      colors: {
+        "editor.background": "#202020",
+        "editor.findMatchBackground": "#663399",
+        "editor.findMatchForeground": "#ffffff",
+        "editor.findMatchHighlightBackground": "#bce4ff",
+        "editor.findMatchHighlightForeground": "#17314a",
+      },
+    });
+
+    expect(asHex(colors.searchMatchActiveBackground)).toBe("#663399");
+    expect(asHex(colors.searchMatchActiveForeground)).toBe("#ffffff");
+    expect(asHex(colors.searchMatchBackground)).toBe("#bce4ff");
+    expect(asHex(colors.searchMatchForeground)).toBe("#17314a");
+  });
+
+  it("composites find backgrounds onto the canvas and foregrounds onto their match", () => {
+    const { colors } = parseVsCodeThemeFile({
+      type: "dark",
+      colors: {
+        "editor.background": "#202020",
+        "editor.findMatchBackground": "#33669980",
+        "editor.findMatchForeground": "#ffffffcc",
+        "editor.findMatchHighlightBackground": "#ffcc0040",
+        "editor.findMatchHighlightForeground": "#ffffff",
+      },
+    });
+
+    expect(asHex(colors.searchMatchActiveBackground)).toBe("#2a435d");
+    expect(asHex(colors.searchMatchActiveForeground)).toBe("#d4d9df");
+    expect(asHex(colors.searchMatchBackground)).toBe("#584b18");
+    expect(asHex(colors.searchMatchForeground)).toBe("#ffffff");
+  });
+
+  it("uses editor text when no find foreground is specified", () => {
+    const { colors } = parseVsCodeThemeFile({
+      type: "dark",
+      colors: {
+        "editor.background": "#101010",
+        "editor.foreground": "#eeeeee",
+        "editor.findMatchBackground": "#304050",
+        "editor.findMatchHighlightBackground": "#403020",
+      },
+    });
+
+    expect(asHex(colors.searchMatchActiveForeground)).toBe("#eeeeee");
+    expect(asHex(colors.searchMatchForeground)).toBe("#eeeeee");
+  });
+
+  it.each(["light", "dark"])(
+    "keeps missing or invalid find colours readable in %s themes",
+    (type) => {
+      const base = {
+        "editor.background": type === "dark" ? "#101010" : "#fafafa",
+      };
+      const missing = parseVsCodeThemeFile({ type, colors: base }).colors;
+      const invalid = parseVsCodeThemeFile({
+        type,
+        colors: {
+          ...base,
+          "editor.findMatchBackground": "not-a-colour",
+          "editor.findMatchForeground": 42,
+          "editor.findMatchHighlightBackground": null,
+          "editor.findMatchHighlightForeground": "invalid",
+        },
+      }).colors;
+      const unreadable = parseVsCodeThemeFile({
+        type,
+        colors: {
+          ...base,
+          "editor.findMatchBackground": "#ffffcc",
+          "editor.findMatchForeground": "#ffffff",
+          "editor.findMatchHighlightBackground": "#101020",
+          "editor.findMatchHighlightForeground": "#111111",
+        },
+      }).colors;
+
+      for (const colors of [missing, invalid, unreadable]) {
+        expect(
+          contrastRatio(colors.searchMatchForeground, colors.searchMatchBackground),
+        ).toBeGreaterThanOrEqual(4.5);
+        expect(
+          contrastRatio(colors.searchMatchActiveForeground, colors.searchMatchActiveBackground),
+        ).toBeGreaterThanOrEqual(4.5);
+      }
+      expect(invalid.searchMatchBackground).toBe(missing.searchMatchBackground);
+      expect(invalid.searchMatchActiveBackground).toBe(missing.searchMatchActiveBackground);
+      expect(missing.searchMatchBackground).not.toBe(missing.searchMatchActiveBackground);
+      expect(missing.searchMatchBackground).not.toBe(missing.canvas);
+      expect(missing.searchMatchActiveBackground).not.toBe(missing.canvas);
+    },
+  );
+
   it("fills every role the file omits with a readable derived value", () => {
     const theme = parseVsCodeThemeFile(VSCODE_DARK);
     const colors = getThemeColorsForMode(theme, "dark")!;
