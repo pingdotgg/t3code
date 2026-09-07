@@ -26,7 +26,7 @@ import {
   useState,
   type RefObject,
 } from "react";
-import { ActivityIndicator, Alert, Platform, Pressable, View, type ViewStyle } from "react-native";
+import { Alert, Platform, Pressable, View, type ViewStyle } from "react-native";
 import { FilePreviewModal, type FilePreviewSource } from "../../components/FilePreviewModal";
 import {
   composerAttachmentUploadBlockReason,
@@ -113,7 +113,6 @@ export interface ThreadComposerProps {
   readonly contentMaxWidth?: number;
   readonly bottomInset?: number;
   readonly connectionState: RemoteClientConnectionState;
-  readonly connectionError: string | null;
   readonly environmentLabel: string | null;
   readonly selectedThread: OrchestrationThreadShell;
   readonly hasCompactableConversation: boolean;
@@ -134,7 +133,6 @@ export interface ThreadComposerProps {
   readonly onUpdateModelSelection: (modelSelection: ModelSelection) => void;
   readonly onUpdateRuntimeMode: (runtimeMode: RuntimeMode) => void;
   readonly onUpdateInteractionMode: (interactionMode: ProviderInteractionMode) => void;
-  readonly onReconnectEnvironment: () => void;
   readonly onExpandedChange?: (expanded: boolean) => void;
   /** Fires on editor focus/blur; hosts use it to vet stale keyboard state. */
   readonly onEditorFocusChange?: (focused: boolean) => void;
@@ -226,72 +224,6 @@ export function ComposerSurface(props: {
   );
 }
 
-type ComposerStatusPillState = {
-  readonly kind: "unavailable" | "reconnecting";
-  readonly label: string;
-};
-
-function composerConnectionStatus(input: {
-  readonly connectionError: string | null;
-  readonly connectionState: RemoteClientConnectionState;
-  readonly environmentLabel: string | null;
-}): ComposerStatusPillState | null {
-  const environmentLabel = input.environmentLabel ?? "Environment";
-
-  switch (input.connectionState) {
-    case "connecting":
-    case "reconnecting":
-      return {
-        kind: "reconnecting",
-        label:
-          input.connectionError === null
-            ? `Reconnecting to ${environmentLabel}...`
-            : `Failed to connect. Retrying ${environmentLabel}...`,
-      };
-    case "offline":
-      return { kind: "unavailable", label: "You are offline" };
-    case "error":
-      return {
-        kind: "unavailable",
-        label: input.connectionError
-          ? `Failed to connect to ${environmentLabel}: ${input.connectionError}`
-          : `Failed to connect to ${environmentLabel}`,
-      };
-    case "available":
-      return { kind: "unavailable", label: `${environmentLabel} is not connected` };
-    case "connected":
-      return null;
-  }
-}
-
-const ComposerConnectionStatusPill = memo(function ComposerConnectionStatusPill(props: {
-  readonly onPress: () => void;
-  readonly status: ComposerStatusPillState;
-}) {
-  const isReconnecting = props.status.kind === "reconnecting";
-  return (
-    <View className="absolute inset-x-0 bottom-full items-center pb-2" pointerEvents="box-none">
-      <Pressable
-        accessibilityRole="button"
-        onPress={props.onPress}
-        className="max-w-full flex-row items-center gap-2 rounded-full bg-card px-3 py-2 shadow-sm active:opacity-70"
-      >
-        {isReconnecting ? (
-          <ActivityIndicator size="small" colorClassName={"accent-icon-muted"} />
-        ) : (
-          <View className="h-2 w-2 rounded-full bg-red-500" />
-        )}
-        <Text
-          className="max-w-[260px] text-sm font-t3-bold leading-snug text-foreground"
-          numberOfLines={1}
-        >
-          {props.status.label}
-        </Text>
-      </Pressable>
-    </View>
-  );
-});
-
 export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposerProps) {
   const navigation = useNavigation();
   const foregroundColor = useUniwindTheme()["--color-foreground"];
@@ -337,11 +269,6 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   const modelUnavailable =
     props.connectionState === "connected" &&
     isModelSelectionUnavailable(props.serverConfig, currentModelSelection);
-  const connectionStatus = composerConnectionStatus({
-    connectionError: props.connectionError,
-    connectionState: props.connectionState,
-    environmentLabel: props.environmentLabel,
-  });
   const selectedProviderStatus = useMemo(() => {
     if (!props.serverConfig) return null;
     return (
@@ -638,13 +565,6 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
               onSelect={composerMenu.onSelect}
             />
           </View>
-        ) : null}
-
-        {connectionStatus ? (
-          <ComposerConnectionStatusPill
-            status={connectionStatus}
-            onPress={props.onReconnectEnvironment}
-          />
         ) : null}
 
         {modelUnavailable ? (
