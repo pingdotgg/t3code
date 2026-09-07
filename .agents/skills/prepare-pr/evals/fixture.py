@@ -180,6 +180,13 @@ def opt(args, name, default=None):
         return default
 
 
+def body_option(args, default=""):
+    body_file = opt(args, "--body-file")
+    if body_file is not None:
+        return Path(body_file).read_text(encoding="utf-8")
+    return opt(args, "--body", default)
+
+
 def select_pr(state, token=None, branch=None):
     if token:
         token = token.rstrip("/").split("/")[-1]
@@ -260,7 +267,7 @@ def service_transaction(root, args):
             number = 17 if not state["prs"] else max(p["number"] for p in state["prs"]) + 1
             pr = {"number": number, "url": f"https://fixture.invalid/acme/widget/pull/{number}",
                   "baseRefName": opt(args, "--base"), "headRefName": branch, "headRefOid": oid,
-                  "title": opt(args, "--title"), "body": Path(opt(args, "--body-file")).read_text(encoding="utf-8"),
+                  "title": opt(args, "--title"), "body": body_option(args),
                   "isDraft": "--draft" in args}
             state["prs"].append(pr)
             record(root, state, "pr.create", {"number": number}, "success")
@@ -272,8 +279,8 @@ def service_transaction(root, args):
                 raise RuntimeError("pull request not found")
             if opt(args, "--title") is not None:
                 pr["title"] = opt(args, "--title")
-            if opt(args, "--body-file"):
-                pr["body"] = Path(opt(args, "--body-file")).read_text(encoding="utf-8")
+            if "--body-file" in args or "--body" in args:
+                pr["body"] = body_option(args)
             record(root, state, "pr.edit", {"number": pr["number"]}, "success")
             print(pr["url"])
             return

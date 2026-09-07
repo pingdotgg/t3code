@@ -250,6 +250,23 @@ class FixtureTests(unittest.TestCase):
         self.assertIn("already exists", duplicate.stderr)
         self.assertEqual(len(fixture.read_state(self.root)["prs"]), 1)
 
+    def test_pr_create_accepts_inline_body(self):
+        fixture.setup("new_pr", self.root)
+        self.command("git", "add", "message.txt")
+        self.command("git", "commit", "-m", "fix(web): show connection status")
+        self.command("git", "push", "-u", "origin", "HEAD")
+        self.command(
+            "gh", "pr", "create", "--repo", "acme/widget", "--base", "main",
+            "--head", "fix/connection-status", "--title", "Show status",
+            "--body", "Inline creation body",
+        )
+        self.assertEqual(fixture.read_state(self.root)["prs"][0]["body"], "Inline creation body")
+
+    def test_pr_edit_accepts_inline_body(self):
+        fixture.setup("existing_pr", self.root)
+        self.command("gh", "pr", "edit", "17", "--body", "Inline edit body")
+        self.assertEqual(fixture.read_state(self.root)["prs"][0]["body"], "Inline edit body")
+
     def test_parallel_uploads_keep_distinct_persisted_state(self):
         fixture.setup("existing_pr", self.root)
         files = sorted((self.root / "repo" / "evidence").iterdir())
