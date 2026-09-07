@@ -1,4 +1,5 @@
 import {
+  type CommandId,
   type ThreadId,
   type OrchestrationV2ThreadProjection,
   type RunId,
@@ -24,10 +25,7 @@ function queueEntry(projection: OrchestrationV2ThreadProjection, runId: RunId, l
 }
 const dispatch = Effect.fn("mcp.dispatchThreadCommand")(function* (
   threadId: ThreadId | undefined,
-  command: (common: {
-    commandId: import("@t3tools/contracts").CommandId;
-    threadId: ThreadId;
-  }) => OrchestrationV2Command,
+  command: (common: { commandId: CommandId; threadId: ThreadId }) => OrchestrationV2Command,
 ) {
   const { threads, projection } = yield* readWritableThread(threadId);
   const result = yield* threads
