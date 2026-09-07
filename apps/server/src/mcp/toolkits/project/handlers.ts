@@ -56,7 +56,13 @@ export const ProjectHandlersLive = ProjectToolkit.toLayer({
           message: "A new thread accepts only pending attachment uploads.",
         });
       const claimed = yield* Claims.claimPendingAttachments({ threadId, attachments }).pipe(
-        Effect.mapError(unavailable),
+        Effect.mapError(
+          (error) =>
+            new OrchestratorMcpFailure({
+              code: "orchestration_error",
+              message: error.message,
+            }),
+        ),
       );
       const result = yield* launch
         .launch({
