@@ -19,6 +19,7 @@ import { PreviewToolkit } from "./preview/tools.ts";
 import { PreviewControlsToolkit } from "./previewControls/tools.ts";
 import { EnvironmentToolkit } from "./environment/tools.ts";
 import * as EnvironmentHandlers from "./environment/handlers.ts";
+import { ProjectToolkit } from "./project/tools.ts";
 import { ThreadToolkit } from "./thread/tools.ts";
 import { WorktreeToolkit } from "./worktree/tools.ts";
 
@@ -29,6 +30,7 @@ it("publishes unique tool names with object-root inputs", () => {
     PreviewToolkit,
     WorktreeToolkit,
     ThreadToolkit,
+    ProjectToolkit,
     EnvironmentToolkit,
     PreviewControlsToolkit,
   ]) {
