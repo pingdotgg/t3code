@@ -208,6 +208,32 @@ export function UsageLimitsSection({
   const colors = useProviderColors();
   return (
     <View className="gap-6">
+      {pools.length === 0 && notices.length === 0 && failedLabels.length === 0 ? (
+        <Text className="py-12 text-center text-base text-foreground-muted">
+          {selected.size === 0
+            ? "Select an environment to see limits."
+            : "No provider on the selected environments reports subscription limits."}
+        </Text>
+      ) : null}
+      {pools.map((pool) => (
+        <View key={pool.driver} className="gap-3">
+          <View className="flex-row items-center gap-2 px-1">
+            <ProviderIcon provider={pool.driver} size={18} />
+            <Text className="text-base font-t3-medium text-foreground">
+              {DRIVER_LABEL[pool.driver] ?? pool.driver}
+            </Text>
+          </View>
+          {pool.windows.map((window) => (
+            <PoolWindowCard
+              key={`${window.kind}:${window.id}`}
+              pool={window}
+              color={pool.driver === "claudeAgent" ? colors.claude : colors.codex}
+              now={now}
+              environmentIds={selectedEnvironmentIds === null ? null : [...selectedEnvironmentIds]}
+            />
+          ))}
+        </View>
+      ))}
       {notices.length > 0 ? (
         <View className="gap-2">
           {notices.map((notice) => (
@@ -235,32 +261,6 @@ export function UsageLimitsSection({
           {failedLabels.join(", ")} could not refresh limits. Showing the last known values.
         </Text>
       ) : null}
-      {pools.length === 0 && notices.length === 0 && failedLabels.length === 0 ? (
-        <Text className="py-12 text-center text-base text-foreground-muted">
-          {selected.size === 0
-            ? "Select an environment to see limits."
-            : "No provider on the selected environments reports subscription limits."}
-        </Text>
-      ) : null}
-      {pools.map((pool) => (
-        <View key={pool.driver} className="gap-3">
-          <View className="flex-row items-center gap-2 px-1">
-            <ProviderIcon provider={pool.driver} size={18} />
-            <Text className="text-base font-t3-medium text-foreground">
-              {DRIVER_LABEL[pool.driver] ?? pool.driver}
-            </Text>
-          </View>
-          {pool.windows.map((window) => (
-            <PoolWindowCard
-              key={`${window.kind}:${window.id}`}
-              pool={window}
-              color={pool.driver === "claudeAgent" ? colors.claude : colors.codex}
-              now={now}
-              environmentIds={selectedEnvironmentIds === null ? null : [...selectedEnvironmentIds]}
-            />
-          ))}
-        </View>
-      ))}
     </View>
   );
 }

@@ -545,7 +545,6 @@ export function UsageLimitsPooled({
   const notices = collectLimitNotices(presentations);
   return (
     <div className="flex flex-col gap-8">
-      <LimitNotices notices={notices} />
       {pools.length === 0 && notices.length === 0 ? (
         <p className="text-sm text-muted-foreground">
           No provider on the selected environments reports subscription limits.
@@ -554,6 +553,7 @@ export function UsageLimitsPooled({
       {pools.map((pool) => (
         <PoolSection key={pool.driver} pool={pool} now={now} />
       ))}
+      <LimitNotices notices={notices} />
     </div>
   );
 }
