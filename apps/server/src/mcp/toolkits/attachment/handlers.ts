@@ -2,6 +2,7 @@ import { type ChatAttachment, MessageId, OrchestratorMcpFailure } from "@t3tools
 import * as Effect from "effect/Effect";
 import * as Upload from "../../../assets/AttachmentUpload.ts";
 import * as Claims from "../../../orchestration-v2/AttachmentClaims.ts";
+import * as ThreadMessageIntake from "../../../orchestration-v2/ThreadMessageIntake.ts";
 import {
   newCommandId,
   readMutationCaller,
@@ -46,7 +47,7 @@ export const AttachmentHandlersLive = AttachmentToolkit.toLayer({
     }),
   t3_thread_send_attachments: (input) =>
     Effect.gen(function* () {
-      const { caller, threads, projection } = yield* readWritableThread(input.threadId);
+      const { caller, projection } = yield* readWritableThread(input.threadId);
       if (projection.thread.archivedAt !== null)
         return yield* new OrchestratorMcpFailure({
           code: "invalid_request",
@@ -58,32 +59,23 @@ export const AttachmentHandlersLive = AttachmentToolkit.toLayer({
       );
       const commandId = yield* newCommandId();
       const messageId = MessageId.make(commandId);
-      const claimed = yield* Claims.claimPendingAttachments({
+      const result = yield* ThreadMessageIntake.sendToThread({
+        projectId: caller.projectId,
         threadId: projection.thread.id,
+        commandId,
+        messageId,
+        text: input.message ?? "",
         attachments,
+        mode: "auto",
+        createdBy: "agent",
+        creationSource: "mcp",
       }).pipe(
-        Effect.mapError(
-          (error) =>
-            new OrchestratorMcpFailure({
-              code: "orchestration_error",
-              message: error.message,
-            }),
+        Effect.mapError((error) =>
+          error._tag === "AttachmentClaimError"
+            ? new OrchestratorMcpFailure({ code: "orchestration_error", message: error.message })
+            : unavailable(),
         ),
       );
-      // Preserve claimed copies if dispatch may have committed before failing to return.
-      const result = yield* threads
-        .sendToThread({
-          projectId: caller.projectId,
-          threadId: projection.thread.id,
-          commandId,
-          messageId,
-          text: input.message ?? "",
-          attachments: claimed.attachments,
-          mode: "auto",
-          createdBy: "agent",
-          creationSource: "mcp",
-        })
-        .pipe(Effect.mapError(unavailable));
       return {
         threadId: projection.thread.id,
         messageId,
