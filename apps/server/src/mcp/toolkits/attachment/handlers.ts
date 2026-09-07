@@ -47,7 +47,15 @@ export const AttachmentHandlersLive = AttachmentToolkit.toLayer({
       const claimed = yield* Claims.claimPendingAttachments({
         threadId: projection.thread.id,
         attachments: input.attachments,
-      }).pipe(Effect.mapError(unavailable));
+      }).pipe(
+        Effect.mapError(
+          (error) =>
+            new OrchestratorMcpFailure({
+              code: "orchestration_error",
+              message: error.message,
+            }),
+        ),
+      );
       // Preserve claimed copies if dispatch may have committed before failing to return.
       const result = yield* threads
         .sendToThread({
