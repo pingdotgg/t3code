@@ -1,5 +1,6 @@
 import {
   type CommandId,
+  type RuntimeRequestId,
   type ThreadId,
   type OrchestrationV2ThreadProjection,
   type RunId,
@@ -34,7 +35,59 @@ const dispatch = Effect.fn("mcp.dispatchThreadCommand")(function* (
   return { sequence: result.sequence };
 });
 
+const readQuestion = Effect.fn("mcp.readQuestion")(function* (
+  input: {
+    threadId?: ThreadId | undefined;
+    requestId: RuntimeRequestId;
+  },
+  writable = false,
+) {
+  const context = yield* writable ? readWritableThread(input.threadId) : readThread(input.threadId);
+  const request = context.projection.runtimeRequests.find(
+    (request) =>
+      request.id === input.requestId &&
+      request.kind === "user_input" &&
+      request.status === "pending",
+  );
+  const item = context.projection.turnItems.find(
+    (item) => item.type === "user_input_request" && item.requestId === input.requestId,
+  );
+  if (request === undefined || item?.type !== "user_input_request")
+    return yield* new OrchestratorMcpFailure({
+      code: "invalid_request",
+      message: "The pending user-input request was not found.",
+    });
+  return { ...context, request, item };
+});
 export const ThreadToolkitHandlersLive = ThreadToolkit.toLayer({
+  t3_pending_request_list: (input) =>
+    Effect.gen(function* () {
+      const { projection } = yield* readThread(input.threadId);
+      return {
+        requestIds: projection.runtimeRequests
+          .filter((request) => request.kind === "user_input" && request.status === "pending")
+          .map((request) => request.id),
+      };
+    }),
+  t3_pending_request_read: (input) =>
+    Effect.gen(function* () {
+      const { item } = yield* readQuestion(input);
+      return { requestId: input.requestId, questions: item.questions };
+    }),
+  t3_pending_request_respond: (input) =>
+    Effect.gen(function* () {
+      const { threads, projection } = yield* readQuestion(input, true);
+      const result = yield* threads
+        .dispatch({
+          type: "runtime-request.respond",
+          threadId: projection.thread.id,
+          commandId: yield* newCommandId(),
+          requestId: input.requestId,
+          answers: input.answers,
+        })
+        .pipe(Effect.mapError(unavailable));
+      return { sequence: result.sequence };
+    }),
   t3_queue_list: (input) =>
     Effect.gen(function* () {
       const { projection } = yield* readThread(input.threadId);
