@@ -273,11 +273,14 @@ const PlatformServicesLive = Layer.unwrap(
   }),
 );
 
+const CheckpointAndProviderCommandReactorsLive = ProviderCommandReactorLive.pipe(
+  Layer.provideMerge(CheckpointReactorLive),
+);
+
 const ReactorLayerLive = Layer.empty.pipe(
   Layer.provideMerge(OrchestrationReactorLive),
   Layer.provideMerge(ProviderRuntimeIngestionLive),
-  Layer.provideMerge(ProviderCommandReactorLive),
-  Layer.provideMerge(CheckpointReactorLive),
+  Layer.provideMerge(CheckpointAndProviderCommandReactorsLive),
   Layer.provideMerge(ThreadDeletionReactorLive),
   Layer.provideMerge(ThreadSettlementReactor.layer),
   Layer.provideMerge(ThreadPullRequestReactor.layer),

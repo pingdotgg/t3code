@@ -13,10 +13,12 @@ import {
 import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import type * as PlatformError from "effect/PlatformError";
+import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import { isTemporaryWorktreeBranch } from "@t3tools/shared/git";
@@ -91,6 +93,40 @@ const make = Effect.gen(function* () {
   const pullRequests = yield* PullRequestService.PullRequestService;
   const startedTurns = new Map<ThreadId, TurnId>();
   const pending = new Set<ThreadId>();
+  const domainSequenceState = yield* Ref.make<{
+    readonly processed: number;
+    readonly waiters: ReadonlyArray<{
+      readonly sequence: number;
+      readonly deferred: Deferred.Deferred<void>;
+    }>;
+  }>({ processed: -1, waiters: [] });
+
+  const awaitDomainSequence = Effect.fn("CheckpointReactor.awaitDomainSequence")(function* (
+    sequence: number,
+  ) {
+    const deferred = yield* Deferred.make<void>();
+    const shouldWait = yield* Ref.modify(domainSequenceState, (state) =>
+      state.processed >= sequence
+        ? [false, state]
+        : [true, { ...state, waiters: [...state.waiters, { sequence, deferred }] }],
+    );
+    if (shouldWait) yield* Deferred.await(deferred);
+  });
+
+  const markDomainSequence = Effect.fn("CheckpointReactor.markDomainSequence")(function* (
+    sequence: number,
+  ) {
+    const ready = yield* Ref.modify(domainSequenceState, (state) => [
+      state.waiters.filter((waiter) => waiter.sequence <= sequence),
+      {
+        processed: Math.max(state.processed, sequence),
+        waiters: state.waiters.filter((waiter) => waiter.sequence > sequence),
+      },
+    ]);
+    yield* Effect.forEach(ready, (waiter) => Deferred.succeed(waiter.deferred, undefined), {
+      discard: true,
+    });
+  });
 
   const appendRevertFailureActivity = (input: {
     readonly threadId: ThreadId;
@@ -932,6 +968,9 @@ const make = Effect.gen(function* () {
           cause: Cause.pretty(cause),
         });
       }),
+      Effect.andThen(
+        input.source === "domain" ? markDomainSequence(input.event.sequence) : Effect.void,
+      ),
     );
 
   const worker = yield* makeDrainableWorker(processInputSafely);
@@ -968,6 +1007,7 @@ const make = Effect.gen(function* () {
   return {
     start,
     drain: worker.drain.pipe(Effect.andThen(statusRefreshWorker.drain)),
+    awaitDomainSequence,
   } satisfies CheckpointReactorShape;
 });
 

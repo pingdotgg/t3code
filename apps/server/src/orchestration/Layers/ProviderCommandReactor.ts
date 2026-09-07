@@ -43,6 +43,7 @@ import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { ProviderRegistry } from "../../provider/Services/ProviderRegistry.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
+import { CheckpointReactor } from "../Services/CheckpointReactor.ts";
 import {
   ProviderCommandReactor,
   type ProviderCommandReactorShape,
@@ -322,6 +323,7 @@ const make = Effect.gen(function* () {
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
   const providerAuthService = yield* ProviderAuthService;
   const providerService = yield* ProviderService;
+  const checkpointReactor = yield* CheckpointReactor;
   const providerRegistry = yield* ProviderRegistry;
   const gitWorkflow = yield* GitWorkflowService;
   const fileSystem = yield* FileSystem.FileSystem;
@@ -1183,6 +1185,10 @@ const make = Effect.gen(function* () {
   const processTurnStartRequested = Effect.fn("processTurnStartRequested")(function* (
     event: Extract<ProviderIntentEvent, { type: "thread.turn-start-requested" }>,
   ) {
+    // Checkpoint and provider reactors consume the same ordered domain stream on
+    // independent workers. Cross this sequence barrier before a later turn can
+    // mutate files or provider history that an earlier revert is still restoring.
+    yield* checkpointReactor.awaitDomainSequence(event.sequence);
     const key = turnStartKeyForEvent(event);
     if (yield* hasHandledTurnStartRecently(key)) {
       return;

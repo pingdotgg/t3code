@@ -66,6 +66,7 @@ import {
 } from "./ProviderCommandReactor.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProviderCommandReactor } from "../Services/ProviderCommandReactor.ts";
+import { CheckpointReactor } from "../Services/CheckpointReactor.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Clock from "effect/Clock";
@@ -182,6 +183,7 @@ describe("ProviderCommandReactor", () => {
       session: ProviderSession,
     ) => Effect.Effect<ProviderSession, ProviderServiceError>;
     readonly tryHandlePromptCommandEffect?: ProviderAuthService["Service"]["tryHandlePromptCommand"];
+    readonly awaitCheckpointSequenceEffect?: (sequence: number) => Effect.Effect<void>;
   }) {
     const now = "2026-01-01T00:00:00.000Z";
     const baseDir =
@@ -412,6 +414,9 @@ describe("ProviderCommandReactor", () => {
       Layer.provide(RepositoryIdentityResolver.layer),
       Layer.provide(SqlitePersistenceMemory),
     );
+    const awaitCheckpointSequence = vi.fn(
+      (sequence: number) => input?.awaitCheckpointSequenceEffect?.(sequence) ?? Effect.void,
+    );
     let titleRegenerationCompletionDispatchAttempts = 0;
     const reactorOrchestrationLayer = Layer.effect(
       OrchestrationEngineService,
@@ -476,6 +481,13 @@ describe("ProviderCommandReactor", () => {
         }),
       ),
       Layer.provideMerge(ServerSettingsService.layerTest()),
+      Layer.provideMerge(
+        Layer.succeed(CheckpointReactor, {
+          start: () => Effect.void,
+          drain: Effect.void,
+          awaitDomainSequence: awaitCheckpointSequence,
+        }),
+      ),
       Layer.provideMerge(SqlitePersistenceMemory),
       Layer.provideMerge(ServerConfig.layerTest(process.cwd(), baseDir)),
       Layer.provideMerge(NodeServices.layer),
@@ -610,11 +622,53 @@ describe("ProviderCommandReactor", () => {
       stateDir,
       drain,
       runEffect,
+      awaitCheckpointSequence,
       get titleRegenerationCompletionDispatchAttempts() {
         return titleRegenerationCompletionDispatchAttempts;
       },
     };
   }
+
+  effectIt.effect("waits for checkpoint side effects before starting a later provider turn", () =>
+    Effect.gen(function* () {
+      let barrierPassed = false;
+      const harness = yield* Effect.promise(() =>
+        createHarness({
+          awaitCheckpointSequenceEffect: () =>
+            Effect.sync(() => {
+              barrierPassed = true;
+            }),
+        }),
+      );
+      yield* harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-after-checkpoint-side-effects"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: MessageId.make("message-after-checkpoint-side-effects"),
+          role: "user",
+          text: "Continue after revert",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      });
+      yield* Effect.promise(() =>
+        waitFor(
+          () =>
+            harness.awaitCheckpointSequence.mock.calls.length === 1 ||
+            harness.sendTurn.mock.calls.length === 1,
+        ),
+      );
+      yield* Effect.promise(() => harness.drain());
+
+      expect(harness.awaitCheckpointSequence).toHaveBeenCalledTimes(1);
+      expect(harness.awaitCheckpointSequence).toHaveBeenCalledWith(expect.any(Number));
+      expect(barrierPassed).toBe(true);
+      expect(harness.sendTurn).toHaveBeenCalledTimes(1);
+    }),
+  );
 
   effectIt.effect.each(["new", "ready", "stopped"] as const)(
     "handles sign-out for a %s thread before worktree repair, text helpers, or startup",

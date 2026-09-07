@@ -25,6 +25,7 @@ import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as PubSub from "effect/PubSub";
@@ -488,6 +489,8 @@ describe("CheckpointReactor", () => {
 
     return {
       engine,
+      reactor,
+      checkpointStore,
       readModel: () => Effect.runPromise(snapshotQuery.getSnapshot()),
       provider,
       cwd,
@@ -496,6 +499,44 @@ describe("CheckpointReactor", () => {
       pullRequestRefreshes,
     };
   }
+
+  effectIt.effect("releases a domain sequence barrier only after checkpoint work reaches it", () =>
+    Effect.gen(function* () {
+      const harness = yield* Effect.promise(() =>
+        createHarness({ seedFilesystemCheckpoints: false }),
+      );
+      const targetSequence = (yield* harness.engine.latestSequence) + 2;
+      const waiter = yield* harness.reactor
+        .awaitDomainSequence(targetSequence)
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Effect.yieldNow;
+      expect(waiter.pollUnsafe()).toBeUndefined();
+
+      const result = yield* harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-checkpoint-sequence-barrier"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: MessageId.make("message-checkpoint-sequence-barrier"),
+          role: "user",
+          text: "Start after the checkpoint barrier",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: "2026-01-01T00:00:01.000Z",
+      });
+      expect(result.sequence).toBe(targetSequence);
+      yield* Fiber.join(waiter);
+
+      expect(
+        yield* harness.checkpointStore.hasCheckpointRef({
+          cwd: harness.cwd,
+          checkpointRef: checkpointRefForThreadTurn(ThreadId.make("thread-1"), 0),
+        }),
+      ).toBe(true);
+    }),
+  );
 
   effectIt.effect("captures baseline and large turn summaries before completion receipts", () =>
     Effect.gen(function* () {

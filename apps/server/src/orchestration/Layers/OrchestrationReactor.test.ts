@@ -55,6 +55,7 @@ describe("OrchestrationReactor", () => {
               return Effect.void;
             },
             drain: Effect.void,
+            awaitDomainSequence: () => Effect.void,
           }),
         ),
         Layer.provideMerge(
