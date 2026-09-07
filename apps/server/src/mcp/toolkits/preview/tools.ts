@@ -47,7 +47,7 @@ const readonlyBrowserTool = <T extends Tool.Any>(tool: T): T =>
 
 export const PreviewStatusTool = Tool.make("preview_status", {
   description:
-    "Report whether a collaborative browser tab is automation-capable, including its URL, title, visibility, loading state, viewport mode, and measured CSS-pixel size. Pass tabId to inspect a specific tab; omit it to use this agent session's current tab.",
+    "Report whether an in-app browser tab is automation-capable, including its URL, title, visibility, loading state, viewport mode, and measured CSS-pixel size. The tab is a collaborative browser surface: visible=false means it is offscreen or in the background, but it is still automatable. Pass tabId to inspect a specific tab; omit it to use this agent session's current tab.",
   parameters: PreviewAutomationTabTargetInput,
   success: PreviewAutomationStatus,
   failure: PreviewAutomationError,
@@ -61,7 +61,7 @@ export const PreviewStatusTool = Tool.make("preview_status", {
 export const PreviewOpenTool = browserTool(
   Tool.make("preview_open", {
     description:
-      "Initialize a collaborative browser tab and open its thread-bound inline preview by default. Set open=false for background-only automation. Pass tabId to reuse a specific existing tab, set reuseExistingTab=false to create another tab, or omit both to use this agent session's current tab.",
+      "Initialize an in-app browser tab. Visibility follows the user's auto-show preference unless you set open=true (right panel) or open=false (background-only). Pass tabId to reuse a specific existing tab, set reuseExistingTab=false to create another tab, or omit both to use this agent session's current tab.",
     parameters: PreviewAutomationOpenInput,
     success: PreviewAutomationStatus,
     failure: PreviewAutomationError,

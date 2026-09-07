@@ -17,6 +17,7 @@ import * as TestClock from "effect/testing/TestClock";
 
 import {
   ApprovalRequestId,
+  EnvironmentId,
   GrokSettings,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -26,6 +27,8 @@ import {
 } from "@t3tools/contracts";
 
 import { ServerConfig } from "../../config.ts";
+import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import { HOST_BROWSER_TOOL_INSTRUCTIONS } from "../HostBrowserToolInstructions.ts";
 import {
   grokPromptSettlementBelongsToContext,
   isGrokEnterPlanModeToolCall,
@@ -85,6 +88,22 @@ async function readJsonLines(filePath: string) {
     .map((line) => line.trim())
     .filter((line) => line.length > 0)
     .map((line) => JSON.parse(line) as Record<string, unknown>);
+}
+
+function promptTextsFromLog(requests: ReadonlyArray<Record<string, unknown>>): string[] {
+  return requests.flatMap((entry) => {
+    if (entry.method !== "session/prompt") return [];
+    const prompt = (entry.params as { prompt?: ReadonlyArray<{ type?: string; text?: string }> })
+      ?.prompt;
+    return (prompt ?? [])
+      .filter(
+        (part) =>
+          part.type === "text" &&
+          typeof part.text === "string" &&
+          !part.text.startsWith("<runtime_info>"),
+      )
+      .map((part) => part.text ?? "");
+  });
 }
 
 const grokAdapterTestLayer = ServerConfig.layerTest(process.cwd(), {
@@ -1115,6 +1134,14 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
         }),
       );
       const adapter = yield* makeTestAdapter(wrapperPath);
+      McpProviderSession.setMcpProviderSession({
+        environmentId: EnvironmentId.make("grok-cancelled-browser-prefix-environment"),
+        threadId,
+        providerSessionId: "grok-cancelled-browser-prefix-provider-session",
+        providerInstanceId: ProviderInstanceId.make("grok-cancelled-browser-prefix-instance"),
+        endpoint: "http://127.0.0.1:43123/mcp",
+        authorizationHeader: "Bearer test-token",
+      });
 
       const runtimeEvents: ProviderRuntimeEvent[] = [];
       const firstTurnStarted = yield* Deferred.make<TurnId>();
@@ -1178,8 +1205,16 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
       assert.equal(readySession?.status, "ready");
       assert.isUndefined(readySession?.activeTurnId);
 
+      const prompts = promptTextsFromLog(
+        yield* Effect.promise(() => readJsonLines(requestLogPath)),
+      );
+      assert.equal(prompts.length, 2);
+      assert.include(prompts[0], HOST_BROWSER_TOOL_INSTRUCTIONS.trim());
+      assert.include(prompts[1], HOST_BROWSER_TOOL_INSTRUCTIONS.trim());
+
       yield* Fiber.interrupt(runtimeEventsFiber);
       yield* adapter.stopSession(threadId);
+      McpProviderSession.clearMcpProviderSession(threadId);
     }).pipe(TestClock.withLive),
   );
 
@@ -2456,5 +2491,108 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
       // they wait on virtual time that never advances, and a regression would
       // hang until the suite timeout instead of failing here.
     }).pipe(TestClock.withLive),
+  );
+
+  it.effect("prefixes in-app browser instructions on the first prompt when MCP is attached", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("grok-browser-prefix");
+      const tempDir = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "grok-acp-browser-prefix-")),
+      );
+      const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockGrokWrapper({ T3_ACP_REQUEST_LOG_PATH: requestLogPath }),
+      );
+      const adapter = yield* makeTestAdapter(wrapperPath);
+      McpProviderSession.setMcpProviderSession({
+        environmentId: EnvironmentId.make("grok-browser-prefix-environment"),
+        threadId,
+        providerSessionId: "grok-browser-prefix-provider-session",
+        providerInstanceId: ProviderInstanceId.make("grok-browser-prefix-instance"),
+        endpoint: "http://127.0.0.1:43123/mcp",
+        authorizationHeader: "Bearer test-token",
+      });
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("grok"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({ threadId, input: "open the app", attachments: [] });
+      yield* adapter.sendTurn({ threadId, input: "continue", attachments: [] });
+      yield* waitForFileContent(requestLogPath, 80, '"method":"session/prompt"');
+
+      const prompts = promptTextsFromLog(
+        yield* Effect.promise(() => readJsonLines(requestLogPath)),
+      );
+      assert.equal(prompts.length, 2);
+      assert.include(prompts[0], HOST_BROWSER_TOOL_INSTRUCTIONS.trim());
+      assert.match(prompts[0] ?? "", /open the app$/);
+      assert.equal(prompts[1], "continue");
+
+      yield* adapter.stopSession(threadId);
+      McpProviderSession.clearMcpProviderSession(threadId);
+    }),
+  );
+
+  it.effect("prefixes browser instructions after an attachments-only first turn", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("grok-browser-image-first");
+      const tempDir = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "grok-acp-browser-image-first-")),
+      );
+      const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockGrokWrapper({ T3_ACP_REQUEST_LOG_PATH: requestLogPath }),
+      );
+      const adapter = yield* makeTestAdapter(wrapperPath);
+      const { attachmentsDir } = yield* Effect.service(ServerConfig);
+      const attachmentId = "browser-prefix-shot";
+      yield* Effect.promise(async () => {
+        await NodeFSP.mkdir(attachmentsDir, { recursive: true });
+        await NodeFSP.writeFile(NodePath.join(attachmentsDir, `${attachmentId}.png`), "pixels");
+      });
+      McpProviderSession.setMcpProviderSession({
+        environmentId: EnvironmentId.make("grok-browser-image-first-environment"),
+        threadId,
+        providerSessionId: "grok-browser-image-first-provider-session",
+        providerInstanceId: ProviderInstanceId.make("grok-browser-image-first-instance"),
+        endpoint: "http://127.0.0.1:43123/mcp",
+        authorizationHeader: "Bearer test-token",
+      });
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("grok"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId,
+        input: "",
+        attachments: [
+          {
+            type: "image",
+            id: attachmentId,
+            name: "shot.png",
+            mimeType: "image/png",
+            sizeBytes: 6,
+          },
+        ],
+      });
+      yield* adapter.sendTurn({ threadId, input: "what is this", attachments: [] });
+      yield* waitForFileContent(requestLogPath, 80, '"method":"session/prompt"');
+
+      const prompts = promptTextsFromLog(
+        yield* Effect.promise(() => readJsonLines(requestLogPath)),
+      );
+      assert.equal(prompts.length, 2);
+      assert.equal(prompts[0], HOST_BROWSER_TOOL_INSTRUCTIONS.trim());
+      assert.equal(prompts[1], "what is this");
+
+      yield* adapter.stopSession(threadId);
+      McpProviderSession.clearMcpProviderSession(threadId);
+    }),
   );
 });
