@@ -814,6 +814,7 @@ export type SidebarThreadStatus =
   | "working"
   | "monitoring"
   | "failed"
+  | "limited"
   | "ready";
 
 export function shouldRecedeSidebarThread(input: {
@@ -849,7 +850,7 @@ export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): Si
   // A failed session outranks lingering background liveness: the user must
   // see the failure, not a stale Working (review finding).
   if (thread.session?.status === "error") {
-    return "failed";
+    return thread.session.lastErrorClass === "usage_limit" ? "limited" : "failed";
   }
   // Background work outlives the turn: fleets read as working; monitoring
   // only when watch loops are the sole live work.
