@@ -8,7 +8,7 @@ import * as Path from "effect/Path";
 import * as Predicate from "effect/Predicate";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/hostProcess";
 
 import * as ServerConfig from "../config.ts";
 
@@ -155,7 +155,7 @@ export const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const serverConfig = yield* ServerConfig.ServerConfig;
-  const platform = yield* HostProcessPlatform;
+  const platform = yield* HostProcess.HostProcessPlatform;
 
   yield* fileSystem.makeDirectory(serverConfig.secretsDir, { recursive: true });
   yield* fileSystem.chmod(serverConfig.secretsDir, 0o700).pipe(
