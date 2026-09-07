@@ -35,7 +35,7 @@ import {
   NATIVE_MAIL_SEARCH_TOOLBAR_SUPPORTED,
 } from "../layout/native-mail-search-toolbar";
 import { branchBadgeLabel, useNewTaskFlow } from "./new-task-flow-provider";
-import { shouldCheckoutNewTaskBranch } from "./new-task-context-presentation";
+import { checkoutNewTaskBranch } from "./checkout-new-task-branch";
 
 function SelectionRow(props: {
   readonly icon?: "arrow.triangle.branch" | ReactNode;
@@ -257,43 +257,29 @@ export function NewTaskBranchPickerRouteScreen() {
       void Haptics.selectionAsync();
 
       try {
-        let selectedBranch = branch;
-        const needsCheckout = shouldCheckoutNewTaskBranch({
-          branchIsCurrent: branch.current,
-          branchWorktreePath: branch.worktreePath,
+        if (!flow.selectedProject) return;
+        setSwitchingBranchName(branch.name);
+        const result = await checkoutNewTaskBranch({
+          branch,
+          project: flow.selectedProject,
           workspaceMode: flow.workspaceMode,
+          switchRef,
         });
-        if (needsCheckout && flow.selectedProject) {
-          setSwitchingBranchName(branch.name);
-          const result = await switchRef({
-            environmentId: flow.selectedProject.environmentId,
-            input: {
-              cwd: flow.selectedProject.workspaceRoot,
-              refName: branch.name,
-            },
-          });
-          if (result._tag === "Failure") {
-            if (mountedRef.current && navigation.isFocused() && !isAtomCommandInterrupted(result)) {
-              const error = squashAtomCommandFailure(result);
-              Alert.alert(
-                "Could not switch branch",
-                error instanceof Error ? error.message : "The branch could not be checked out.",
-              );
-            }
-            return;
+        if (result._tag === "Failure") {
+          if (mountedRef.current && navigation.isFocused() && !isAtomCommandInterrupted(result)) {
+            const error = squashAtomCommandFailure(result);
+            Alert.alert(
+              "Could not switch branch",
+              error instanceof Error ? error.message : "The branch could not be checked out.",
+            );
           }
-          selectedBranch = {
-            ...branch,
-            current: true,
-            isRemote: false,
-            name: result.value.refName ?? branch.name,
-          };
+          return;
         }
 
         // The checkout has already changed the repository. Persist the matching
         // draft selection even if the native sheet was dismissed while the
         // command was in flight; only visible-screen work is focus-gated below.
-        flow.selectBranch(selectedBranch);
+        flow.selectBranch(result.value);
         if (!mountedRef.current || !navigation.isFocused()) {
           return;
         }
