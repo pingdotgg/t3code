@@ -2,6 +2,7 @@ import { EnvironmentId, ProjectId, type AgentSessionProjectCandidate } from "@t3
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  groupOnboardingProjects,
   partitionOnboardingProjects,
   onboardingProjectKey,
   resolveOnboardingLandingProject,
@@ -18,12 +19,18 @@ function candidate(
     title: path.split("/").at(-1) ?? path,
     path,
     sources: ["codex"],
-    threadCount: 1,
+    threadCount: 3,
     lastActiveAt: "2026-08-20T12:00:00.000Z",
     alreadyImported: false,
+    git: { remoteKey: null, repository: null },
     ...overrides,
   };
 }
+
+const github = (repository: string) => ({
+  remoteKey: `github.com/${repository.toLowerCase()}`,
+  repository,
+});
 
 describe("partitionOnboardingProjects", () => {
   it("keeps existing projects available for thread history import", () => {
@@ -58,6 +65,67 @@ describe("partitionOnboardingProjects", () => {
       available: [recent, future],
       recent: [recent],
     });
+  });
+
+  it("keeps non-git folders and thin histories out of the default selection", () => {
+    const repo = candidate("/projects/repo");
+    const folder = candidate("/projects/folder", { git: null });
+    const thin = candidate("/projects/thin", { threadCount: 2 });
+
+    expect(partitionOnboardingProjects([repo, folder, thin], now).recent).toEqual([repo]);
+  });
+});
+
+describe("groupOnboardingProjects", () => {
+  it("groups clones by origin, keeps local repos separate, and folds non-git folders away", () => {
+    const main = candidate("/code/t3code", {
+      git: github("pingdotgg/t3code"),
+      threadCount: 79,
+      lastActiveAt: "2026-08-21T12:00:00.000Z",
+    });
+    const clone = candidate("/code/clones/t3code-2", {
+      git: github("pingdotgg/t3code"),
+      threadCount: 13,
+      lastActiveAt: "2026-08-10T12:00:00.000Z",
+    });
+    const older = candidate("/code/fleet", {
+      git: github("t3dotgg/fleet"),
+      threadCount: 295,
+      lastActiveAt: "2026-08-22T00:00:00.000Z",
+    });
+    const local = candidate("/code/scratch-repo", { title: "scratch-repo" });
+    const folder = candidate("/tmp/notes", { git: null });
+
+    const grouped = groupOnboardingProjects([main, clone, older, local, folder]);
+
+    expect(grouped.other).toEqual([folder]);
+    expect(
+      grouped.repositories.map((group) => ({
+        label: group.label,
+        paths: group.candidates.map((item) => item.path),
+        threadCount: group.threadCount,
+        lastActiveAt: group.lastActiveAt,
+      })),
+    ).toEqual([
+      {
+        label: "t3dotgg/fleet",
+        paths: ["/code/fleet"],
+        threadCount: 295,
+        lastActiveAt: "2026-08-22T00:00:00.000Z",
+      },
+      {
+        label: "pingdotgg/t3code",
+        paths: ["/code/t3code", "/code/clones/t3code-2"],
+        threadCount: 92,
+        lastActiveAt: "2026-08-21T12:00:00.000Z",
+      },
+      {
+        label: "scratch-repo",
+        paths: ["/code/scratch-repo"],
+        threadCount: 3,
+        lastActiveAt: "2026-08-20T12:00:00.000Z",
+      },
+    ]);
   });
 });
 
