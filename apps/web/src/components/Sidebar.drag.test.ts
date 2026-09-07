@@ -357,6 +357,36 @@ describe("sidebar drag projection", () => {
     expect(result.get("s")?.y).toBe(32);
   });
 
+  it.each(["s1", "missing-target"])(
+    "keeps label clearance when a settled drag is over %s",
+    (over) => {
+      const items = [
+        pinnedHeader,
+        thread("p", "pinned"),
+        divider,
+        thread("a", "active"),
+        settledHeader,
+        thread("s1", "settled"),
+        thread("s2", "settled"),
+      ];
+      const result = preview(
+        {
+          items,
+          settledOrder: ["s1", "s2"],
+          settledExpanded: true,
+          boundaryLabelHeight: 24,
+        },
+        "s2",
+        over,
+      );
+      expect(result.get("p")?.y).toBe(24);
+      expect(result.get(sidebarMarkerId("pinned-divider"))?.y).toBe(24);
+      expect(result.get("a")?.y).toBe(48);
+      expect(result.get("s1")?.y).toBe(48);
+      expect(result.get("s2")).toEqual(stationary);
+    },
+  );
+
   it("stacks the labels with their gaps when the pinned section is empty", () => {
     const items = [
       pinnedHeader,

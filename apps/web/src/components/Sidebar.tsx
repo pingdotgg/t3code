@@ -2,7 +2,6 @@ import { useAtomValue } from "@effect/atom-react";
 import * as Schema from "effect/Schema";
 import {
   DndContext,
-  PointerSensor,
   useSensor,
   useSensors,
   type DragEndEvent,
@@ -173,6 +172,7 @@ import {
 } from "./Sidebar.logic";
 import { resolveLocalCheckoutBranchMismatch } from "./BranchToolbar.logic";
 import { createSidebarCollisionDetection, createSidebarSortingStrategy } from "./Sidebar.drag";
+import { SidebarDragLifecycle, SidebarPointerSensor } from "./Sidebar.pointer";
 import { createSidebarListMotion } from "./Sidebar.motion";
 import {
   ThreadWorktreeIndicator,
@@ -501,6 +501,8 @@ function SortableThreadRow(props: {
     id: props.id,
     disabled: { draggable: props.disabled },
     animateLayoutChanges: animateSidebarLayoutChanges,
+    // Apply label clearance and row positions together, without tweening through content.
+    transition: null,
   });
   // dnd-kit memoizes each field but not the bag, so the memoized row would
   // rerender on every shell update without this.
@@ -531,6 +533,7 @@ function SortableSidebarMarker(props: {
     id: sidebarMarkerId(props.marker),
     disabled: { draggable: true },
     animateLayoutChanges: animateSidebarLayoutChanges,
+    transition: null,
   });
   return (
     <li
@@ -572,15 +575,9 @@ function SidebarSectionPlaceholder(props: {
   );
 }
 
-// Boundary labels appear during a drag in space the sorting strategy opens
-// below each marker (SIDEBAR_DRAG_LABEL_HEIGHT), so they never sit on a row.
-// The marker itself stays zero height, so nothing is reserved at rest and
-// pickup measurements are unchanged. They read at full strength so the
-// sections are easy to find, and the section under the lifted row takes the
-// accent. They paint above the lifted row so a card dragged across a
-// boundary never hides its label.
-// Matches the label's h-4 below.
-const SIDEBAR_DRAG_LABEL_HEIGHT = 16;
+// Zero-height markers reserve no label space at rest. During a drag the
+// sorting strategy opens 24px for a 16px label with 4px clearance on each side.
+const SIDEBAR_DRAG_LABEL_HEIGHT = 24;
 
 function SidebarDragBoundary(props: {
   marker: "pinned-header" | "pinned-divider";
@@ -592,10 +589,10 @@ function SidebarDragBoundary(props: {
     <SortableSidebarMarker
       marker={props.marker}
       data-testid={`sidebar-${props.marker}`}
-      className="pointer-events-none relative z-30 mx-0.5 h-0"
+      className="pointer-events-none relative mx-0.5 h-0"
     >
       {props.visible ? (
-        <div className="absolute inset-x-2 top-0 flex h-4 items-center gap-1.5">
+        <div className="absolute inset-x-2 top-1 flex h-4 items-center gap-1.5">
           <span
             className={cn(
               "inline-flex h-4 shrink-0 items-center rounded-sm border bg-sidebar px-1.5 text-[10px] leading-none font-medium",
@@ -3031,16 +3028,35 @@ export default function Sidebar() {
   // Hold the chosen section and order until every key write arrives. This
   // also covers first-time ordering, which assigns keys to keyless neighbors.
   // A failed write, concurrent reorder, or membership change releases the hold.
-  const dndSensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
-  );
   const [dragState, setDragState] = useState<{
     readonly activeKey: string;
     readonly activeSection: SidebarSection;
     readonly occurredAt: string;
     readonly activationY: number | null;
+    readonly targetSection: SidebarSection | null;
   } | null>(null);
-  const [dragTargetSection, setDragTargetSection] = useState<SidebarSection | null>(null);
+  const dragTargetSection = dragState?.targetSection ?? null;
+  const dragSensorRef = useRef<SidebarPointerSensor | null>(null);
+  const finishThreadDrag = useCallback((started: boolean) => {
+    dragSensorRef.current = null;
+    if (started) {
+      listMotionRef.current?.release();
+      setDragState(null);
+    }
+  }, []);
+  const attachDragSensor = useCallback((sensor: SidebarPointerSensor) => {
+    dragSensorRef.current = sensor;
+  }, []);
+  const cancelThreadDrag = useCallback(() => {
+    dragSensorRef.current?.cancel();
+  }, []);
+  const dndSensors = useSensors(
+    useSensor(SidebarPointerSensor, {
+      distance: 6,
+      onAttach: attachDragSensor,
+      onFinish: finishThreadDrag,
+    }),
+  );
   const sectionByThreadKey = useMemo(() => {
     const map = new Map<string, SidebarSection>();
     const add = (list: readonly EnvironmentThreadShell[], section: SidebarSection) => {
@@ -3188,19 +3204,14 @@ export default function Sidebar() {
       setDragState({
         activeKey,
         activeSection,
+        targetSection: activeSection,
         occurredAt: new Date().toISOString(),
         activationY:
           event.activatorEvent instanceof PointerEvent ? event.activatorEvent.clientY : null,
       });
-      setDragTargetSection(activeSection);
     },
     [sectionByThreadKey],
   );
-  const handleThreadDragCancel = useCallback(() => {
-    listMotionRef.current?.release();
-    setDragState(null);
-    setDragTargetSection(null);
-  }, []);
   // Include every visible row in the measured order. Older servers disable
   // pickup on their rows without changing where those rows render.
   const sidebarListItems = useMemo((): readonly SidebarListItem[] => {
@@ -3249,6 +3260,14 @@ export default function Sidebar() {
     snoozedThreads.length,
     visibleSnoozedThreads,
   ]);
+  useEffect(() => {
+    if (
+      dragState !== null &&
+      !sidebarListItems.some((item) => item.kind === "thread" && item.key === dragState.activeKey)
+    ) {
+      cancelThreadDrag();
+    }
+  }, [cancelThreadDrag, dragState, sidebarListItems]);
   const listMotionPaused = dragState !== null;
   useLayoutEffect(() => {
     // Drag release clears the baseline, so its commit cannot replay the
@@ -3264,7 +3283,11 @@ export default function Sidebar() {
       const target = event.over
         ? resolveSidebarDropTarget(sidebarListItems, String(event.active.id), String(event.over.id))
         : null;
-      setDragTargetSection(target?.section ?? null);
+      setDragState((current) =>
+        current === null || current.activeKey !== String(event.active.id)
+          ? current
+          : { ...current, targetSection: target?.section ?? null },
+      );
     },
     [sidebarListItems],
   );
@@ -3361,9 +3384,6 @@ export default function Sidebar() {
   ]);
   const handleThreadDragEnd = useCallback(
     (event: DragEndEvent) => {
-      listMotionRef.current?.release();
-      setDragState(null);
-      setDragTargetSection(null);
       const activeKey = String(event.active.id);
       const activeSection = sectionByThreadKey.get(activeKey);
       const target =
@@ -4550,9 +4570,9 @@ export default function Sidebar() {
                 modifiers={[restrictToVerticalAxis, restrictToFirstScrollableAncestor]}
                 onDragStart={handleThreadDragStart}
                 onDragOver={handleThreadDragOver}
-                onDragCancel={handleThreadDragCancel}
                 onDragEnd={handleThreadDragEnd}
               >
+                <SidebarDragLifecycle onUnmount={cancelThreadDrag} />
                 <SortableContext items={sortableIds} strategy={sidebarSortingStrategy}>
                   <ul
                     ref={attachListMotionRef}

@@ -73,14 +73,10 @@ export function createSidebarSortingStrategy(input: {
 
   function project({ rects, activeIndex, overIndex }: Layout) {
     const active = items[activeIndex];
-    const over = items[overIndex];
+    const over = items[overIndex] ?? active;
     if (active?.kind !== "thread" || !over || !rects[0]) return [];
     const target = resolveSidebarDropTarget(items, active.key, sidebarListItemId(over));
     if (!target) return [];
-    // Settled keeps time order, so a reorder inside it previews nothing.
-    // Every other drag projects so the boundary labels get their space.
-    if (target.section === active.section && over.kind === "thread" && target.section === "settled")
-      return [];
     const groups: Record<SidebarSection, ThreadItem[]> = {
       pinned: [],
       active: [],
