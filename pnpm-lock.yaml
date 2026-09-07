@@ -990,6 +990,9 @@ importers:
       pngjs:
         specifier: 7.0.0
         version: 7.0.0
+      sharp:
+        specifier: 0.34.5
+        version: 0.34.5
     devDependencies:
       '@effect/vitest':
         specifier: 4.0.0-beta.103

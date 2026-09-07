@@ -13,7 +13,8 @@
     "@t3tools/shared": "workspace:*",
     "@t3tools/tailscale": "workspace:*",
     "effect": "catalog:",
-    "pngjs": "7.0.0"
+    "pngjs": "7.0.0",
+    "sharp": "0.34.5"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",
