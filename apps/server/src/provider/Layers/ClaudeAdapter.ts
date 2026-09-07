@@ -161,6 +161,7 @@ interface ClaudeTurnState {
   nextSyntheticAssistantBlockIndex: number;
   authenticationFailureMessage: string | undefined;
   rejectedRateLimitTypes: Set<string>;
+  rateLimitedAssistantMessage: boolean;
 }
 
 interface AssistantTextBlockState {
@@ -3168,6 +3169,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         nextSyntheticAssistantBlockIndex: -1,
         authenticationFailureMessage: undefined,
         rejectedRateLimitTypes: new Set(),
+        rateLimitedAssistantMessage: false,
       };
       context.session = {
         ...context.session,
@@ -3234,6 +3236,12 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           cwd: path.resolve(context.session.cwd ?? "."),
         });
       }
+      // Retries while still limited carry this assistant error but no
+      // rate_limit_event, which the CLI only emits when the window changes
+      // state, so the rejected set alone misses every turn after the first.
+      if (message.error === "rate_limit") {
+        context.turnState.rateLimitedAssistantMessage = true;
+      }
       context.turnState.items.push(message.message);
       if (
         normalizeClaudeActiveTokenUsage(
@@ -3263,7 +3271,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     const turn = context.turnState;
     const failureHint =
       turn?.authenticationFailureMessage ??
-      (turn && turn.rejectedRateLimitTypes.size > 0
+      (turn && (turn.rejectedRateLimitTypes.size > 0 || turn.rateLimitedAssistantMessage)
         ? "Claude usage limit reached. Send the message again once the limit resets."
         : undefined);
     const { status, errorMessage } = resultOutcome(message, failureHint);
@@ -4949,6 +4957,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         nextSyntheticAssistantBlockIndex: -1,
         authenticationFailureMessage: undefined,
         rejectedRateLimitTypes: new Set(),
+        rateLimitedAssistantMessage: false,
       };
 
       const updatedAt = yield* nowIso;

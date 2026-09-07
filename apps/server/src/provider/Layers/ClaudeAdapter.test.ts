@@ -2367,6 +2367,156 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  const USAGE_LIMIT_MESSAGE =
+    "Claude usage limit reached. Send the message again once the limit resets.";
+
+  const limitedAssistant = (uuid: string, error: string) =>
+    ({
+      type: "assistant",
+      session_id: "sdk-session-limit-retry",
+      uuid,
+      parent_tool_use_id: null,
+      error,
+      is_api_error_message: true,
+      message: {
+        id: `assistant-message-${uuid}`,
+        model: "<synthetic>",
+        content: [
+          {
+            type: "text",
+            text: "You've hit your session limit · resets 9:20pm (Europe/Vienna)",
+          },
+        ],
+      },
+    }) as unknown as SDKMessage;
+
+  const apiErrorResult = (uuid: string) =>
+    ({
+      type: "result",
+      subtype: "success",
+      is_error: false,
+      terminal_reason: "api_error",
+      errors: [],
+      session_id: "sdk-session-limit-retry",
+      uuid,
+    }) as unknown as SDKMessage;
+
+  it.effect("names the usage limit when only the assistant error reports it", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.takeUntil((event) => event.type === "turn.completed"),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({ threadId: session.threadId, input: "hello", attachments: [] });
+
+      // No rate_limit_event: the CLI already reported this window last turn.
+      harness.query.emit(limitedAssistant("assistant-limit", "rate_limit"));
+      harness.query.emit(apiErrorResult("result-limit-retry"));
+
+      const events = Array.from(yield* Fiber.join(eventsFiber));
+      const errors = events.filter((event) => event.type === "runtime.error");
+      assert.equal(errors.length, 1);
+      assert.equal(
+        errors[0]?.type === "runtime.error" ? errors[0].payload.message : undefined,
+        USAGE_LIMIT_MESSAGE,
+      );
+      const payload = completedTurn(events);
+      assert.equal(payload.state, "failed");
+      assert.equal(payload.errorMessage, USAGE_LIMIT_MESSAGE);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("names the usage limit on a retry that repeats no rate_limit_event", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      const firstTurnFiber = yield* adapter.streamEvents.pipe(
+        Stream.takeUntil((event) => event.type === "turn.completed"),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      yield* adapter.sendTurn({ threadId: session.threadId, input: "hello", attachments: [] });
+      const nowMs = yield* Clock.currentTimeMillis;
+      harness.query.emit({
+        type: "rate_limit_event",
+        rate_limit_info: {
+          status: "rejected",
+          rateLimitType: "five_hour",
+          resetsAt: Math.floor(nowMs / 1000) + 7200,
+        },
+        session_id: "sdk-session-limit-retry",
+        uuid: "rate-limit-rejected",
+      } as unknown as SDKMessage);
+      harness.query.emit(limitedAssistant("assistant-limit-1", "rate_limit"));
+      harness.query.emit(apiErrorResult("result-limit-1"));
+      assert.equal(
+        completedTurn(Array.from(yield* Fiber.join(firstTurnFiber))).errorMessage,
+        USAGE_LIMIT_MESSAGE,
+      );
+
+      // The retry carries only the assistant error; the window did not change
+      // state, so the CLI stays silent about it.
+      const secondTurnFiber = yield* adapter.streamEvents.pipe(
+        Stream.takeUntil((event) => event.type === "turn.completed"),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      yield* adapter.sendTurn({ threadId: session.threadId, input: "again", attachments: [] });
+      harness.query.emit(limitedAssistant("assistant-limit-2", "rate_limit"));
+      harness.query.emit(apiErrorResult("result-limit-2"));
+      const payload = completedTurn(Array.from(yield* Fiber.join(secondTurnFiber)));
+      assert.equal(payload.state, "failed");
+      assert.equal(payload.errorMessage, USAGE_LIMIT_MESSAGE);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("keeps the generic API error for a non-limit assistant error", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.takeUntil((event) => event.type === "turn.completed"),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({ threadId: session.threadId, input: "hello", attachments: [] });
+      harness.query.emit(limitedAssistant("assistant-server-error", "server_error"));
+      harness.query.emit(apiErrorResult("result-server-error"));
+
+      const payload = completedTurn(Array.from(yield* Fiber.join(eventsFiber)));
+      assert.equal(payload.state, "failed");
+      assert.equal(payload.errorMessage, "Claude gave up after repeated API errors.");
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect.each([
     {
       name: "listed error with api_error",
