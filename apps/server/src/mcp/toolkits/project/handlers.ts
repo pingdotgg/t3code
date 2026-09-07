@@ -1,7 +1,7 @@
 import { MessageId, ThreadId, OrchestratorMcpFailure, ProjectId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import * as Launch from "../../../orchestration-v2/ThreadLaunchService.ts";
+import * as ThreadMessageIntake from "../../../orchestration-v2/ThreadMessageIntake.ts";
 import * as Claims from "../../../orchestration-v2/AttachmentClaims.ts";
 import * as Project from "../../../project/ProjectService.ts";
 import * as Repositories from "../../../sourceControl/SourceControlRepositoryService.ts";
@@ -45,7 +45,6 @@ export const ProjectHandlersLive = ProjectToolkit.toLayer({
           code: "capability_denied",
           message: "Project launches require a full-access/default calling thread.",
         });
-      const launch = yield* Launch.ThreadLaunchService;
       const commandId = yield* newCommandId();
       const threadId = ThreadId.make(commandId);
       const messageId = MessageId.make(commandId);
@@ -55,38 +54,33 @@ export const ProjectHandlersLive = ProjectToolkit.toLayer({
           code: "invalid_request",
           message: "A new thread accepts only pending attachment uploads.",
         });
-      const claimed = yield* Claims.claimPendingAttachments({ threadId, attachments }).pipe(
-        Effect.mapError(
-          (error) =>
-            new OrchestratorMcpFailure({
-              code: "orchestration_error",
-              message: error.message,
+      const result = yield* ThreadMessageIntake.launchThread({
+        commandId,
+        threadId,
+        projectId: input.projectId ?? caller.projectId,
+        title: input.title,
+        modelSelection: input.modelSelection ?? caller.modelSelection,
+        runtimeMode: input.runtimeMode ?? caller.runtimeMode,
+        interactionMode: input.interactionMode ?? caller.interactionMode,
+        workspaceStrategy: input.workspaceStrategy ?? { type: "root" },
+        ...(input.message === undefined && attachments.length === 0
+          ? {}
+          : {
+              initialMessage: {
+                messageId,
+                text: input.message ?? "",
+                attachments,
+              },
             }),
+        createdBy: "agent",
+        creationSource: "mcp",
+      }).pipe(
+        Effect.mapError((error) =>
+          error._tag === "AttachmentClaimError"
+            ? new OrchestratorMcpFailure({ code: "orchestration_error", message: error.message })
+            : unavailable(),
         ),
       );
-      const result = yield* launch
-        .launch({
-          commandId,
-          threadId,
-          projectId: input.projectId ?? caller.projectId,
-          title: input.title,
-          modelSelection: input.modelSelection ?? caller.modelSelection,
-          runtimeMode: input.runtimeMode ?? caller.runtimeMode,
-          interactionMode: input.interactionMode ?? caller.interactionMode,
-          workspaceStrategy: input.workspaceStrategy ?? { type: "root" },
-          ...(input.message === undefined && attachments.length === 0
-            ? {}
-            : {
-                initialMessage: {
-                  messageId,
-                  text: input.message ?? "",
-                  attachments: claimed.attachments,
-                },
-              }),
-          createdBy: "agent",
-          creationSource: "mcp",
-        })
-        .pipe(Effect.mapError(unavailable));
       const thread = result.projection.thread;
       const run = result.projection.runs.find((run) => run.userMessageId === messageId);
       return {
