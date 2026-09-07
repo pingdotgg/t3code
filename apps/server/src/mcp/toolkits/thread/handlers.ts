@@ -60,6 +60,38 @@ const readQuestion = Effect.fn("mcp.readQuestion")(function* (
   return { ...context, request, item };
 });
 export const ThreadToolkitHandlersLive = ThreadToolkit.toLayer({
+  t3_thread_configuration: (input) =>
+    Effect.gen(function* () {
+      const {
+        projection: { thread },
+      } = yield* readThread(input.threadId);
+      return {
+        threadId: thread.id,
+        modelSelection: thread.modelSelection,
+        runtimeMode: thread.runtimeMode,
+        interactionMode: thread.interactionMode,
+      };
+    }),
+  t3_thread_configure: (input) =>
+    Effect.gen(function* () {
+      const {
+        threads,
+        projection: { thread },
+      } = yield* readWritableThread();
+      const type =
+        thread.modelSelection.instanceId === input.modelSelection.instanceId
+          ? "thread.model-selection.set"
+          : "provider.switch";
+      const result = yield* threads
+        .dispatch({
+          type,
+          threadId: thread.id,
+          commandId: yield* newCommandId(),
+          modelSelection: input.modelSelection,
+        })
+        .pipe(Effect.mapError(unavailable));
+      return { sequence: result.sequence };
+    }),
   t3_pending_request_list: (input) =>
     Effect.gen(function* () {
       const { projection } = yield* readThread(input.threadId);

@@ -1,4 +1,7 @@
 import {
+  ModelSelection,
+  RuntimeMode,
+  ProviderInteractionMode,
   RuntimeRequestId,
   ProviderUserInputAnswers,
   IsoDateTime,
@@ -150,7 +153,30 @@ export const PendingRequestRespondTool = Tool.make("t3_pending_request_respond",
   .annotate(Tool.Destructive, true)
   .annotate(Tool.OpenWorld, true);
 
+export const ThreadConfigurationTool = Tool.make("t3_thread_configuration", {
+  ...commandTool,
+  description:
+    "Read a thread's provider/model selection and modes in the calling project. orchestrator_capabilities lists available providers and models.",
+  parameters: Schema.Struct({ threadId: Schema.optional(ThreadId) }),
+  success: Schema.Struct({
+    threadId: ThreadId,
+    modelSelection: ModelSelection,
+    runtimeMode: RuntimeMode,
+    interactionMode: ProviderInteractionMode,
+  }),
+})
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false);
+export const ThreadConfigureTool = Tool.make("t3_thread_configure", {
+  ...commandTool,
+  description:
+    "Set this calling thread's provider, model and options with the existing selection command. This does not change permission modes or other threads. Use orchestrator_capabilities to choose a selection.",
+  parameters: Schema.Struct({ modelSelection: ModelSelection }),
+}).annotate(Tool.Destructive, true);
+
 export const ThreadToolkit = Toolkit.make(
+  ThreadConfigurationTool,
+  ThreadConfigureTool,
   PendingRequestListTool,
   PendingRequestReadTool,
   PendingRequestRespondTool,
