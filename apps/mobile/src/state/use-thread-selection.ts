@@ -15,6 +15,7 @@ import { scopedThreadKey } from "../lib/scopedEntities";
 import { useProject, useThreadShell } from "../state/entities";
 import { useEnvironmentThread } from "../state/threads";
 import {
+  isPendingThreadCreationVisible,
   pendingThreadCreationOutcomesAtom,
   pendingThreadCreationShell,
   type PendingThreadCreationOutcome,
@@ -150,9 +151,16 @@ function useResolvedThreadSelection(params: ThreadSelectionRouteParams | undefin
           : null),
     [pendingCreation, selectedThreadDetail, selectedThreadRef, selectedThreadShell],
   );
-  // The stand-in outlives the queue entry only until the real shell shows up.
+  // The stand-in stands down when the delivered prompt lands, not when the
+  // shell does — see isPendingThreadCreationVisible.
   const selectedThreadCreation =
-    selectedThreadShell === null && selectedThreadDetail === null ? pendingCreation : null;
+    pendingCreation !== null &&
+    isPendingThreadCreationVisible({
+      creationMessageId: pendingCreation.message.messageId,
+      loadedMessageIds: selectedThreadDetail?.messages.map((message) => message.id) ?? null,
+    })
+      ? pendingCreation
+      : null;
   const selectedProjectRef = useMemo<ScopedProjectRef | null>(
     () =>
       selectedThread === null

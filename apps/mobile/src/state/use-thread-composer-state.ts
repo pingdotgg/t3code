@@ -153,25 +153,26 @@ export function useThreadComposerState() {
   );
   const selectedThreadMessages = selectedThreadDetail?.messages;
   const selectedThreadActivities = selectedThreadDetail?.activities;
-  // A thread the server has not created yet only has the queued prompt; the
-  // stand-in shell is the "detail" until the real snapshot lands.
+  // A thread whose creation has not delivered its turn yet: the prompt only
+  // exists in the outbox, so it is appended to whatever the server has. The
+  // detail is usually present but empty during a worktree checkout, so this
+  // cannot be an either/or with the loaded messages.
   const pendingCreationMessage = selectedThreadCreation?.message ?? null;
   // Read inside the send callback, which must not be rebuilt per keystroke.
   const selectedThreadCreationRef = useRef(selectedThreadCreation);
   selectedThreadCreationRef.current = selectedThreadCreation;
   const selectedThreadFeed = useMemo(() => {
+    const loadedMessages = selectedThreadMessages ?? [];
     const feed =
-      selectedThreadMessages && selectedThreadActivities
+      (selectedThreadMessages && selectedThreadActivities) || pendingCreationMessage !== null
         ? buildThreadFeed({
-            messages: selectedThreadMessages,
-            activities: selectedThreadActivities,
+            messages:
+              pendingCreationMessage !== null
+                ? [...loadedMessages, pendingThreadCreationMessage(pendingCreationMessage)]
+                : loadedMessages,
+            activities: selectedThreadActivities ?? [],
           })
-        : pendingCreationMessage !== null
-          ? buildThreadFeed({
-              messages: [pendingThreadCreationMessage(pendingCreationMessage)],
-              activities: [],
-            })
-          : [];
+        : [];
     const pendingAcknowledgments = acknowledgedMessages.filter(
       (message) =>
         scopedThreadKey(message.environmentId, message.threadId) === selectedThreadKey &&

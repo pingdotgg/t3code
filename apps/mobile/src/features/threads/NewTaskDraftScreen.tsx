@@ -1014,26 +1014,24 @@ export function NewTaskDraftScreen(props: {
         projectTitle: selectedProject.title,
       });
     }
-    flow.setSubmitting(true);
-    try {
-      await enqueueThreadOutboxMessage(message);
-    } catch (error) {
-      Alert.alert(
-        "Could not queue task",
-        error instanceof Error ? error.message : "The task could not be saved to the outbox.",
-      );
-      return;
-    } finally {
-      flow.setSubmitting(false);
-    }
+    // Enqueue publishes to the queue atom synchronously and persists behind
+    // it, so leave on this frame instead of holding the sheet open — and the
+    // emptied composer on screen — for a disk write. A failed write rolls the
+    // message back out and restores the draft, exactly like the thread
+    // composer's own send.
+    const enqueued = enqueueThreadOutboxMessage(message);
+    const draftSnapshot = getComposerDraftSnapshot(draftKey);
     if (editingPendingTask) {
       flow.finishEditingPendingTask();
     } else {
       // Drop draft-local model/workspace selections with the content. The
       // next task re-resolves project defaults before sticky app defaults.
+      // The queued message owns the attachments now, so the sweep is deferred
+      // until the write confirms it.
       clearComposerDraftContent(draftKey, {
         clearModelSelection: true,
         clearWorkspaceSelection: true,
+        deferAttachmentCleanup: true,
       });
     }
     setSubmitNavigationAction(
@@ -1043,6 +1041,21 @@ export function NewTaskDraftScreen(props: {
             environmentId: String(message.environmentId),
             threadId: String(message.threadId),
           }),
+    );
+    void enqueued.then(
+      () => {
+        scheduleUnusedComposerAttachmentCleanup(draftSnapshot.attachments);
+      },
+      (error: unknown) => {
+        // The message was rolled back out of the queue, so nothing will start
+        // the thread. Restore the draft and say so: the user has already been
+        // moved to a thread screen that is never going to fill in.
+        void restoreComposerDraftSnapshot(draftKey, draftSnapshot);
+        Alert.alert(
+          "Could not queue task",
+          error instanceof Error ? error.message : "The task could not be saved to the outbox.",
+        );
+      },
     );
   }
 

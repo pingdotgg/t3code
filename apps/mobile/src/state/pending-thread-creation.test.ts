@@ -9,6 +9,7 @@ import {
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  isPendingThreadCreationVisible,
   pendingThreadCreationMessage,
   pendingThreadCreationShell,
 } from "./pending-thread-creation";
@@ -75,6 +76,39 @@ describe("pendingThreadCreationShell", () => {
   it("returns null for a follow-up message or a creation without a model", () => {
     expect(pendingThreadCreationShell({ ...creation, creation: undefined })).toBeNull();
     expect(pendingThreadCreationShell({ ...creation, modelSelection: undefined })).toBeNull();
+  });
+});
+
+describe("isPendingThreadCreationVisible", () => {
+  const creationMessageId = String(creation.messageId);
+
+  it("stands in before any detail has loaded", () => {
+    expect(isPendingThreadCreationVisible({ creationMessageId, loadedMessageIds: null })).toBe(
+      true,
+    );
+  });
+
+  // The regression: the server creates the thread, THEN builds the worktree,
+  // then starts the turn. The shell and an empty detail arrive seconds before
+  // the prompt, and keying on the shell left the thread empty for that whole
+  // window.
+  it("keeps standing in while the created thread has no messages yet", () => {
+    expect(isPendingThreadCreationVisible({ creationMessageId, loadedMessageIds: [] })).toBe(true);
+  });
+
+  it("keeps standing in when the thread holds only unrelated messages", () => {
+    expect(
+      isPendingThreadCreationVisible({ creationMessageId, loadedMessageIds: ["someone-else"] }),
+    ).toBe(true);
+  });
+
+  it("stands down once the delivered prompt lands under the same id", () => {
+    expect(
+      isPendingThreadCreationVisible({
+        creationMessageId,
+        loadedMessageIds: ["someone-else", creationMessageId],
+      }),
+    ).toBe(false);
   });
 });
 
