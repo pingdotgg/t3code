@@ -12,6 +12,12 @@ Select a machine to limit edits to it. **All machines** writes defaults to conne
 offline machines keep their previous values. Mixed values are indicated when selected machines
 or checkouts disagree. Browser access changes apply when an agent session next starts.
 
+To clear existing project model overrides in bulk, select **All projects**, choose the machine
+scope, and click **Use default for all projects**. Confirm the affected projects and machines.
+Each affected project inherits its machine's default model and follows later changes to that
+default. Offline machines keep their overrides. Existing threads keep their model selections;
+you can still set a new override on an individual project afterward.
+
 Project grouping has a client-wide default across machines, with individual checkout overrides.
 Shared actions apply to inheriting projects; editing a project's actions creates an independent list.
 Reset that list to use shared actions again. Existing project actions are preserved.
