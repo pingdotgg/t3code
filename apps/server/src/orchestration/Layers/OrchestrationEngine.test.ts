@@ -13,6 +13,7 @@ import {
   ProjectId,
   ThreadId,
   TurnId,
+  type OrchestrationCommand,
   type OrchestrationEvent,
   ProviderInstanceId,
 } from "@t3tools/contracts";
@@ -325,6 +326,8 @@ describe("OrchestrationEngine", () => {
           }),
         ),
       hasEventAfter: () => Effect.succeed(false),
+      readAggregateRange: () => Stream.die("unused aggregate replay"),
+      getAggregateReplayStats: () => Effect.die("unused aggregate replay stats"),
     };
 
     const projectionSnapshot = {
@@ -416,8 +419,11 @@ describe("OrchestrationEngine", () => {
           getActiveProjectByWorkspaceRoot: () => Effect.succeed(Option.none()),
           getProjectShellById: () => Effect.succeed(Option.none()),
           getFirstActiveThreadIdByProjectId: () => Effect.succeed(Option.none()),
+          getImportedAgentSessionSources: () => Effect.die("unused"),
           getThreadCheckpointContext: () => Effect.succeed(Option.none()),
           getFullThreadDiffContext: () => Effect.succeed(Option.none()),
+          getThreadRuntimeContext: () => Effect.die("unused"),
+          getTurnStartMessage: () => Effect.die("unused"),
           getThreadShellById: () => Effect.succeed(Option.none()),
           getThreadDetailById: () => Effect.succeed(Option.none()),
           getThreadDetailSnapshot: () => Effect.succeed(Option.none()),
@@ -988,6 +994,216 @@ describe("OrchestrationEngine", () => {
     await system.dispose();
   });
 
+  it.each(["unlink", "relink", "branch", "worktree", "project", "delete"] as const)(
+    "rejects PR discovery completed after a newer %s command",
+    async (change) => {
+      const system = await createOrchestrationSystem();
+      try {
+        const projectId = ProjectId.make("pr-race-project");
+        const threadId = ThreadId.make("pr-race-thread");
+        const previous = {
+          projectId,
+          repository: "owner/repository",
+          number: 1,
+          url: "https://example.test/owner/repository/pull/1",
+        };
+        const replacement = {
+          ...previous,
+          number: 2,
+          url: "https://example.test/owner/repository/pull/2",
+        };
+        await system.run(
+          system.engine.dispatch({
+            type: "project.create",
+            commandId: CommandId.make("pr-race-project-create"),
+            projectId,
+            title: "PR race project",
+            workspaceRoot: "/tmp/pr-race-project",
+            defaultModelSelection: null,
+            createdAt: now(),
+          }),
+        );
+        await system.run(
+          system.engine.dispatch({
+            type: "thread.create",
+            commandId: CommandId.make("pr-race-thread-create"),
+            threadId,
+            projectId,
+            title: "PR race thread",
+            modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5" },
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: "feature",
+            worktreePath: null,
+            createdAt: now(),
+          }),
+        );
+        const observed = await system.run(
+          system.engine.dispatch({
+            type: "thread.meta.update",
+            commandId: CommandId.make("pr-race-link"),
+            threadId,
+            linkedPullRequest: previous,
+          }),
+        );
+        const metadataChanges = {
+          unlink: { linkedPullRequest: null },
+          relink: {
+            linkedPullRequest: {
+              ...previous,
+              number: 3,
+              url: "https://example.test/owner/repository/pull/3",
+            },
+          },
+          branch: { branch: "another-feature" },
+          worktree: { worktreePath: "/tmp/another-worktree" },
+          project: {},
+        };
+        await system.run(
+          system.engine.dispatch(
+            change === "project"
+              ? {
+                  type: "project.meta.update",
+                  commandId: CommandId.make("pr-race-project-move"),
+                  projectId,
+                  workspaceRoot: "/tmp/another-project-root",
+                }
+              : change === "delete"
+                ? { type: "thread.delete", commandId: CommandId.make("pr-race-delete"), threadId }
+                : {
+                    type: "thread.meta.update",
+                    commandId: CommandId.make(`pr-race-${change}`),
+                    threadId,
+                    ...metadataChanges[change],
+                  },
+          ),
+        );
+        const command = {
+          type: "thread.pull-request.sync",
+          commandId: CommandId.make("pr-race-stale-sync"),
+          threadId,
+          projectId,
+          snapshotSequence: observed.sequence,
+          expected: {
+            workspaceRoot: "/tmp/pr-race-project",
+            branch: "feature",
+            worktreePath: null,
+            linkedPullRequest: previous,
+            branchPullRequest: null,
+          },
+          branchPullRequest: replacement,
+          linkedPullRequest: replacement,
+        } satisfies OrchestrationCommand;
+        const error = await system.run(system.engine.dispatch(command).pipe(Effect.flip));
+        expect(error._tag).toBe("OrchestrationCommandInvariantError");
+        if (change === "delete") return;
+        const current = (await system.readModel()).threads[0];
+        expect(current?.branchPullRequest ?? null).toBeNull();
+        expect(current?.linkedPullRequest ?? null).toEqual(
+          change === "unlink"
+            ? null
+            : change === "relink"
+              ? metadataChanges.relink.linkedPullRequest
+              : previous,
+        );
+      } finally {
+        await system.dispose();
+      }
+    },
+  );
+
+  it("saves PR associations through streaming and unrelated metadata edits", async () => {
+    const system = await createOrchestrationSystem();
+    try {
+      const projectId = ProjectId.make("pr-sync-project");
+      const threadId = ThreadId.make("pr-sync-thread");
+      await system.run(
+        system.engine.dispatch({
+          type: "project.create",
+          commandId: CommandId.make("pr-sync-project-create"),
+          projectId,
+          title: "PR sync project",
+          workspaceRoot: "/tmp/pr-sync-project",
+          defaultModelSelection: null,
+          createdAt: now(),
+        }),
+      );
+      const created = await system.run(
+        system.engine.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make("pr-sync-thread-create"),
+          threadId,
+          projectId,
+          title: "PR sync thread",
+          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5" },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: "feature",
+          worktreePath: null,
+          createdAt: now(),
+        }),
+      );
+      const reference = {
+        projectId,
+        repository: "owner/repository",
+        number: 42,
+        url: "https://example.test/owner/repository/pull/42",
+      };
+      const activityAt = "2026-01-01T01:00:00.000Z";
+      await system.run(
+        system.engine.dispatch({
+          type: "thread.message.assistant.delta",
+          commandId: CommandId.make("pr-sync-streaming-message"),
+          threadId,
+          messageId: MessageId.make("pr-sync-message"),
+          delta: "The PR is ready.",
+          createdAt: activityAt,
+        }),
+      );
+      await system.run(
+        system.engine.dispatch({
+          type: "thread.meta.update",
+          commandId: CommandId.make("pr-sync-title-and-model"),
+          threadId,
+          title: "Renamed thread",
+          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+        }),
+      );
+      await system.run(
+        system.engine.dispatch({
+          type: "project.meta.update",
+          commandId: CommandId.make("pr-sync-project-title"),
+          projectId,
+          title: "Renamed project",
+        }),
+      );
+      const beforeSync = (await system.readModel()).threads[0];
+      await system.run(
+        system.engine.dispatch({
+          type: "thread.pull-request.sync",
+          commandId: CommandId.make("pr-sync-discovery"),
+          projectId,
+          threadId,
+          snapshotSequence: created.sequence,
+          expected: {
+            workspaceRoot: "/tmp/pr-sync-project",
+            branch: "feature",
+            worktreePath: null,
+            linkedPullRequest: null,
+            branchPullRequest: null,
+          },
+          branchPullRequest: reference,
+        }),
+      );
+      const current = (await system.readModel()).threads[0];
+      expect(current?.branchPullRequest).toEqual(reference);
+      expect(current?.linkedPullRequest ?? null).toBeNull();
+      expect(current?.updatedAt).toBe(beforeSync?.updatedAt);
+    } finally {
+      await system.dispose();
+    }
+  });
+
   it("allows authoritative worktree bootstrap to assign a temporary branch", async () => {
     const system = await createOrchestrationSystem();
     const { engine } = system;
@@ -1234,6 +1450,8 @@ describe("OrchestrationEngine", () => {
         return Stream.fromIterable(events);
       },
       hasEventAfter: () => Effect.succeed(false),
+      readAggregateRange: () => Stream.die("unused aggregate replay"),
+      getAggregateReplayStats: () => Effect.die("unused aggregate replay stats"),
     };
 
     const ServerConfigLayer = ServerConfig.layerTest(process.cwd(), {
@@ -1472,6 +1690,8 @@ describe("OrchestrationEngine", () => {
         return Stream.fromIterable(events);
       },
       hasEventAfter: () => Effect.succeed(false),
+      readAggregateRange: () => Stream.die("unused aggregate replay"),
+      getAggregateReplayStats: () => Effect.die("unused aggregate replay stats"),
     };
 
     let shouldFailProjection = true;

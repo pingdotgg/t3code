@@ -53,14 +53,21 @@ const CLAUDE_TIMEOUT_MS = 180_000;
 
 /**
  * Schema for the wrapper JSON returned by `claude -p --output-format json`.
- * We only care about `structured_output`.
+ * Verbose mode wraps the result in an array of conversation messages.
  */
 const ClaudeOutputEnvelope = Schema.Struct({
   structured_output: Schema.Unknown,
 });
+const ClaudeOutputMessage = Schema.Struct({
+  type: Schema.String,
+  structured_output: Schema.optionalKey(Schema.Unknown),
+});
+const isClaudeOutputEnvelope = Schema.is(ClaudeOutputEnvelope);
 
 const encodeJsonString = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
-const decodeClaudeOutputEnvelope = Schema.decodeEffect(Schema.fromJsonString(ClaudeOutputEnvelope));
+const decodeClaudeOutput = Schema.decodeEffect(
+  Schema.fromJsonString(Schema.Union([ClaudeOutputEnvelope, Schema.Array(ClaudeOutputMessage)])),
+);
 
 export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(function* (
   claudeSettings: ClaudeSettings,
@@ -254,7 +261,7 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
       ),
     );
 
-    const envelope = yield* decodeClaudeOutputEnvelope(rawStdout).pipe(
+    const output = yield* decodeClaudeOutput(rawStdout).pipe(
       Effect.catchTags({
         SchemaError: (cause) =>
           Effect.fail(
@@ -266,9 +273,12 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
           ),
       }),
     );
+    const envelope = isClaudeOutputEnvelope(output)
+      ? output
+      : output.findLast((message) => message.type === "result");
 
     const decodeOutput = Schema.decodeEffect(outputSchemaJson);
-    return yield* decodeOutput(envelope.structured_output).pipe(
+    return yield* decodeOutput(envelope?.structured_output).pipe(
       Effect.catchTags({
         SchemaError: (cause) =>
           Effect.fail(

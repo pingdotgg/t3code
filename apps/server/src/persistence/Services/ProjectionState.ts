@@ -37,6 +37,11 @@ export interface ProjectionStateRepositoryShape {
    */
   readonly upsert: (row: ProjectionState) => Effect.Effect<void, ProjectionRepositoryError>;
 
+  /** Insert or replace projector cursors in one statement. Empty batches do nothing. */
+  readonly upsertMany: (
+    rows: ReadonlyArray<ProjectionState>,
+  ) => Effect.Effect<void, ProjectionRepositoryError>;
+
   /**
    * Read projection cursor state for a projector key.
    */

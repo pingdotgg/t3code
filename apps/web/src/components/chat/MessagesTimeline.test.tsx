@@ -1,9 +1,11 @@
 import { CheckpointRef, EnvironmentId, MessageId, TurnId } from "@t3tools/contracts";
-import { codexFeedbackMessage } from "@t3tools/client-runtime/state/threads";
-import { createRef, type ReactNode, type Ref } from "react";
+import { act, createRef, useLayoutEffect, type ReactNode, type Ref } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { create, type ReactTestRenderer } from "react-test-renderer";
 import { beforeAll, describe, expect, it, vi } from "vite-plus/test";
 import type { LegendListRef, MaintainScrollAtEndOptions } from "@legendapp/list/react";
+import { shouldUseRestingComposerLayout } from "../composerFooterLayout";
+import { useComposerFocusState } from "./useComposerFocusState";
 
 vi.mock("@legendapp/list/react", async () => {
   const legendListTestId = "legend-list";
@@ -122,6 +124,10 @@ vi.mock("@pierre/diffs/react", () => {
   return { FileDiff: MockFileDiff };
 });
 
+vi.mock("../DiffWorkerPoolProvider", () => ({
+  DiffWorkerPoolProvider: ({ children }: { children?: ReactNode }) => children,
+}));
+
 function matchMedia() {
   return {
     matches: false,
@@ -177,11 +183,11 @@ function buildProps() {
     listRef: createRef<LegendListRef | null>(),
     latestTurn: null,
     runningTurnId: null,
-    turnDiffSummaryByAssistantMessageId: new Map(),
+    turnDiffSummaries: [],
     routeThreadKey: "environment-local:thread-1",
     onOpenTurnDiff: () => {},
-    revertTurnCountByUserMessageId: new Map(),
-    onRevertUserMessage: () => {},
+    supportsConversationRollback: false,
+    onRevertToTurnCount: () => {},
     isRevertingCheckpoint: false,
     onImageExpand: () => {},
     activeThreadEnvironmentId: ACTIVE_THREAD_ENVIRONMENT_ID,
@@ -233,60 +239,96 @@ function buildAssistantTimelineEntry(text: string) {
 }
 
 describe("MessagesTimeline", () => {
-  it("renders a feedback command and its pending response as normal thread messages", () => {
-    const submission = {
-      id: MessageId.make("feedback-command"),
-      command: "/feedback The agent stopped early.",
-      createdAt: MESSAGE_CREATED_AT,
-      status: "uploading" as const,
-    };
-    const messages = [
-      codexFeedbackMessage(submission),
-      codexFeedbackMessage(submission, "assistant"),
-    ];
-    const markup = renderToStaticMarkup(
-      <MessagesTimeline
-        {...buildProps()}
-        timelineEntries={messages.map((message) => ({
-          id: message.id,
-          kind: "message" as const,
-          createdAt: message.createdAt,
-          message,
-        }))}
-      />,
-    );
+  it.each([
+    { toolLifecycleStatus: "inProgress", isAtEnd: true },
+    { toolLifecycleStatus: "inProgress", isAtEnd: false },
+    { toolLifecycleStatus: "completed", isAtEnd: true },
+    { toolLifecycleStatus: "completed", isAtEnd: false },
+  ] as const)(
+    "restores the composer after closing $toolLifecycleStatus tool output only at the end: $isAtEnd",
+    async ({ toolLifecycleStatus, isAtEnd }) => {
+      const frames = new Map<number, FrameRequestCallback>();
+      let nextFrame = 0;
+      vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+        frames.set(++nextFrame, callback);
+        return nextFrame;
+      });
+      vi.stubGlobal("cancelAnimationFrame", (frame: number) => frames.delete(frame));
+      vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+      const flushFrame = () =>
+        act(() => {
+          const callbacks = [...frames.values()];
+          frames.clear();
+          callbacks.forEach((callback) => callback(0));
+        });
+      const props = buildProps();
+      let timelineIsAtEnd = isAtEnd;
+      props.listRef.current = {
+        getState: () => ({ isAtEnd: timelineIsAtEnd }),
+        getScrollableNode: () => null,
+      } as unknown as LegendListRef;
+      let isResting = false;
+      let composerState: ReturnType<typeof useComposerFocusState> | undefined;
+      function ThreadProbe() {
+        const composer = useComposerFocusState();
+        useLayoutEffect(() => {
+          composerState = composer;
+          isResting = shouldUseRestingComposerLayout({
+            isExistingThread: true,
+            isMobileViewport: false,
+            isScrollCollapsed: composer.isComposerScrollCollapsed,
+            hasExpandedChrome: false,
+            hasMultilinePrompt: false,
+            timelineOverflows: true,
+          });
+        });
+        return (
+          <MessagesTimeline
+            {...props}
+            isWorking={toolLifecycleStatus === "inProgress"}
+            onToolOutputCollapsedAtEnd={composer.restoreAfterTimelineReachedEnd}
+            timelineEntries={[
+              {
+                id: "running-tool",
+                kind: "work",
+                createdAt: MESSAGE_CREATED_AT,
+                entry: {
+                  id: "running-tool",
+                  createdAt: MESSAGE_CREATED_AT,
+                  label: "Run command",
+                  tone: "tool",
+                  toolLifecycleStatus,
+                  detail: "Command output",
+                },
+              },
+            ]}
+          />
+        );
+      }
+      let renderer: ReactTestRenderer | undefined;
+      try {
+        await act(() => {
+          renderer = create(<ThreadProbe />);
+        });
+        // The user scrolled up to read, so the composer is resting.
+        await act(() => composerState!.setIsComposerScrollCollapsed(true));
+        const toggle = renderer!.root.findByProps({ "aria-expanded": false });
+        await act(() => toggle.props.onClick());
+        await flushFrame();
+        await flushFrame();
+        expect(isResting).toBe(true);
 
-    expect(markup).toContain("/feedback The agent stopped early.");
-    expect(markup).toContain("Sending feedback to OpenAI...");
-  });
-
-  it("renders the returned Codex thread ID in the feedback response", () => {
-    const submission = {
-      id: MessageId.make("feedback-command"),
-      command: "/feedback The agent stopped early.",
-      createdAt: MESSAGE_CREATED_AT,
-      status: "sent" as const,
-      feedbackId: "codex-thread-1",
-    };
-    const messages = [
-      codexFeedbackMessage(submission),
-      codexFeedbackMessage(submission, "assistant"),
-    ];
-    const markup = renderToStaticMarkup(
-      <MessagesTimeline
-        {...buildProps()}
-        timelineEntries={messages.map((message) => ({
-          id: message.id,
-          kind: "message" as const,
-          createdAt: message.createdAt,
-          message,
-        }))}
-      />,
-    );
-
-    expect(markup).toContain("Feedback sent to OpenAI.");
-    expect(markup).toContain("codex-thread-1");
-  });
+        timelineIsAtEnd = false;
+        await act(() => toggle.props.onClick());
+        await flushFrame();
+        timelineIsAtEnd = isAtEnd;
+        await flushFrame();
+        expect(isResting).toBe(!isAtEnd);
+      } finally {
+        await act(() => renderer?.unmount());
+      }
+    },
+  );
 
   it("renders elapsed time for a completed turn", () => {
     const turnId = TurnId.make("turn-with-fold");
@@ -353,31 +395,25 @@ describe("MessagesTimeline", () => {
             },
           },
         ]}
-        turnDiffSummaryByAssistantMessageId={
-          new Map([
-            [
-              assistantMessageId,
-              {
-                turnId,
-                checkpointTurnCount: 1,
-                checkpointRef: CheckpointRef.make("checkpoint-with-files"),
-                status: "ready",
-                files: [{ path: "README.md", kind: "modified", additions: 2, deletions: 1 }],
-                assistantMessageId,
-                completedAt: MESSAGE_CREATED_AT,
-              },
-            ],
-          ])
-        }
+        turnDiffSummaries={[
+          {
+            turnId,
+            checkpointTurnCount: 1,
+            checkpointRef: CheckpointRef.make("checkpoint-with-files"),
+            status: "ready",
+            files: [{ path: "README.md", kind: "modified", additions: 2, deletions: 1 }],
+            assistantMessageId,
+            completedAt: MESSAGE_CREATED_AT,
+          },
+        ]}
       />,
     );
 
     expect(markup).toContain("sticky top-2 z-10");
     expect(markup).not.toContain("self-start");
     expect(markup).toContain("whitespace-nowrap");
-    expect(markup).toContain("!size-[22px]");
     expect(markup).toContain("size-3");
-    expect(markup).toContain('aria-label="Collapse all folders"');
+    expect(markup).not.toContain('aria-label="Collapse all folders"');
     expect(markup).toContain('aria-label="Open diff"');
     expect(markup).toContain("1 changed file");
   });
@@ -1131,7 +1167,7 @@ describe("MessagesTimeline", () => {
               label: "Ran command",
               tone: "tool",
               itemType: "command_execution",
-              toolLifecycleStatus: "completed",
+              toolLifecycleStatus: "failed",
             },
           },
         ]}
@@ -1199,7 +1235,7 @@ describe("MessagesTimeline", () => {
     expect(markup).not.toContain('aria-label="Hidden work includes a failure"');
   });
 
-  it("shows the animated one-line label for a live tool group", () => {
+  it("shows the one-line label for a live tool group", () => {
     const turnId = TurnId.make("turn-live");
     const markup = renderToStaticMarkup(
       <MessagesTimeline
@@ -1236,7 +1272,6 @@ describe("MessagesTimeline", () => {
 
     expect(markup).toContain("Working for");
     expect(markup).toContain("Running pnpm");
-    expect(markup).toContain("live-activity-focus");
   });
 
   it("scopes a live row failure to the tool named by the row", () => {
@@ -1354,7 +1389,6 @@ describe("MessagesTimeline", () => {
 
     expect(markup).toContain("Running pnpm");
     expect(markup).toContain("lucide-terminal");
-    expect(markup).toContain("live-activity-focus");
     expect(markup).not.toContain("Ran pnpm");
     expect(markup).not.toContain("Thinking");
     expect(markup).not.toContain('data-timeline-row-kind="thinking"');

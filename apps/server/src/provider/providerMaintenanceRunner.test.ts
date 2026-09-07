@@ -70,7 +70,7 @@ const baseProvider: ServerProvider = {
   driver: CODEX_DRIVER,
   enabled: true,
   installed: true,
-  version: null,
+  version: "0.0.0",
   status: "ready",
   auth: { status: "authenticated" },
   checkedAt: "2026-04-10T00:00:00.000Z",
@@ -129,6 +129,7 @@ function mockSpawnerLayer(
   handler: (
     command: string,
     args: ReadonlyArray<string>,
+    options: { readonly env?: NodeJS.ProcessEnv | undefined },
   ) => {
     readonly stdout?: string;
     readonly stderr?: string;
@@ -142,8 +143,11 @@ function mockSpawnerLayer(
       const childProcess = command as unknown as {
         readonly command: string;
         readonly args: ReadonlyArray<string>;
+        readonly options: { readonly env?: NodeJS.ProcessEnv | undefined };
       };
-      return Effect.succeed(mockHandle(handler(childProcess.command, childProcess.args)));
+      return Effect.succeed(
+        mockHandle(handler(childProcess.command, childProcess.args, childProcess.options)),
+      );
     }),
   );
 }
@@ -198,6 +202,7 @@ function makeRegistry(
 
     return {
       registry,
+      providersRef,
       updateStatesRef,
     };
   });
@@ -210,7 +215,8 @@ const makeTestRunner = (registry: ProviderRegistryShape) =>
         Layer.provide(
           Layer.mergeAll(
             Layer.succeed(ProviderRegistry, registry),
-            Layer.succeed(ProviderVersionCache, new Map()),
+            // Fresh per runner so a version cached by one test cannot leak into another.
+            Layer.sync(ProviderVersionCache, () => new Map()),
           ),
         ),
       ),
@@ -243,6 +249,182 @@ describe("providerMaintenanceRunner", () => {
           latestVersionHttpClient("0.0.0"),
           mockSpawnerLayer((command, args) => {
             calls.push({ command, args });
+            return { stdout: "updated" };
+          }),
+        ),
+      ),
+    );
+  });
+
+  it.effect("reports unchanged when the updater exits 0 but the provider is gone", () => {
+    return Effect.gen(function* () {
+      const { registry, providersRef } = yield* makeRegistry(baseProvider);
+      // After the update, the refreshed snapshot no longer sees an install.
+      const updater = yield* makeTestRunner({
+        ...registry,
+        refreshInstance: () =>
+          Ref.updateAndGet(providersRef, (providers) =>
+            providers.map((provider) => ({ ...provider, installed: false, version: null })),
+          ),
+      });
+
+      const result = yield* updater.updateProvider(CODEX_DRIVER);
+      assert.strictEqual(result.providers[0]?.updateState?.status, "unchanged");
+      assert.match(result.providers[0]?.updateState?.message ?? "", /could not verify/);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          NonWindowsPlatform,
+          latestVersionHttpClient("0.0.0"),
+          mockSpawnerLayer(() => ({ stdout: "updated" })),
+        ),
+      ),
+    );
+  });
+
+  it.effect(
+    "keeps a successful update when the binary is present but its version is unreadable",
+    () => {
+      return Effect.gen(function* () {
+        const { registry, providersRef } = yield* makeRegistry(baseCursorProvider);
+        // Cursor's `agent about` probe can fail right after an update while the
+        // new binary is perfectly fine.
+        const updater = yield* makeTestRunner({
+          ...registry,
+          refreshInstance: () =>
+            Ref.updateAndGet(providersRef, (providers) =>
+              providers.map((provider) => ({ ...provider, installed: true, version: null })),
+            ),
+        });
+
+        const result = yield* updater.updateProvider(CURSOR_DRIVER);
+        assert.strictEqual(result.providers[0]?.updateState?.status, "succeeded");
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            NonWindowsPlatform,
+            latestVersionHttpClient("0.0.0"),
+            mockSpawnerLayer(() => ({ stdout: "updated" })),
+          ),
+        ),
+      );
+    },
+  );
+
+  it.effect("spawns the updater with the environment its capabilities declare", () => {
+    const seen: Array<NodeJS.ProcessEnv | undefined> = [];
+    return Effect.gen(function* () {
+      const { registry } = yield* makeRegistry(baseProvider);
+      const updater = yield* makeTestRunner({
+        ...registry,
+        getProviderMaintenanceCapabilitiesForInstance: (_instanceId, provider) =>
+          Effect.succeed({
+            ...lifecycleFor(provider),
+            update: {
+              command: "codex update",
+              executable: "/work/codex-home/packages/standalone/bin/codex",
+              args: ["update"],
+              lockKey: "codex-native",
+              env: { CODEX_HOME: "/work/codex-home" },
+            },
+          }),
+      });
+
+      yield* updater.updateProvider(CODEX_DRIVER);
+      assert.deepStrictEqual(seen, [{ CODEX_HOME: "/work/codex-home" }]);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          NonWindowsPlatform,
+          latestVersionHttpClient("0.0.0"),
+          mockSpawnerLayer((_command, _args, options) => {
+            seen.push(options.env);
+            return { stdout: "updated" };
+          }),
+        ),
+      ),
+    );
+  });
+
+  it.effect("re-resolves ownership before running and executes the fresh command", () => {
+    const calls: Array<{ command: string; args: ReadonlyArray<string> }> = [];
+    const fresh: Array<boolean> = [];
+    return Effect.gen(function* () {
+      const { registry } = yield* makeRegistry(baseProvider);
+      const updater = yield* makeTestRunner({
+        ...registry,
+        getProviderMaintenanceCapabilitiesForInstance: (_instanceId, provider, options) => {
+          fresh.push(options?.fresh === true);
+          return Effect.succeed(
+            makeProviderMaintenanceCapabilities({
+              provider,
+              packageName: "@openai/codex",
+              updateExecutable: options?.fresh ? "/opt/homebrew/bin/brew" : "brew",
+              updateArgs: ["upgrade", "--cask", "codex"],
+              updateLockKey: "homebrew",
+            }),
+          );
+        },
+      });
+
+      yield* updater.updateProvider(CODEX_DRIVER);
+      // Cached read picks the lock; the two fresh reads bracket the command.
+      assert.deepStrictEqual(fresh, [false, true, true]);
+      assert.deepStrictEqual(calls, [
+        { command: "/opt/homebrew/bin/brew", args: ["upgrade", "--cask", "codex"] },
+      ]);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          NonWindowsPlatform,
+          latestVersionHttpClient("0.0.0"),
+          mockSpawnerLayer((command, args) => {
+            calls.push({ command, args });
+            return { stdout: "updated" };
+          }),
+        ),
+      ),
+    );
+  });
+
+  it.effect("aborts without running when the installation changed since the advisory", () => {
+    const calls: Array<string> = [];
+    return Effect.gen(function* () {
+      const { registry, updateStatesRef } = yield* makeRegistry(baseProvider);
+      const updater = yield* makeTestRunner({
+        ...registry,
+        getProviderMaintenanceCapabilitiesForInstance: (_instanceId, provider, options) =>
+          Effect.succeed(
+            options?.fresh
+              ? makeProviderMaintenanceCapabilities({
+                  provider,
+                  packageName: "@openai/codex",
+                  updateExecutable: null,
+                  updateArgs: [],
+                  updateLockKey: null,
+                })
+              : lifecycleFor(provider),
+          ),
+      });
+
+      const result = yield* updater.updateProvider(CODEX_DRIVER);
+      assert.deepStrictEqual(calls, []);
+      assert.strictEqual(result.providers[0]?.updateState?.status, "failed");
+      assert.strictEqual(
+        result.providers[0]?.updateState?.message,
+        "Provider installation changed. Refresh and try again.",
+      );
+      assert.deepStrictEqual(
+        (yield* Ref.get(updateStatesRef)).map((state) => state.status),
+        ["queued", "running", "failed"],
+      );
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          NonWindowsPlatform,
+          latestVersionHttpClient("0.0.0"),
+          mockSpawnerLayer((command) => {
+            calls.push(command);
             return { stdout: "updated" };
           }),
         ),

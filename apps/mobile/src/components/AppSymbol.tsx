@@ -20,6 +20,7 @@ import IconArrowsMinimize from "@tabler/icons-react-native/IconArrowsMinimize";
 import IconBellRinging from "@tabler/icons-react-native/IconBellRinging";
 import IconBolt from "@tabler/icons-react-native/IconBolt";
 import IconBox from "@tabler/icons-react-native/IconBox";
+import IconBrain from "@tabler/icons-react-native/IconBrain";
 import IconCamera from "@tabler/icons-react-native/IconCamera";
 import IconChartBar from "@tabler/icons-react-native/IconChartBar";
 import IconCheck from "@tabler/icons-react-native/IconCheck";
@@ -30,6 +31,7 @@ import IconChevronRight from "@tabler/icons-react-native/IconChevronRight";
 import IconChevronUp from "@tabler/icons-react-native/IconChevronUp";
 import IconCircleCheck from "@tabler/icons-react-native/IconCircleCheck";
 import IconCircleXFilled from "@tabler/icons-react-native/IconCircleXFilled";
+import IconTicket from "@tabler/icons-react-native/IconTicket";
 import IconClock from "@tabler/icons-react-native/IconClock";
 import IconCode from "@tabler/icons-react-native/IconCode";
 import IconCopy from "@tabler/icons-react-native/IconCopy";
@@ -82,6 +84,7 @@ import IconTextIncrease from "@tabler/icons-react-native/IconTextIncrease";
 import IconTool from "@tabler/icons-react-native/IconTool";
 import IconTrash from "@tabler/icons-react-native/IconTrash";
 import IconTypography from "@tabler/icons-react-native/IconTypography";
+import IconUpload from "@tabler/icons-react-native/IconUpload";
 import IconUserCircle from "@tabler/icons-react-native/IconUserCircle";
 import IconWifiOff from "@tabler/icons-react-native/IconWifiOff";
 import IconWorld from "@tabler/icons-react-native/IconWorld";
@@ -109,11 +112,13 @@ const ANDROID_ICON_BY_SF_SYMBOL: Partial<Record<SFSymbol, Icon>> = {
   "bell.badge": IconBellRinging,
   "bolt.circle": IconBolt,
   "bolt.horizontal.circle": IconBolt,
+  brain: IconBrain,
   camera: IconCamera,
   "chart.bar.xaxis": IconChartBar,
   checkmark: IconCheck,
   "checkmark.circle": IconCircleCheck,
   clock: IconClock,
+  ticket: IconTicket,
   cloud: IconCloud,
   cube: IconBox,
   "chevron.down": IconChevronDown,
@@ -136,6 +141,7 @@ const ANDROID_ICON_BY_SF_SYMBOL: Partial<Record<SFSymbol, Icon>> = {
   "info.circle": IconInfoCircle,
   laptopcomputer: IconDeviceLaptop,
   link: IconLink,
+  "line.3.horizontal.decrease": IconFilter,
   "line.3.horizontal.decrease.circle": IconFilter,
   "line.3.horizontal.decrease.circle.fill": IconFilterFilled,
   // Tabler has no Apple desktops; the closest silhouettes stand in on Android.
@@ -168,6 +174,7 @@ const ANDROID_ICON_BY_SF_SYMBOL: Partial<Record<SFSymbol, Icon>> = {
   "textformat.size": IconTypography,
   "textformat.size.larger": IconTextIncrease,
   "textformat.size.smaller": IconTextDecrease,
+  "tray.and.arrow.up": IconUpload,
   trash: IconTrash,
   "wifi.slash": IconWifiOff,
   xmark: IconX,

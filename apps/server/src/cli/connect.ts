@@ -86,7 +86,7 @@ const promptForOutOfBandOAuthCode = Effect.fn("cloud.cli.prompt_for_out_of_band_
   },
 );
 
-export function formatHeadlessAuthorizationPrompt(authorizeUrl: string): string {
+function formatHeadlessAuthorizationPrompt(authorizeUrl: string): string {
   return [
     "Headless authorization",
     "Open this URL on a device with a browser:",
@@ -142,10 +142,6 @@ function bytesToString(value: Uint8Array): string {
 
 function stringToBytes(value: string): Uint8Array {
   return new TextEncoder().encode(value);
-}
-
-export function isPublishAgentActivityEnabledValue(value: string | null): boolean {
-  return isAgentActivityPublishingEnabledValue(value);
 }
 
 interface CloudCliStatus {
@@ -464,7 +460,7 @@ const runCloudCommand = Effect.fn("cloud.cli.run_cloud_command")(function* <A, E
 
 const connectedAs = (identity: string | null): string => (identity ? ` as ${identity}` : "");
 
-export function formatRelayClientReady(version: string): string {
+function formatRelayClientReady(version: string): string {
   return `✓ Relay client ready · cloudflared ${version}`;
 }
 
@@ -573,7 +569,7 @@ const connectStatusCommand = Command.make("status", {
           linked: Option.isSome(cloudUserId),
           cloudUserId: Option.isSome(cloudUserId) ? bytesToString(cloudUserId.value) : null,
           relayUrl: Option.isSome(relayUrl) ? bytesToString(relayUrl.value) : null,
-          publishAgentActivity: isPublishAgentActivityEnabledValue(
+          publishAgentActivity: isAgentActivityPublishingEnabledValue(
             Option.isSome(publishAgentActivity) ? bytesToString(publishAgentActivity.value) : null,
           ),
           relayClient: executable,

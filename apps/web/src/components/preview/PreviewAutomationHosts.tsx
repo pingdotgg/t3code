@@ -41,7 +41,11 @@ import {
   acquireBrowserSurfaceActivity,
   useBrowserSurfaceStore,
 } from "~/browser/browserSurfaceStore";
-import { browserDefaultOpenViewport, resolveBrowserDefaults } from "~/browser/browserDefaults";
+import {
+  browserDefaultOpenProfileId,
+  browserDefaultOpenViewport,
+  resolveBrowserDefaults,
+} from "~/browser/browserDefaults";
 import { runBrowserViewportMutation } from "~/browser/browserViewportActions";
 import { previewRuntimeTabId } from "~/browser/previewRuntimeTabId";
 import { isElectron } from "~/env";
@@ -76,6 +80,7 @@ import {
   resolvePreviewAutomationOpenTab,
   resolvePreviewAutomationTarget,
 } from "./previewAutomationTarget";
+import { resolveHostWaitBudgetMs, waitForHostReadiness } from "./previewAutomationHostBudget";
 import { isPreviewViewportReady } from "./previewViewportReadiness";
 import { shouldRollbackPreviewViewport } from "./previewViewportRollback";
 
@@ -95,25 +100,26 @@ const waitForDesktopOverlay = async (
   tabId: string,
   runtimeTabId: string,
   operation: PreviewAutomationRequest["operation"],
-  timeoutMs: number,
+  deadlineMs: number,
 ): Promise<void> => {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() <= deadline) {
+  const waitBudgetMs = Math.max(0, deadlineMs - Date.now());
+  const ready = await waitForHostReadiness(deadlineMs, async () => {
     const state = assertPreviewRuntimeCurrent(threadRef, tabId, runtimeTabId, {
       operation,
       requestId,
     });
     if (state.desktopByTabId[tabId] && previewBridge && isPreviewWebviewRendering(runtimeTabId)) {
       const status = await previewBridge.automation.status(runtimeTabId);
-      if (status.available) return;
+      return status.available;
     }
-    await new Promise<void>((resolve) => window.setTimeout(resolve, 50));
-  }
+    return false;
+  });
+  if (ready) return;
   throw new PreviewAutomationOverlayTimeoutError({
     requestId,
     environmentId: threadRef.environmentId,
     threadId: threadRef.threadId,
-    timeoutMs,
+    timeoutMs: waitBudgetMs,
   });
 };
 
@@ -317,6 +323,8 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
 
   const handleRequest = useCallback(
     async (request: PreviewAutomationRequest): Promise<unknown> => {
+      // Session sync and tab creation consume the same budget as overlay registration.
+      const hostDeadlineMs = Date.now() + resolveHostWaitBudgetMs(request.timeoutMs);
       const threadRef: ScopedThreadRef = {
         environmentId,
         threadId: request.threadId,
@@ -378,7 +386,7 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
             readyTabId,
             runtimeTabId,
             request.operation,
-            request.timeoutMs,
+            hostDeadlineMs,
           );
           return {
             bridge,
@@ -408,6 +416,7 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
             const reusedExistingTab = activeTabId !== null;
             tabId = activeTabId;
             if (!activeTabId) {
+              const defaults = await resolveBrowserDefaults();
               const result = await open({
                 environmentId,
                 input: {
@@ -415,7 +424,8 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
                   ...(resolvedInputUrl ? { url: resolvedInputUrl } : {}),
                   // An agent that didn't state a size gets the user's
                   // configured default, same as a hand-opened tab.
-                  viewport: browserDefaultOpenViewport(await resolveBrowserDefaults()),
+                  viewport: browserDefaultOpenViewport(defaults),
+                  profileId: browserDefaultOpenProfileId(defaults),
                 },
               });
               if (result._tag === "Failure") {
