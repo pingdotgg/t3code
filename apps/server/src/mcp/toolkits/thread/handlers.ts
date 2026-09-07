@@ -1,7 +1,7 @@
 import {
   type CommandId,
   type RuntimeRequestId,
-  type ThreadId,
+  ThreadId,
   type OrchestrationV2ThreadProjection,
   type RunId,
   OrchestratorMcpFailure,
@@ -61,6 +61,55 @@ const readQuestion = Effect.fn("mcp.readQuestion")(function* (
   return { ...context, request, item };
 });
 export const ThreadToolkitHandlersLive = ThreadToolkit.toLayer({
+  t3_thread_fork: (input) =>
+    Effect.gen(function* () {
+      const { threads, projection } = yield* readWritableThread();
+      const commandId = yield* newCommandId();
+      const targetThreadId = ThreadId.make(`${commandId}:fork`);
+      const result = yield* threads
+        .dispatch({
+          type: "thread.fork",
+          commandId,
+          sourceThreadId: projection.thread.id,
+          targetThreadId,
+          sourcePoint: input.sourcePoint,
+          ...(input.title === undefined ? {} : { title: input.title }),
+          createdBy: "agent",
+          creationSource: "mcp",
+        })
+        .pipe(Effect.mapError(unavailable));
+      return { sequence: result.sequence, targetThreadId };
+    }),
+  t3_thread_merge_back: (input) =>
+    Effect.gen(function* () {
+      const { threads, caller } = yield* readWritableThread(input.targetThreadId);
+      const result = yield* threads
+        .dispatch({
+          type: "thread.merge_back",
+          commandId: yield* newCommandId(),
+          sourceThreadId: caller.id,
+          targetThreadId: input.targetThreadId,
+          sourcePoint: input.sourcePoint,
+          createdBy: "agent",
+          creationSource: "mcp",
+        })
+        .pipe(Effect.mapError(unavailable));
+      return { sequence: result.sequence, targetThreadId: input.targetThreadId };
+    }),
+  t3_thread_transfers: (input) =>
+    Effect.gen(function* () {
+      const { projection } = yield* readThread(input.threadId);
+      return {
+        transfers: projection.contextTransfers.map(
+          ({ id, sourceThreadId, targetThreadId, status }) => ({
+            id,
+            sourceThreadId,
+            targetThreadId,
+            status,
+          }),
+        ),
+      };
+    }),
   t3_thread_configuration: (input) =>
     Effect.gen(function* () {
       const {

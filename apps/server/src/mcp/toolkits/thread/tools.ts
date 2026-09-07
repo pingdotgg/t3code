@@ -1,4 +1,7 @@
 import {
+  OrchestrationV2ThreadForkSourcePoint,
+  OrchestrationV2ContextTransfer,
+  TrimmedNonEmptyString,
   ModelSelection,
   RuntimeMode,
   ProviderInteractionMode,
@@ -174,7 +177,49 @@ export const ThreadConfigureTool = Tool.make("t3_thread_configure", {
   parameters: Schema.Struct({ modelSelection: ModelSelection }),
 }).annotate(Tool.Destructive, true);
 
+const transferResult = Schema.Struct({ sequence: NonNegativeInt, targetThreadId: ThreadId });
+export const ThreadForkTool = Tool.make("t3_thread_fork", {
+  ...commandTool,
+  description:
+    "Fork this thread from a stable run or checkpoint using the existing fork command. The fork inherits the source configuration. Acceptance does not mean a provider turn has completed.",
+  parameters: Schema.Struct({
+    sourcePoint: OrchestrationV2ThreadForkSourcePoint,
+    title: Schema.optional(TrimmedNonEmptyString),
+  }),
+  success: transferResult,
+}).annotate(Tool.Destructive, true);
+export const ThreadMergeBackTool = Tool.make("t3_thread_merge_back", {
+  ...commandTool,
+  description:
+    "Merge context from this thread back to a related thread in the same project. Existing lineage and transfer rules apply.",
+  parameters: Schema.Struct({
+    targetThreadId: ThreadId,
+    sourcePoint: OrchestrationV2ThreadForkSourcePoint,
+  }),
+  success: transferResult,
+}).annotate(Tool.Destructive, true);
+export const ThreadTransfersTool = Tool.make("t3_thread_transfers", {
+  ...commandTool,
+  description: "Read context transfer status for a thread in the calling project.",
+  parameters: Schema.Struct({ threadId: Schema.optional(ThreadId) }),
+  success: Schema.Struct({
+    transfers: Schema.Array(
+      Schema.Struct({
+        id: OrchestrationV2ContextTransfer.fields.id,
+        sourceThreadId: OrchestrationV2ContextTransfer.fields.sourceThreadId,
+        targetThreadId: OrchestrationV2ContextTransfer.fields.targetThreadId,
+        status: OrchestrationV2ContextTransfer.fields.status,
+      }),
+    ),
+  }),
+})
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false);
+
 export const ThreadToolkit = Toolkit.make(
+  ThreadForkTool,
+  ThreadMergeBackTool,
+  ThreadTransfersTool,
   ThreadConfigurationTool,
   ThreadConfigureTool,
   PendingRequestListTool,
