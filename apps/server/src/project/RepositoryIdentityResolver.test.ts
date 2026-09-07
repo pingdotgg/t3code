@@ -163,6 +163,18 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
 
   it.effect.each([
     {
+      remoteUrl: "git@github.com:example/project.git",
+      stdout: "hostname ssh.github.com\nport 443\n",
+      code: 0,
+      host: "github.com",
+    },
+    {
+      remoteUrl: "git@github.com-t3-test:example/project.git",
+      stdout: "hostname ssh.github.com\nport 443\n",
+      code: 0,
+      host: "github.com",
+    },
+    {
       remoteUrl: "git@github.com-t3-test:example/project.git",
       stdout: "hostname github.com\n",
       code: 0,

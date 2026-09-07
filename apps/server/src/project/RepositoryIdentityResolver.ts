@@ -111,7 +111,10 @@ const resolveRepositoryRemoteHost = Effect.fn("RepositoryIdentityResolver.resolv
       return undefined;
     }
     const resolvedHost = parseSshResolvedHostName(resolved.value.stdout, host);
-    return resolvedHost.toLowerCase() === host.toLowerCase() ? undefined : resolvedHost;
+    // GitHub's SSH-over-443 endpoint is a transport host, not its API host.
+    const repositoryHost =
+      resolvedHost.toLowerCase() === "ssh.github.com" ? "github.com" : resolvedHost;
+    return repositoryHost.toLowerCase() === host.toLowerCase() ? undefined : repositoryHost;
   },
 );
 
