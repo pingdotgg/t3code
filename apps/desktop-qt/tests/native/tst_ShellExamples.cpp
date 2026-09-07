@@ -3,6 +3,7 @@
 #include <QImage>
 #include <QQmlApplicationEngine>
 #include <QQuickItem>
+#include <QSignalSpy>
 #include <QQuickWebEngineProfile>
 #include <QTemporaryDir>
 #include <QTest>
@@ -13,6 +14,15 @@
 #include "ShellRuntime.h"
 #include "ThemeStore.h"
 #include "WebProfile.h"
+
+// List delegates belong to the visual tree, not necessarily the QObject tree.
+static QQuickItem* findVisualItem(QQuickItem* parent, const QString& name) {
+  if (parent->objectName() == name) return parent;
+  for (auto* child : parent->childItems()) {
+    if (auto* found = findVisualItem(child, name)) return found;
+  }
+  return nullptr;
+}
 
 class ShellExamplesTest : public QObject {
   Q_OBJECT
@@ -128,6 +138,43 @@ private slots:
       QVERIFY(agent);
       QTRY_VERIFY(agent->mapToItem(drawer, QPointF(0, agent->height())).y() <= drawer->height() - 10);
     }
+  }
+
+  void panelTabsSupportKeyboardActivationAndClose() {
+    QFile source(directory.filePath("shell.qml"));
+    QVERIFY(source.open(QIODevice::WriteOnly | QIODevice::Truncate));
+    source.write("import QtQuick\nimport T3.Bricks\nShellWindow { width: 600; height: 400; RightPanel { anchors.fill: parent } }");
+    source.close();
+    bridge.publish("rightPanel", QJsonDocument::fromJson(R"({
+      "isOpen": true, "activeSurfaceId": "diff", "embedPath": "/test",
+      "surfaces": [{"id": "diff", "title": "Diff"}, {"id": "files", "title": "Files"}],
+      "canAdd": {"diff": true, "files": true, "terminal": true, "pullRequest": false, "agents": true}
+    })").toVariant());
+    runtime->reload();
+    QVERIFY2(runtime->lastError().isEmpty(), qPrintable(runtime->lastError()));
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    auto* engine = runtime->findChild<QQmlApplicationEngine*>();
+    QVERIFY(engine);
+    auto* window = qobject_cast<QQuickWindow*>(engine->rootObjects().last());
+    QVERIFY(window);
+    QVERIFY(QTest::qWaitForWindowExposed(window));
+    QTRY_VERIFY(findVisualItem(window->contentItem(), "panelTab-files"));
+    auto* tab = findVisualItem(window->contentItem(), "panelTab-files");
+    auto* close = findVisualItem(window->contentItem(), "panelClose-files");
+    QVERIFY(tab);
+    QVERIFY(close);
+    QSignalSpy actions(&bridge, &ShellBridge::actionRequested);
+    tab->forceActiveFocus(Qt::TabFocusReason);
+    QTest::keyClick(window, Qt::Key_Return);
+    QCOMPARE(actions.size(), 1);
+    QCOMPARE(actions.last().at(0).toString(), QString("rightPanel.activate"));
+    QCOMPARE(actions.last().at(1).toMap().value("id").toString(), QString("files"));
+    close->forceActiveFocus(Qt::TabFocusReason);
+    QTest::keyClick(window, Qt::Key_Space);
+    QCOMPARE(actions.size(), 2);
+    QCOMPARE(actions.last().at(0).toString(), QString("rightPanel.close"));
+    QCOMPARE(actions.last().at(1).toMap().value("id").toString(), QString("files"));
+    bridge.publish("rightPanel", QVariant());
   }
 
   void cleanupTestCase() {

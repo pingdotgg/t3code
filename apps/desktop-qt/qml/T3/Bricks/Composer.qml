@@ -389,6 +389,28 @@ Rectangle {
                             }
                         }
                         Keys.onPressed: event => {
+                            if (composer.suggesting && !(event.modifiers & (Qt.ControlModifier | Qt.MetaModifier | Qt.AltModifier))) {
+                                if (event.key === Qt.Key_Escape) {
+                                    event.accepted = true;
+                                    Shell.dispatch("composer.suggest.dismiss");
+                                    return;
+                                }
+                                if (composer.suggestions.length > 0 && !(event.modifiers & Qt.ShiftModifier)) {
+                                    if (event.key === Qt.Key_Down || event.key === Qt.Key_Up) {
+                                        event.accepted = true;
+                                        if (event.key === Qt.Key_Down) suggestionList.incrementCurrentIndex();
+                                        else suggestionList.decrementCurrentIndex();
+                                        return;
+                                    }
+                                    if (event.key === Qt.Key_Tab || event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+                                        event.accepted = true;
+                                        const index = suggestionList.currentIndex;
+                                        composer.flushText();
+                                        composer.selectSuggestion(index);
+                                        return;
+                                    }
+                                }
+                            }
                             if (event.key !== Qt.Key_Return && event.key !== Qt.Key_Enter) {
                                 return;
                             }

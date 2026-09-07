@@ -560,7 +560,8 @@ ShellWindow {
                         anchors.topMargin: 12
                         anchors.horizontalCenter: parent.horizontalCenter
                         width: Math.min(parent.width - 24, 1040)
-                        height: Math.min(drawerGrid.columns === 4 ? 336 : 660, parent.height - 24)
+                        readonly property int gridColumns: width - 24 >= 920 ? 4 : width - 24 >= 460 ? 2 : 1
+                        height: Math.min(gridColumns === 4 ? 336 : 660, parent.height - 24)
                         visible: opacity > 0
                         opacity: root.drawerOpen ? 1 : 0
 
@@ -634,7 +635,7 @@ ShellWindow {
                                 id: drawerGrid
                                 objectName: "drawerGrid"
                                 width: drawerScroll.availableWidth
-                                columns: width >= 920 ? 4 : width >= 460 ? 2 : 1
+                                columns: drawer.gridColumns
                                 rowSpacing: 10
                                 columnSpacing: 10
 

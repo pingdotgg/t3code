@@ -16,6 +16,11 @@ Rectangle {
     implicitWidth: 260
     color: Theme.color("sidebar", "#0a0a0a")
 
+    function focusRow(index) {
+        list.currentIndex = Math.max(0, Math.min(index, list.count - 1));
+        if (list.currentItem) list.currentItem.forceActiveFocus();
+    }
+
     ColumnLayout {
         anchors.fill: parent
         spacing: 0
@@ -43,6 +48,7 @@ Rectangle {
 
         ShellTextField {
             id: search
+            objectName: "search"
 
             Layout.fillWidth: true
             Layout.leftMargin: 10
@@ -54,7 +60,6 @@ Rectangle {
                 query: text
             })
             Keys.onEscapePressed: {
-                text = "";
                 Shell.dispatch("settings.search", {
                     query: ""
                 });
@@ -73,39 +78,39 @@ Rectangle {
             boundsBehavior: Flickable.StopAtBounds
             model: nav.model === null ? [] : searching ? nav.model.searchResults : nav.model.sections
 
-            delegate: Item {
+            delegate: ItemDelegate {
                 id: row
 
                 required property var modelData
+                required property int index
+                objectName: "settingsRow" + index
 
                 readonly property bool isResult: list.searching
                 readonly property bool current: !isResult && nav.model.activeSection === modelData.to
 
                 width: ListView.view.width
                 implicitHeight: isResult ? 48 : 36
+                Accessible.name: isResult ? modelData.title : modelData.label
+                Keys.onReturnPressed: clicked()
+                Keys.onEnterPressed: clicked()
+                Keys.onDownPressed: nav.focusRow(index + 1)
+                Keys.onUpPressed: nav.focusRow(index - 1)
+                onClicked: row.isResult ? Shell.dispatch("settings.openResult", {
+                    to: row.modelData.to,
+                    targetId: row.modelData.targetId
+                }) : Shell.dispatch("settings.navigate", {
+                    to: row.modelData.to
+                })
 
-                Rectangle {
+                background: Rectangle {
                     anchors.fill: parent
                     anchors.leftMargin: 6
                     anchors.rightMargin: 6
                     radius: 6
-                    color: row.current ? Theme.color("sidebarRowSelected", "#2a2a30") : hover.hovered ? Theme.color("sidebarRowHover", "#1c1c21") : "transparent"
+                    color: row.current ? Theme.color("sidebarRowSelected", "#2a2a30") : row.hovered || row.visualFocus ? Theme.color("sidebarRowHover", "#1c1c21") : "transparent"
                 }
 
-                HoverHandler {
-                    id: hover
-                }
-
-                TapHandler {
-                    onTapped: row.isResult ? Shell.dispatch("settings.openResult", {
-                        to: row.modelData.to,
-                        targetId: row.modelData.targetId
-                    }) : Shell.dispatch("settings.navigate", {
-                        to: row.modelData.to
-                    })
-                }
-
-                ColumnLayout {
+                contentItem: ColumnLayout {
                     anchors.fill: parent
                     anchors.leftMargin: 16
                     anchors.rightMargin: 16

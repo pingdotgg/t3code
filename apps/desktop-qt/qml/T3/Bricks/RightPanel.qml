@@ -82,26 +82,25 @@ Rectangle {
                 boundsBehavior: Flickable.StopAtBounds
                 model: panel.open ? panel.model.surfaces : []
 
-                delegate: Rectangle {
+                delegate: AbstractButton {
                     id: tab
 
                     required property var modelData
+                    objectName: "panelTab-" + modelData.id
 
                     readonly property bool active: panel.model.activeSurfaceId === modelData.id
 
                     width: tabRow.implicitWidth + 16
                     height: 36
-                    color: active ? Theme.color("surfaceRaised", "#1f1f24") : tabHover.hovered ? Theme.color("surface", "#141416") : "transparent"
-                    radius: 6
-
-                    HoverHandler {
-                        id: tabHover
-                    }
-
-                    TapHandler {
-                        onTapped: Shell.dispatch("rightPanel.activate", {
-                            id: tab.modelData.id
-                        })
+                    hoverEnabled: true
+                    Accessible.role: Accessible.PageTab
+                    Accessible.name: modelData.title
+                    Keys.onReturnPressed: clicked()
+                    Keys.onEnterPressed: clicked()
+                    onClicked: Shell.dispatch("rightPanel.activate", { id: tab.modelData.id })
+                    background: Rectangle {
+                        color: tab.active ? Theme.color("surfaceRaised", "#1f1f24") : tab.hovered || tab.visualFocus ? Theme.color("surface", "#141416") : "transparent"
+                        radius: 6
                     }
 
                     Row {
@@ -117,17 +116,18 @@ Rectangle {
                             anchors.verticalCenter: parent.verticalCenter
                         }
 
-                        ShellIcon {
-                            name: "x"
-                            size: 12
-                            color: panel.muted
+                        ShellButton {
+                            objectName: "panelClose-" + tab.modelData.id
+                            subtle: true
+                            iconName: "x"
+                            iconSize: 12
+                            iconTint: panel.muted
+                            width: 20
+                            height: 20
+                            padding: 4
+                            Accessible.name: qsTr("Close %1").arg(tab.modelData.title)
                             anchors.verticalCenter: parent.verticalCenter
-
-                            TapHandler {
-                                onTapped: Shell.dispatch("rightPanel.close", {
-                                    id: tab.modelData.id
-                                })
-                            }
+                            onClicked: Shell.dispatch("rightPanel.close", { id: tab.modelData.id })
                         }
                     }
                 }

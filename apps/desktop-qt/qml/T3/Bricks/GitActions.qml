@@ -118,8 +118,10 @@ RowLayout {
     // ---- Commit dialog -------------------------------------------------
     Popup {
         id: commitDialog
+        objectName: "commitDialog"
 
         property var excluded: ({})
+        readonly property bool hasSelectedFiles: git.ready && git.model.files.some(file => !excluded[file.path])
 
         function reset() {
             message.text = "";
@@ -199,6 +201,7 @@ RowLayout {
                     spacing: 8
 
                     CheckBox {
+                        objectName: "fileCheck-" + modelData.path
                         checked: !commitDialog.excluded[modelData.path]
                         onToggled: {
                             const next = Object.assign({}, commitDialog.excluded);
@@ -271,13 +274,17 @@ RowLayout {
                 }
 
                 ShellButton {
+                    objectName: "commitNewBranch"
                     text: qsTr("Commit on new branch")
+                    enabled: commitDialog.hasSelectedFiles
                     onClicked: commitDialog.submit(true)
                 }
 
                 ShellButton {
+                    objectName: "commitSelected"
                     primary: true
                     text: qsTr("Commit")
+                    enabled: commitDialog.hasSelectedFiles
                     onClicked: commitDialog.submit(false)
                 }
             }

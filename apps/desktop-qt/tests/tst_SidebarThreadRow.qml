@@ -23,7 +23,7 @@ Item {
                 canSettle: true,
                 canSnooze: true,
                 branch: "main",
-                updatedAt: new Date(Date.now() - 59500).toISOString()
+                updatedAt: new Date(Date.now() - 61000).toISOString()
             })
         }
     }
@@ -37,6 +37,7 @@ Item {
             verify(!!row, "Component exists");
             let timer = findChild(row, "ageRefreshTimer");
             verify(!!timer, "Object exists");
+            row.ageNow = Date.parse(row.item.updatedAt) + 1000;
             compare(row.ageLabel, qsTr("now"));
 
             timer.interval = 25;

@@ -125,7 +125,7 @@ Item {
             compare(input.cursorPosition, 3);
         }
 
-        function test_targetSwitchDiscardsOutstandingEchoes() {
+        function test_targetSwitchRetiresPreviousEditRevisions() {
             Shell.echoTextEdits = false;
             let composer = createTemporaryObject(composerComponent, root);
             verify(!!composer, "Component exists");
@@ -136,8 +136,10 @@ Item {
             Shell.publishComposerTarget("thread-b", qsTr("Thread B draft"), 4);
             compare(input.text, qsTr("Thread B draft"));
             compare(input.cursorPosition, 4);
-            Shell.publishComposerText(qsTr("Thread A edit"), 2);
-            compare(input.text, qsTr("Thread A edit"));
+            // This helper publishes an external edit for the current target B.
+            // The old target's outstanding revision must not suppress it.
+            Shell.publishComposerText(qsTr("Thread B page edit"), 2);
+            compare(input.text, qsTr("Thread B page edit"));
             compare(input.cursorPosition, 2);
         }
 
