@@ -70,6 +70,7 @@ const T3_MCP_TOOLS: Record<
   t3_thread_wait: { displayName: "Wait for a T3 thread", summaryAction: "thread-wait" },
   t3_thread_interrupt: { displayName: "Interrupt a T3 thread", summaryAction: "thread-interrupt" },
   t3_worktree_handoff: { displayName: "Hand off thread to a git worktree" },
+  t3_worktree_list: { displayName: "List workspace branches" },
   t3_worktree_status: { displayName: "Get thread worktree status" },
   t3_preview_list: { displayName: "List preview tabs" },
   t3_preview_close: { displayName: "Close a preview tab" },
