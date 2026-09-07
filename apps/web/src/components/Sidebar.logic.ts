@@ -17,7 +17,10 @@ import {
   type ThreadSortInput,
 } from "../lib/threadSort";
 import { effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
-import { sortPinnedThreadsByOrderKey } from "@t3tools/client-runtime/state/thread-sort";
+import {
+  sortActiveThreadsByOrderKey,
+  sortPinnedThreadsByOrderKey,
+} from "@t3tools/client-runtime/state/thread-sort";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import type { EnvironmentId } from "@t3tools/contracts";
@@ -1313,7 +1316,7 @@ export function partitionSidebarThreads(
         .filter((thread) => input.capabilitiesFor(thread.environmentId)?.threadPinReorder === true)
         .map((thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))),
     ),
-    activeThreads: sortThreadsForSidebar(active),
+    activeThreads: sortActiveThreadsByOrderKey(active),
     // Soonest wake first: "what comes back next" is the shelf's question.
     snoozedThreads: snoozed.toSorted(
       (left, right) =>

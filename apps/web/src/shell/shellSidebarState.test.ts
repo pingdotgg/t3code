@@ -54,6 +54,7 @@ function makeProjectGroup(): SidebarProjectSnapshot {
     groupedProjectCount: 1,
     environmentPresence: "local-only",
     allRemoteMembersAreDesktopLocal: false,
+    allRemoteMembersAreWsl: false,
     memberProjects: [],
     memberProjectRefs: [{ environmentId, projectId }],
     remoteEnvironmentLabels: [],

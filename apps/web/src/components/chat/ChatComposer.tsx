@@ -5440,108 +5440,108 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 )}
 
               {hideEditorForShell ? null : (
-              <div
-                className={cn(
-                  "relative",
-                  isComposerResting && "flex min-w-0 items-center gap-1",
-                  isComposerResting &&
-                    (settings.contextWindowMeterEnabled && activeContextWindow
-                      ? "pr-28"
-                      : showComposerAttachAction
-                        ? "pr-20"
-                        : "pr-12"),
-                )}
-              >
-                <ComposerPromptEditor
-                  editorRef={composerEditorRef}
-                  value={
-                    isComposerApprovalState
-                      ? ""
-                      : activePendingProgress
-                        ? activePendingProgress.customAnswer
-                        : prompt
-                  }
-                  cursor={composerCursor}
-                  terminalContexts={
-                    !isComposerApprovalState && pendingUserInputs.length === 0
-                      ? composerTerminalContexts
-                      : []
-                  }
-                  skills={selectedProviderSkills}
-                  containerClassName={cn(isComposerResting && "min-w-0 flex-1")}
+                <div
                   className={cn(
-                    showMobilePendingAnswerActions && "max-sm:pb-11",
+                    "relative",
+                    isComposerResting && "flex min-w-0 items-center gap-1",
                     isComposerResting &&
-                      "max-h-8 min-h-8 overflow-hidden whitespace-pre! leading-8",
+                      (settings.contextWindowMeterEnabled && activeContextWindow
+                        ? "pr-28"
+                        : showComposerAttachAction
+                          ? "pr-20"
+                          : "pr-12"),
                   )}
-                  placeholderClassName={cn(
-                    isComposerResting &&
-                      "flex items-center overflow-hidden whitespace-nowrap leading-8",
-                  )}
-                  onRemoveTerminalContext={removeComposerTerminalContextFromDraft}
-                  onChange={onPromptChange}
-                  onVisibleSelectionChange={expandComposerForEditorChange}
-                  onCommandKeyDown={onComposerCommandKey}
-                  onPageScrollKeyDown={onPageScrollKeyDown}
-                  onPageScrollKeyUp={onPageScrollKeyUp}
-                  onPageScrollRelease={onPageScrollRelease}
-                  onCitationSubmitAndSend={submitCitationAndSend}
-                  onPaste={onComposerPaste}
-                  placeholder={
-                    isComposerApprovalState
-                      ? (activePendingApproval?.detail ??
-                        "Resolve this approval request to continue")
-                      : activePendingProgress
-                        ? isChoiceOnlyPendingQuestion
-                          ? "Choose an option above"
-                          : "Type your own answer, or leave this blank to use the selected option"
-                        : showPlanFollowUpPrompt && activeProposedPlan
-                          ? "Add feedback to refine the plan, or leave this blank to implement it"
-                          : projectSelectionRequired
-                            ? "Choose a project above to start a thread"
-                            : noProviderAvailable
-                              ? "Enable a provider in Settings to send a message"
-                              : phase === "disconnected"
-                                ? DISCONNECTED_COMPOSER_PLACEHOLDER
-                                : "Ask anything, @tag files/folders, $use skills, or / for commands"
-                  }
-                  disabled={
-                    isConnecting ||
-                    isComposerApprovalState ||
-                    projectSelectionRequired ||
-                    isChoiceOnlyPendingQuestion
-                  }
-                />
-                {isComposerResting ? collapsedComposerImagePreviews : null}
-                {showMobilePendingAnswerActions ? (
-                  <div
-                    data-chat-composer-mobile-pending-actions="true"
-                    className="absolute bottom-0 right-0 flex items-center justify-end gap-1"
-                  >
-                    <ComposerPrimaryActions
-                      compact
-                      pendingAction={pendingPrimaryAction}
-                      isRunning={false}
-                      showPlanFollowUpPrompt={false}
-                      promptHasText={false}
-                      isSendBusy={isSendBusy}
-                      sendDisabledReason={sendDisabledReason}
-                      isConnecting={isConnecting}
-                      isEnvironmentUnavailable={
-                        environmentUnavailable !== null ||
-                        noProviderAvailable ||
-                        projectSelectionRequired
-                      }
-                      isPreparingWorktree={false}
-                      hasSendableContent={false}
-                      preserveComposerFocusOnPointerDown
-                      onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
-                      onInterrupt={handleInterruptPrimaryAction}
-                      onImplementPlanInNewThread={handleImplementPlanInNewThreadPrimaryAction}
-                    />
-                  </div>
-                ) : null}
-              </div>
+                >
+                  <ComposerPromptEditor
+                    editorRef={composerEditorRef}
+                    value={
+                      isComposerApprovalState
+                        ? ""
+                        : activePendingProgress
+                          ? activePendingProgress.customAnswer
+                          : prompt
+                    }
+                    cursor={composerCursor}
+                    terminalContexts={
+                      !isComposerApprovalState && pendingUserInputs.length === 0
+                        ? composerTerminalContexts
+                        : []
+                    }
+                    skills={selectedProviderSkills}
+                    containerClassName={cn(isComposerResting && "min-w-0 flex-1")}
+                    className={cn(
+                      showMobilePendingAnswerActions && "max-sm:pb-11",
+                      isComposerResting &&
+                        "max-h-8 min-h-8 overflow-hidden whitespace-pre! leading-8",
+                    )}
+                    placeholderClassName={cn(
+                      isComposerResting &&
+                        "flex items-center overflow-hidden whitespace-nowrap leading-8",
+                    )}
+                    onRemoveTerminalContext={removeComposerTerminalContextFromDraft}
+                    onChange={onPromptChange}
+                    onVisibleSelectionChange={expandComposerForEditorChange}
+                    onCommandKeyDown={onComposerCommandKey}
+                    onPageScrollKeyDown={onPageScrollKeyDown}
+                    onPageScrollKeyUp={onPageScrollKeyUp}
+                    onPageScrollRelease={onPageScrollRelease}
+                    onCitationSubmitAndSend={submitCitationAndSend}
+                    onPaste={onComposerPaste}
+                    placeholder={
+                      isComposerApprovalState
+                        ? (activePendingApproval?.detail ??
+                          "Resolve this approval request to continue")
+                        : activePendingProgress
+                          ? isChoiceOnlyPendingQuestion
+                            ? "Choose an option above"
+                            : "Type your own answer, or leave this blank to use the selected option"
+                          : showPlanFollowUpPrompt && activeProposedPlan
+                            ? "Add feedback to refine the plan, or leave this blank to implement it"
+                            : projectSelectionRequired
+                              ? "Choose a project above to start a thread"
+                              : noProviderAvailable
+                                ? "Enable a provider in Settings to send a message"
+                                : phase === "disconnected"
+                                  ? DISCONNECTED_COMPOSER_PLACEHOLDER
+                                  : "Ask anything, @tag files/folders, $use skills, or / for commands"
+                    }
+                    disabled={
+                      isConnecting ||
+                      isComposerApprovalState ||
+                      projectSelectionRequired ||
+                      isChoiceOnlyPendingQuestion
+                    }
+                  />
+                  {isComposerResting ? collapsedComposerImagePreviews : null}
+                  {showMobilePendingAnswerActions ? (
+                    <div
+                      data-chat-composer-mobile-pending-actions="true"
+                      className="absolute bottom-0 right-0 flex items-center justify-end gap-1"
+                    >
+                      <ComposerPrimaryActions
+                        compact
+                        pendingAction={pendingPrimaryAction}
+                        isRunning={false}
+                        showPlanFollowUpPrompt={false}
+                        promptHasText={false}
+                        isSendBusy={isSendBusy}
+                        sendDisabledReason={sendDisabledReason}
+                        isConnecting={isConnecting}
+                        isEnvironmentUnavailable={
+                          environmentUnavailable !== null ||
+                          noProviderAvailable ||
+                          projectSelectionRequired
+                        }
+                        isPreparingWorktree={false}
+                        hasSendableContent={false}
+                        preserveComposerFocusOnPointerDown
+                        onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
+                        onInterrupt={handleInterruptPrimaryAction}
+                        onImplementPlanInNewThread={handleImplementPlanInNewThreadPrimaryAction}
+                      />
+                    </div>
+                  ) : null}
+                </div>
               )}
             </div>
 
@@ -5599,7 +5599,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 runtimeMode={runtimeMode}
                 runtimeModes={shellRuntimeModes}
                 interactionMode={interactionMode}
-                showInteractionModeToggle={composerProviderControls.showInteractionModeToggle}
+                showInteractionModeToggle={planModeUiEnabled}
                 onRuntimeModeChange={handleRuntimeModeChange}
                 onInteractionModeChange={handleInteractionModeChange}
                 onSend={onSend}

@@ -31,6 +31,7 @@ import { usePrimaryEnvironmentId } from "../../state/environments";
 import { useT3ProjectFileScripts } from "~/hooks/useT3ProjectFileScripts";
 import { useRenameThread } from "../../hooks/useRenameThread";
 import { useThreadActionMenu } from "~/hooks/useThreadActionMenu";
+import { readLocalApi } from "~/localApi";
 import { observeResponsiveBreakpointFade, usePanelAnimationSettings } from "../../panelAnimations";
 import { ProjectFavicon } from "../ProjectFavicon";
 import {

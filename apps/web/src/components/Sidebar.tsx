@@ -2483,9 +2483,10 @@ export default function Sidebar() {
     settledThreads,
     snoozeNow,
   } = useMemo(() => {
-    // The partition reads a real clock for snooze classification; the minute
-    // tick and snoozeWakeTick (exactly at the next wake boundary) re-run it.
-    void nowMinute;
+    // Snooze classification uses a REAL clock, not the quantized minute:
+    // wake times are second-precise and a woken thread must not linger on
+    // the shelf for the rest of the minute. snoozeWakeTick re-runs this
+    // memo exactly at the next wake boundary.
     void snoozeWakeTick;
     const preciseNow = new Date().toISOString();
     const visible = threads.filter(
