@@ -582,7 +582,7 @@ describe("thread outbox delivered creation recovery", () => {
 });
 
 describe("thread outbox recovery rollback", () => {
-  it("restores a rejected new task into its durable project draft", async () => {
+  it("restores a rejected new task as its own draft for the project", async () => {
     const message: QueuedThreadMessage = {
       ...queuedMessage({ messageId: "message-creation-restore", text: "new task text" }),
       modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.6-sol" },
@@ -599,14 +599,19 @@ describe("thread outbox recovery rollback", () => {
       "restored",
     );
 
+    // The draft is keyed by the message so a retry lands on the same one, and
+    // stamped with the project so it shows up as a Draft row for that project.
     expect(
-      composerDrafts.getComposerDraftSnapshot(
-        `new-task:${message.environmentId}:${message.creation!.projectId}`,
-      ),
+      composerDrafts.getComposerDraftSnapshot(`new-task:restored-${message.messageId}`),
     ).toMatchObject({
       text: message.text,
       attachments: message.attachments,
       modelSelection: message.modelSelection,
+      project: {
+        environmentId: message.environmentId,
+        projectId: message.creation!.projectId,
+        createdAt: message.createdAt,
+      },
     });
     expect(remainingMessages()).toEqual([]);
     expect(harness.setPendingConnectionError).toHaveBeenCalledWith("rejected by server");

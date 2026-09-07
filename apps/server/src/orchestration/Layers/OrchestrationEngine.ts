@@ -185,6 +185,23 @@ const makeOrchestrationEngine = Effect.gen(function* () {
           });
         }
 
+        // The decider compares the lookup inputs. Only recreation needs an
+        // event check, since it can reset a thread to the same field values.
+        if (
+          envelope.command.type === "thread.pull-request.sync" &&
+          (yield* eventStore.hasEventAfter({
+            aggregateKind: "thread",
+            aggregateId: envelope.command.threadId,
+            sequenceExclusive: envelope.command.snapshotSequence,
+            type: "thread.created",
+          }))
+        ) {
+          return yield* new OrchestrationCommandInvariantError({
+            commandType: envelope.command.type,
+            detail: `thread ${envelope.command.threadId} was recreated before pull request discovery`,
+          });
+        }
+
         if (
           envelope.command.type === "thread.auto-settle" &&
           threadBackgroundLiveness.getThreadBackgroundLiveness(envelope.command.threadId) !== null
@@ -198,7 +215,8 @@ const makeOrchestrationEngine = Effect.gen(function* () {
         // Command snapshots omit activities at startup and cap them while running.
         // Read this request's durable state before deciding how to send the answer.
         const userInputActivity =
-          envelope.command.type === "thread.user-input.respond"
+          envelope.command.type === "thread.user-input.respond" ||
+          envelope.command.type === "thread.user-input.dismiss"
             ? yield* projectionSnapshotQuery.getUserInputActivity(envelope.command)
             : Option.none();
         const eventBase = yield* decideOrchestrationCommand({
