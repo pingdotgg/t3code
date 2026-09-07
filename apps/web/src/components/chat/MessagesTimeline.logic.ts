@@ -18,6 +18,7 @@ export {
 } from "@t3tools/client-runtime/work-log/presentation";
 import {
   formatDuration,
+  inferCheckpointTurnCountByTurnId,
   isStreamingMessageTextUpdate,
   workEntryDisplayIndicatesToolFailure,
   workEntryIndicatesToolSuccess,
@@ -776,6 +777,45 @@ function attachTrailingToolGroupsToAssistant(
   return result;
 }
 
+/** Match each user message to the next assistant checkpoint. */
+function buildRevertTurnCountByUserMessageId(input: {
+  supportsConversationRollback: boolean;
+  timelineEntries: ReadonlyArray<TimelineEntry>;
+  turnDiffSummaryByAssistantMessageId: ReadonlyMap<MessageId, TurnDiffSummary>;
+  inferredCheckpointTurnCountByTurnId: Readonly<Record<string, number | undefined>>;
+}): Map<MessageId, number> {
+  const byUserMessageId = new Map<MessageId, number>();
+  const entryCount = input.supportsConversationRollback ? input.timelineEntries.length : 0;
+  for (let index = 0; index < entryCount; index += 1) {
+    const entry = input.timelineEntries[index];
+    if (!entry || entry.kind !== "message" || entry.message.role !== "user") {
+      continue;
+    }
+
+    for (let nextIndex = index + 1; nextIndex < input.timelineEntries.length; nextIndex += 1) {
+      const nextEntry = input.timelineEntries[nextIndex];
+      if (!nextEntry || nextEntry.kind !== "message") {
+        continue;
+      }
+      if (nextEntry.message.role === "user") {
+        break;
+      }
+      const summary = input.turnDiffSummaryByAssistantMessageId.get(nextEntry.message.id);
+      if (!summary) {
+        continue;
+      }
+      const turnCount =
+        summary.checkpointTurnCount ?? input.inferredCheckpointTurnCountByTurnId[summary.turnId];
+      if (typeof turnCount !== "number") {
+        break;
+      }
+      byUserMessageId.set(entry.message.id, Math.max(0, turnCount - 1));
+      break;
+    }
+  }
+  return byUserMessageId;
+}
+
 export function deriveMessagesTimelineRows(input: {
   timelineEntries: ReadonlyArray<TimelineEntry>;
   latestTurn?: TimelineLatestTurn | null;
@@ -784,9 +824,23 @@ export function deriveMessagesTimelineRows(input: {
   expandedWorkGroupIds?: ReadonlySet<string>;
   isWorking: boolean;
   activeTurnStartedAt: string | null;
-  turnDiffSummaryByAssistantMessageId: ReadonlyMap<MessageId, TurnDiffSummary>;
-  revertTurnCountByUserMessageId: ReadonlyMap<MessageId, number>;
+  turnDiffSummaries: ReadonlyArray<TurnDiffSummary>;
+  supportsConversationRollback: boolean;
 }): MessagesTimelineRow[] {
+  const turnDiffSummaryByAssistantMessageId = new Map<MessageId, TurnDiffSummary>();
+  for (const summary of input.turnDiffSummaries) {
+    if (summary.assistantMessageId) {
+      turnDiffSummaryByAssistantMessageId.set(summary.assistantMessageId, summary);
+    }
+  }
+  const revertTurnCountByUserMessageId = buildRevertTurnCountByUserMessageId({
+    supportsConversationRollback: input.supportsConversationRollback,
+    timelineEntries: input.timelineEntries,
+    turnDiffSummaryByAssistantMessageId,
+    inferredCheckpointTurnCountByTurnId: input.supportsConversationRollback
+      ? inferCheckpointTurnCountByTurnId(input.turnDiffSummaries)
+      : {},
+  });
   const nextRows: MessagesTimelineRow[] = [];
   const durationStartByMessageId = computeMessageDurationStart(
     input.timelineEntries.flatMap((entry) => (entry.kind === "message" ? [entry.message] : [])),
@@ -1134,11 +1188,11 @@ export function deriveMessagesTimelineRows(input: {
       assistantCopyStreaming: timelineEntry.message.streaming || assistantResponseStillInProgress,
       assistantTurnDiffSummary:
         timelineEntry.message.role === "assistant"
-          ? input.turnDiffSummaryByAssistantMessageId.get(timelineEntry.message.id)
+          ? turnDiffSummaryByAssistantMessageId.get(timelineEntry.message.id)
           : undefined,
       revertTurnCount:
         timelineEntry.message.role === "user"
-          ? input.revertTurnCountByUserMessageId.get(timelineEntry.message.id)
+          ? revertTurnCountByUserMessageId.get(timelineEntry.message.id)
           : undefined,
     });
   }
@@ -1168,9 +1222,30 @@ function replaceStreamingMessageRows(
   input: MessagesTimelineRowsInput,
   previous: MessagesTimelineRowsProjection,
 ): MessagesTimelineRow[] | null {
-  const { timelineEntries: previousEntries, ...previousContext } = previous.input;
-  const { timelineEntries, ...context } = input;
-  if (timelineEntries.length !== previousEntries.length || !shallow(previousContext, context)) {
+  const {
+    timelineEntries: previousEntries,
+    turnDiffSummaries: previousSummaries,
+    latestTurn: previousLatestTurn,
+    expandedTurnIds: previousExpandedTurns,
+    expandedWorkGroupIds: previousExpandedGroups,
+    ...previousContext
+  } = previous.input;
+  const {
+    timelineEntries,
+    turnDiffSummaries,
+    latestTurn,
+    expandedTurnIds,
+    expandedWorkGroupIds,
+    ...context
+  } = input;
+  if (
+    timelineEntries.length !== previousEntries.length ||
+    !shallow(previousContext, context) ||
+    !shallow(previousSummaries, turnDiffSummaries) ||
+    !shallow(previousLatestTurn, latestTurn) ||
+    !shallow(previousExpandedTurns, expandedTurnIds) ||
+    !shallow(previousExpandedGroups, expandedWorkGroupIds)
+  ) {
     return null;
   }
   const replacements = new Map<ChatMessage, ChatMessage>();

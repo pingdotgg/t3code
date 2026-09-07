@@ -1847,6 +1847,7 @@ const makeWsRpcLayer = (
           observeRpcEffect(
             WS_METHODS.providerConsumeResetCredit,
             Effect.gen(function* () {
+              if ("sourceId" in input) return yield* usageLimitSources.consumeResetCredit(input);
               const instance = yield* providerInstances.getInstance(input.instanceId);
               // A disabled instance must not spend anything on its account.
               if (instance === undefined || !instance.enabled) {

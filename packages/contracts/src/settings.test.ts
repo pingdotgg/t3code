@@ -329,18 +329,17 @@ describe("ClientSettings context window meter", () => {
 });
 
 describe("ClientSettings composer collapse", () => {
-  it("collapses on blur and scroll by default and accepts opting out of each", () => {
-    const defaults = decodeClientSettings({});
-    expect(defaults.composerCollapseOnBlur).toBe(true);
-    expect(defaults.composerCollapseOnScroll).toBe(true);
-
-    const blurOff = decodeClientSettings({ composerCollapseOnBlur: false });
-    expect(blurOff.composerCollapseOnBlur).toBe(false);
-    expect(blurOff.composerCollapseOnScroll).toBe(true);
-
+  it("collapses on scroll by default and accepts opting out", () => {
+    expect(decodeClientSettings({}).composerCollapseOnScroll).toBe(true);
     expect(
       decodeClientSettingsPatch({ composerCollapseOnScroll: false }).composerCollapseOnScroll,
     ).toBe(false);
+  });
+
+  it("drops the retired blur trigger key", () => {
+    const decoded = decodeClientSettings({ composerCollapseOnBlur: false });
+    expect(decoded.composerCollapseOnScroll).toBe(true);
+    expect(decoded).not.toHaveProperty("composerCollapseOnBlur");
   });
 });
 
@@ -625,6 +624,7 @@ describe("ServerSettings environment icon", () => {
 
   it("keeps a kind this build knows", () => {
     expect(decodeServerSettings({ environmentIcon: "mac-mini" }).environmentIcon).toBe("mac-mini");
+    expect(decodeServerSettings({ environmentIcon: "linux" }).environmentIcon).toBe("linux");
   });
 
   it("decodes a kind from a newer server as null instead of failing the snapshot", () => {
@@ -634,5 +634,8 @@ describe("ServerSettings environment icon", () => {
   it("round-trips through encode", () => {
     const settings = decodeServerSettings({ environmentIcon: "laptop" });
     expect(encodeServerSettings(settings).environmentIcon).toBe("laptop");
+
+    const linuxSettings = decodeServerSettings({ environmentIcon: "linux" });
+    expect(encodeServerSettings(linuxSettings).environmentIcon).toBe("linux");
   });
 });

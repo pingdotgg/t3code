@@ -235,7 +235,7 @@ function PoolSegment({
   const [open, setOpen] = useState(false);
   const remaining = remainingPercent(window);
   const resetsIn = formatResetsIn(window, now);
-  const credits = account.redeem ? (account.limits.resetCredits?.availableCount ?? 0) : 0;
+  const credits = account.limits.resetCredits?.availableCount ?? 0;
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger
@@ -340,7 +340,7 @@ function LegendRow({
 }) {
   const remaining = remainingPercent(window);
   const resetsIn = formatResetsIn(window, now);
-  const credits = account.redeem ? (account.limits.resetCredits?.availableCount ?? 0) : 0;
+  const credits = account.limits.resetCredits?.availableCount ?? 0;
   return (
     <PopoverTrigger
       style={{ gridColumn: "1 / -1", gridRow: index + 1 }}
@@ -395,7 +395,7 @@ function RedeemableSegmentPopup({
   readonly redeemAt: NonNullable<LimitAccount["redeem"]>;
   readonly closePopover: () => void;
 }) {
-  const redeem = useResetCredit(redeemAt.environmentId, redeemAt.instanceId);
+  const redeem = useResetCredit(redeemAt.environmentId, redeemAt.input);
   return (
     <>
       <PopoverPopup side="top" sideOffset={6}>

@@ -1,6 +1,7 @@
 import {
   EventId,
   MessageId,
+  ThreadLinkedPullRequest,
   UserInputRequestedPayload,
   isImportedAgentSessionMessageId,
   type OrchestrationCommand,
@@ -38,6 +39,7 @@ import { threadHasQueuedTurnStart } from "./ThreadSettlementPolicy.ts";
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 const decodeUserInputRequestedPayload = Schema.decodeUnknownOption(UserInputRequestedPayload);
+const threadPullRequestLinksEqual = Schema.toEquivalence(Schema.NullOr(ThreadLinkedPullRequest));
 
 /**
  * Blocked-on-you work derived from the thread's retained activities: an
@@ -66,10 +68,8 @@ function isStaleRequestFailureDetail(payload: Record<string, unknown> | null): b
 // Scans the read model's activities, which the projector caps at the most
 // recent 500 plus pending async questions. Async questions remain actionable
 // while the agent works, so they must not expire with the activity window.
-function hasOpenBlockingRequest(thread: {
-  readonly activities: ReadonlyArray<{ readonly kind: string; readonly payload: unknown }>;
-}): boolean {
-  const openRequestIds = new Set<string>();
+function openRequests(thread: Pick<OrchestrationThread, "activities">) {
+  const requests = new Map<string, OrchestrationThreadActivity>();
   for (const activity of thread.activities) {
     const payload =
       typeof activity.payload === "object" && activity.payload !== null
@@ -78,18 +78,18 @@ function hasOpenBlockingRequest(thread: {
     const requestId = typeof payload?.requestId === "string" ? payload.requestId : null;
     if (requestId === null) continue;
     if (activity.kind === "approval.requested" || activity.kind === "user-input.requested") {
-      openRequestIds.add(requestId);
+      requests.set(requestId, activity);
     } else if (activity.kind === "approval.resolved" || activity.kind === "user-input.resolved") {
-      openRequestIds.delete(requestId);
+      requests.delete(requestId);
     } else if (
       (activity.kind === "provider.approval.respond.failed" ||
         activity.kind === "provider.user-input.respond.failed") &&
       isStaleRequestFailureDetail(payload)
     ) {
-      openRequestIds.delete(requestId);
+      requests.delete(requestId);
     }
   }
-  return openRequestIds.size > 0;
+  return requests;
 }
 
 /** Apply the shared shell-level rule to the detailed command read model. */
@@ -454,10 +454,18 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       if (thread.session?.status === "starting" || thread.session?.status === "running") {
         return yield* new OrchestrationThreadSettleBlockedError({ threadId: command.threadId });
       }
-      // Pending approval / user-input requests are blocked-on-you work: a
-      // raced or stale client must not park them behind a settled override
-      // that would surface only after the request resolves.
-      if (hasOpenBlockingRequest(thread)) {
+      const pendingRequests = openRequests(thread);
+      // Manual settlement dismisses async questions without answering them.
+      // Native callbacks and approvals still need a response or interruption.
+      if (
+        Array.from(pendingRequests.values()).some(
+          (activity) =>
+            command.type === "thread.auto-settle" ||
+            activity.kind !== "user-input.requested" ||
+            !Predicate.isObject(activity.payload) ||
+            activity.payload.responseMode !== "message",
+        )
+      ) {
         return yield* new OrchestrationThreadSettleBlockedError({ threadId: command.threadId });
       }
       const occurredAt = yield* nowIso;
@@ -493,6 +501,29 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       // Settling is "I'm done with this": clear states that would keep the
       // row pinned or snoozed instead of showing the new settled state.
       const companionEvents: Array<Omit<OrchestrationEvent, "sequence">> = [];
+      for (const [requestId, request] of pendingRequests) {
+        companionEvents.push({
+          ...(yield* withEventBase({
+            aggregateKind: "thread",
+            aggregateId: command.threadId,
+            occurredAt,
+            commandId: command.commandId,
+          })),
+          type: "thread.activity-appended",
+          payload: {
+            threadId: command.threadId,
+            activity: {
+              id: EventId.make(`settle:${command.commandId}:${requestId}`),
+              kind: "user-input.resolved",
+              summary: "User input dismissed",
+              tone: "info",
+              turnId: request.turnId,
+              createdAt: occurredAt,
+              payload: { requestId, responseMode: "message" },
+            },
+          },
+        });
+      }
       if (thread.pinnedAt != null) {
         companionEvents.push({
           ...(yield* withEventBase({
@@ -579,7 +610,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       // user-input request is the agent waiting on the user, and hiding it
       // defeats the request. (A running session IS snoozable — snooze only
       // affects visibility, never the agent.)
-      if (hasOpenBlockingRequest(thread)) {
+      if (openRequests(thread).size > 0) {
         return yield* Effect.fail(
           new OrchestrationCommandInvariantError({
             commandType: command.type,
@@ -786,6 +817,42 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       };
     }
 
+    case "thread.active.reorder": {
+      const thread = yield* requireThreadNotArchived({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      const occurredAt = yield* nowIso;
+      // Snooze retains this slot. Changing it cannot wake the thread, and
+      // accepting it handles races with snooze and retained wake timestamps.
+      if (
+        thread.deletedAt !== null ||
+        thread.pinnedAt != null ||
+        thread.settledOverride === "settled"
+      ) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `thread ${command.threadId} is not active and cannot be reordered`,
+        });
+      }
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.meta-updated",
+        payload: {
+          threadId: command.threadId,
+          activeOrderKey: command.orderKey,
+          // Arranging the list is not thread activity or a lifecycle transition.
+          updatedAt: thread.updatedAt,
+        },
+      };
+    }
+
     case "thread.meta.update": {
       const thread = yield* requireThread({
         readModel,
@@ -832,6 +899,63 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
             ? { linkedPullRequest: command.linkedPullRequest }
             : {}),
           updatedAt: occurredAt,
+        },
+      };
+    }
+
+    case "thread.pull-request.sync": {
+      const thread = yield* requireThreadNotArchived({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      if (thread.deletedAt !== null) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `thread ${command.threadId} was deleted before pull request discovery`,
+        });
+      }
+      if (
+        thread.projectId !== command.projectId ||
+        thread.branch !== command.expected.branch ||
+        thread.worktreePath !== command.expected.worktreePath ||
+        !threadPullRequestLinksEqual(
+          thread.linkedPullRequest ?? null,
+          command.expected.linkedPullRequest,
+        ) ||
+        !threadPullRequestLinksEqual(
+          thread.branchPullRequest ?? null,
+          command.expected.branchPullRequest,
+        )
+      ) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `thread ${command.threadId} changed before pull request discovery`,
+        });
+      }
+      const project = yield* requireProject({ readModel, command, projectId: command.projectId });
+      if (project.deletedAt !== null || project.workspaceRoot !== command.expected.workspaceRoot) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `project ${command.projectId} changed before pull request discovery`,
+        });
+      }
+      const occurredAt = yield* nowIso;
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.meta-updated",
+        payload: {
+          threadId: command.threadId,
+          branchPullRequest: command.branchPullRequest,
+          ...(command.linkedPullRequest !== undefined
+            ? { linkedPullRequest: command.linkedPullRequest }
+            : {}),
+          updatedAt: thread.updatedAt,
         },
       };
     }
@@ -1165,6 +1289,51 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       };
     }
 
+    case "thread.user-input.dismiss": {
+      yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      const request = userInputActivity;
+      if (request === undefined || request.kind !== "user-input.requested") {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "This question has already been answered.",
+        });
+      }
+      // Only async questions can be dropped silently. A native callback
+      // question leaves the provider blocked until it gets a reply, so it
+      // still needs an answer or an interrupted turn.
+      if (!Predicate.isObject(request.payload) || request.payload.responseMode !== "message") {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "This question needs an answer. Answer it or stop the turn.",
+        });
+      }
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.activity-appended",
+        payload: {
+          threadId: command.threadId,
+          activity: {
+            id: EventId.make(`async-dismiss:${command.requestId}`),
+            kind: "user-input.resolved",
+            summary: "User input dismissed",
+            tone: "info",
+            turnId: request.turnId,
+            createdAt: command.createdAt,
+            payload: { requestId: command.requestId, responseMode: "message" },
+          },
+        },
+      };
+    }
+
     case "thread.checkpoint.revert": {
       yield* requireThread({
         readModel,
@@ -1358,7 +1527,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         thread.messages.length > 0 ||
         thread.latestTurn !== null ||
         thread.session !== null ||
-        hasOpenBlockingRequest(thread)
+        openRequests(thread).size > 0
       ) {
         return yield* new OrchestrationCommandInvariantError({
           commandType: command.type,
