@@ -9,6 +9,7 @@ import { ensureClientSettingsHydrated, getClientSettings } from "~/hooks/useSett
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 
 import { acquireBrowserSurfaceActivity } from "./browserSurfaceStore";
+import { createBrowserMediaRecorder } from "./browserMediaRecorder";
 
 export class BrowserRecordingUnavailableError extends Schema.TaggedErrorClass<BrowserRecordingUnavailableError>()(
   "BrowserRecordingUnavailableError",
@@ -236,32 +237,6 @@ export function findActiveBrowserRecordingRuntimeTabId(
     )?.runtimeTabId ?? null
   );
 }
-
-const preferredMimeTypes = [
-  "video/mp4;codecs=avc1",
-  "video/mp4;codecs=avc1.640028",
-  "video/mp4;codecs=avc1.42e01e",
-  "video/webm;codecs=vp9",
-  "video/webm;codecs=vp8",
-  "video/webm",
-] as const;
-
-const createMediaRecorder = (stream: MediaStream): MediaRecorder => {
-  const mimeType = preferredMimeTypes.find((candidate) => MediaRecorder.isTypeSupported(candidate));
-  const settings = stream.getVideoTracks()[0]?.getSettings();
-  // Browser defaults under-budget native-resolution text and motion. Scale with captured pixels
-  // and frames, while bounding storage and encoder load for very large displays.
-  const videoBitsPerSecond = Math.round(
-    Math.min(
-      50_000_000,
-      Math.max(
-        2_500_000,
-        (settings?.width ?? 1920) * (settings?.height ?? 1080) * (settings?.frameRate ?? 30) * 0.05,
-      ),
-    ),
-  );
-  return new MediaRecorder(stream, { ...(mimeType ? { mimeType } : {}), videoBitsPerSecond });
-};
 
 const captureTabMediaStream = (frameRate: number): Promise<MediaStream> =>
   // The desktop main process routes this request to the tab that `startScreencast` armed, so the
@@ -612,7 +587,7 @@ export async function startBrowserRecording(
 
     let recorder: MediaRecorder;
     try {
-      recorder = createMediaRecorder(stream);
+      recorder = createBrowserMediaRecorder(stream);
       recording.recorder = recorder;
       recorder.addEventListener("dataavailable", (event) => {
         if (event.data.size > 0) chunks.push(event.data);
