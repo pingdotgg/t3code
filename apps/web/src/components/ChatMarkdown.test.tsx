@@ -199,7 +199,7 @@ describe("ChatMarkdown streaming", () => {
       });
       const details = mounted.root.findByProps({ "data-markdown-details": "" });
       expect(details.props["data-markdown-details-open"]).toBe("true");
-      expect(writeText).toHaveBeenCalledWith("First code block\n");
+      expect(writeText).toHaveBeenCalledWith("First code block");
       expect(highlight).toHaveBeenCalledTimes(1);
 
       for (let index = 0; index < 10; index += 1) {
@@ -226,7 +226,7 @@ describe("ChatMarkdown streaming", () => {
       await act(async () => {
         copyUpdated.onClick?.({} as Parameters<NonNullable<typeof copyUpdated.onClick>>[0]);
       });
-      expect(writeText).toHaveBeenLastCalledWith("Updated code block\n");
+      expect(writeText).toHaveBeenLastCalledWith("Updated code block");
       expect(highlight).toHaveBeenCalledTimes(2);
     } finally {
       await act(async () => renderer?.unmount());
