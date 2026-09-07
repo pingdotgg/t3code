@@ -56,7 +56,6 @@ interface HeldResponse {
   data: WorkerResponse;
   deliver: () => void;
 }
-const animationFrames = new Set<ReturnType<typeof setImmediate>>();
 let responses: HeldResponse[];
 let responseWaiters: ((response: HeldResponse) => void)[];
 let terminationPromises: Promise<number>[];

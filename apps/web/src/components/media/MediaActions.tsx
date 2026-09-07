@@ -57,7 +57,8 @@ function canReadHostMedia(environmentId: EnvironmentId | null): boolean {
 }
 
 /** Explicit byte operations get fresh capabilities without replacing a player's active source. */
-function useMediaActions(source: MediaActionSource) {
+/** Exported for tests that drive the byte operations without the menu. */
+export function useMediaActions(source: MediaActionSource) {
   const hostEnvironmentId =
     source.asset &&
     (source.asset.resource._tag === "workspace-file" || source.asset.resource._tag === "media-file")

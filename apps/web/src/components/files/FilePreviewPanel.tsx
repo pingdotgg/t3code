@@ -1115,7 +1115,7 @@ export default function FilePreviewPanel({
     if (fileAccess.isPending) {
       return (
         <div className="flex min-h-0 flex-1 items-center justify-center gap-2 text-sm text-muted-foreground">
-          <LoaderCircle className="size-4 animate-spin" aria-hidden />
+          <Spinner className="size-4" />
           Checking file access...
         </div>
       );
