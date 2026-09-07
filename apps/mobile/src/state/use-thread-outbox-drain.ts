@@ -962,7 +962,7 @@ export function useThreadOutboxDrain(): void {
     [makeDeliveryHelpers, restoreQueuedMessage, startTurn],
   );
 
-  // A creation outcome only bridges the gap until the server's shell arrives.
+  // A creation outcome bridges setup until the server's shell has a turn.
   // Drop it once that happens so the map cannot grow for a whole session; a
   // failed outcome stays until its thread screen consumes it.
   // Subscribed, not read once: the shell often lands before the outcome is
@@ -972,7 +972,14 @@ export function useThreadOutboxDrain(): void {
     for (const [threadKey, outcome] of Object.entries(creationOutcomes)) {
       if (
         outcome.kind === "delivered" &&
-        threads.some((thread) => scopedThreadKey(thread.environmentId, thread.id) === threadKey)
+        threads.some(
+          (thread) =>
+            scopedThreadKey(thread.environmentId, thread.id) === threadKey &&
+            (thread.latestTurn !== null ||
+              thread.session?.status === "error" ||
+              thread.session?.status === "stopped" ||
+              thread.session?.status === "interrupted"),
+        )
       ) {
         clearPendingThreadCreationOutcome(threadKey);
       }

@@ -31,6 +31,38 @@ describe("formatDuration", () => {
 });
 
 describe("deriveActiveWorkStartedAt", () => {
+  it.each([null, "2026-09-06T23:34:00.000Z"])(
+    "does not time a superseded turn when the active turn differs",
+    (sendStartedAt) => {
+      expect(
+        deriveActiveWorkStartedAt(
+          {
+            turnId: "old",
+            requestedAt: "2026-09-06T23:33:00.000Z",
+            startedAt: null,
+            completedAt: null,
+          },
+          { orchestrationStatus: "running", activeTurnId: "new" },
+          sendStartedAt,
+        ),
+      ).toBe(sendStartedAt);
+    },
+  );
+
+  it("stops timing a turn that failed before its provider started", () => {
+    expect(
+      deriveActiveWorkStartedAt(
+        {
+          turnId: "turn-1",
+          requestedAt: "2026-09-06T23:33:00.000Z",
+          startedAt: null,
+          completedAt: "2026-09-06T23:33:05.000Z",
+        },
+        { orchestrationStatus: "error", activeTurnId: null },
+        null,
+      ),
+    ).toBeNull();
+  });
   // The gap this closes. The projector stamps startedAt in the same update
   // that moves the session to "running", so during provider spin-up the turn
   // is requested with no startedAt and the session is "starting". Returning

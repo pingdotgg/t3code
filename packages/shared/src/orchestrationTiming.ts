@@ -34,7 +34,7 @@ function isLatestTurnSettled(
   latestTurn: LatestTurnTiming | null,
   session: SessionActivityState | null,
 ): boolean {
-  if (!latestTurn?.startedAt) return false;
+  if (!latestTurn) return false;
   if (!latestTurn.completedAt) return false;
   if (!session) return true;
   if (session.orchestrationStatus === "running") return false;
@@ -56,6 +56,9 @@ export function deriveActiveWorkStartedAt(
   session: SessionActivityState | null,
   sendStartedAt: string | null,
 ): string | null {
+  if (session?.activeTurnId && session.activeTurnId !== latestTurn?.turnId) {
+    return sendStartedAt;
+  }
   if (!isLatestTurnSettled(latestTurn, session)) {
     return latestTurn?.startedAt ?? latestTurn?.requestedAt ?? sendStartedAt;
   }

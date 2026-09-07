@@ -22,11 +22,12 @@ import {
   projectScriptRuntimeEnv,
   resolveProjectScripts,
 } from "@t3tools/shared/projectScripts";
-import { Platform, ScrollView, View } from "react-native";
+import { Alert, Platform, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useWorkspaceState } from "../../state/workspace";
 import { restoredNewTaskDraftKey } from "../../state/new-task-draft-key";
 import { clearPendingThreadCreationOutcome } from "../../state/pending-thread-creation";
+import { recoverFailedThreadDraft } from "../../state/recover-failed-thread-draft";
 import { useEnvironmentQuery } from "../../state/query";
 import { dismissGitActionResult, useGitActionProgress } from "../../state/use-vcs-action-state";
 import { vcsEnvironment } from "../../state/vcs";
@@ -748,7 +749,7 @@ function ThreadRouteContent(
     selectedThreadProject?.workspaceRoot,
   ]);
 
-  const handleEditFailedCreation = useCallback(() => {
+  const handleEditFailedCreation = useCallback(async () => {
     const creation = selectedThreadCreation?.message;
     if (!creation?.creation || routeThreadIdentity === null) {
       return;
@@ -756,6 +757,15 @@ function ThreadRouteContent(
     // The drain restored the prompt and attachments into the recovery draft
     // the rejected creation owns. Open that draft by id: without it the sheet
     // mints a fresh empty one and the restored content is unreachable.
+    try {
+      await recoverFailedThreadDraft(creation);
+    } catch (error) {
+      Alert.alert(
+        "Could not restore draft",
+        error instanceof Error ? error.message : String(error),
+      );
+      return;
+    }
     clearPendingThreadCreationOutcome(routeThreadIdentity);
     navigation.dispatch(
       StackActions.replace("NewTaskSheet", {

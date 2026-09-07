@@ -12,6 +12,8 @@ import {
   isPendingThreadCreationVisible,
   pendingThreadCreationMessage,
   pendingThreadCreationShell,
+  resolvePendingThreadCreation,
+  type PendingThreadCreation,
 } from "./pending-thread-creation";
 import type { QueuedThreadMessage } from "./thread-outbox-model";
 
@@ -41,6 +43,118 @@ const creation: QueuedThreadMessage = {
   },
   createdAt: "2026-08-24T12:00:00.000Z",
 };
+
+describe("resolvePendingThreadCreation", () => {
+  const threadKey = `${creation.environmentId}:${creation.threadId}`;
+  const pending: PendingThreadCreation = { message: creation, outcome: null };
+  const prompt = { id: creation.messageId };
+
+  it("keeps setup visible through the prompt echo and shell cleanup until detail has a turn", () => {
+    let previous = resolvePendingThreadCreation({
+      threadKey,
+      pending,
+      previous: null,
+      detail: null,
+    });
+    expect(previous).toBe(pending);
+
+    previous = resolvePendingThreadCreation({
+      threadKey,
+      pending,
+      previous,
+      detail: { messages: [], latestTurn: null, session: null },
+    });
+    expect(previous).toBe(pending);
+
+    // The user message arrives before the provider publishes a timed turn.
+    previous = resolvePendingThreadCreation({
+      threadKey,
+      pending,
+      previous,
+      detail: { messages: [prompt], latestTurn: null, session: { status: "starting" } },
+    });
+    expect(previous).toBe(pending);
+
+    // The shell stream may observe the turn and collect the global outcome
+    // before this screen's detail stream catches up.
+    previous = resolvePendingThreadCreation({
+      threadKey,
+      pending: null,
+      previous,
+      detail: { messages: [prompt], latestTurn: null, session: { status: "starting" } },
+    });
+    expect(previous).toBe(pending);
+
+    expect(
+      resolvePendingThreadCreation({
+        threadKey,
+        pending: null,
+        previous,
+        detail: {
+          messages: [prompt],
+          latestTurn: { turnId: "turn-1" },
+          session: { status: "running" },
+        },
+      }),
+    ).toBeNull();
+  });
+
+  it("keeps the prompt until both the turn and its message have arrived", () => {
+    expect(
+      resolvePendingThreadCreation({
+        threadKey,
+        pending,
+        previous: null,
+        detail: { messages: [], latestTurn: { turnId: "turn-1" }, session: { status: "running" } },
+      }),
+    ).toBe(pending);
+  });
+
+  it.each(["error", "stopped", "interrupted"])("ends setup when startup is %s", (status) => {
+    expect(
+      resolvePendingThreadCreation({
+        threadKey,
+        pending: null,
+        previous: pending,
+        detail: { messages: [prompt], latestTurn: null, session: { status } },
+      }),
+    ).toBeNull();
+  });
+
+  it("preserves rejected task recovery", () => {
+    const failed: PendingThreadCreation = {
+      message: creation,
+      outcome: { kind: "failed", message: creation, reason: "Checkout failed" },
+    };
+    expect(
+      resolvePendingThreadCreation({
+        threadKey,
+        pending: failed,
+        previous: pending,
+        detail: { messages: [], latestTurn: null, session: { status: "error" } },
+      }),
+    ).toBe(failed);
+  });
+
+  it("does not carry setup into another thread or invent it for existing threads", () => {
+    expect(
+      resolvePendingThreadCreation({
+        threadKey: "another-thread",
+        pending: null,
+        previous: pending,
+        detail: null,
+      }),
+    ).toBeNull();
+    expect(
+      resolvePendingThreadCreation({
+        threadKey,
+        pending: null,
+        previous: null,
+        detail: null,
+      }),
+    ).toBeNull();
+  });
+});
 
 describe("pendingThreadCreationShell", () => {
   it("shapes a queued creation as the thread shell the screen renders before creation", () => {

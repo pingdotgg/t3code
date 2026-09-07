@@ -1,6 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import { useRoute, type RouteProp } from "@react-navigation/native";
-import { useMemo, useRef } from "react";
+import { useMemo, useRef, useState } from "react";
 import {
   EnvironmentId,
   type OrchestrationThread,
@@ -15,12 +15,11 @@ import { scopedThreadKey } from "../lib/scopedEntities";
 import { useProject, useThreadShell } from "../state/entities";
 import { useEnvironmentThread } from "../state/threads";
 import {
-  isPendingThreadCreationVisible,
+  resolvePendingThreadCreation,
   pendingThreadCreationOutcomesAtom,
   pendingThreadCreationShell,
-  type PendingThreadCreationOutcome,
+  type PendingThreadCreation,
 } from "./pending-thread-creation";
-import type { QueuedThreadMessage } from "./thread-outbox-model";
 import {
   useRemoteEnvironmentRuntime,
   useSavedRemoteConnection,
@@ -114,10 +113,7 @@ function useResolvedThreadSelection(params: ThreadSelectionRouteParams | undefin
   const creationOutcome = useAtomValue(pendingThreadCreationOutcomesAtom);
   // A creation the outbox still holds or just delivered: the thread screen
   // opened before the server made the thread, so present a stand-in shell.
-  const pendingCreation = useMemo<{
-    readonly message: QueuedThreadMessage;
-    readonly outcome: PendingThreadCreationOutcome | null;
-  } | null>(() => {
+  const pendingCreation = useMemo<PendingThreadCreation | null>(() => {
     if (selectedThreadKey === null) {
       return null;
     }
@@ -151,16 +147,16 @@ function useResolvedThreadSelection(params: ThreadSelectionRouteParams | undefin
           : null),
     [pendingCreation, selectedThreadDetail, selectedThreadRef, selectedThreadShell],
   );
-  // The stand-in stands down when the delivered prompt lands, not when the
-  // shell does — see isPendingThreadCreationVisible.
-  const selectedThreadCreation =
-    pendingCreation !== null &&
-    isPendingThreadCreationVisible({
-      creationMessageId: pendingCreation.message.messageId,
-      loadedMessageIds: selectedThreadDetail?.messages.map((message) => message.id) ?? null,
-    })
-      ? pendingCreation
-      : null;
+  const [previousCreation, setPreviousCreation] = useState<PendingThreadCreation | null>(null);
+  const selectedThreadCreation = resolvePendingThreadCreation({
+    threadKey: selectedThreadKey,
+    pending: pendingCreation,
+    previous: previousCreation,
+    detail: selectedThreadDetail,
+  });
+  if (previousCreation !== selectedThreadCreation) {
+    setPreviousCreation(selectedThreadCreation);
+  }
   const selectedProjectRef = useMemo<ScopedProjectRef | null>(
     () =>
       selectedThread === null

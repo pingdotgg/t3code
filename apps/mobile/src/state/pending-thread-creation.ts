@@ -13,12 +13,59 @@ import type { QueuedThreadMessage } from "./thread-outbox-model";
  * server has created the thread. Until the shell arrives the screen renders a
  * stand-in built from the queued creation. The outcome recorded by the outbox
  * drain covers the two windows that stand-in cannot: the gap between delivery
- * and the shell snapshot (keep showing the stand-in) and a rejected creation
+ * and the first turn (keep showing setup) and a rejected creation
  * (the drain restored the content into the project draft; offer to reopen it).
  */
 export type PendingThreadCreationOutcome =
   | { readonly kind: "delivered"; readonly message: QueuedThreadMessage }
   | { readonly kind: "failed"; readonly message: QueuedThreadMessage; readonly reason: string };
+
+export type PendingThreadCreation = {
+  readonly message: QueuedThreadMessage;
+  readonly outcome: PendingThreadCreationOutcome | null;
+};
+
+/** Keep the screen's creation state until its detail can take over the pill. */
+export function resolvePendingThreadCreation(input: {
+  readonly threadKey: string | null;
+  readonly pending: PendingThreadCreation | null;
+  readonly previous: PendingThreadCreation | null;
+  readonly detail: {
+    readonly messages: ReadonlyArray<{ readonly id: string }>;
+    readonly latestTurn: { readonly turnId: string } | null;
+    readonly session: { readonly status: string } | null;
+  } | null;
+}): PendingThreadCreation | null {
+  const creation = input.pending ?? input.previous;
+  if (
+    creation === null ||
+    scopedThreadKey(creation.message.environmentId, creation.message.threadId) !== input.threadKey
+  ) {
+    return null;
+  }
+  if (creation.outcome?.kind === "failed") return creation;
+  const detail = input.detail;
+  if (
+    detail?.session?.status === "error" ||
+    detail?.session?.status === "stopped" ||
+    detail?.session?.status === "interrupted"
+  )
+    return null;
+  // Message delivery and turn startup are separate events. The prompt alone
+  // cannot replace the preparing pill; wait for the turn's timing too. Retain
+  // the local creation if the outbox has already collected its shell outcome.
+  if (
+    detail !== null &&
+    detail.latestTurn !== null &&
+    !isPendingThreadCreationVisible({
+      creationMessageId: creation.message.messageId,
+      loadedMessageIds: detail.messages.map((message) => message.id),
+    })
+  ) {
+    return null;
+  }
+  return creation;
+}
 
 export const pendingThreadCreationOutcomesAtom = Atom.make<
   Readonly<Record<string, PendingThreadCreationOutcome>>

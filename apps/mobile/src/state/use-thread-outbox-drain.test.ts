@@ -139,6 +139,7 @@ import {
 } from "./pending-thread-creation";
 import type { QueuedThreadMessage } from "./thread-outbox-model";
 import * as composerDrafts from "./use-composer-drafts";
+import { recoverFailedThreadDraft } from "./recover-failed-thread-draft";
 import { editingQueuedMessageIdsAtom } from "./use-thread-outbox";
 import {
   completeQueuedMessageDelivery,
@@ -590,6 +591,55 @@ describe("thread outbox delivered creation recovery", () => {
 });
 
 describe("thread outbox recovery rollback", () => {
+  it("reopens a rejected task with setup edits and every attachment, even above the send cap", async () => {
+    const message = queuedMessage({ messageId: "failed-setup", text: "Original prompt" });
+    const sourceKey = `${message.environmentId}:${message.threadId}`;
+    const targetKey = "new-task:restored-failed-setup";
+    const files = Array.from(
+      { length: 10 },
+      (_, index) =>
+        queuedMessage({
+          messageId: `attachment-${index}`,
+          text: "",
+          fileUri: `file:///file-${index}`,
+        }).attachments[0]!,
+    );
+    appAtomRegistry.set(composerDrafts.composerDraftsAtom, {
+      [targetKey]: { text: message.text, attachments: files.slice(0, 8) },
+      [sourceKey]: { text: "Please include tests", attachments: files.slice(8) },
+    });
+    await recoverFailedThreadDraft(message);
+    expect(composerDrafts.getComposerDraftSnapshot(targetKey)).toMatchObject({
+      text: "Original prompt\n\nPlease include tests",
+      attachments: files,
+    });
+    expect(composerDrafts.getComposerDraftSnapshot(sourceKey)).toMatchObject({
+      text: "",
+      attachments: [],
+    });
+    await recoverFailedThreadDraft(message);
+    expect(composerDrafts.getComposerDraftSnapshot(targetKey).text).toBe(
+      "Original prompt\n\nPlease include tests",
+    );
+  });
+
+  it("keeps setup edits recoverable when saving their recovery draft fails", async () => {
+    const message = queuedMessage({ messageId: "failed-save", text: "Original prompt" });
+    const sourceKey = `${message.environmentId}:${message.threadId}`;
+    appAtomRegistry.set(composerDrafts.composerDraftsAtom, {
+      "new-task:restored-failed-save": { text: message.text, attachments: [] },
+      [sourceKey]: { text: "Follow-up", attachments: [] },
+    });
+    harness.draftFile.setWriteError(new Error("disk full"));
+    await expect(recoverFailedThreadDraft(message)).rejects.toThrow("Composer draft persistence");
+    expect(composerDrafts.getComposerDraftSnapshot(sourceKey).text).toBe("Follow-up");
+    harness.draftFile.setWriteError(null);
+    await recoverFailedThreadDraft(message);
+    expect(composerDrafts.getComposerDraftSnapshot("new-task:restored-failed-save").text).toBe(
+      "Original prompt\n\nFollow-up",
+    );
+  });
+
   it("restores a rejected new task as its own draft for the project", async () => {
     const message: QueuedThreadMessage = {
       ...queuedMessage({ messageId: "message-creation-restore", text: "new task text" }),

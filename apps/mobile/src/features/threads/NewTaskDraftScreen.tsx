@@ -1014,12 +1014,20 @@ export function NewTaskDraftScreen(props: {
         projectTitle: selectedProject.title,
       });
     }
-    // Enqueue publishes to the queue atom synchronously and persists behind
-    // it, so leave on this frame instead of holding the sheet open — and the
-    // emptied composer on screen — for a disk write. A failed write rolls the
-    // message back out and restores the draft, exactly like the thread
-    // composer's own send.
-    const enqueued = enqueueThreadOutboxMessage(message);
+    // Persist before clearing the draft or leaving its editor. This only waits
+    // for the local outbox write; server and worktree setup run on the thread.
+    flow.setSubmitting(true);
+    try {
+      await enqueueThreadOutboxMessage(message);
+    } catch (error) {
+      Alert.alert(
+        "Could not queue task",
+        error instanceof Error ? error.message : "The task could not be saved to the outbox.",
+      );
+      return;
+    } finally {
+      flow.setSubmitting(false);
+    }
     const draftSnapshot = getComposerDraftSnapshot(draftKey);
     if (editingPendingTask) {
       flow.finishEditingPendingTask();
@@ -1042,21 +1050,7 @@ export function NewTaskDraftScreen(props: {
             threadId: String(message.threadId),
           }),
     );
-    void enqueued.then(
-      () => {
-        scheduleUnusedComposerAttachmentCleanup(draftSnapshot.attachments);
-      },
-      (error: unknown) => {
-        // The message was rolled back out of the queue, so nothing will start
-        // the thread. Restore the draft and say so: the user has already been
-        // moved to a thread screen that is never going to fill in.
-        void restoreComposerDraftSnapshot(draftKey, draftSnapshot);
-        Alert.alert(
-          "Could not queue task",
-          error instanceof Error ? error.message : "The task could not be saved to the outbox.",
-        );
-      },
-    );
+    scheduleUnusedComposerAttachmentCleanup(draftSnapshot.attachments);
   }
 
   if (!selectedProject) {

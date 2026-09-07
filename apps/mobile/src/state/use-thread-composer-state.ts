@@ -1,5 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Alert } from "react-native";
 
 import {
@@ -158,16 +158,14 @@ export function useThreadComposerState() {
   // detail is usually present but empty during a worktree checkout, so this
   // cannot be an either/or with the loaded messages.
   const pendingCreationMessage = selectedThreadCreation?.message ?? null;
-  // Read inside the send callback, which must not be rebuilt per keystroke.
-  const selectedThreadCreationRef = useRef(selectedThreadCreation);
-  selectedThreadCreationRef.current = selectedThreadCreation;
   const selectedThreadFeed = useMemo(() => {
     const loadedMessages = selectedThreadMessages ?? [];
     const feed =
       (selectedThreadMessages && selectedThreadActivities) || pendingCreationMessage !== null
         ? buildThreadFeed({
             messages:
-              pendingCreationMessage !== null
+              pendingCreationMessage !== null &&
+              !loadedMessages.some((message) => message.id === pendingCreationMessage.messageId)
                 ? [...loadedMessages, pendingThreadCreationMessage(pendingCreationMessage)]
                 : loadedMessages,
             activities: selectedThreadActivities ?? [],
@@ -294,7 +292,7 @@ export function useThreadComposerState() {
     // its id would strand the message: if the creation is rejected the thread
     // never appears and the drain drops the orphan. The composer disables its
     // send button too; this guard also covers the editor's submit key.
-    if (selectedThreadCreationRef.current !== null) {
+    if (selectedThreadCreation !== null) {
       return null;
     }
 
@@ -431,6 +429,7 @@ export function useThreadComposerState() {
   }, [
     selectedEnvironmentRuntime?.connectionState,
     selectedEnvironmentRuntime?.serverConfig,
+    selectedThreadCreation,
     selectedThreadDetail,
     selectedThreadShell,
     uploadThreadFeedback,
