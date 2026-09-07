@@ -1,15 +1,12 @@
 import {
   NonNegativeInt,
   Project,
-  ProjectIconOverride,
-  ThreadEnvMode,
+  ProjectCreatePayload,
+  ProjectUpdatePayload,
   ProjectId,
   OrchestratorMcpFailure,
-  ModelSelection,
-  ProjectScript,
   SourceControlCloneRepositoryInput,
   SourceControlCloneRepositoryResult,
-  TrimmedNonEmptyString,
 } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as Schema from "effect/Schema";
@@ -52,29 +49,13 @@ export const ProjectCreateTool = Tool.make("t3_project_create", {
   ...shared,
   description:
     "Register a project directory through the existing project service. Set createWorkspaceRootIfMissing to create a directory. Each call creates a new request; an existing registered workspace is rejected. Clone separately with t3_project_clone when needed.",
-  parameters: Schema.Struct({
-    title: TrimmedNonEmptyString,
-    workspaceRoot: TrimmedNonEmptyString,
-    createWorkspaceRootIfMissing: Schema.optionalKey(Schema.Boolean),
-    defaultModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
-    scripts: Schema.optionalKey(Schema.Array(ProjectScript)),
-  }),
+  parameters: ProjectCreatePayload,
 }).annotate(Tool.Destructive, true);
 export const ProjectUpdateTool = Tool.make("t3_project_update", {
   ...shared,
   description:
     "Update a registered project's settings. Omitted fields are preserved. Uses the same project service as the app.",
-  parameters: Schema.Struct({
-    projectId: ProjectId,
-    title: Schema.optionalKey(TrimmedNonEmptyString),
-    workspaceRoot: Schema.optionalKey(TrimmedNonEmptyString),
-    defaultModelSelection: Schema.optionalKey(Project.fields.defaultModelSelection),
-    defaultThreadEnvMode: Schema.optionalKey(Schema.NullOr(ThreadEnvMode)),
-    autoPull: Schema.optionalKey(Schema.Boolean),
-    projectIcon: Schema.optionalKey(Schema.NullOr(ProjectIconOverride)),
-    faviconPath: Schema.optionalKey(Schema.NullOr(TrimmedNonEmptyString)),
-    scripts: Schema.optionalKey(Schema.Array(ProjectScript)),
-  }),
+  parameters: Schema.Struct({ projectId: ProjectId, ...ProjectUpdatePayload.fields }),
 }).annotate(Tool.Destructive, true);
 export const ProjectDeleteTool = Tool.make("t3_project_delete", {
   ...shared,
