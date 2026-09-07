@@ -114,6 +114,33 @@ describe("sidebar pointer lifecycle", () => {
     });
   }
 
+  it("suppresses a delayed release click after cancellation, then accepts the next click", () => {
+    const drag = gesture();
+    document.dispatchEvent(pointer("pointermove", { clientY: 20 }));
+    drag.sensor.cancel();
+    vi.advanceTimersByTime(1000);
+    const releaseClick = new Event("click");
+    const releasePropagation = vi.spyOn(releaseClick, "stopPropagation");
+    document.dispatchEvent(releaseClick);
+    expect(releasePropagation).toHaveBeenCalledOnce();
+    document.dispatchEvent(pointer("pointerdown"));
+    const nextClick = new Event("click");
+    const nextPropagation = vi.spyOn(nextClick, "stopPropagation");
+    document.dispatchEvent(nextClick);
+    expect(nextPropagation).not.toHaveBeenCalled();
+  });
+
+  it("allows the next click when the cancelled release happened outside the document", () => {
+    const drag = gesture();
+    document.dispatchEvent(pointer("pointermove", { clientY: 20 }));
+    drag.sensor.cancel();
+    document.dispatchEvent(pointer("pointerdown"));
+    const click = new Event("click");
+    const propagation = vi.spyOn(click, "stopPropagation");
+    document.dispatchEvent(click);
+    expect(propagation).not.toHaveBeenCalled();
+  });
+
   it("does not move after cancellation during activation", () => {
     const drag = gesture();
     drag.onStart.mockImplementation(() => drag.sensor.cancel());

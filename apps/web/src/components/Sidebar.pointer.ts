@@ -35,9 +35,9 @@ export class SidebarPointerSensor {
     this.document = getOwnerDocument(this.pointer.target);
     this.window = getWindow(this.pointer.target);
     this.document.addEventListener("pointermove", this.move, { passive: false, capture: true });
-    this.document.addEventListener("pointerup", this.end, true);
-    this.document.addEventListener("pointercancel", this.pointerCancel, true);
-    this.document.addEventListener("keydown", this.keydown, true);
+    this.document.addEventListener("pointerup", this.end, { capture: true });
+    this.document.addEventListener("pointercancel", this.pointerCancel, { capture: true });
+    this.document.addEventListener("keydown", this.keydown, { capture: true });
     this.document.addEventListener("visibilitychange", this.visibilityChange);
     this.window.addEventListener("blur", this.cancel);
     this.window.addEventListener("pagehide", this.cancel);
@@ -50,7 +50,14 @@ export class SidebarPointerSensor {
 
   private coordinates = () => ({ x: this.pointer.clientX, y: this.pointer.clientY });
   private preventDefault = (event: Event) => event.preventDefault();
-  private suppressClick = (event: Event) => event.stopPropagation();
+  private clearClickSuppression = () => {
+    this.document.removeEventListener("click", this.suppressClick, { capture: true });
+    this.document.removeEventListener("pointerdown", this.clearClickSuppression, { capture: true });
+  };
+  private suppressClick = (event: Event) => {
+    event.stopPropagation();
+    this.clearClickSuppression();
+  };
   private clearSelection = () => this.document.getSelection()?.removeAllRanges();
 
   private move = (event: PointerEvent) => {
@@ -74,7 +81,7 @@ export class SidebarPointerSensor {
         return;
       }
       this.phase = "dragging";
-      this.document.addEventListener("click", this.suppressClick, true);
+      this.document.addEventListener("click", this.suppressClick, { capture: true });
       this.document.addEventListener("selectionchange", this.clearSelection);
       this.clearSelection();
       this.props.onStart(this.coordinates());
@@ -103,10 +110,10 @@ export class SidebarPointerSensor {
     if (this.phase === "finished") return;
     const aborted = this.phase === "pending";
     this.phase = "finished";
-    this.document.removeEventListener("pointermove", this.move, true);
-    this.document.removeEventListener("pointerup", this.end, true);
-    this.document.removeEventListener("pointercancel", this.pointerCancel, true);
-    this.document.removeEventListener("keydown", this.keydown, true);
+    this.document.removeEventListener("pointermove", this.move, { capture: true });
+    this.document.removeEventListener("pointerup", this.end, { capture: true });
+    this.document.removeEventListener("pointercancel", this.pointerCancel, { capture: true });
+    this.document.removeEventListener("keydown", this.keydown, { capture: true });
     this.document.removeEventListener("visibilitychange", this.visibilityChange);
     this.window.removeEventListener("blur", this.cancel);
     this.window.removeEventListener("pagehide", this.cancel);
@@ -114,10 +121,12 @@ export class SidebarPointerSensor {
     this.document.removeEventListener("dragstart", this.preventDefault);
     this.document.removeEventListener("contextmenu", this.preventDefault);
     this.document.removeEventListener("selectionchange", this.clearSelection);
-    // Keep the release click from opening the thread after a drag.
-    this.window.setTimeout(() => {
-      this.document.removeEventListener("click", this.suppressClick, true);
-    }, 0);
+    // Cancellation can precede release by an arbitrary amount of time. Consume
+    // that release click, or let a fresh pointerdown end suppression if release
+    // happened outside the document. Ordinary clicks never install this guard.
+    if (!aborted) {
+      this.document.addEventListener("pointerdown", this.clearClickSuppression, { capture: true });
+    }
     try {
       // Release the sidebar preview before dnd-kit clears its transforms.
       // Its public end/cancel event can be omitted before its first layout.
