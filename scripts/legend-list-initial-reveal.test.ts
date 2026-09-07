@@ -101,6 +101,16 @@ for (const bundle of ["react-native.js", "react-native.mjs"]) {
       expect(list.ready()).toBe(true);
     });
 
+    it("preserves an initial index before the last item", () => {
+      const list = createList(bundle);
+      list.state.props.data = ["requested message", "later message"];
+      list.state.scroll = 200;
+      list.complete();
+      list.advance(8);
+      expect(list.ready()).toBe(true);
+      expect(list.scrollTo).not.toHaveBeenCalled();
+    });
+
     it("does not count an in-flight scroll as stability", () => {
       const list = createList(bundle);
       list.state.lastNativeScroll = 400;
