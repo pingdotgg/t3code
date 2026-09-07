@@ -12,9 +12,9 @@
 class ShellBridge;
 class ThemeStore;
 
-// Owns the QML engine "generation": resolves which shell.qml to load (user
+// Owns one QML engine: resolves which shell.qml to load (user
 // config dir first, built-in default otherwise), watches the QML sources it
-// loaded from disk, and rebuilds the whole engine when they change. A broken
+// loaded from disk, and replaces its root objects when they change. A broken
 // user shell falls back to the default with `lastError` set so a bad rice can
 // never lock the app.
 class ShellRuntime : public QObject {

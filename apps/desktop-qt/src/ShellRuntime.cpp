@@ -30,11 +30,18 @@ bool isWatchedSource(const QFileInfo& info) {
 
 ShellRuntime::ShellRuntime(Options options, ShellBridge* bridge, ThemeStore* theme, QObject* parent)
     : QObject(parent), m_options(std::move(options)), m_bridge(bridge), m_theme(theme) {
-  // Registered once: singleton instances are shared by every engine generation,
-  // which is what keeps published web state alive across a hot reload.
+  // These instances, including WebProfile registered by main, belong to one
+  // engine for its entire lifetime. Reload replaces only the root objects.
   qmlRegisterSingletonInstance("T3.Shell", 1, 0, "Shell", m_bridge);
   qmlRegisterSingletonInstance("T3.Shell", 1, 0, "Theme", m_theme);
   qmlRegisterSingletonInstance("T3.Shell", 1, 0, "Runtime", this);
+
+  m_engine = new QQmlApplicationEngine(this);
+  connect(m_engine, &QQmlEngine::warnings, this, [](const QList<QQmlError>& warnings) {
+    for (const auto& warning : warnings) {
+      qWarning().noquote() << "[qml]" << warning.toString();
+    }
+  });
 
   m_debounce.setSingleShot(true);
   m_debounce.setInterval(120);
@@ -81,9 +88,11 @@ void ShellRuntime::start() {
 }
 
 void ShellRuntime::reload() {
-  QQmlApplicationEngine* previous = m_engine;
+  const auto previous = m_engine->rootObjects();
   const bool previousUsingUserShell = m_usingUserShell;
-  m_engine = nullptr;
+  // Old roots keep their own QML types until the replacement loads. Only
+  // C++ singleton state crosses generations; QML-created objects never do.
+  m_engine->clearComponentCache();
   m_lastError.clear();
   m_usingUserShell = false;
 
@@ -111,7 +120,6 @@ void ShellRuntime::reload() {
     // Neither shell loaded: keep the previous generation on screen so the
     // app never loses its window; the overlay shows lastError until the next
     // source change retries.
-    m_engine = previous;
     m_usingUserShell = previousUsingUserShell;
     m_fingerprint = sourceFingerprint();
     emit generationChanged();
@@ -119,8 +127,8 @@ void ShellRuntime::reload() {
   }
   // The new window exists before the old one goes, so the app never hits
   // "last window closed" mid-reload.
-  if (previous != nullptr) {
-    previous->deleteLater();
+  for (QObject* root : previous) {
+    root->deleteLater();
   }
   applyWindowTheme();
   m_fingerprint = sourceFingerprint();
@@ -131,7 +139,8 @@ void ShellRuntime::reload() {
 }
 
 bool ShellRuntime::loadGeneration(const QUrl& rootUrl, QString* errorOut) {
-  auto* engine = new QQmlApplicationEngine(this);
+  auto* engine = m_engine;
+  const auto previousRootCount = engine->rootObjects().size();
   if (!m_options.qmlSourceDir.isEmpty()) {
     engine->addImportPath(m_options.qmlSourceDir);
   }
@@ -140,8 +149,7 @@ bool ShellRuntime::loadGeneration(const QUrl& rootUrl, QString* errorOut) {
     engine->addImportPath(userImports);
   }
 
-  // Collect load-time diagnostics into locals, then hand the connection over
-  // to a logger: these lambdas must not outlive the locals they capture.
+  // Temporary diagnostic connections must not outlive the captured locals.
   QStringList messages;
   const auto warningsDuringLoad =
       connect(engine, &QQmlEngine::warnings, this, [&messages](const QList<QQmlError>& warnings) {
@@ -156,24 +164,14 @@ bool ShellRuntime::loadGeneration(const QUrl& rootUrl, QString* errorOut) {
   engine->load(rootUrl);
   disconnect(warningsDuringLoad);
   disconnect(creationFailed);
-  connect(engine, &QQmlEngine::warnings, this, [](const QList<QQmlError>& warnings) {
-    for (const auto& warning : warnings) {
-      qWarning().noquote() << "[qml]" << warning.toString();
-    }
-  });
-  for (const auto& message : messages) {
-    qWarning().noquote() << "[qml]" << message;
-  }
-  if (failed || engine->rootObjects().isEmpty()) {
+  if (failed || engine->rootObjects().size() == previousRootCount) {
     if (errorOut != nullptr) {
       *errorOut = messages.isEmpty()
                       ? QStringLiteral("Failed to load %1").arg(rootUrl.toString())
                       : messages.join(QLatin1Char('\n'));
     }
-    delete engine;
     return false;
   }
-  m_engine = engine;
   return true;
 }
 
@@ -229,8 +227,9 @@ QQuickWindow* ShellRuntime::rootWindow() const {
   if (m_engine == nullptr) {
     return nullptr;
   }
-  for (QObject* root : m_engine->rootObjects()) {
-    if (auto* window = qobject_cast<QQuickWindow*>(root)) {
+  const auto roots = m_engine->rootObjects();
+  for (auto root = roots.crbegin(); root != roots.crend(); ++root) {
+    if (auto* window = qobject_cast<QQuickWindow*>(*root)) {
       return window;
     }
   }
@@ -238,14 +237,9 @@ QQuickWindow* ShellRuntime::rootWindow() const {
 }
 
 void ShellRuntime::applyWindowTheme() {
-  if (m_engine == nullptr) {
-    return;
-  }
-  for (QObject* root : m_engine->rootObjects()) {
-    if (auto* window = qobject_cast<QQuickWindow*>(root)) {
-      applyWindowBlur(window, m_theme->windowTransparent() && m_theme->windowBlur(),
-                      m_theme->appearance() != QStringLiteral("light"));
-    }
+  if (auto* window = rootWindow()) {
+    applyWindowBlur(window, m_theme->windowTransparent() && m_theme->windowBlur(),
+                    m_theme->appearance() != QStringLiteral("light"));
   }
 }
 

@@ -70,21 +70,21 @@ running dev server; this is what `vp run dev:qt` uses.
 
 ## Source layout
 
-| Path                    | Role                                                                 |
-| ----------------------- | -------------------------------------------------------------------- |
-| `src/main.cpp`          | CLI flags, config dir resolution, wiring                             |
-| `src/ShellRuntime.*`    | QML engine generations, `shell.qml` resolution, hot reload, fallback |
-| `src/ShellBridge.*`     | The `shell` WebChannel object / `Shell` QML singleton                |
-| `src/ThemeStore.*`      | `theme.json` loader + watcher, `Theme` QML singleton, CSS injection  |
-| `src/BackendProcess.*`  | Spawns the Node desktop host, waits for `ready`                      |
-| `qml/T3/Bricks/`        | Pure-QML bricks (see below) and the injected `js/shell-connect.js`   |
-| `scripts/gen-icons.mjs` | Regenerates `js/lucide.js`, the icon paths `ShellIcon` draws         |
-| `host/main.ts`          | Node desktop host                                                    |
-| `scripts/dev-qt.mjs`    | Build, pair with the dev server, launch                              |
-| `examples/`             | Starter `theme.json` and `shell.qml`                                 |
+| Path                    | Role                                                                |
+| ----------------------- | ------------------------------------------------------------------- |
+| `src/main.cpp`          | CLI flags, config dir resolution, wiring                            |
+| `src/ShellRuntime.*`    | QML root generations, `shell.qml` resolution, hot reload, fallback  |
+| `src/ShellBridge.*`     | The `shell` WebChannel object / `Shell` QML singleton               |
+| `src/ThemeStore.*`      | `theme.json` loader + watcher, `Theme` QML singleton, CSS injection |
+| `src/BackendProcess.*`  | Spawns the Node desktop host, waits for `ready`                     |
+| `qml/T3/Bricks/`        | Pure-QML bricks (see below) and the injected `js/shell-connect.js`  |
+| `scripts/gen-icons.mjs` | Regenerates `js/lucide.js`, the icon paths `ShellIcon` draws        |
+| `host/main.ts`          | Node desktop host                                                   |
+| `scripts/dev-qt.mjs`    | Build, pair with the dev server, launch                             |
+| `examples/`             | Starter `theme.json` and `shell.qml`                                |
 
-QML modules: `T3.Shell` is C++-only (`Shell`, `Theme`, `Runtime` singletons,
-registered once and shared by every engine generation). `T3.Bricks` is
+QML modules: `T3.Shell` is C++-only (`Shell`, `Theme`, `Runtime`, and `WebProfile`
+singletons, registered once and used by one engine throughout its lifetime). `T3.Bricks` is
 QML-only with a hand-written `qmldir` (no `prefer` line) so the same directory
 works compiled into the binary and as an on-disk import path.
 
@@ -228,9 +228,12 @@ path). If `shell.qml` fails to load, the default shell takes over with
 ### Hot reload
 
 `ShellRuntime` watches the config dir and, in non-release builds, the in-repo
-`qml/` directory. A change to any `.qml`/`.js`/`qmldir` file rebuilds the whole
-engine generation (new window first, then the old one is dropped, so the app
-never hits "last window closed"). The web view is recreated with the window
+`qml/` directory. A change to any `.qml`/`.js`/`qmldir` file clears the component
+cache and loads new root objects in the same engine. The new window loads before
+the old roots are dropped, so the app never hits "last window closed". If both
+the user shell and default shell fail, the previous roots stay alive. Generations
+share C++ singleton state, never QML-created objects with generation-specific
+types. The web view is recreated with the window
 and reloads the page; keeping it alive across generations is a follow-up.
 QmlLive was evaluated and rejected: unmaintained since 2019, Qt 5 only.
 
