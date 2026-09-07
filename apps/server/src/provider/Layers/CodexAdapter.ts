@@ -71,7 +71,12 @@ import {
 } from "./CodexSessionRuntime.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 import { resolveCodexLaunchArgs } from "./codexLaunchArgs.ts";
-import { codexRateLimitsToUpdate } from "./codexUsageLimits.ts";
+import {
+  type CodexRateLimitSnapshot,
+  codexRateLimitsToUpdate,
+  codexUsageLimitMessage,
+  mergeCodexRateLimits,
+} from "./codexUsageLimits.ts";
 const isCodexAppServerProcessExitedError = Schema.is(CodexErrors.CodexAppServerProcessExitedError);
 const isCodexAppServerTransportError = Schema.is(CodexErrors.CodexAppServerTransportError);
 const isCodexSessionRuntimeThreadIdMissingError = Schema.is(
@@ -2282,6 +2287,12 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
             : {}),
         };
         const turnTokenUsage = makeCodexTurnTokenUsageState();
+        // Codex reports a usage-limit stop as OpenAI's own sentence, which on a
+        // Business workspace blames credits for a window that ran out. The
+        // snapshot naming that window arrives in its own notification, before or
+        // after the stop and often sparse, so keep the session's merged view of
+        // it and read it when a turn fails on the limit.
+        let rateLimits: CodexRateLimitSnapshot | undefined;
         const sessionScope = yield* Scope.make("sequential");
         let sessionScopeTransferred = false;
         yield* Effect.addFinalizer(() =>
@@ -2339,12 +2350,56 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
               }
             }
 
-            const runtimeEvents = mapToRuntimeEvents(event, event.threadId).map((runtimeEvent) => {
+            if (event.method === "account/rateLimits/updated") {
+              const limitsPayload = readPayload(
+                EffectCodexSchema.V2AccountRateLimitsUpdatedNotification,
+                event.payload,
+              );
+              if (limitsPayload) {
+                rateLimits = mergeCodexRateLimits(rateLimits, limitsPayload.rateLimits);
+              }
+            } else if (event.method === "error") {
+              const errorPayload = readPayload(
+                EffectCodexSchema.V2ErrorNotification,
+                event.payload,
+              );
+              // The failed `turn/completed` repeats this sentence and is answered
+              // below; relaying both would show the limit twice.
+              if (errorPayload?.error.codexErrorInfo === "usageLimitExceeded") return;
+            }
+
+            let usageLimitError: ProviderRuntimeEvent | undefined;
+            let usageLimitMessage: string | undefined;
+            if (event.method === "turn/completed") {
+              const completedPayload = readPayload(
+                EffectCodexSchema.V2TurnCompletedNotification,
+                event.payload,
+              );
+              const turnError =
+                completedPayload?.turn.status === "failed"
+                  ? completedPayload.turn.error
+                  : undefined;
+              if (turnError?.codexErrorInfo === "usageLimitExceeded") {
+                usageLimitMessage = codexUsageLimitMessage(rateLimits, event.createdAt);
+                usageLimitError = {
+                  ...runtimeEventBase(event, event.threadId),
+                  type: "runtime.error",
+                  payload: {
+                    message: usageLimitMessage,
+                    class: "provider_error",
+                    ...(turnError.message ? { detail: turnError.message } : {}),
+                  },
+                };
+              }
+            }
+
+            const mappedEvents = mapToRuntimeEvents(event, event.threadId).map((runtimeEvent) => {
               if (runtimeEvent.type === "turn.completed" && runtimeEvent.turnId) {
                 return {
                   ...runtimeEvent,
                   payload: {
                     ...runtimeEvent.payload,
+                    ...(usageLimitMessage ? { errorMessage: usageLimitMessage } : {}),
                     tokenUsage: completeCodexTurnTokenUsage(
                       turnTokenUsage,
                       String(runtimeEvent.turnId),
@@ -2368,6 +2423,9 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
               }
               return runtimeEvent;
             });
+            const runtimeEvents = usageLimitError
+              ? [usageLimitError, ...mappedEvents]
+              : mappedEvents;
             if (runtimeEvents.length === 0) {
               yield* Effect.logDebug("ignoring unhandled Codex provider event", {
                 method: event.method,
