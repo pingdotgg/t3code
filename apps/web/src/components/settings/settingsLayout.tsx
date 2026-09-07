@@ -155,9 +155,9 @@ export function useRelativeTimeTick(intervalMs = 1_000) {
   return nowMs;
 }
 
+/** Muted section headings have no descriptions; explanatory copy belongs to individual settings. */
 export function SettingsSection({
   title,
-  description,
   hideTitle = false,
   icon,
   headerAction,
@@ -167,7 +167,6 @@ export function SettingsSection({
   ...sectionProps
 }: ComponentPropsWithoutRef<"section"> & {
   title: string;
-  description?: ReactNode;
   hideTitle?: boolean;
   icon?: ReactNode;
   headerAction?: ReactNode;
@@ -195,11 +194,6 @@ export function SettingsSection({
               {icon}
               {title}
             </h2>
-            {description ? (
-              <div className="flex min-w-0 flex-wrap items-center gap-x-1.5 text-[13px] leading-[1.45] text-muted-foreground/80">
-                {description}
-              </div>
-            ) : null}
           </div>
           <div className="flex min-h-7 min-w-7 items-center justify-end">{headerAction}</div>
         </div>
@@ -224,6 +218,9 @@ export function SettingsSection({
  * environment's settings.json; where there is no primary (the hosted app)
  * the control goes inert with a tooltip instead of showing an editable
  * default that would never save.
+ *
+ * Keep descriptions short enough for one line where possible. Allow wrapping
+ * for clarity or narrow screens instead of truncating or forcing no-wrap.
  *
  * Control sizing across settings follows three tiers so rows share a baseline:
  * - `control` slot: `size="sm"` (Button, Select, Input, NumberField) or `icon-sm`.
@@ -284,7 +281,11 @@ export function SettingsRow({
       ref={targetRef}
       tabIndex={rowProps.id ? -1 : rowProps.tabIndex}
       data-slot="settings-row"
-      className={cn("rounded-xl px-3 sm:px-4", children ? "pt-3 pb-1" : "py-3", className)}
+      className={cn(
+        "rounded-xl px-3 sm:px-4 aria-disabled:opacity-50 aria-disabled:[&_*]:text-muted-foreground",
+        children ? "pt-3 pb-1" : "py-3",
+        className,
+      )}
     >
       <div className="flex flex-col gap-3 sm:grid sm:grid-cols-[minmax(0,1fr)_minmax(10rem,auto)] sm:items-center sm:gap-8">
         <div className="min-w-0 flex-1 space-y-1">
@@ -320,10 +321,12 @@ export function SettingsRow({
 
 export function SettingResetButton({
   label,
+  tooltip = "Reset to default",
   disabled = false,
   onClick,
 }: {
   label: string;
+  tooltip?: string;
   disabled?: boolean;
   onClick: () => void;
 }) {
@@ -345,7 +348,7 @@ export function SettingResetButton({
           </Button>
         }
       />
-      <TooltipPopup side="top">Reset to default</TooltipPopup>
+      <TooltipPopup side="top">{tooltip}</TooltipPopup>
     </Tooltip>
   );
 }
