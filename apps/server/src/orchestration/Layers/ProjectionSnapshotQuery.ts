@@ -1221,6 +1221,41 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
     `,
   });
 
+  const listCurrentPendingTurnStartRows = SqlSchema.findAll({
+    Request: Schema.Void,
+    Result: PendingTurnStartRowSchema,
+    execute: () => sql`
+      SELECT
+        pending.thread_id AS "threadId",
+        pending.pending_message_id AS "messageId",
+        pending.requested_at AS "requestedAt"
+      FROM projection_turns AS pending
+      WHERE pending.turn_id IS NULL
+        AND pending.state = 'pending'
+        AND pending.pending_message_id IS NOT NULL
+      ORDER BY pending.row_id ASC
+    `,
+  });
+
+  const getPendingTurnStartRowByThread = SqlSchema.findOneOption({
+    Request: ThreadIdLookupInput,
+    Result: PendingTurnStartRowSchema,
+    execute: ({ threadId }) => sql`
+      SELECT
+        thread_id AS "threadId",
+        pending_message_id AS "messageId",
+        requested_at AS "requestedAt"
+      FROM projection_turns
+      WHERE thread_id = ${threadId}
+        AND turn_id IS NULL
+        AND state = 'pending'
+        AND pending_message_id IS NOT NULL
+        AND checkpoint_turn_count IS NULL
+      ORDER BY row_id DESC
+      LIMIT 1
+    `,
+  });
+
   const listSubmittedTurnStartRows = SqlSchema.findAll({
     Request: Schema.Void,
     Result: SubmittedTurnStartRowSchema,
@@ -1237,6 +1272,26 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         AND submitted_turn_id IS NOT NULL
         AND checkpoint_turn_count IS NULL
       ORDER BY thread_id ASC, row_id ASC
+    `,
+  });
+
+  const listSubmittedTurnStartRowsByThread = SqlSchema.findAll({
+    Request: ThreadIdLookupInput,
+    Result: SubmittedTurnStartRowSchema,
+    execute: ({ threadId }) => sql`
+      SELECT
+        thread_id AS "threadId",
+        pending_message_id AS "messageId",
+        submitted_turn_id AS "turnId",
+        requested_at AS "requestedAt"
+      FROM projection_turns
+      WHERE thread_id = ${threadId}
+        AND turn_id IS NULL
+        AND state = 'submitted'
+        AND pending_message_id IS NOT NULL
+        AND submitted_turn_id IS NOT NULL
+        AND checkpoint_turn_count IS NULL
+      ORDER BY row_id ASC
     `,
   });
 
@@ -1957,6 +2012,22 @@ pending_approval_requests AS (
               ),
             ),
           ),
+          listCurrentPendingTurnStartRows(undefined).pipe(
+            Effect.mapError(
+              toPersistenceSqlOrDecodeError(
+                "ProjectionSnapshotQuery.getSnapshot:listPendingTurnStarts:query",
+                "ProjectionSnapshotQuery.getSnapshot:listPendingTurnStarts:decodeRows",
+              ),
+            ),
+          ),
+          listSubmittedTurnStartRows(undefined).pipe(
+            Effect.mapError(
+              toPersistenceSqlOrDecodeError(
+                "ProjectionSnapshotQuery.getSnapshot:listSubmittedTurnStarts:query",
+                "ProjectionSnapshotQuery.getSnapshot:listSubmittedTurnStarts:decodeRows",
+              ),
+            ),
+          ),
           listProjectionStateRows(undefined).pipe(
             Effect.mapError(
               toPersistenceSqlOrDecodeError(
@@ -1978,6 +2049,8 @@ pending_approval_requests AS (
             sessionRows,
             checkpointRows,
             latestTurnRows,
+            pendingTurnStartRows,
+            submittedTurnStartRows,
             stateRows,
           ]) =>
             Effect.gen(function* () {
@@ -1987,6 +2060,8 @@ pending_approval_requests AS (
               const checkpointsByThread = new Map<string, Array<OrchestrationCheckpointSummary>>();
               const sessionsByThread = new Map<string, OrchestrationSession>();
               const latestTurnByThread = new Map<string, OrchestrationLatestTurn>();
+              const pendingTurnStartByThread = new Map<string, MessageId>();
+              const submittedTurnStartsByThread = groupSubmittedTurnStarts(submittedTurnStartRows);
 
               let updatedAt: string | null = null;
 
@@ -2098,6 +2173,14 @@ pending_approval_requests AS (
                 });
               }
 
+              for (const row of pendingTurnStartRows) {
+                updatedAt = maxIso(updatedAt, row.requestedAt);
+                pendingTurnStartByThread.set(row.threadId, row.messageId);
+              }
+              for (const row of submittedTurnStartRows) {
+                updatedAt = maxIso(updatedAt, row.requestedAt);
+              }
+
               for (const row of sessionRows) {
                 updatedAt = maxIso(updatedAt, row.updatedAt);
                 sessionsByThread.set(row.threadId, {
@@ -2135,39 +2218,45 @@ pending_approval_requests AS (
                 deletedAt: row.deletedAt,
               }));
 
-              const threads: ReadonlyArray<OrchestrationThread> = threadRows.map((row) => ({
-                id: row.threadId,
-                projectId: row.projectId,
-                title: row.title,
-                modelSelection: row.modelSelection,
-                runtimeMode: row.runtimeMode,
-                interactionMode: row.interactionMode,
-                branch: row.branch,
-                worktreePath: row.worktreePath,
-                branchPullRequest: row.branchPullRequest,
-                ...(row.linkedPullRequest === null
-                  ? {}
-                  : { linkedPullRequest: row.linkedPullRequest }),
-                latestTurn: latestTurnByThread.get(row.threadId) ?? null,
-                createdAt: row.createdAt,
-                updatedAt: row.updatedAt,
-                archivedAt: row.archivedAt,
-                settledOverride: row.settledOverride,
-                settledAt: row.settledAt,
-                unsettledAt: row.unsettledAt,
-                snoozedUntil: row.snoozedUntil,
-                snoozedAt: row.snoozedAt,
-                pinnedAt: row.pinnedAt,
-                pinOrderKey: row.pinOrderKey ?? null,
-                activeOrderKey: row.activeOrderKey ?? null,
-                titleRegeneration: mapTitleRegeneration(row),
-                deletedAt: row.deletedAt,
-                messages: messagesByThread.get(row.threadId) ?? [],
-                proposedPlans: proposedPlansByThread.get(row.threadId) ?? [],
-                activities: activitiesByThread.get(row.threadId) ?? [],
-                checkpoints: checkpointsByThread.get(row.threadId) ?? [],
-                session: sessionsByThread.get(row.threadId) ?? null,
-              }));
+              const threads: ReadonlyArray<OrchestrationThread> = threadRows.map((row) => {
+                const pendingTurnStartMessageId = pendingTurnStartByThread.get(row.threadId);
+                const submittedTurnStarts = submittedTurnStartsByThread.get(row.threadId) ?? [];
+                return {
+                  id: row.threadId,
+                  projectId: row.projectId,
+                  title: row.title,
+                  modelSelection: row.modelSelection,
+                  runtimeMode: row.runtimeMode,
+                  interactionMode: row.interactionMode,
+                  branch: row.branch,
+                  worktreePath: row.worktreePath,
+                  branchPullRequest: row.branchPullRequest,
+                  ...(row.linkedPullRequest === null
+                    ? {}
+                    : { linkedPullRequest: row.linkedPullRequest }),
+                  latestTurn: latestTurnByThread.get(row.threadId) ?? null,
+                  createdAt: row.createdAt,
+                  updatedAt: row.updatedAt,
+                  archivedAt: row.archivedAt,
+                  settledOverride: row.settledOverride,
+                  settledAt: row.settledAt,
+                  unsettledAt: row.unsettledAt,
+                  snoozedUntil: row.snoozedUntil,
+                  snoozedAt: row.snoozedAt,
+                  pinnedAt: row.pinnedAt,
+                  pinOrderKey: row.pinOrderKey ?? null,
+                  activeOrderKey: row.activeOrderKey ?? null,
+                  titleRegeneration: mapTitleRegeneration(row),
+                  ...(pendingTurnStartMessageId === undefined ? {} : { pendingTurnStartMessageId }),
+                  ...(submittedTurnStarts.length === 0 ? {} : { submittedTurnStarts }),
+                  deletedAt: row.deletedAt,
+                  messages: messagesByThread.get(row.threadId) ?? [],
+                  proposedPlans: proposedPlansByThread.get(row.threadId) ?? [],
+                  activities: activitiesByThread.get(row.threadId) ?? [],
+                  checkpoints: checkpointsByThread.get(row.threadId) ?? [],
+                  session: sessionsByThread.get(row.threadId) ?? null,
+                };
+              });
 
               const snapshot = {
                 snapshotSequence: computeSnapshotSequence(stateRows),
@@ -2235,6 +2324,14 @@ pending_approval_requests AS (
               ),
             ),
           ),
+          listCurrentPendingTurnStartRows(undefined).pipe(
+            Effect.mapError(
+              toPersistenceSqlOrDecodeError(
+                "ProjectionSnapshotQuery.getCommandReadModel:listPendingTurnStarts:query",
+                "ProjectionSnapshotQuery.getCommandReadModel:listPendingTurnStarts:decodeRows",
+              ),
+            ),
+          ),
           listSubmittedTurnStartRows(undefined).pipe(
             Effect.mapError(
               toPersistenceSqlOrDecodeError(
@@ -2261,6 +2358,7 @@ pending_approval_requests AS (
             proposedPlanRows,
             sessionRows,
             latestTurnRows,
+            pendingTurnStartRows,
             submittedTurnStartRows,
             stateRows,
           ]) =>
@@ -2324,6 +2422,13 @@ pending_approval_requests AS (
                   updatedAt = maxIso(updatedAt, row.completedAt);
                 }
               }
+              for (let index = 0; index < pendingTurnStartRows.length; index += 1) {
+                const row = pendingTurnStartRows[index];
+                if (!row) {
+                  continue;
+                }
+                updatedAt = maxIso(updatedAt, row.requestedAt);
+              }
               for (let index = 0; index < submittedTurnStartRows.length; index += 1) {
                 const row = submittedTurnStartRows[index];
                 if (!row) {
@@ -2340,6 +2445,7 @@ pending_approval_requests AS (
               }
 
               const latestTurnByThread = new Map<string, OrchestrationLatestTurn>();
+              const pendingTurnStartByThread = new Map<string, MessageId>();
               const submittedTurnStartsByThread = groupSubmittedTurnStarts(submittedTurnStartRows);
               for (let index = 0; index < latestTurnRows.length; index += 1) {
                 const row = latestTurnRows[index];
@@ -2347,6 +2453,13 @@ pending_approval_requests AS (
                   continue;
                 }
                 latestTurnByThread.set(row.threadId, mapLatestTurn(row));
+              }
+              for (let index = 0; index < pendingTurnStartRows.length; index += 1) {
+                const row = pendingTurnStartRows[index];
+                if (!row) {
+                  continue;
+                }
+                pendingTurnStartByThread.set(row.threadId, row.messageId);
               }
               const proposedPlansByThread = new Map<string, Array<OrchestrationProposedPlan>>();
               const sessionByThread = new Map<string, OrchestrationSession>();
@@ -2374,6 +2487,7 @@ pending_approval_requests AS (
                 if (!row) {
                   continue;
                 }
+                const pendingTurnStartMessageId = pendingTurnStartByThread.get(row.threadId);
                 const submittedTurnStarts = submittedTurnStartsByThread.get(row.threadId) ?? [];
                 threads.push({
                   id: row.threadId,
@@ -2401,6 +2515,7 @@ pending_approval_requests AS (
                   pinOrderKey: row.pinOrderKey ?? null,
                   activeOrderKey: row.activeOrderKey ?? null,
                   titleRegeneration: mapTitleRegeneration(row),
+                  ...(pendingTurnStartMessageId === undefined ? {} : { pendingTurnStartMessageId }),
                   ...(submittedTurnStarts.length === 0 ? {} : { submittedTurnStarts }),
                   deletedAt: row.deletedAt,
                   messages: [],
@@ -3227,6 +3342,8 @@ pending_approval_requests AS (
         checkpointRows,
         latestTurnRow,
         sessionRow,
+        pendingTurnStartRow,
+        submittedTurnStartRows,
       ] = yield* Effect.all([
         getActiveThreadRowById({ threadId }).pipe(
           Effect.mapError(
@@ -3280,6 +3397,22 @@ pending_approval_requests AS (
             ),
           ),
         ),
+        getPendingTurnStartRowByThread({ threadId }).pipe(
+          Effect.mapError(
+            toPersistenceSqlOrDecodeError(
+              "ProjectionSnapshotQuery.getThreadDetailById:getPendingTurnStart:query",
+              "ProjectionSnapshotQuery.getThreadDetailById:getPendingTurnStart:decodeRow",
+            ),
+          ),
+        ),
+        listSubmittedTurnStartRowsByThread({ threadId }).pipe(
+          Effect.mapError(
+            toPersistenceSqlOrDecodeError(
+              "ProjectionSnapshotQuery.getThreadDetailById:listSubmittedTurnStarts:query",
+              "ProjectionSnapshotQuery.getThreadDetailById:listSubmittedTurnStarts:decodeRows",
+            ),
+          ),
+        ),
       ]);
 
       if (Option.isNone(threadRow)) {
@@ -3312,6 +3445,17 @@ pending_approval_requests AS (
         pinOrderKey: threadRow.value.pinOrderKey ?? null,
         activeOrderKey: threadRow.value.activeOrderKey ?? null,
         titleRegeneration: mapTitleRegeneration(threadRow.value),
+        ...(Option.isSome(pendingTurnStartRow)
+          ? { pendingTurnStartMessageId: pendingTurnStartRow.value.messageId }
+          : {}),
+        ...(submittedTurnStartRows.length === 0
+          ? {}
+          : {
+              submittedTurnStarts: submittedTurnStartRows.map((row) => ({
+                messageId: row.messageId,
+                turnId: row.turnId,
+              })),
+            }),
         deletedAt: null,
         messages: messageRows.map((row) => {
           const message = {

@@ -1943,7 +1943,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
     }),
   );
 
-  it.effect("reconstructs submitted turn identity for orphan reconciliation", () =>
+  it.effect("restores pending and submitted turn identity after restart", () =>
     Effect.gen(function* () {
       const snapshotQuery = yield* ProjectionSnapshotQuery;
       const sql = yield* SqlClient.SqlClient;
@@ -1965,13 +1965,13 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           deleted_at
         )
         VALUES (
-          'project-submitted-restart',
-          'Submitted Restart Project',
-          '/tmp/project-submitted-restart',
+          'project-pending',
+          'Pending Project',
+          '/tmp/project-pending',
           '{"provider":"codex","model":"gpt-5-codex"}',
           '[]',
-          '2026-09-08T04:00:00.000Z',
-          '2026-09-08T04:00:01.000Z',
+          '2026-04-06T00:00:00.000Z',
+          '2026-04-06T00:00:01.000Z',
           NULL
         )
       `;
@@ -1997,21 +1997,21 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           deleted_at
         )
         VALUES (
-          'thread-submitted-restart',
-          'project-submitted-restart',
-          'Submitted Restart Thread',
+          'thread-pending',
+          'project-pending',
+          'Pending Thread',
           '{"provider":"codex","model":"gpt-5-codex"}',
           'full-access',
           'default',
           NULL,
           NULL,
           NULL,
-          '2026-09-08T04:00:02.000Z',
+          '2026-04-06T00:00:02.000Z',
           0,
           0,
           0,
-          '2026-09-08T04:00:02.000Z',
-          '2026-09-08T04:00:02.000Z',
+          '2026-04-06T00:00:02.000Z',
+          '2026-04-06T00:00:02.000Z',
           NULL,
           NULL
         )
@@ -2036,15 +2036,49 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           checkpoint_files_json
         )
         VALUES (
-          'thread-submitted-restart',
+          'thread-pending',
           NULL,
-          'message-submitted-restart',
-          'turn-submitted-restart',
+          'message-pending',
+          NULL,
+          NULL,
+          NULL,
+          NULL,
+          'pending',
+          '2026-04-06T00:00:02.000Z',
+          NULL,
+          NULL,
+          NULL,
+          NULL,
+          NULL,
+          '[]'
+        ),
+        (
+          'thread-pending',
+          NULL,
+          'message-pending-latest',
+          NULL,
+          NULL,
+          NULL,
+          NULL,
+          'pending',
+          '2026-04-05T23:59:59.000Z',
+          NULL,
+          NULL,
+          NULL,
+          NULL,
+          NULL,
+          '[]'
+        ),
+        (
+          'thread-pending',
+          NULL,
+          'message-submitted',
+          'turn-submitted',
           NULL,
           NULL,
           NULL,
           'submitted',
-          '2026-09-08T04:00:02.000Z',
+          '2026-04-06T00:00:01.000Z',
           NULL,
           NULL,
           NULL,
@@ -2055,12 +2089,36 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
       `;
 
       const commandReadModel = yield* snapshotQuery.getCommandReadModel();
+      assert.equal(
+        commandReadModel.threads[0]?.pendingTurnStartMessageId,
+        asMessageId("message-pending-latest"),
+      );
       assert.deepEqual(commandReadModel.threads[0]?.submittedTurnStarts, [
-        {
-          messageId: asMessageId("message-submitted-restart"),
-          turnId: asTurnId("turn-submitted-restart"),
-        },
+        { messageId: asMessageId("message-submitted"), turnId: asTurnId("turn-submitted") },
       ]);
+
+      const fullSnapshot = yield* snapshotQuery.getSnapshot();
+      assert.equal(
+        fullSnapshot.threads[0]?.pendingTurnStartMessageId,
+        asMessageId("message-pending-latest"),
+      );
+      assert.deepEqual(fullSnapshot.threads[0]?.submittedTurnStarts, [
+        { messageId: asMessageId("message-submitted"), turnId: asTurnId("turn-submitted") },
+      ]);
+
+      const threadDetail = yield* snapshotQuery.getThreadDetailById(
+        ThreadId.make("thread-pending"),
+      );
+      assert.equal(threadDetail._tag, "Some");
+      if (threadDetail._tag === "Some") {
+        assert.equal(
+          threadDetail.value.pendingTurnStartMessageId,
+          asMessageId("message-pending-latest"),
+        );
+        assert.deepEqual(threadDetail.value.submittedTurnStarts, [
+          { messageId: asMessageId("message-submitted"), turnId: asTurnId("turn-submitted") },
+        ]);
+      }
     }),
   );
 

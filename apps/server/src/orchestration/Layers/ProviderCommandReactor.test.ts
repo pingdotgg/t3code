@@ -739,10 +739,12 @@ describe("ProviderCommandReactor", () => {
   effectIt.effect("waits for checkpoint side effects before starting a later provider turn", () =>
     Effect.gen(function* () {
       let barrierPassed = false;
+      const barrierEntered = yield* Deferred.make<void>();
       const harness = yield* Effect.promise(() =>
         createHarness({
           awaitCheckpointSequenceEffect: () =>
-            Effect.sync(() => {
+            Effect.gen(function* () {
+              yield* Deferred.succeed(barrierEntered, undefined);
               barrierPassed = true;
             }),
         }),
@@ -761,13 +763,7 @@ describe("ProviderCommandReactor", () => {
         runtimeMode: "approval-required",
         createdAt: "2026-01-01T00:00:00.000Z",
       });
-      yield* Effect.promise(() =>
-        waitFor(
-          () =>
-            harness.awaitCheckpointSequence.mock.calls.length === 1 ||
-            harness.sendTurn.mock.calls.length === 1,
-        ),
-      );
+      yield* Deferred.await(barrierEntered);
       yield* Effect.promise(() => harness.drain());
 
       expect(harness.awaitCheckpointSequence).toHaveBeenCalledTimes(1);
@@ -817,9 +813,14 @@ describe("ProviderCommandReactor", () => {
   effectIt.effect("starts a turn accepted while an earlier checkpoint revert completes", () =>
     Effect.gen(function* () {
       const barrier = yield* Deferred.make<void>();
+      const barrierEntered = yield* Deferred.make<void>();
       const harness = yield* Effect.promise(() =>
         createHarness({
-          awaitCheckpointSequenceEffect: () => Deferred.await(barrier),
+          awaitCheckpointSequenceEffect: () =>
+            Effect.gen(function* () {
+              yield* Deferred.succeed(barrierEntered, undefined);
+              yield* Deferred.await(barrier);
+            }),
         }),
       );
       const messageId = MessageId.make("message-accepted-during-checkpoint-revert");
@@ -838,9 +839,7 @@ describe("ProviderCommandReactor", () => {
         runtimeMode: "approval-required",
         createdAt: "2026-01-01T00:00:01.000Z",
       });
-      yield* Effect.promise(() =>
-        waitFor(() => harness.awaitCheckpointSequence.mock.calls.length === 1),
-      );
+      yield* Deferred.await(barrierEntered);
 
       yield* harness.engine.dispatch({
         type: "thread.revert.complete",
