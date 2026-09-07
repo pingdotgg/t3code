@@ -26,6 +26,7 @@ interface CodexRateLimitWindow {
 
 /** Structural view of the generated `RateLimitSnapshot`; both messages satisfy it. */
 export interface CodexRateLimitSnapshot {
+  readonly limitId?: string | null;
   readonly planType?: string | null;
   readonly primary?: CodexRateLimitWindow | null;
   readonly secondary?: CodexRateLimitWindow | null;
@@ -68,6 +69,9 @@ function labelForKind(kind: ServerProviderUsageWindow["kind"]): string {
 export function codexRateLimitsToWindows(
   snapshot: CodexRateLimitSnapshot,
 ): ReadonlyArray<ServerProviderUsageWindow> {
+  // Show the main allowance only. Model-specific notifications (such as Spark)
+  // must not replace its primary/secondary rows. Older CLIs omit the limit id.
+  if (snapshot.limitId && snapshot.limitId !== "codex") return [];
   const isMonthlyPlan = snapshot.planType === "free" || snapshot.planType === "go";
   const positions = [
     ["primary", snapshot.primary, isMonthlyPlan ? MONTH_MINS : SESSION_MINS],
@@ -110,14 +114,20 @@ export function codexResetCreditsToContract(
 
 export function codexRateLimitsToLimits(input: {
   readonly snapshot: CodexRateLimitSnapshot;
+  readonly rateLimitsByLimitId?:
+    | Readonly<Record<string, CodexRateLimitSnapshot>>
+    | null
+    | undefined;
   readonly resetCredits?: CodexResetCreditsSummary | null | undefined;
   readonly checkedAt: string;
 }): ServerProviderUsageLimits {
   const resetCredits = codexResetCreditsToContract(input.resetCredits);
+  // Select the main bucket explicitly; the legacy snapshot can name another limit.
+  const windows = codexRateLimitsToWindows(input.rateLimitsByLimitId?.codex ?? input.snapshot);
   return {
     ...makeUsageLimits({
       checkedAt: input.checkedAt,
-      windows: codexRateLimitsToWindows(input.snapshot),
+      windows,
     }),
     ...(resetCredits ? { resetCredits } : {}),
   };
