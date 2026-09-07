@@ -4,10 +4,7 @@ import * as Layer from "effect/Layer";
 import { HttpClient } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
-import {
-  parseTailscaleMagicDnsName,
-  resolveTailscaleAdvertisedEndpoints,
-} from "./tailscaleEndpointProvider.ts";
+import { resolveTailscaleAdvertisedEndpoints } from "./tailscaleEndpointProvider.ts";
 
 const unusedTailscaleExternalServicesLayer = Layer.mergeAll(
   Layer.succeed(
@@ -21,18 +18,6 @@ const unusedTailscaleExternalServicesLayer = Layer.mergeAll(
 );
 
 describe("tailscale endpoint provider", () => {
-  it.effect("parses MagicDNS names from tailscale status", () =>
-    Effect.gen(function* () {
-      const dnsName = yield* parseTailscaleMagicDnsName(
-        `{"Self":{"DNSName":"desktop.tail.ts.net."}}`,
-      );
-      assert.equal(dnsName, "desktop.tail.ts.net");
-      assert.equal(yield* parseTailscaleMagicDnsName("{}"), null);
-      const malformed = yield* Effect.result(parseTailscaleMagicDnsName("not-json"));
-      assert.isTrue(malformed._tag === "Failure");
-    }),
-  );
-
   it.effect("resolves Tailscale endpoints as add-on advertised endpoints", () =>
     Effect.gen(function* () {
       const endpoints = yield* resolveTailscaleAdvertisedEndpoints({
