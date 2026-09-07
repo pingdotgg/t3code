@@ -358,6 +358,31 @@ describe("sidebar list motion", () => {
     expect(clone.animations[0]!.cancel).toHaveBeenCalledOnce();
   });
 
+  it("skips fades when a large list change would clone too many rows", () => {
+    const rows = Array.from({ length: 41 }, (_, index) => new TestRow(`row-${index}`));
+    const { motion, layout, parent } = fixture(rows);
+    motion.update(true);
+    layout([]);
+    motion.update(true);
+    expect(rows.every((row) => row.clones.length === 0)).toBe(true);
+    expect(parent.children).toHaveLength(0);
+    const entering = Array.from({ length: 41 }, (_, index) => new TestRow(`new-${index}`));
+    layout(entering);
+    motion.update(true);
+    expect(entering.every((row) => row.animate.mock.calls.length === 0)).toBe(true);
+  });
+
+  it("still slides rows when one removal displaces a large list", () => {
+    const rows = Array.from({ length: 60 }, (_, index) => new TestRow(`row-${index}`));
+    const { motion, layout } = fixture(rows);
+    motion.update(true);
+    const [removed, ...rest] = rows;
+    layout(rest);
+    motion.update(true);
+    expect(removed!.clones).toHaveLength(1);
+    expect(rest.every((row) => row.animations.length === 1)).toBe(true);
+  });
+
   it("respects reduced motion while keeping the next baseline fresh", () => {
     const a = new TestRow("a");
     const b = new TestRow("b");

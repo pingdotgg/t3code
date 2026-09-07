@@ -1,4 +1,10 @@
 const motionTiming = { duration: 150, easing: "ease-out" };
+// A project filter change or a bulk snooze swaps a large part of the list at
+// once. Fades are the expensive part: every removed row gets a deep clone and
+// every clone and entering row gets its own animation, and the layout reads
+// in between force synchronous reflows. Translating displaced rows is cheap,
+// so only the fade count decides whether an update animates.
+const MAX_FADED_ROWS_PER_UPDATE = 40;
 
 type RowPosition = { top: number; left: number; width: number; height: number };
 
@@ -124,7 +130,20 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
             },
           ]),
       );
-      const shouldAnimate = animate && positions !== null && !reducedMotion?.matches;
+      let fadeCount = 0;
+      if (positions !== null) {
+        for (const [node, position] of positions) {
+          if (!next.has(node) && position.height > 0) fadeCount++;
+        }
+        for (const [node, position] of next) {
+          if (!positions.has(node) && position.height > 0) fadeCount++;
+        }
+      }
+      const shouldAnimate =
+        animate &&
+        positions !== null &&
+        !reducedMotion?.matches &&
+        fadeCount <= MAX_FADED_ROWS_PER_UPDATE;
       if (!shouldAnimate) clearFades();
       else {
         for (const [node, position] of positions!) {
