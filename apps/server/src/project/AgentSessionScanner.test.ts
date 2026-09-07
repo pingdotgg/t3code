@@ -873,7 +873,9 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
         // must live there. Each run owns a uniquely named subtree and removes
         // only that subtree, never the shared Codex or Downloads parents.
         const home = NodeOS.homedir();
-        const runId = `t3code-scanner-test-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        // Borrow a unique suffix from a scoped temp dir instead of reaching for
+        // Date.now or Math.random, which the Effect lint rejects.
+        const runId = path.basename(yield* makeTempDir("t3code-scanner-test-"));
         const scratchRoot = path.join(home, "Documents", "Codex", runId);
         const scratch = path.join(scratchRoot, "2026-09-01", "some-conversation");
         const downloads = path.join(home, "Downloads", runId);
