@@ -8,6 +8,9 @@ import * as NodePath from "node:path";
 import { afterEach, assert, beforeEach, describe, it } from "@effect/vitest";
 
 import { readTranscriptRecords } from "./usageTranscriptReader.ts";
+import { UsageAggregator } from "./usageAggregation.ts";
+import { dedupeWithinFile } from "./usageScanCache.ts";
+import { parseRateTable } from "./usagePricing.ts";
 
 let dir: string;
 
@@ -61,6 +64,65 @@ function codexUsageLine(outputTokens: number, secondsOffset: number): string {
 }
 
 describe("readTranscriptRecords resume", () => {
+  it("counts and prices an advisor arriving after the executor, once across replays", async () => {
+    const path = NodePath.join(dir, "advisor.jsonl");
+    const executor = JSON.parse(claudeLine(1, 5));
+    executor.message.usage.iterations = [
+      { type: "message", input_tokens: 10, output_tokens: 5 },
+      { type: "advisor_message", model: "claude-opus-5" },
+    ];
+    await NodeFSP.writeFile(path, JSON.stringify(executor) + "\n");
+    const first = await readTranscriptRecords(path, "claude");
+    assert.isNotNull(first);
+    assert.strictEqual(first.records.length, 1);
+
+    executor.message.usage.iterations = [
+      { type: "message", input_tokens: 10, output_tokens: 5 },
+      { type: "advisor_message", model: "claude-opus-5", input_tokens: 100, output_tokens: 20 },
+    ];
+    const advisorLine = JSON.stringify(executor) + "\n";
+    executor.message.usage.iterations.push({
+      type: "advisor_message",
+      model: "claude-opus-5",
+      input_tokens: 200,
+      output_tokens: 40,
+    });
+    const secondAdvisorLine = JSON.stringify(executor) + "\n";
+    await NodeFSP.appendFile(path, advisorLine + secondAdvisorLine + secondAdvisorLine);
+    const appended = await readTranscriptRecords(path, "claude", first.position);
+    assert.isNotNull(appended);
+    assert.isTrue(appended.resumed);
+    const records = dedupeWithinFile([...first.records, ...appended.records]);
+    assert.strictEqual(records.length, 3);
+
+    const replayPath = NodePath.join(dir, "replayed.jsonl");
+    await NodeFSP.writeFile(replayPath, secondAdvisorLine);
+    const replay = await readTranscriptRecords(replayPath, "claude");
+    assert.isNotNull(replay);
+    const aggregator = new UsageAggregator({
+      timeZone: "UTC",
+      sinceDay: "2026-08-01",
+      untilDay: "2026-08-01",
+      rates: parseRateTable({
+        "claude-fable-5": { input_cost_per_token: 1e-5, output_cost_per_token: 5e-5 },
+        "claude-opus-5": { input_cost_per_token: 5e-6, output_cost_per_token: 2.5e-5 },
+      }),
+    });
+    for (const record of [...records, ...replay.records]) aggregator.add(record);
+    const buckets = aggregator.finish().buckets;
+    assert.strictEqual(buckets.length, 2);
+    const advisor = buckets.find((bucket) => bucket.model === "claude-opus-5");
+    assert.isDefined(advisor);
+    assert.strictEqual(advisor.records, 2);
+    assert.strictEqual(advisor.totals.uncachedInputTokens, 300);
+    assert.strictEqual(advisor.totals.outputTokens, 60);
+    assert.approximately(advisor.costUsd, 0.003, 1e-10);
+    assert.strictEqual(
+      buckets.find((bucket) => bucket.model === "claude-fable-5")?.totals.outputTokens,
+      5,
+    );
+  });
+
   it("parses only appended lines when resuming a grown file", async () => {
     const path = NodePath.join(dir, "claude.jsonl");
     await NodeFSP.writeFile(path, claudeLine(1, 5) + claudeLine(2, 7));

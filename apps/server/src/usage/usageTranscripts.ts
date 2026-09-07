@@ -89,38 +89,38 @@ export function grokCostTicksToUsd(ticks: unknown): number | null {
 /* -------------------------------------------------------------------------- */
 
 /**
- * Parses one line of a Claude Code transcript.
+ * Parses the executor and any advisor usage from a Claude Code transcript line.
  *
  * T3 Code writes one record per assistant *content block*, and every one of
  * those records repeats the same complete `usage` object for the parent
  * message. Summing them overcounts by roughly 2.4x on a real workload, so the
  * caller must drop repeats by `dedupeKey` and keep the first.
  */
-export function parseClaudeLine(line: string): UsageRecord | null {
+export function parseClaudeLine(line: string): readonly UsageRecord[] {
   let parsed: unknown;
   try {
     parsed = JSON.parse(line);
   } catch {
-    return null;
+    return [];
   }
-  if (typeof parsed !== "object" || parsed === null) return null;
+  if (typeof parsed !== "object" || parsed === null) return [];
 
   const record = parsed as Record<string, unknown>;
-  if (record["type"] !== "assistant") return null;
+  if (record["type"] !== "assistant") return [];
 
   const message = record["message"];
-  if (typeof message !== "object" || message === null) return null;
+  if (typeof message !== "object" || message === null) return [];
   const messageRecord = message as Record<string, unknown>;
 
   const usage = messageRecord["usage"];
-  if (typeof usage !== "object" || usage === null) return null;
+  if (typeof usage !== "object" || usage === null) return [];
   const usageRecord = usage as Record<string, unknown>;
 
   const timestampMs = parseTimestampMs(record["timestamp"]);
-  if (timestampMs === null) return null;
+  if (timestampMs === null) return [];
 
   const model = typeof messageRecord["model"] === "string" ? messageRecord["model"] : "";
-  if (model.length === 0) return null;
+  if (model.length === 0) return [];
 
   const messageId = typeof messageRecord["id"] === "string" ? messageRecord["id"] : null;
   const requestId = typeof record["requestId"] === "string" ? record["requestId"] : null;
@@ -131,7 +131,7 @@ export function parseClaudeLine(line: string): UsageRecord | null {
 
   const cost = record["costUSD"];
 
-  return {
+  const executor: UsageRecord = {
     provider: "claude",
     timestampMs,
     model,
@@ -147,6 +147,36 @@ export function parseClaudeLine(line: string): UsageRecord | null {
     reportedCostUsd: typeof cost === "number" && Number.isFinite(cost) ? cost : null,
     dedupeKey,
   };
+
+  const records = [executor];
+  const iterations = usageRecord["iterations"];
+  if (!Array.isArray(iterations)) return records;
+
+  // Top-level usage includes executor iterations only. Advisor sub-inferences
+  // have their own model and rates; ordinary "message" iterations are already counted.
+  for (const [index, raw] of iterations.entries()) {
+    if (typeof raw !== "object" || raw === null) continue;
+    const iteration = raw as Record<string, unknown>;
+    if (iteration["type"] !== "advisor_message") continue;
+    const advisorModel = iteration["model"];
+    if (typeof advisorModel !== "string" || advisorModel.trim().length === 0) continue;
+    const advisor: UsageRecord = {
+      ...executor,
+      model: advisorModel,
+      totals: {
+        uncachedInputTokens: int(iteration["input_tokens"]),
+        cachedInputTokens: int(iteration["cache_read_input_tokens"]),
+        cacheCreationTokens: int(iteration["cache_creation_input_tokens"]),
+        outputTokens: int(iteration["output_tokens"]),
+        reasoningTokens: 0,
+      },
+      // Legacy costUSD remains executor cost; do not copy it to advisor calls.
+      reportedCostUsd: null,
+      dedupeKey: dedupeKey === null ? null : `${dedupeKey}:advisor:${index}`,
+    };
+    if (totalTokens(advisor.totals) > 0) records.push(advisor);
+  }
+  return records;
 }
 
 /* -------------------------------------------------------------------------- */
