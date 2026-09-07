@@ -521,6 +521,28 @@ final class WebSocketRPCRaceTests: XCTestCase {
         await connection.releaseClose()
     }
 
+    func testStopDuringReconnectCloseDoesNotRestartTheClient() async throws {
+        let closing = BlockingStopConnection()
+        let client = WebSocketRPCClient(
+            connector: SequencedConnector(connections: [closing, AutoReplyConnection()]),
+            endpointProvider: { URL(string: "wss://studio.example/ws")! }
+        )
+        await client.start()
+        await closing.waitUntilReceiving()
+
+        let reconnect = Task { await client.reconnect() }
+        await closing.waitUntilCloseStarted()
+        await client.stop()
+        await closing.releaseClose()
+        await reconnect.value
+
+        do {
+            _ = try await client.waitForConnection(after: nil)
+            XCTFail("An old reconnect must not restart a client that has since stopped.")
+        } catch RPCError.disconnected {}
+        await client.stop()
+    }
+
     func testRestartWhileOldSocketClosesKeepsTheNewConnection() async throws {
         let closing = BlockingStopConnection()
         let recovered = AutoReplyConnection()
