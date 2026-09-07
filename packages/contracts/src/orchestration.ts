@@ -1326,6 +1326,7 @@ const ThreadRevertCompleteCommand = Schema.Struct({
   commandId: CommandId,
   threadId: ThreadId,
   turnCount: NonNegativeInt,
+  preservedMessageIds: Schema.Array(MessageId),
   createdAt: IsoDateTime,
 });
 

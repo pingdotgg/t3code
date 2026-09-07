@@ -928,4 +928,51 @@ it.layer(NodeServices.layer)("settled thread decider", (it) => {
       expect(queuedError._tag).toBe("OrchestrationCommandInvariantError");
     }),
   );
+
+  it.effect("preserves a pending turn start when its client clock is behind", () =>
+    Effect.gen(function* () {
+      const pendingMessageId = MessageId.make("message-revert-clock-skew");
+      const result = yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.revert.complete",
+          commandId: CommandId.make("cmd-revert-complete-clock-skew"),
+          threadId: ThreadId.make("thread-1"),
+          turnCount: 0,
+          preservedMessageIds: [pendingMessageId],
+          createdAt: "2026-01-01T00:00:13.000Z",
+        },
+        readModel: makeReadModel(
+          null,
+          null,
+          null,
+          [],
+          [
+            {
+              id: pendingMessageId,
+              role: "user",
+              text: "Continue after revert",
+              turnId: null,
+              streaming: false,
+              createdAt: "2026-01-01T00:00:09.000Z",
+              updatedAt: "2026-01-01T00:00:09.000Z",
+            },
+          ],
+          {},
+          {
+            turnId: TurnId.make("turn-before-revert"),
+            state: "completed",
+            requestedAt: "2026-01-01T00:00:10.000Z",
+            startedAt: "2026-01-01T00:00:11.000Z",
+            completedAt: "2026-01-01T00:00:12.000Z",
+            assistantMessageId: null,
+          },
+        ),
+      });
+
+      expect(result).toMatchObject({
+        type: "thread.reverted",
+        payload: { preservedMessageIds: [pendingMessageId] },
+      });
+    }),
+  );
 });

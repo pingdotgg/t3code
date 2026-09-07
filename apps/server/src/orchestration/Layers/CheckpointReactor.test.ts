@@ -90,11 +90,12 @@ function createProviderServiceHarness(
   hasSession = true,
   sessionCwd = cwd,
   providerName: ProviderSession["provider"] = ProviderDriverKind.make("codex"),
+  rollbackConversationEffect: ProviderServiceShape["rollbackConversation"] = () => Effect.void,
 ) {
   const now = "2026-01-01T00:00:00.000Z";
   const runtimeEventPubSub = Effect.runSync(PubSub.unbounded<ProviderRuntimeEvent>());
-  const rollbackConversation = vi.fn(
-    (_input: { readonly threadId: ThreadId; readonly numTurns: number }) => Effect.void,
+  const rollbackConversation = vi.fn<ProviderServiceShape["rollbackConversation"]>(
+    rollbackConversationEffect,
   );
   const assertConversationRollbackSupported = vi.fn<
     ProviderServiceShape["assertConversationRollbackSupported"]
@@ -306,6 +307,7 @@ describe("CheckpointReactor", () => {
     readonly pullRequestRefreshCalls?: Array<string>;
     readonly pullRequestRefresh?: Effect.Effect<void>;
     readonly serverActivation?: Effect.Effect<void>;
+    readonly rollbackConversationEffect?: ProviderServiceShape["rollbackConversation"];
   }) {
     const cwd = createGitRepository();
     if (options?.initializeGit === false) {
@@ -317,6 +319,7 @@ describe("CheckpointReactor", () => {
       options?.hasSession ?? true,
       options?.providerSessionCwd ?? cwd,
       options?.providerName ?? ProviderDriverKind.make("codex"),
+      options?.rollbackConversationEffect,
     );
     const orchestrationLayer = OrchestrationEngineLive.pipe(
       Layer.provide(OrchestrationProjectionSnapshotQueryLive),
@@ -383,6 +386,7 @@ describe("CheckpointReactor", () => {
       Layer.provideMerge(VcsProcess.layer),
       Layer.provideMerge(ServerConfigLayer),
       Layer.provideMerge(NodeServices.layer),
+      Layer.provideMerge(SqlitePersistenceMemory),
     );
 
     runtime = ManagedRuntime.make(layer);
@@ -1774,8 +1778,16 @@ describe("CheckpointReactor", () => {
   );
 
   it("executes provider revert and emits thread.reverted for checkpoint revert requests", async () => {
-    const harness = await createHarness();
+    const rollbackStarted = await Effect.runPromise(Deferred.make<void>());
+    const continueRollback = await Effect.runPromise(Deferred.make<void>());
+    const harness = await createHarness({
+      rollbackConversationEffect: () =>
+        Deferred.succeed(rollbackStarted, undefined).pipe(
+          Effect.andThen(Deferred.await(continueRollback)),
+        ),
+    });
     const createdAt = "2026-01-01T00:00:00.000Z";
+    const pendingMessageId = MessageId.make("message-accepted-during-revert-with-skew");
 
     await Effect.runPromise(
       harness.engine.dispatch({
@@ -1834,7 +1846,26 @@ describe("CheckpointReactor", () => {
       }),
     );
 
-    await waitForEvent(harness.engine, (event) => event.type === "thread.reverted");
+    await Effect.runPromise(Deferred.await(rollbackStarted));
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-during-revert-with-skew"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: pendingMessageId,
+          role: "user",
+          text: "Continue after revert",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: "2025-12-31T23:59:00.000Z",
+      }),
+    );
+    await Effect.runPromise(Deferred.succeed(continueRollback, undefined));
+
+    const events = await waitForEvent(harness.engine, (event) => event.type === "thread.reverted");
     const thread = await waitForThread(
       harness.readModel,
       (entry) => entry.checkpoints.length === 1,
@@ -1843,6 +1874,14 @@ describe("CheckpointReactor", () => {
     expect(thread.latestTurn?.turnId).toBe("turn-1");
     expect(thread.checkpoints).toHaveLength(1);
     expect(thread.checkpoints[0]?.checkpointTurnCount).toBe(1);
+    expect(
+      (await harness.readModel()).threads[0]?.messages.some(
+        (message) => message.id === pendingMessageId,
+      ),
+    ).toBe(true);
+    expect(events.find((event) => event.type === "thread.reverted")?.payload).toMatchObject({
+      preservedMessageIds: [pendingMessageId],
+    });
     expect(harness.provider.rollbackConversation).toHaveBeenCalledTimes(1);
     expect(harness.provider.rollbackConversation).toHaveBeenCalledWith({
       threadId: ThreadId.make("thread-1"),

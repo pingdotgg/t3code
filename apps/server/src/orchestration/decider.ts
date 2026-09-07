@@ -121,25 +121,6 @@ function hasQueuedTurnStartForThread(
   );
 }
 
-function unadoptedTurnStartMessageIds(
-  thread: Pick<OrchestrationThread, "messages" | "latestTurn" | "session">,
-): ReadonlyArray<MessageId> {
-  return thread.messages.flatMap((message) =>
-    message.role === "user" &&
-    !isImportedAgentSessionMessageId(message.id) &&
-    threadHasQueuedTurnStart(
-      {
-        latestUserMessageAt: message.createdAt,
-        latestTurn: thread.latestTurn,
-        session: thread.session,
-      },
-      message.createdAt,
-    )
-      ? [message.id]
-      : [],
-  );
-}
-
 function withEventBase(
   input: Pick<OrchestrationCommand, "commandId"> & {
     readonly aggregateKind: OrchestrationEvent["aggregateKind"];
@@ -1755,7 +1736,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.revert.complete": {
-      const thread = yield* requireThread({
+      yield* requireThread({
         readModel,
         command,
         threadId: command.threadId,
@@ -1771,7 +1752,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         payload: {
           threadId: command.threadId,
           turnCount: command.turnCount,
-          preservedMessageIds: unadoptedTurnStartMessageIds(thread),
+          preservedMessageIds: command.preservedMessageIds,
         },
       };
     }
