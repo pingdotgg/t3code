@@ -64,10 +64,13 @@ export function ComposerStashFlight(props: {
         typeof geometry.startTime === "number"
           ? geometry.startTime
           : Number(document.timeline.currentTime);
-      const remaining = Math.max(
-        1,
-        COMPOSER_STASH_DURATION_MS - (Number(document.timeline.currentTime) - startTime),
-      );
+      const remaining =
+        COMPOSER_STASH_DURATION_MS - (Number(document.timeline.currentTime) - startTime);
+      if (remaining <= 0) {
+        cancelled = true;
+        onDone();
+        return;
+      }
       // Motion arc() / add-to-basket pattern: https://motion.dev/docs/arc
       // Reuse the path when the editor's later layout measurement updates the tab.
       animation = animate(

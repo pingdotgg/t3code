@@ -120,6 +120,18 @@ describe("saved draft flight", () => {
     expect(fixture.onDone).toHaveBeenCalledOnce();
   });
 
+  it.each([650, 700])("settles a retarget at or after the deadline (%s)", async (currentTime) => {
+    const fixture = await renderFlight(false);
+    fixture.timeline.currentTime = currentTime;
+    fixture.geometryListenerRef.current?.({ x: 720, y: 480, startTime: 100 });
+    expect(fixture.controls[0]!.stop).toHaveBeenCalledOnce();
+    expect(fixture.animate).toHaveBeenCalledTimes(2);
+    expect(fixture.onDone).toHaveBeenCalledOnce();
+    fixture.geometryListenerRef.current?.({ x: 720, y: 500, startTime: 100 });
+    fixture.controls[0]!.complete?.();
+    expect(fixture.onDone).toHaveBeenCalledOnce();
+  });
+
   it("acknowledges without moving the draft when reduced motion is requested", async () => {
     const fixture = await renderFlight(true);
     expect(fixture.animate).not.toHaveBeenCalled();
