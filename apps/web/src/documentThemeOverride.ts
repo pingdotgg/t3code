@@ -25,6 +25,9 @@ export function setDocumentThemeOverride(value: DocumentThemeOverride | null): v
     for (const name of Object.keys(current?.vars ?? {})) {
       if (!(name in (next?.vars ?? {}))) document.documentElement.style.removeProperty(name);
     }
+    if (current?.vars["--app-theme-chrome"] && !next?.vars["--app-theme-chrome"]) {
+      document.documentElement.style.removeProperty("background-color");
+    }
   }
   current = next;
   currentJson = json;

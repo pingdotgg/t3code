@@ -1,8 +1,18 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { buildShellSettingsState, resolveActiveSettingsSection } from "./shellSettingsState";
+import {
+  buildShellSettingsState,
+  isSettingsPath,
+  resolveActiveSettingsSection,
+} from "./shellSettingsState";
 
 describe("buildShellSettingsState", () => {
+  it("rejects inherited object properties as settings destinations", () => {
+    expect(isSettingsPath("/settings/general")).toBe(true);
+    for (const path of ["constructor", "toString", "__proto__", "/settings/missing"]) {
+      expect(isSettingsPath(path)).toBe(false);
+    }
+  });
   it("is inactive off the settings routes and lists every section", () => {
     const state = buildShellSettingsState({ pathname: "/env/thread", searchQuery: "" });
     expect(state.active).toBe(false);

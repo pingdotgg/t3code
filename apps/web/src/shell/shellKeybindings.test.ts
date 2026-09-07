@@ -104,6 +104,19 @@ describe("shellKeybindingPressToForward", () => {
     ).toBeNull();
   });
 
+  it("normalizes shifted letter and named keys before crossing the shell contract", () => {
+    const shifted = compileResolvedKeybindingsConfig([
+      { key: "mod+shift+b", command: "sidebar.toggle" },
+      { key: "mod+arrowdown", command: "thread.jump.1" },
+    ]);
+    expect(
+      shellKeybindingPressToForward({ ...ctrl("B"), shiftKey: true }, shifted, "Linux", {}),
+    ).toEqual({ ...ctrl("b"), shiftKey: true });
+    expect(shellKeybindingPressToForward(ctrl("ArrowDown"), shifted, "Linux", {})).toEqual(
+      ctrl("arrowdown"),
+    );
+  });
+
   it("ignores keys bound to nothing", () => {
     expect(shellKeybindingPressToForward(ctrl("z"), config, "Linux", {})).toBeNull();
   });

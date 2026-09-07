@@ -11,7 +11,7 @@ export const SETTINGS_SECTIONS: ReadonlyArray<{ to: SettingsPath; label: string 
 ).map((to) => ({ to, label: SETTINGS_SECTION_LABELS[to] }));
 
 export function isSettingsPath(value: string): value is SettingsPath {
-  return value in SETTINGS_SECTION_LABELS;
+  return Object.hasOwn(SETTINGS_SECTION_LABELS, value);
 }
 
 export function resolveActiveSettingsSection(pathname: string): SettingsPath | null {

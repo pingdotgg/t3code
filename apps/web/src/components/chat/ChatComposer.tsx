@@ -4710,7 +4710,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const composerPlaceholder = isComposerApprovalState
     ? (activePendingApproval?.detail ?? "Resolve this approval request to continue")
     : activePendingProgress
-      ? "Type your own answer, or leave this blank to use the selected option"
+      ? isChoiceOnlyPendingQuestion
+        ? "Choose an option above"
+        : "Type your own answer, or leave this blank to use the selected option"
       : showPlanFollowUpPrompt && activeProposedPlan
         ? "Add feedback to refine the plan, or leave this blank to implement it"
         : projectSelectionRequired
@@ -4746,6 +4748,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     hideEditorForShell &&
     !hasShoulderTab &&
     composerImages.length === 0 &&
+    composerFiles.length === 0 &&
     composerTerminalContexts.length === 0 &&
     composerElementContexts.length === 0 &&
     composerPreviewAnnotations.length === 0 &&
@@ -5487,24 +5490,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     onPageScrollRelease={onPageScrollRelease}
                     onCitationSubmitAndSend={submitCitationAndSend}
                     onPaste={onComposerPaste}
-                    placeholder={
-                      isComposerApprovalState
-                        ? (activePendingApproval?.detail ??
-                          "Resolve this approval request to continue")
-                        : activePendingProgress
-                          ? isChoiceOnlyPendingQuestion
-                            ? "Choose an option above"
-                            : "Type your own answer, or leave this blank to use the selected option"
-                          : showPlanFollowUpPrompt && activeProposedPlan
-                            ? "Add feedback to refine the plan, or leave this blank to implement it"
-                            : projectSelectionRequired
-                              ? "Choose a project above to start a thread"
-                              : noProviderAvailable
-                                ? "Enable a provider in Settings to send a message"
-                                : phase === "disconnected"
-                                  ? DISCONNECTED_COMPOSER_PLACEHOLDER
-                                  : "Ask anything, @tag files/folders, $use skills, or / for commands"
-                    }
+                    placeholder={composerPlaceholder}
                     disabled={
                       isConnecting ||
                       isComposerApprovalState ||
@@ -5569,12 +5555,17 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 onAddTerminalContext={(selection) => {
                   composerRef.current?.addTerminalContext(selection);
                 }}
-                attachments={composerImages}
+                attachments={standaloneComposerImages}
                 terminalContexts={composerTerminalContexts}
                 onRemoveAttachment={removeComposerImage}
                 onRemoveTerminalContext={removeComposerTerminalContextFromDraft}
                 placeholder={composerPlaceholder}
-                editorDisabled={isConnecting || isComposerApprovalState || projectSelectionRequired}
+                editorDisabled={
+                  isConnecting ||
+                  isComposerApprovalState ||
+                  projectSelectionRequired ||
+                  isChoiceOnlyPendingQuestion
+                }
                 hasSendableContent={composerSendState.hasSendableContent}
                 sendDisabledReason={sendDisabledReason}
                 phase={phase}

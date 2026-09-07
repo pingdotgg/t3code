@@ -19,7 +19,10 @@ function documentFixture(bootstrap: ShellThemeBootstrap = {}) {
     style: {
       backgroundColor: "",
       setProperty: (name: string, value: string) => variables.set(name, value),
-      removeProperty: (name: string) => variables.delete(name),
+      removeProperty: (name: string) => {
+        if (name === "background-color") root.style.backgroundColor = "";
+        return variables.delete(name);
+      },
     },
   };
   vi.stubGlobal("document", { documentElement: root });
@@ -51,6 +54,18 @@ const shell = {
 };
 
 describe("shell theme ownership", () => {
+  it("releases the inline chrome background when replaced or removed", async () => {
+    const { root } = documentFixture();
+    const { setDocumentThemeOverride } = await import("../documentThemeOverride");
+    const withChrome = { ...shell, vars: { "--app-theme-chrome": "#123456" } };
+    setDocumentThemeOverride(withChrome);
+    expect(root.style.backgroundColor).toBe("#123456");
+    setDocumentThemeOverride(shell);
+    expect(root.style.backgroundColor).toBe("");
+    setDocumentThemeOverride(withChrome);
+    setDocumentThemeOverride(null);
+    expect(root.style.backgroundColor).toBe("");
+  });
   it("lets embedded documents claim the override without publishing native colors", async () => {
     const disconnect = vi.fn();
     const fixture = documentFixture({ observer: { disconnect }, override: shell });

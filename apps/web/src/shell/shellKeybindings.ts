@@ -108,7 +108,7 @@ export function shellKeybindingPressToForward(
   if (command === null) return null;
   if (resolveShortcutCommand(event, config, { platform }) !== command) return null;
   return {
-    key: event.key,
+    key: event.key.toLowerCase(),
     ctrlKey: event.ctrlKey,
     metaKey: event.metaKey,
     shiftKey: event.shiftKey,
