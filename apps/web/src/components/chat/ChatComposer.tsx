@@ -5537,7 +5537,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       aria-label="Stash current draft"
                       className="group/stash h-8 min-w-8 w-auto gap-0 bg-(--chat-composer-glass-surface) px-2 text-xs sm:h-8 sm:w-auto sm:text-xs [&_svg]:mx-0"
                       onPointerDown={(event) => event.preventDefault()}
-                      onClick={() => void stashCurrentPrompt()}
+                      onClick={() => {
+                        void stashCurrentPrompt();
+                        window.requestAnimationFrame(() => {
+                          composerEditorRef.current?.focusAtEnd();
+                        });
+                      }}
                     >
                       <span className="max-w-0 overflow-hidden whitespace-nowrap opacity-0 transition-[max-width,opacity,margin] duration-150 ease-out group-hover/stash:mr-1 group-hover/stash:max-w-24 group-hover/stash:opacity-100 group-focus/stash:mr-1 group-focus/stash:max-w-24 group-focus/stash:opacity-100 motion-reduce:transition-none">
                         Stash this
