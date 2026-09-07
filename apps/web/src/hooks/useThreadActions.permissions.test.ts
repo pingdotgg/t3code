@@ -33,6 +33,7 @@ const state = vi.hoisted(() => ({
   requests: [] as { action: string; environmentId: string; input: { threadId?: string } }[],
   localEffects: [] as string[],
   confirm: vi.fn<(message: string) => Promise<boolean>>(),
+  toasts: [] as string[],
   afterRequest: undefined as ((action: string) => void) | undefined,
   sessionLookupFails: false,
 }));
@@ -147,7 +148,11 @@ vi.mock("../threadRoutes", () => ({
 }));
 vi.mock("../components/ui/toast", () => ({
   stackedThreadToast: (toast: unknown) => toast,
-  toastManager: { add: () => {} },
+  toastManager: {
+    add: (toast: { title?: string }) => {
+      if (toast.title) state.toasts.push(toast.title);
+    },
+  },
 }));
 vi.mock("./useHandleNewThread", () => ({ useNewThreadHandler: () => async () => {} }));
 vi.mock("./useSettings", () => ({
@@ -221,6 +226,7 @@ beforeEach(() => {
   state.requests = [];
   state.localEffects = [];
   state.confirm.mockReset().mockResolvedValue(true);
+  state.toasts = [];
   state.afterRequest = undefined;
   state.sessionLookupFails = false;
 });
@@ -334,13 +340,12 @@ describe("thread action permissions", () => {
     state.afterRequest = () => state.scopes.get(secondary)!.delete(AuthSourceControlWriteScope);
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     try {
+      // The thread is already gone, so cleanup reports itself in a toast
+      // instead of failing the deletion.
       const result = await useThreadActions().deleteThread(target);
-      expect(result._tag).toBe("Failure");
-      if (result._tag !== "Failure") throw new Error("Expected permission denial");
-      const error = Cause.squash<unknown>(result.cause);
-      expect(error).toBeInstanceOf(EnvironmentAuthorizationError);
-      expect(error).toMatchObject({ requiredScope: AuthSourceControlWriteScope });
+      expect(result._tag).toBe("Success");
       expect(state.requests.map((request) => request.action)).toEqual(["delete"]);
+      expect(state.toasts).toContain("Failed to delete worktree");
       expect(state.localEffects).toContain("clear-terminal-ui");
     } finally {
       consoleError.mockRestore();
