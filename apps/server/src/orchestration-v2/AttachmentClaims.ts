@@ -28,8 +28,7 @@ export function attachmentIsPendingUpload(attachment: ChatAttachment): boolean {
   return parseThreadSegmentFromAttachmentId(attachment.id) === PENDING_ATTACHMENT_THREAD_SEGMENT;
 }
 
-/** Best-effort removal of claimed copies after a failed dispatch: the pending
- *  upload remains the retry source, so only the thread-scoped copies go. */
+/** Remove partial claims only before dispatch, or after proving they were not accepted. */
 export const releaseClaimedAttachments = Effect.fn("AttachmentClaims.releaseClaimedAttachments")(
   function* (claimedPaths: ReadonlyArray<string>) {
     if (claimedPaths.length === 0) return;
