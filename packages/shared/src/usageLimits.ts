@@ -189,7 +189,21 @@ export function collectLimitAccounts(
 ): readonly LimitAccount[] {
   const accounts = new Map<string, LimitAccount>();
   const creditSources = new Map<string, LimitAccount>();
+  const hubRedeems = new Map<string, LimitAccount>();
   const merge = (key: string, next: LimitAccount) => {
+    // Redeeming through a hub also clears the routing cooldown that hub holds
+    // for the account. Redeeming natively against the same subscription resets
+    // it upstream but leaves the hub refusing to route to the account until
+    // its own cooldown expires, so a hub target wins the redemption outright
+    // while the displayed balance still follows the freshest read.
+    const previousHub = hubRedeems.get(key);
+    if (
+      next.redeem &&
+      "sourceId" in next.redeem.input &&
+      (!previousHub || Date.parse(next.limits.checkedAt) > Date.parse(previousHub.limits.checkedAt))
+    ) {
+      hubRedeems.set(key, next);
+    }
     const previousCredit = creditSources.get(key);
     if (
       next.limits.resetCredits &&
@@ -224,9 +238,9 @@ export function collectLimitAccounts(
       environments,
       // A hub only names the account when no environment has it natively.
       sourceLabel: environments.length > 0 ? null : (previous.sourceLabel ?? next.sourceLabel),
-      redeem: creditSource
-        ? creditSource.redeem
-        : (winner.redeem ?? previous.redeem ?? next.redeem),
+      redeem:
+        hubRedeems.get(key)?.redeem ??
+        (creditSource ? creditSource.redeem : (winner.redeem ?? previous.redeem ?? next.redeem)),
       limits: {
         ...winner.limits,
         ...(creditSource?.limits.resetCredits
