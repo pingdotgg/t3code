@@ -49,19 +49,10 @@ export function pendingThreadCreationMessage(
     id: message.messageId,
     role: "user",
     text: message.text,
-    // Local attachments have no server id yet; the row only needs to
-    // reserve the space and name them.
-    ...(message.attachments.length > 0
-      ? {
-          attachments: message.attachments.map((attachment) => ({
-            type: attachment.type,
-            id: attachment.id,
-            name: attachment.name,
-            mimeType: attachment.mimeType,
-            sizeBytes: attachment.sizeBytes,
-          })),
-        }
-      : {}),
+    // Deliberately no attachments. Their ids are local draft ids the server
+    // cannot resolve, so the feed's attachment rows would sit on a spinner
+    // that only ends when the real message arrives — and never, if the
+    // creation is rejected. The delivered message renders them moments later.
     turnId: null,
     streaming: false,
     createdAt: message.createdAt,

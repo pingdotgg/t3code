@@ -27,6 +27,7 @@ import {
   forgetAcknowledgedThreadMessage,
 } from "./acknowledged-thread-messages";
 import { appAtomRegistry } from "./atom-registry";
+import { restoredNewTaskDraftKey } from "./new-task-draft-key";
 import { useProjects, useServerConfigs, useThreadShells } from "./entities";
 import {
   clearPendingThreadCreationOutcome,
@@ -62,7 +63,6 @@ import {
   type ComposerDraft,
   getComposerDraftSnapshot,
   mergeComposerDraftContent,
-  newTaskDraftKey,
   replaceComposerDraftAttachments,
   removeDeliveredCloudQueuedMessage,
   undoComposerDraftMerge,
@@ -482,7 +482,7 @@ export async function restoreRejectedQueuedMessage(
  */
 function recoveryDraftKey(queuedMessage: QueuedThreadMessage): string {
   return queuedMessage.creation
-    ? newTaskDraftKey(`restored-${queuedMessage.messageId}`)
+    ? restoredNewTaskDraftKey(queuedMessage.messageId)
     : scopedThreadKey(queuedMessage.environmentId, queuedMessage.threadId);
 }
 
@@ -552,6 +552,7 @@ export function useThreadOutboxDrain(): void {
   const queuedMessagesByThreadKey = useThreadOutboxMessages();
   const shellStatuses = useThreadOutboxShellStatuses();
   const threads = useThreadShells();
+  const creationOutcomes = useAtomValue(pendingThreadCreationOutcomesAtom);
   const projects = useProjects();
   const serverConfigs = useServerConfigs();
   const { connectedEnvironments } = useRemoteConnectionStatus();
@@ -964,9 +965,11 @@ export function useThreadOutboxDrain(): void {
   // A creation outcome only bridges the gap until the server's shell arrives.
   // Drop it once that happens so the map cannot grow for a whole session; a
   // failed outcome stays until its thread screen consumes it.
+  // Subscribed, not read once: the shell often lands before the outcome is
+  // recorded, and a non-reactive read would leave that entry uncollected
+  // because `threads` never changes again.
   useEffect(() => {
-    const outcomes = appAtomRegistry.get(pendingThreadCreationOutcomesAtom);
-    for (const [threadKey, outcome] of Object.entries(outcomes)) {
+    for (const [threadKey, outcome] of Object.entries(creationOutcomes)) {
       if (
         outcome.kind === "delivered" &&
         threads.some((thread) => scopedThreadKey(thread.environmentId, thread.id) === threadKey)
@@ -974,7 +977,7 @@ export function useThreadOutboxDrain(): void {
         clearPendingThreadCreationOutcome(threadKey);
       }
     }
-  }, [threads]);
+  }, [creationOutcomes, threads]);
 
   useEffect(() => {
     if (dispatchingQueuedMessageId !== null) {

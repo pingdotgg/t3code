@@ -79,24 +79,21 @@ describe("pendingThreadCreationShell", () => {
 });
 
 describe("pendingThreadCreationMessage", () => {
-  it("renders the queued prompt as the first user message with its attachments named", () => {
+  it("renders the queued prompt as the first user message", () => {
     expect(pendingThreadCreationMessage(creation)).toEqual({
       id: creation.messageId,
       role: "user",
       text: creation.text,
-      attachments: [
-        {
-          type: "image",
-          id: "draft-image",
-          name: "screen.png",
-          mimeType: "image/png",
-          sizeBytes: 10,
-        },
-      ],
       turnId: null,
       streaming: false,
       createdAt: creation.createdAt,
       updatedAt: creation.createdAt,
     });
+  });
+
+  // Draft attachment ids are local; the feed resolves attachment rows against
+  // the server and would spin forever on them.
+  it("omits the queued attachments rather than passing local draft ids to the feed", () => {
+    expect(pendingThreadCreationMessage(creation)).not.toHaveProperty("attachments");
   });
 });

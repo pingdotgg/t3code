@@ -25,6 +25,7 @@ import {
 import { Platform, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useWorkspaceState } from "../../state/workspace";
+import { restoredNewTaskDraftKey } from "../../state/new-task-draft-key";
 import { clearPendingThreadCreationOutcome } from "../../state/pending-thread-creation";
 import { useEnvironmentQuery } from "../../state/query";
 import { dismissGitActionResult, useGitActionProgress } from "../../state/use-vcs-action-state";
@@ -752,13 +753,15 @@ function ThreadRouteContent(
     if (!creation?.creation || routeThreadIdentity === null) {
       return;
     }
-    // The drain already restored the prompt into the project draft; the
-    // outcome is consumed here so this screen does not keep offering it.
+    // The drain restored the prompt and attachments into the recovery draft
+    // the rejected creation owns. Open that draft by id: without it the sheet
+    // mints a fresh empty one and the restored content is unreachable.
     clearPendingThreadCreationOutcome(routeThreadIdentity);
     navigation.dispatch(
       StackActions.replace("NewTaskSheet", {
         screen: "NewTaskDraft",
         params: {
+          draftId: restoredNewTaskDraftKey(creation.messageId),
           environmentId: String(creation.environmentId),
           projectId: String(creation.creation.projectId),
           ...(selectedThreadProject ? { title: selectedThreadProject.title } : {}),
