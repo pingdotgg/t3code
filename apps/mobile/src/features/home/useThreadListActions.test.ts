@@ -11,6 +11,7 @@ import { AsyncResult } from "effect/unstable/reactivity";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const state = vi.hoisted(() => ({
+  pendingOrder: null as object | null,
   scopes: new Map<string, Set<string>>(),
   shells: [] as EnvironmentThreadShell[],
   requests: [] as {
@@ -58,26 +59,47 @@ vi.mock("../../state/atom-registry", () => ({
     get: (atom: string) =>
       atom === "thread-shells"
         ? state.shells
-        : new Map(
-            [...state.scopes.keys()].map((environmentId) => [
-              environmentId,
-              {
-                environment: {
-                  capabilities: {
-                    threadSettlement: true,
-                    threadSnooze: true,
-                    threadPinning: true,
-                    threadPinReorder: true,
-                    threadTitleRegeneration: true,
+        : atom === "queued-thread-keys"
+          ? new Set<string>()
+          : new Map(
+              [...state.scopes.keys()].map((environmentId) => [
+                environmentId,
+                {
+                  environment: {
+                    capabilities: {
+                      threadSettlement: true,
+                      threadSnooze: true,
+                      threadPinning: true,
+                      threadPinReorder: true,
+                      threadTitleRegeneration: true,
+                    },
                   },
                 },
-              },
-            ]),
-          ),
+              ]),
+            ),
   },
 }));
 vi.mock("../../state/use-atom-command", () => ({
   useAtomCommand: (command: unknown) => command,
+}));
+// Stubbed at the direct dependency: the real outbox pulls the Expo file-system
+// storage into a test that only reads which threads are queued.
+vi.mock("../../state/use-thread-outbox", () => ({ queuedThreadKeysAtom: "queued-thread-keys" }));
+// The real hold lives in a module-level atom that would leak between cases.
+vi.mock("../../state/thread-order", () => ({
+  getPendingThreadOrder: () => state.pendingOrder,
+  beginPendingThreadOrder: () => {
+    state.pendingOrder = {};
+    return {
+      isPending: () => state.pendingOrder !== null,
+      complete: () => {
+        state.pendingOrder = null;
+      },
+      cancel: () => {
+        state.pendingOrder = null;
+      },
+    };
+  },
 }));
 vi.mock("../../state/threads", () => ({
   environmentThreadShells: { threadShellsAtom: "thread-shells" },
@@ -154,6 +176,7 @@ const mutationCases = [
 ] as const;
 
 beforeEach(() => {
+  state.pendingOrder = null;
   state.scopes = new Map([
     [primaryEnvironmentId, new Set([AuthOrchestrationOperateScope])],
     [otherEnvironmentId, new Set<string>()],
@@ -269,7 +292,7 @@ describe("pinned thread operation permissions", () => {
       }),
     ];
 
-    expect(await useThreadListActions().movePinnedThread(moved, "up")).toBe(false);
+    expect(await useThreadListActions().moveThread(moved, "up")).toBe(false);
     expect(state.requests).toEqual([]);
   });
 
@@ -285,7 +308,7 @@ describe("pinned thread operation permissions", () => {
       }),
     ];
 
-    expect(await useThreadListActions().movePinnedThread(moved, "up")).toBe(true);
+    expect(await useThreadListActions().moveThread(moved, "up")).toBe(true);
     expect(state.requests).toEqual([
       expect.objectContaining({ action: "reorderPin", environmentId: primaryEnvironmentId }),
     ]);
@@ -303,7 +326,7 @@ describe("pinned thread operation permissions", () => {
     ];
     state.afterRequest = () => state.scopes.get(primaryEnvironmentId)!.clear();
 
-    expect(await useThreadListActions().movePinnedThread(moved, "up")).toBe(false);
+    expect(await useThreadListActions().moveThread(moved, "up")).toBe(false);
     expect(state.requests).toHaveLength(1);
   });
 });

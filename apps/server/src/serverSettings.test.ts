@@ -427,7 +427,9 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
-  for (const fallbackId of ["codex", "codex_work"]) {
+  // Only driver-keyed instances are fallback candidates; a custom instance id
+  // is not one, so the selection stays put until the user changes it.
+  for (const fallbackId of ["codex"]) {
     it.effect(`falls back to enabled instance ${fallbackId} after disabling the selection`, () =>
       Effect.scoped(
         Effect.gen(function* () {

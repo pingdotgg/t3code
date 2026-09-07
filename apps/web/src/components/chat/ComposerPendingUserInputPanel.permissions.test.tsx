@@ -24,9 +24,11 @@ it("cancels an answer's pending auto-submit on revocation and resumes after a ne
   vi.stubGlobal("document", { addEventListener: vi.fn(), removeEventListener: vi.fn() });
   const onToggleOption = vi.fn();
   const onAdvance = vi.fn();
+  const onDismiss = vi.fn();
   const prompt = {
     requestId: ApprovalRequestId.make("scoped-answer"),
     createdAt: "2026-09-05T00:00:00.000Z",
+    dismissible: false,
     questions: [
       {
         id: "approach",
@@ -46,6 +48,7 @@ it("cancels an answer's pending auto-submit on revocation and resumes after a ne
       questionIndex={0}
       onToggleOption={onToggleOption}
       onAdvance={onAdvance}
+      onDismiss={onDismiss}
     />
   );
   let renderer: ReactTestRenderer | undefined;
