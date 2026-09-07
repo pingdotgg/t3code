@@ -965,6 +965,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           ],
         });
       }
+      const occurredAt = yield* nowIso;
       const worktreeGuardFailed =
         command.requireIdleWorktreePath !== undefined &&
         (thread.worktreePath !== command.requireIdleWorktreePath ||
@@ -974,7 +975,8 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
               other.worktreePath === command.requireIdleWorktreePath &&
               (other.session?.activeTurnId != null ||
                 other.session?.status === "starting" ||
-                other.session?.status === "running"),
+                other.session?.status === "running" ||
+                hasQueuedTurnStartForThread(other, occurredAt)),
           ));
       const branch =
         command.branch !== undefined &&
@@ -982,7 +984,6 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           worktreeGuardFailed)
           ? thread.branch
           : command.branch;
-      const occurredAt = yield* nowIso;
       return {
         ...(yield* withEventBase({
           aggregateKind: "thread",
