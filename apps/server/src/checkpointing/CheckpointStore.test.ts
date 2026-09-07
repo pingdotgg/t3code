@@ -156,6 +156,44 @@ it.layer(TestLayer)("CheckpointStore.layer", (it) => {
     }),
   );
 
+  it.effect("preserves staged changes outside a nested project during restore", () =>
+    Effect.gen(function* () {
+      const tmp = yield* makeTmpDir();
+      yield* initRepoWithCommit(tmp);
+      const project = NodePath.join(tmp, "project");
+      const projectFile = NodePath.join(project, "app.ts");
+      const outsideFile = NodePath.join(tmp, "outside.txt");
+      const store = yield* CheckpointStore.CheckpointStore;
+      const fs = yield* FileSystem.FileSystem;
+      const thread = ThreadId.make("nested-project-index");
+      const checkpointRef = checkpointRefForThreadTurn(thread, 0);
+      const fromCheckpointRef = checkpointRefForThreadTurn(thread, 1);
+
+      yield* fs.makeDirectory(project);
+      yield* writeTextFile(projectFile, "baseline\n");
+      yield* writeTextFile(outsideFile, "outside baseline\n");
+      yield* git(tmp, ["add", "."]);
+      yield* git(tmp, ["commit", "-m", "add project"]);
+      yield* store.captureCheckpoint({ cwd: project, checkpointRef });
+
+      yield* writeTextFile(projectFile, "agent edit\n");
+      yield* writeTextFile(NodePath.join(project, "agent.txt"), "agent addition\n");
+      yield* store.captureCheckpoint({ cwd: project, checkpointRef: fromCheckpointRef });
+
+      yield* writeTextFile(outsideFile, "outside staged\n");
+      yield* git(tmp, ["add", "outside.txt"]);
+      yield* writeTextFile(outsideFile, "outside unstaged\n");
+
+      expect(
+        yield* store.restoreCheckpoint({ cwd: project, checkpointRef, fromCheckpointRef }),
+      ).toBe(true);
+      expect(yield* git(tmp, ["show", ":outside.txt"])).toBe("outside staged");
+      expect(yield* fs.readFileString(outsideFile)).toBe("outside unstaged\n");
+      expect(yield* fs.readFileString(projectFile)).toBe("baseline\n");
+      expect(yield* fs.exists(NodePath.join(project, "agent.txt"))).toBe(false);
+    }),
+  );
+
   describe("diffCheckpoints", () => {
     it.effect("returns full oversized checkpoint diffs without truncation", () =>
       Effect.gen(function* () {
