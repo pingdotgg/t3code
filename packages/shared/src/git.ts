@@ -182,10 +182,11 @@ export function parseOriginUrlFromGitConfig(configText: string): string | null {
     const line = rawLine.trim();
     if (line.length === 0 || line.startsWith("#") || line.startsWith(";")) continue;
     // Both `[remote "origin"]` and the legacy `[remote.origin]` form, with an
-    // optional trailing comment.
+    // optional trailing comment. Git keeps quoted subsections case-sensitive
+    // but folds the dotted form to lowercase.
     const header = /^\[\s*remote(?:\s+"([^"]+)"|\.([^\]\s]+))\s*\](?:\s*[#;].*)?$/i.exec(line);
     if (header) {
-      section = header[1] ?? header[2] ?? null;
+      section = header[1] ?? header[2]?.toLowerCase() ?? null;
       continue;
     }
     if (line.startsWith("[")) {

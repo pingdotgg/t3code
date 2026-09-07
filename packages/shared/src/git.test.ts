@@ -83,6 +83,15 @@ describe("parseOriginUrlFromGitConfig", () => {
     expect(parseOriginUrlFromGitConfig("[remote.origin]\n\turl = git@github.com:a/b.git\n")).toBe(
       "git@github.com:a/b.git",
     );
+    // Git folds the dotted form to lowercase but keeps quoted names as written.
+    expect(parseOriginUrlFromGitConfig("[remote.Origin]\n\turl = git@github.com:a/b.git\n")).toBe(
+      "git@github.com:a/b.git",
+    );
+    expect(
+      parseOriginUrlFromGitConfig(
+        '[remote "Origin"]\n\turl = git@github.com:x/y.git\n[remote "origin"]\n\turl = git@github.com:a/b.git\n',
+      ),
+    ).toBe("git@github.com:a/b.git");
     expect(
       parseOriginUrlFromGitConfig('[remote "origin"] # primary\n\turl = git@github.com:a/b.git\n'),
     ).toBe("git@github.com:a/b.git");
