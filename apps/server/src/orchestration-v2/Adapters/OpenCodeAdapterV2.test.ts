@@ -25,7 +25,7 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
 import type { EventNdjsonLogger } from "../../provider/Layers/EventNdjsonLogger.ts";
-import type { OpenCodeRuntimeShape } from "../../provider/opencodeRuntime.ts";
+import { OpenCodeRuntimeError, type OpenCodeRuntimeShape } from "../../provider/opencodeRuntime.ts";
 import type { ServerConfig } from "../../config.ts";
 import { IdAllocatorV2, layer as idAllocatorLayer } from "../IdAllocator.ts";
 
@@ -1073,16 +1073,84 @@ describe("OpenCodeAdapterV2", () => {
             providerThread: harness.providerThread,
             providerTurnId: snapshot.providerTurns.at(-1)!.id,
           })
-          .pipe(Effect.exit, Effect.forkScoped);
+          .pipe(Effect.flip, Effect.forkScoped);
         const childSignal = yield* Effect.promise(() => childAbortStarted.promise);
         if (failureMode === "timeout") yield* TestClock.adjust("5 seconds");
 
-        assert.isTrue(Exit.isFailure(yield* Fiber.join(result)));
+        const interruptError = yield* Fiber.join(result);
         assert.include(abortCalls, "native-opencode-failing-child");
         assert.include(abortCalls, "native-opencode-surviving-sibling");
-        if (failureMode === "timeout") assert.isTrue(childSignal.aborted);
+        if (failureMode === "timeout") {
+          assert.isTrue(childSignal.aborted);
+          assert.isTrue(OpenCodeRuntimeError.is(interruptError.cause));
+          if (OpenCodeRuntimeError.is(interruptError.cause)) {
+            assert.equal(interruptError.cause.category, "timeout");
+            assert.equal(interruptError.cause.sessionId, "native-opencode-failing-child");
+            assert.equal(interruptError.cause.timeoutMs, 5_000);
+          }
+        }
         cleanupReady = true;
       }).pipe(Effect.provide(idAllocatorLayer), Effect.scoped),
+  );
+
+  it.effect("treats a missing descendant session as already stopped", () =>
+    Effect.gen(function* () {
+      const nativeEvents = asyncEventStream();
+      const abortCalls: Array<string> = [];
+      let cleanupReady = false;
+      const harness = yield* makeOpenCodeRuntimeHarness(
+        "descendant-not-found",
+        "native-opencode-descendant-not-found",
+        {
+          event: {
+            subscribe: async (_input: unknown, options: { signal?: AbortSignal }) => {
+              options.signal?.addEventListener("abort", () => nativeEvents.close(), { once: true });
+              return { stream: nativeEvents.stream };
+            },
+          },
+          session: {
+            create: async () => ({
+              data: {
+                id: "native-opencode-descendant-not-found",
+                time: { created: 1, updated: 1 },
+              },
+            }),
+            promptAsync: async () => ({ data: true }),
+            messages: async () => ({ data: [] }),
+            abort: async (input: { sessionID: string }) => {
+              abortCalls.push(input.sessionID);
+              if (!cleanupReady && input.sessionID === "native-opencode-missing-child") {
+                throw { response: { status: 404 } };
+              }
+              return { data: true };
+            },
+            children: async (input: { sessionID: string }) => {
+              if (!cleanupReady && input.sessionID === "native-opencode-missing-child") {
+                throw { response: { status: 404 } };
+              }
+              return {
+                data:
+                  input.sessionID === "native-opencode-descendant-not-found"
+                    ? [{ id: "native-opencode-missing-child" }]
+                    : [],
+              };
+            },
+          },
+        },
+      );
+      yield* harness.startTurn();
+      const snapshot = yield* harness.runtime.readThreadSnapshot({
+        providerThread: harness.providerThread,
+      });
+
+      yield* harness.runtime.interruptTurn({
+        providerThread: harness.providerThread,
+        providerTurnId: snapshot.providerTurns.at(-1)!.id,
+      });
+
+      assert.include(abortCalls, "native-opencode-missing-child");
+      cleanupReady = true;
+    }).pipe(Effect.provide(idAllocatorLayer), Effect.scoped),
   );
 
   it.effect("aborts external OpenCode work when its adapter scope closes", () =>

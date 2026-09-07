@@ -101,11 +101,60 @@ export interface OpenCodeServerConnection {
 const OPENCODE_RUNTIME_ERROR_TAG = "OpenCodeRuntimeError";
 export class OpenCodeRuntimeError extends Data.TaggedError(OPENCODE_RUNTIME_ERROR_TAG)<{
   readonly operation: string;
+  readonly category?: "http" | "timeout";
+  readonly status?: number;
+  readonly sessionId?: string;
+  readonly timeoutMs?: number;
   readonly cause?: unknown;
   readonly detail: string;
 }> {
   static readonly is = (u: unknown): u is OpenCodeRuntimeError =>
     P.isTagged(u, OPENCODE_RUNTIME_ERROR_TAG);
+
+  static sessionRequestTimeout(input: {
+    readonly operation: string;
+    readonly sessionId: string;
+    readonly timeoutMs: number;
+  }): OpenCodeRuntimeError {
+    return new OpenCodeRuntimeError({
+      operation: input.operation,
+      category: "timeout",
+      sessionId: input.sessionId,
+      timeoutMs: input.timeoutMs,
+      detail: `OpenCode ${input.operation} did not complete for session ${input.sessionId} within ${input.timeoutMs / 1_000} seconds.`,
+    });
+  }
+}
+
+function openCodeHttpStatus(cause: unknown): number | undefined {
+  const seen = new Set<unknown>();
+  const queue: Array<unknown> = [cause];
+  for (let steps = 0; queue.length > 0 && steps < 32; steps += 1) {
+    const node = queue.shift();
+    if (node === null || typeof node !== "object" || seen.has(node)) continue;
+    seen.add(node);
+    const record = node as Record<string, unknown>;
+    const response = record.response;
+    const statusCandidates = [
+      record.status,
+      record.statusCode,
+      response !== null && typeof response === "object"
+        ? (response as { readonly status?: unknown }).status
+        : undefined,
+    ];
+    const status = statusCandidates.find(
+      (value): value is number =>
+        typeof value === "number" && Number.isInteger(value) && value >= 100 && value <= 599,
+    );
+    if (status !== undefined) return status;
+    if (typeof record.name === "string" && record.name.toLowerCase() === "notfounderror") {
+      return 404;
+    }
+    for (const key of ["cause", "body", "error", "data"] as const) {
+      if (record[key] !== undefined) queue.push(record[key]);
+    }
+  }
+  return undefined;
 }
 
 function encodeJsonStringForDiagnostics(input: unknown): string | undefined {
@@ -135,8 +184,15 @@ export const runOpenCodeSdk = <A>(
 ): Effect.Effect<A, OpenCodeRuntimeError> =>
   Effect.tryPromise({
     try: fn,
-    catch: (cause) =>
-      new OpenCodeRuntimeError({ operation, detail: openCodeRuntimeErrorDetail(cause), cause }),
+    catch: (cause) => {
+      const status = openCodeHttpStatus(cause);
+      return new OpenCodeRuntimeError({
+        operation,
+        ...(status !== undefined ? { category: "http" as const, status } : {}),
+        detail: openCodeRuntimeErrorDetail(cause),
+        cause,
+      });
+    },
   }).pipe(Effect.withSpan(`opencode.${operation}`));
 
 export const verifyOpenCodeServerVersion = Effect.fn("verifyOpenCodeServerVersion")(function* (

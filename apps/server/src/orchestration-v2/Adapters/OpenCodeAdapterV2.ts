@@ -870,32 +870,8 @@ function isMessageAbortedError(event: Extract<OpenCodeEvent, { type: "session.er
   return event.properties.error?.name === "MessageAbortedError";
 }
 
-function isOpenCodeNotFound(cause: unknown): boolean {
-  const seen = new Set<unknown>();
-  const queue: Array<unknown> = [cause];
-  for (let steps = 0; queue.length > 0 && steps < 32; steps += 1) {
-    const node = queue.shift();
-    if (node === null || typeof node !== "object" || seen.has(node)) continue;
-    seen.add(node);
-    const record = node as Record<string, unknown>;
-    const response = record.response;
-    const statuses = [
-      record.status,
-      record.statusCode,
-      response !== null && typeof response === "object"
-        ? (response as { readonly status?: unknown }).status
-        : undefined,
-    ].filter((status): status is number => typeof status === "number");
-    if (statuses.includes(404)) return true;
-    if (statuses.length > 0) continue;
-    if (typeof record.name === "string" && record.name.toLowerCase() === "notfounderror") {
-      return true;
-    }
-    for (const key of ["cause", "body", "error", "data"] as const) {
-      if (record[key] !== undefined) queue.push(record[key]);
-    }
-  }
-  return false;
+function isOpenCodeNotFound(error: OpenCodeRuntimeError): boolean {
+  return error.category === "http" && error.status === 404;
 }
 
 function unwrapData<A>(operation: string, result: { readonly data?: A }): NonNullable<A> {
@@ -1033,9 +1009,10 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
                   duration: "5 seconds",
                   orElse: () =>
                     Effect.fail(
-                      new OpenCodeRuntimeError({
+                      OpenCodeRuntimeError.sessionRequestTimeout({
                         operation,
-                        detail: `OpenCode ${operation} did not complete for session ${sessionId} within 5 seconds.`,
+                        sessionId,
+                        timeoutMs: 5_000,
                       }),
                     ),
                 }),

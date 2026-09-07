@@ -137,6 +137,8 @@ describe("verifyOpenCodeServerVersion", () => {
         ),
       ).pipe(Effect.flip);
       expect(error).toBeInstanceOf(OpenCodeRuntimeError);
+      expect(error.category).toBe("http");
+      expect(error.status).toBe(401);
       expect(error.detail).toContain("status=401");
       expect(error.detail).toContain("Unauthorized");
     }),
