@@ -96,6 +96,7 @@ import {
 } from "../lib/projectPaths";
 import { onOpenCommandPalette } from "../commandPaletteBus";
 import { isPreviewFocused } from "../lib/previewFocus";
+import { isModelPickerOpen } from "../modelPickerVisibility";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { selectActiveRightPanel, useRightPanelStore } from "../rightPanelStore";
 import { getLatestThreadForProject, sortThreads } from "../lib/threadSort";
@@ -397,6 +398,7 @@ function overlayModeForCommand(command: string | null): SearchOverlayMode | null
 }
 
 export function CommandPalette({ children }: { children: ReactNode }) {
+  const navigate = useNavigate();
   const [state, dispatch] = useReducer(reduceCommandPaletteUiState, {
     open: false,
     mode: "command",
@@ -442,6 +444,29 @@ export function CommandPalette({ children }: { children: ReactNode }) {
   }, [state.mode, state.open, toggleMode]);
 
   useEffect(() => {
+    // Claim navigation before the composer's underline shortcut consumes mod+u.
+    const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.defaultPrevented || event.isComposing) return;
+      const command = resolveShortcutCommand(event, keybindings, {
+        context: {
+          terminalFocus: isTerminalFocused(),
+          terminalOpen,
+          previewFocus: isPreviewFocused(),
+          previewOpen,
+          modelPickerOpen: isModelPickerOpen(),
+        },
+      });
+      if (command !== "usage.open") return;
+      event.preventDefault();
+      event.stopPropagation();
+      setOpen(false);
+      void navigate({ to: "/usage" });
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, [keybindings, navigate, previewOpen, setOpen, terminalOpen]);
+
+  useEffect(() => {
     const onKeyDown = (event: globalThis.KeyboardEvent) => {
       if (event.defaultPrevented) return;
       // Resolve with the complete shortcut context so customized bindings
@@ -452,6 +477,7 @@ export function CommandPalette({ children }: { children: ReactNode }) {
           terminalOpen,
           previewFocus: isPreviewFocused(),
           previewOpen,
+          modelPickerOpen: isModelPickerOpen(),
         },
       });
       if (command === "themeEditor.toggle") {
