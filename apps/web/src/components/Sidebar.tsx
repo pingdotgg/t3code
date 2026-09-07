@@ -545,7 +545,8 @@ function SortableSidebarMarker(props: {
       className={cn("list-none", props.className)}
       style={{
         transform: CSS.Translate.toString(transform),
-        transition,
+        // A newly revealed target must not slide from its hidden position.
+        transition: props.marker.endsWith("-placeholder") ? "none" : transition,
         visibility: transform?.scaleY === 0 ? "hidden" : undefined,
       }}
     >
@@ -599,13 +600,11 @@ function SidebarDragBoundary(props: {
       className="pointer-events-none relative mx-0.5 h-0"
     >
       {props.visible ? (
-        <div className="sidebar-drag-boundary-label absolute inset-x-2 top-1 flex h-4 items-center gap-1.5">
+        <div className="sidebar-drag-boundary-label absolute inset-x-2 top-1 flex h-4 items-center gap-2">
           <span
             className={cn(
-              "inline-flex h-4 shrink-0 items-center rounded-sm border bg-sidebar px-1.5 text-[10px] leading-none font-medium",
-              props.isDropTarget
-                ? "border-primary/40 text-primary"
-                : "border-sidebar-foreground/25 text-sidebar-foreground/80",
+              "shrink-0 text-xs font-medium",
+              props.isDropTarget ? "text-primary" : "text-sidebar-foreground/80",
             )}
           >
             {props.label}
@@ -635,10 +634,10 @@ function SidebarSectionHeader(props: {
 }) {
   const snoozed = props.marker === "snoozed-header";
   const className = cn(
-    "flex h-full w-full items-center gap-2 rounded-md border border-dashed border-transparent px-2 text-left text-xs font-medium",
+    "flex h-full w-full items-center gap-2 px-2 text-left text-xs font-medium",
     snoozed ? "text-blue-600 dark:text-blue-400" : "text-sidebar-muted-foreground/60",
     props.dragging && "text-sidebar-foreground/80",
-    props.isDropTarget && "border-primary/40 bg-primary/5 text-primary",
+    props.isDropTarget && "text-primary",
   );
   const content = (
     <>
@@ -3261,9 +3260,7 @@ export default function Sidebar() {
     items.push(...pinnedRows);
     items.push({ kind: "marker", marker: "pinned-divider" });
     const activeRows = rowsOf(activeThreads, "active");
-    if (activeRows.length === 0) {
-      items.push({ kind: "marker", marker: "active-placeholder" });
-    }
+    items.push({ kind: "marker", marker: "active-placeholder" });
     items.push(...activeRows);
     if (snoozedThreads.length > 0) {
       items.push({ kind: "marker", marker: "snoozed-header" });
@@ -3271,9 +3268,7 @@ export default function Sidebar() {
     }
     items.push({ kind: "marker", marker: "settled-header" });
     const settledRows = rowsOf(renderedSettledThreads, "settled");
-    if (settledRows.length === 0) {
-      items.push({ kind: "marker", marker: "settled-placeholder" });
-    }
+    items.push({ kind: "marker", marker: "settled-placeholder" });
     items.push(...settledRows);
     return items;
   }, [
@@ -4805,7 +4800,14 @@ export default function Sidebar() {
                                 key="active-placeholder"
                                 marker="active-placeholder"
                                 label="Active"
-                                showHint={from !== null}
+                                showHint={
+                                  from !== null &&
+                                  (activeThreads.length === 0 ||
+                                    (from === "active" &&
+                                      activeThreads.length === 1 &&
+                                      dragTargetSection !== null &&
+                                      dragTargetSection !== "active"))
+                                }
                                 isDropTarget={dragTargetSection === "active"}
                               />,
                             );
@@ -4852,7 +4854,14 @@ export default function Sidebar() {
                                 key="settled-placeholder"
                                 marker="settled-placeholder"
                                 label="Settled"
-                                showHint={from !== null && from !== "settled"}
+                                showHint={
+                                  from !== null &&
+                                  (renderedSettledThreads.length === 0 ||
+                                    (from === "settled" &&
+                                      renderedSettledThreads.length === 1 &&
+                                      dragTargetSection !== null &&
+                                      dragTargetSection !== "settled"))
+                                }
                                 isDropTarget={dragTargetSection === "settled"}
                               />,
                             );

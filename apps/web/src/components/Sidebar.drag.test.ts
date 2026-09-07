@@ -622,6 +622,31 @@ describe("sidebar drag projection", () => {
     expect(strategy({ ...smaller, index: 2 })?.y).toBe(-62.5);
   });
 
+  it.each(["active", "settled"] as const)(
+    "reveals the mounted empty %s target when its last row leaves and hides it on return",
+    (section) => {
+      const items = [
+        pinnedHeader,
+        thread("p", "pinned"),
+        divider,
+        marker("active-placeholder"),
+        thread("a", "active"),
+        settledHeader,
+        marker("settled-placeholder"),
+        thread("s", "settled"),
+      ];
+      const active = section === "active" ? "a" : "s";
+      const input = { items, settledOrder: ["s"], settledExpanded: true };
+      const placeholderId = sidebarMarkerId(`${section}-placeholder`);
+      const resting = preview(input, active, active);
+      expect(resting.get(placeholderId)?.scaleY).toBe(0);
+      const leaving = preview(input, active, sidebarMarkerId("pinned-header"));
+      expect(leaving.get(placeholderId)?.scaleY).toBe(1);
+      const returning = preview(input, active, active);
+      expect(returning.get(placeholderId)?.scaleY).toBe(0);
+    },
+  );
+
   it("uses shelf height for empty target sizing when card height differs from its default", () => {
     const items = [
       pinnedHeader,
