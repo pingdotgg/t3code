@@ -123,7 +123,10 @@ vi.mock("../lib/composerImages", async (importOriginal) => ({
   removePersistedComposerAttachmentFile: composerAttachmentCleanupMocks.remove,
 }));
 
-vi.mock("../lib/uuid", () => ({ uuidv4: () => "uuid", randomHex: () => "0000" }));
+vi.mock("../lib/uuid", () => {
+  let hexSequence = 0;
+  return { uuidv4: () => "uuid", randomHex: () => (hexSequence++).toString(16).padStart(4, "0") };
+});
 vi.mock("./assets", () => ({ assetEnvironment: {} }));
 vi.mock("./attachments", () => ({ attachmentEnvironment: {} }));
 vi.mock("./session", () => ({ environmentSession: {} }));
@@ -154,6 +157,7 @@ import {
   archiveCloudComposerDrafts,
   clearComposerDraftContent,
   clearComposerDraftContentState,
+  clearComposerDraftModelSelection,
   clearComposerDraftsEnvironment,
   ComposerDraftPersistenceError,
   composerDraftsAtom,
@@ -165,6 +169,7 @@ import {
   findNewTaskDraftKeys,
   flushComposerDrafts,
   getComposerDraftSnapshot,
+  mergeComposerDraftContent,
   mergeComposerDraftContentState,
   migrateLegacyNewTaskDraft,
   releaseUnusedComposerAttachmentFiles,
@@ -181,6 +186,7 @@ import {
   stickyComposerModelSelectionAtom,
   undoComposerDraftMerge,
   undoComposerDraftMergeState,
+  updateComposerDraftSettings,
 } from "./use-composer-drafts";
 
 const DRAFT: ComposerDraft = {
@@ -1434,6 +1440,7 @@ describe("mobile composer drafts", () => {
         model: "gpt-5.4",
         options: [{ id: "reasoningEffort", value: "xhigh" }],
       },
+      modelSelectionId: "choice-1",
       workspaceSelection: {
         mode: "worktree",
         branch: "main",
@@ -1444,10 +1451,66 @@ describe("mobile composer drafts", () => {
     expect(clearComposerDraftContentState({ [draftKey]: draft }, draftKey)).toEqual({
       [draftKey]: {
         modelSelection: draft.modelSelection,
+        modelSelectionId: "choice-1",
         workspaceSelection: draft.workspaceSelection,
         text: "",
         attachments: [],
       },
+    });
+  });
+
+  it("persists a share-import receipt when releasing a sent model choice", async () => {
+    const draftKey = "environment-1:thread-1";
+    const model = { instanceId: ProviderInstanceId.make("codex"), model: "ModelA" };
+    const share = { text: "Shared text", attachments: [], sourceShareId: "share-1" };
+    await waitForComposerDraftsLoaded();
+    await mergeComposerDraftContent(draftKey, share);
+    updateComposerDraftSettings(draftKey, { modelSelection: model });
+    const sentId = getComposerDraftSnapshot(draftKey).modelSelectionId;
+    if (sentId === undefined) throw new Error("choice has no id");
+    setComposerDraftText(draftKey, "");
+    clearComposerDraftModelSelection(draftKey, sentId);
+
+    const receipt = {
+      text: "",
+      attachments: [],
+      importedShareIds: ["share-1"],
+    };
+    expect(getComposerDraftSnapshot(draftKey)).toEqual(receipt);
+    await flushComposerDrafts();
+    appAtomRegistry.set(composerDraftsAtom, {});
+    resetComposerDraftsLoadState();
+    await waitForComposerDraftsLoaded();
+    expect(getComposerDraftSnapshot(draftKey)).toEqual(receipt);
+    await mergeComposerDraftContent(draftKey, share);
+    expect(getComposerDraftSnapshot(draftKey)).toEqual(receipt);
+  });
+
+  it("gives every model pick its own id and releases only the pick a message sent", () => {
+    const draftKey = "environment-1:thread-1";
+    const model = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" };
+    updateComposerDraftSettings(draftKey, { modelSelection: model });
+    const sentId = getComposerDraftSnapshot(draftKey).modelSelectionId;
+
+    // Choosing the same value again is a new choice.
+    updateComposerDraftSettings(draftKey, { modelSelection: { ...model } });
+    const rePickedId = getComposerDraftSnapshot(draftKey).modelSelectionId;
+    if (sentId === undefined || rePickedId === undefined) throw new Error("choice has no id");
+    expect(rePickedId).not.toBe(sentId);
+    updateComposerDraftSettings(draftKey, { runtimeMode: "approval-required" });
+    expect(getComposerDraftSnapshot(draftKey).modelSelectionId).toBe(rePickedId);
+
+    clearComposerDraftModelSelection(draftKey, sentId);
+    expect(getComposerDraftSnapshot(draftKey)).toMatchObject({
+      modelSelection: model,
+      modelSelectionId: rePickedId,
+    });
+
+    clearComposerDraftModelSelection(draftKey, rePickedId);
+    expect(getComposerDraftSnapshot(draftKey)).toEqual({
+      text: "",
+      attachments: [],
+      runtimeMode: "approval-required",
     });
   });
 
@@ -1706,6 +1769,59 @@ describe("mobile composer drafts", () => {
         merged,
       ),
     ).toEqual({});
+  });
+
+  it("keeps a same-model re-pick made during the merge when rolling back", () => {
+    const draftKey = "environment-1:thread-1";
+    const model = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" };
+    const snapshot: ComposerDraft = {
+      text: "typed before",
+      attachments: [],
+      modelSelection: model,
+      modelSelectionId: "choice-1",
+    };
+    const merged: ComposerDraft = { ...snapshot, text: "typed before\n\nqueued text" };
+    // Same selection object, new choice: only the id tells the rollback the user acted.
+    const rePicked: ComposerDraft = { ...merged, modelSelectionId: "choice-2" };
+
+    expect(
+      undoComposerDraftMergeState({ [draftKey]: rePicked }, draftKey, snapshot, merged),
+    ).toEqual({ [draftKey]: { ...snapshot, modelSelectionId: "choice-2" } });
+  });
+
+  it("rolls the model and its id back as one pair", () => {
+    const draftKey = "environment-1:thread-1";
+    const older = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" };
+    const newer = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.6-sol" };
+    const snapshot: ComposerDraft = {
+      text: "typed before",
+      attachments: [],
+      modelSelection: older,
+      modelSelectionId: "choice-1",
+    };
+    // A new choice landed while the merge awaited, then the same object was chosen again.
+    const merged: ComposerDraft = {
+      ...snapshot,
+      text: "typed before\n\nqueued text",
+      modelSelection: newer,
+      modelSelectionId: "choice-2",
+    };
+    const edited: ComposerDraft = {
+      ...merged,
+      text: "typed before\n\nqueued text more",
+      modelSelectionId: "choice-3",
+    };
+
+    expect(undoComposerDraftMergeState({ [draftKey]: edited }, draftKey, snapshot, merged)).toEqual(
+      {
+        [draftKey]: {
+          text: "typed before more",
+          attachments: [],
+          modelSelection: newer,
+          modelSelectionId: "choice-3",
+        },
+      },
+    );
   });
 
   it("persists an async merge rollback with the sticky model selection", async () => {

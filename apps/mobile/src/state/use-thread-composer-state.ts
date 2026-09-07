@@ -368,6 +368,7 @@ export function useThreadComposerState() {
       text,
       attachments,
       modelSelection,
+      ...(draft.modelSelectionId === undefined ? {} : { modelSelectionId: draft.modelSelectionId }),
       runtimeMode: draft.runtimeMode ?? thread.runtimeMode,
       interactionMode: resolveProviderInteractionMode(
         provider,
