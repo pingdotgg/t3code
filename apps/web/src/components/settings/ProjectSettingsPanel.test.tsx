@@ -48,6 +48,7 @@ const state = vi.hoisted(() => ({
       }) => Promise<AsyncResult.Success<void>>
     >(),
   confirm: vi.fn<() => Promise<boolean>>(),
+  updateSettings: vi.fn(),
   upsertKeybinding: vi.fn(),
   removeKeybinding: vi.fn(),
   updateClientSettings: vi.fn(),
@@ -84,13 +85,15 @@ vi.mock("~/state/server", () => ({
   serverEnvironment: {
     providersValueAtom: () => state.providers!,
     configValueAtom: () => state.config!,
+    updateSettings: "updateSettings",
     upsertKeybinding: "upsertKeybinding",
     removeKeybinding: "removeKeybinding",
   },
 }));
 vi.mock("~/state/use-atom-command", () => ({
-  useAtomCommand: (command: "update" | "delete" | "upsertKeybinding" | "removeKeybinding") =>
-    state[command],
+  useAtomCommand: (
+    command: "update" | "delete" | "updateSettings" | "upsertKeybinding" | "removeKeybinding",
+  ) => state[command],
 }));
 vi.mock("~/hooks/useSettings", () => ({
   useClientSettings: () => DEFAULT_CLIENT_SETTINGS,
@@ -282,6 +285,7 @@ beforeEach(() => {
     return AsyncResult.success(undefined);
   });
   state.delete.mockResolvedValue(AsyncResult.success(undefined));
+  state.updateSettings.mockResolvedValue(AsyncResult.success(undefined));
   state.confirm.mockResolvedValue(true);
 });
 
@@ -352,27 +356,27 @@ describe("project settings permissions", () => {
 
   it("updates every member when all have project access without settings access", async () => {
     const root = await mountPanel();
-    await act(async () =>
-      root
-        .findByProps({ "aria-label": "Automatically pull the default branch" })
-        .props.onCheckedChange(true),
-    );
+    await act(async () => {
+      const name = root.findByProps({ "aria-label": "Project name" });
+      name.props.onChange();
+      name.props.onBlur({ currentTarget: { value: "Renamed" } });
+    });
     expect(state.update.mock.calls.map(([request]) => request.environmentId)).toEqual([
       primaryId,
       remoteId,
     ]);
-    expect(state.projects.map((project) => project.autoPull)).toEqual([true, true]);
+    expect(state.projects.map((project) => project.title)).toEqual(["Renamed", "Renamed"]);
   });
 
   it("stops before the next member if its grant is revoked during an earlier update", async () => {
     const firstUpdate = deferred<AsyncResult.Success<void>>();
     state.update.mockReturnValueOnce(firstUpdate.promise);
     const root = await mountPanel();
-    await act(async () =>
-      root
-        .findByProps({ "aria-label": "Automatically pull the default branch" })
-        .props.onCheckedChange(true),
-    );
+    await act(async () => {
+      const name = root.findByProps({ "aria-label": "Project name" });
+      name.props.onChange();
+      name.props.onBlur({ currentTarget: { value: "Renamed" } });
+    });
     expect(state.update).toHaveBeenCalledOnce();
 
     await grant(remoteId, AsyncResult.success(session([])));
@@ -385,6 +389,12 @@ describe("project settings permissions", () => {
   });
 
   it("keeps the writable checkout editable and local controls usable in a mixed group", async () => {
+    // Actions are stored in the environment's settings, so editing them needs
+    // settings access on top of the project grant.
+    await grant(
+      primaryId,
+      AsyncResult.success(session([AuthOrchestrationOperateScope, AuthSettingsWriteScope])),
+    );
     await grant(remoteId, AsyncResult.success(session([])));
     const root = await mountPanel();
     expect(button("Add action").props.disabled).toBe(false);
@@ -400,14 +410,20 @@ describe("project settings permissions", () => {
       button("Add action").props.onClick();
       await root.findByType(ProjectScriptEditorDialog).props.onSubmit(null, input);
     });
-    expect(state.projects[0]!.scripts.map((script) => script.name)).toEqual(["Build"]);
-    expect(state.projects[1]!.scripts).toEqual([]);
+    expect(state.updateSettings.mock.calls.map(([request]) => request.environmentId)).toEqual([
+      primaryId,
+    ]);
+    expect(
+      state.updateSettings.mock.calls[0]![0].input.patch.projectScriptOverrides[
+        state.projects[0]!.id
+      ].map((script: { name: string }) => script.name),
+    ).toEqual(["Build"]);
     expect(state.upsertKeybinding).not.toHaveBeenCalled();
     expect(state.removeKeybinding).not.toHaveBeenCalled();
 
     await act(() =>
       root
-        .findByProps({ "aria-label": "Selected checkout" })
+        .findByProps({ "aria-label": "Checkout" })
         .parent!.props.onValueChange(group().memberProjects[1]!.physicalProjectKey),
     );
     expect(button("Add action").props.disabled).toBe(true);
@@ -417,11 +433,9 @@ describe("project settings permissions", () => {
       root
         .findByProps({ "aria-label": "Grouping rule for remote" })
         .parent!.props.onValueChange("separate");
-      root.findByProps({ "aria-label": "Copy checkout path" }).props.onClick();
     });
-    expect(state.update).toHaveBeenCalledOnce();
+    expect(state.updateSettings).toHaveBeenCalledOnce();
     expect(state.updateClientSettings).toHaveBeenCalledOnce();
-    expect(state.copy).toHaveBeenCalledWith("/work/remote", { path: "/work/remote" });
   });
 
   it("allows removing a writable checkout while denying removal of the mixed group", async () => {
@@ -456,22 +470,29 @@ describe("project settings permissions", () => {
   });
 
   it("reacts to another member's revoked and restored grant and guards a stale handler", async () => {
+    await grant(
+      primaryId,
+      AsyncResult.success(session([AuthOrchestrationOperateScope, AuthSettingsWriteScope])),
+    );
     const root = await mountPanel();
-    const autoPull = () =>
-      root.findByProps({ "aria-label": "Automatically pull the default branch" });
-    const staleSave = autoPull().props.onCheckedChange;
+    const name = () => root.findByProps({ "aria-label": "Project name" });
+    const staleSave = name().props.onBlur;
     await act(async () => {
       state.registry!.set(state.sessions.get(remoteId)!, AsyncResult.success(session([])));
-      staleSave(true);
+      name().props.onChange();
+      staleSave({ currentTarget: { value: "Renamed" } });
     });
     expect(state.update).not.toHaveBeenCalled();
-    expect(autoPull().props.disabled).toBe(true);
+    expect(name().props.disabled).toBe(true);
     expect(button("Add action").props.disabled).toBe(false);
 
     await grant(remoteId, writable());
-    expect(autoPull().props.disabled).toBe(false);
-    await act(async () => autoPull().props.onCheckedChange(true));
-    expect(state.projects.map((project) => project.autoPull)).toEqual([true, true]);
+    expect(name().props.disabled).toBe(false);
+    await act(async () => {
+      name().props.onChange();
+      name().props.onBlur({ currentTarget: { value: "Renamed" } });
+    });
+    expect(state.projects.map((project) => project.title)).toEqual(["Renamed", "Renamed"]);
   });
 
   it.each([
@@ -487,9 +508,12 @@ describe("project settings permissions", () => {
     async (_state, result, allowed) => {
       await grant(remoteId, result());
       const root = await mountPanel();
-      const autoPull = root.findByProps({ "aria-label": "Automatically pull the default branch" });
-      expect(autoPull.props.disabled).toBe(!allowed);
-      await act(async () => autoPull.props.onCheckedChange(true));
+      const name = root.findByProps({ "aria-label": "Project name" });
+      expect(name.props.disabled).toBe(!allowed);
+      await act(async () => {
+        name.props.onChange();
+        name.props.onBlur({ currentTarget: { value: "Renamed" } });
+      });
       expect(state.update).toHaveBeenCalledTimes(allowed ? 2 : 0);
     },
   );
