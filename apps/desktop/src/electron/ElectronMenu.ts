@@ -190,6 +190,13 @@ export const make = Effect.gen(function* () {
       Effect.try({
         try: () => {
           Electron.Menu.setApplicationMenu(Electron.Menu.buildFromTemplate([...template]));
+          if (platform === "win32") {
+            for (const window of Electron.BrowserWindow.getAllWindows()) {
+              if (!window.isDestroyed()) {
+                window.setMenu(null);
+              }
+            }
+          }
         },
         catch: (cause) =>
           new ElectronMenuOperationError({

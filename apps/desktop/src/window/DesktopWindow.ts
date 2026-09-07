@@ -258,6 +258,9 @@ function syncWindowAppearance(
     if (typeof titleBarOverlay === "object") {
       window.setTitleBarOverlay(titleBarOverlay);
     }
+    if (platform === "win32") {
+      window.setMenu?.(null);
+    }
   });
 }
 
@@ -389,6 +392,9 @@ export const make = Effect.gen(function* () {
 
     if (environment.platform === "darwin") {
       window.setAutoHideCursor(false);
+    }
+    if (environment.platform === "win32") {
+      window.setMenu?.(null);
     }
     let boundsPersistFiber: Fiber.Fiber<void, never> | undefined;
     let pendingBoundsPersistFiber: Fiber.Fiber<void, never> | undefined;
@@ -594,10 +600,41 @@ export const make = Effect.gen(function* () {
     });
     window.webContents.on("before-input-event", (event, input) => {
       quitShortcutHandler(event, input);
-      if (input.type !== "keyDown" || !input.isAutoRepeat) return;
+      if (input.type !== "keyDown") {
+        return;
+      }
+
       const modifier = environment.platform === "darwin" ? input.meta : input.control;
-      if (modifier && !input.alt && !input.shift && input.key.toLowerCase() === "w") {
-        event.preventDefault();
+      if (input.isAutoRepeat) {
+        if (modifier && !input.alt && !input.shift && input.key.toLowerCase() === "w") {
+          event.preventDefault();
+        }
+        return;
+      }
+
+      if (environment.platform === "win32" && input.control && !input.alt) {
+        if (!input.shift && input.key === ",") {
+          event.preventDefault();
+          window.webContents.send(MENU_ACTION_CHANNEL, "open-settings");
+          return;
+        }
+        if (input.key === "=" || input.key === "+") {
+          event.preventDefault();
+          window.webContents.setZoomLevel(window.webContents.getZoomLevel() + 0.5);
+          void runPromise(previewManager.reapplyZoom());
+          return;
+        }
+        if (!input.shift && (input.key === "-" || input.key === "_")) {
+          event.preventDefault();
+          window.webContents.setZoomLevel(window.webContents.getZoomLevel() - 0.5);
+          void runPromise(previewManager.reapplyZoom());
+          return;
+        }
+        if (!input.shift && input.key === "0") {
+          event.preventDefault();
+          window.webContents.setZoomLevel(0);
+          void runPromise(previewManager.reapplyZoom());
+        }
       }
     });
 

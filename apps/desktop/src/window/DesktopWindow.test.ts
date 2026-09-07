@@ -109,6 +109,7 @@ function makeFakeBrowserWindow() {
     setOpacity: vi.fn(),
     setTitle: vi.fn(),
     setTitleBarOverlay: vi.fn(),
+    setMenu: vi.fn(),
     show: vi.fn(),
     webContents,
   };
@@ -131,6 +132,7 @@ function makeFakeBrowserWindow() {
     setAutoHideCursor: window.setAutoHideCursor,
     setFullScreen: window.setFullScreen,
     setOpacity: window.setOpacity,
+    setMenu: window.setMenu,
     webContentsListeners,
     windowListeners,
   };
@@ -209,6 +211,7 @@ function makeTestLayer(input: {
   ) => Effect.Effect<void>;
   readonly openedExternalUrls?: unknown[];
   readonly previewZoomReapplies?: number[];
+  readonly environmentLayer?: Layer.Layer<DesktopEnvironment.DesktopEnvironment, never, never>;
 }) {
   let desktopSettings = input.desktopSettings ?? DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS;
   const desktopAppSettingsLayer = Layer.succeed(DesktopAppSettings.DesktopAppSettings, {
@@ -267,7 +270,7 @@ function makeTestLayer(input: {
     Layer.provide(
       Layer.mergeAll(
         desktopAssetsLayer,
-        desktopEnvironmentLayer,
+        input.environmentLayer ?? desktopEnvironmentLayer,
         desktopAppSettingsLayer,
         desktopClientSettingsLayer,
         desktopServerExposureLayer,
@@ -1258,6 +1261,116 @@ describe("DesktopWindow", () => {
         assert.equal(yield* Ref.get(scenario.createCalls), 3);
         assert.deepEqual(main.send.mock.calls, [[MENU_ACTION_CHANNEL, "open-settings"]]);
       }).pipe(Effect.provide(scenario.layer));
+    }),
+  );
+
+  it.effect("detaches window menu on Windows during syncAppearance", () =>
+    Effect.gen(function* () {
+      const { window, setMenu } = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make(Option.some(window));
+      const windowsEnvironmentLayer = DesktopEnvironment.layer({
+        ...environmentInput,
+        platform: "win32",
+      }).pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            NodeServices.layer,
+            DesktopConfig.layerTest({
+              T3CODE_PORT: "3773",
+              VITE_DEV_SERVER_URL: "http://127.0.0.1:5733",
+            }),
+          ),
+        ),
+        Layer.orDie,
+      );
+
+      const layer = makeTestLayer({
+        window,
+        createCount,
+        mainWindow,
+        environmentLayer: windowsEnvironmentLayer,
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.syncAppearance;
+        assert.equal(setMenu.mock.calls.length, 1);
+        assert.deepEqual(setMenu.mock.calls[0], [null]);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("handles settings and zoom shortcuts on Windows via before-input-event", () =>
+    Effect.gen(function* () {
+      const fake = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const windowsEnvironmentLayer = DesktopEnvironment.layer({
+        ...environmentInput,
+        platform: "win32",
+      }).pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            NodeServices.layer,
+            DesktopConfig.layerTest({
+              T3CODE_PORT: "3773",
+              VITE_DEV_SERVER_URL: "http://127.0.0.1:5733",
+            }),
+          ),
+        ),
+        Layer.orDie,
+      );
+
+      const layer = makeTestLayer({
+        window: fake.window,
+        createCount,
+        mainWindow,
+        environmentLayer: windowsEnvironmentLayer,
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+
+        const beforeInput = fake.webContentsListeners.get("before-input-event");
+        if (!beforeInput) {
+          return yield* Effect.die("before-input-event listener was not registered");
+        }
+
+        const sendKey = (key: string, shift = false) => {
+          let prevented = false;
+          beforeInput(
+            { preventDefault: () => (prevented = true) },
+            {
+              type: "keyDown",
+              isAutoRepeat: false,
+              key,
+              control: true,
+              meta: false,
+              alt: false,
+              shift,
+            },
+          );
+          return prevented;
+        };
+
+        assert.isTrue(sendKey(","));
+        assert.deepEqual(fake.send.mock.calls, [[MENU_ACTION_CHANNEL, "open-settings"]]);
+
+        assert.isTrue(sendKey("="));
+        assert.equal(fake.window.webContents.getZoomLevel(), 0.5);
+
+        assert.isTrue(sendKey("+", true));
+        assert.equal(fake.window.webContents.getZoomLevel(), 1);
+
+        assert.isTrue(sendKey("-"));
+        assert.equal(fake.window.webContents.getZoomLevel(), 0.5);
+
+        fake.window.webContents.setZoomLevel(1.5);
+        assert.isTrue(sendKey("0"));
+        assert.equal(fake.window.webContents.getZoomLevel(), 0);
+      }).pipe(Effect.provide(layer));
     }),
   );
 });
