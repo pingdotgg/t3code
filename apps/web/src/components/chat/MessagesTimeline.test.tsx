@@ -278,6 +278,7 @@ describe("MessagesTimeline", () => {
             isMobileViewport: false,
             isScrollCollapsed: composer.isComposerScrollCollapsed,
             hasExpandedChrome: false,
+            hasMultilinePrompt: false,
             timelineOverflows: true,
           });
         });
