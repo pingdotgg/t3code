@@ -217,6 +217,10 @@ export async function readTranscriptRecords(
       resumed = true;
     }
 
+    /**
+     * Appends all usage records from one provider transcript line, including
+     * Claude advisor calls, and updates Codex state even on context-only lines.
+     */
     const parseLine = (line: string, state: CodexScanState, out: UsageRecord[]): void => {
       if (provider === "codex") {
         if (
