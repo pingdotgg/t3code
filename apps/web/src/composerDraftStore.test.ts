@@ -2177,6 +2177,25 @@ describe("composerDraftStore sticky composer settings", () => {
     expect(useComposerDraftStore.getState().stickyActiveProvider).toBe("cursor");
   });
 
+  it("preserves sticky provider options when model selection omits options", () => {
+    const store = useComposerDraftStore.getState();
+
+    store.setStickyModelSelection(
+      modelSelection(CURSOR_DRIVER, "composer-2", {
+        fastMode: false,
+      }),
+    );
+    store.setStickyModelSelection(modelSelection(CURSOR_DRIVER, "composer-2.5"));
+
+    expect(
+      useComposerDraftStore.getState().stickyModelSelectionByProvider[CURSOR_INSTANCE],
+    ).toEqual(
+      modelSelection(CURSOR_DRIVER, "composer-2.5", {
+        fastMode: false,
+      }),
+    );
+  });
+
   it("applies sticky activeProvider to new drafts", () => {
     const store = useComposerDraftStore.getState();
     const threadId = ThreadId.make("thread-sticky-active-provider");
