@@ -11,12 +11,19 @@ import * as McpHttpServer from "../McpHttpServer.ts";
 import { McpInvocationContext, type McpInvocationScope } from "../McpInvocationContext.ts";
 import { OrchestratorToolkit } from "./orchestrator/tools.ts";
 import { PreviewToolkit } from "./preview/tools.ts";
+import { PreviewControlsToolkit } from "./previewControls/tools.ts";
 import { ThreadToolkit } from "./thread/tools.ts";
 import { WorktreeToolkit } from "./worktree/tools.ts";
 
 it("publishes unique tool names with object-root inputs", () => {
   const names = new Set<string>();
-  for (const toolkit of [OrchestratorToolkit, PreviewToolkit, WorktreeToolkit, ThreadToolkit]) {
+  for (const toolkit of [
+    OrchestratorToolkit,
+    PreviewToolkit,
+    WorktreeToolkit,
+    ThreadToolkit,
+    PreviewControlsToolkit,
+  ]) {
     for (const tool of Object.values(toolkit.tools)) {
       expect(names.has(tool.name)).toBe(false);
       names.add(tool.name);
