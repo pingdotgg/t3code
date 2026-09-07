@@ -127,6 +127,22 @@ export const ModelCapabilities = Schema.Struct({
 });
 export type ModelCapabilities = typeof ModelCapabilities.Type;
 
+/**
+ * A user-authored custom model. `name` and `capabilities` are optional so a
+ * bare slug keeps its driver-default presentation; when `capabilities` is
+ * set, its descriptors replace the driver default in the model picker.
+ */
+export const CustomModelEntry = Schema.Struct({
+  slug: TrimmedNonEmptyString,
+  name: Schema.optional(TrimmedNonEmptyString),
+  capabilities: Schema.optional(ModelCapabilities),
+});
+export type CustomModelEntry = typeof CustomModelEntry.Type;
+
+/** On-disk custom model setting: the legacy bare slug, or a full entry. */
+export const CustomModelSetting = Schema.Union([Schema.String, CustomModelEntry]);
+export type CustomModelSetting = typeof CustomModelSetting.Type;
+
 const CODEX_DRIVER_KIND = ProviderDriverKind.make("codex");
 const CLAUDE_DRIVER_KIND = ProviderDriverKind.make("claudeAgent");
 const CURSOR_DRIVER_KIND = ProviderDriverKind.make("cursor");

@@ -1,12 +1,10 @@
 import type {
   EnvironmentId,
-  LocalApi,
   RepositoryIdentity,
   ScopedThreadRef,
   ThreadLinkedPullRequest,
 } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
-import * as Schema from "effect/Schema";
 import { type MouseEvent, useCallback } from "react";
 
 import { pullRequestHostOf, type SourceControlProviderKind } from "@t3tools/contracts";
@@ -18,41 +16,6 @@ import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 
 import { useProjects, useServerConfigs } from "../state/entities";
 import { usePrimaryEnvironmentId } from "../state/environments";
-
-export class PullRequestLinkOpenError extends Schema.TaggedErrorClass<PullRequestLinkOpenError>()(
-  "PullRequestLinkOpenError",
-  {
-    targetOrigin: Schema.NullOr(Schema.String),
-    cause: Schema.Defect(),
-  },
-) {
-  static fromCause(targetUrl: string, cause: unknown): PullRequestLinkOpenError {
-    let targetOrigin: string | null = null;
-    try {
-      targetOrigin = new URL(targetUrl).origin;
-    } catch {
-      // Keep malformed URLs out of diagnostics while preserving the open failure below.
-    }
-    return new PullRequestLinkOpenError({ targetOrigin, cause });
-  }
-
-  override get message(): string {
-    return this.targetOrigin === null
-      ? "Unable to open pull request link."
-      : `Unable to open pull request link at ${this.targetOrigin}.`;
-  }
-}
-
-export async function openPullRequestLink(
-  shell: Pick<LocalApi["shell"], "openExternal">,
-  targetUrl: string,
-): Promise<void> {
-  try {
-    await shell.openExternal(targetUrl);
-  } catch (cause) {
-    throw PullRequestLinkOpenError.fromCause(targetUrl, cause);
-  }
-}
 
 /** Builds a GitHub URL that remains available when the pull request API cannot be read. */
 export function gitHubPullRequestBrowserUrl(
@@ -160,6 +123,30 @@ export function parseChangeRequestUrl(targetUrl: string): ChangeRequestLink | nu
   return null;
 }
 
+/**
+ * The pull-request URL a GitHub-style `#123` autolink might name. GitHub writes every bare
+ * reference through `/issues/`, including pull requests, so this only builds a candidate: the
+ * caller must successfully read it as a pull request before treating it as one.
+ */
+export function pullRequestCandidateUrlFromReferenceAutolink(targetUrl: string): string | null {
+  let url: URL;
+  try {
+    url = new URL(targetUrl);
+  } catch {
+    return null;
+  }
+  if (
+    (url.protocol !== "https:" && url.protocol !== "http:") ||
+    !isHostOf(url.hostname.toLowerCase(), "github.com", "github")
+  ) {
+    return null;
+  }
+  const match = /^\/([^/]+\/[^/]+)\/issues\/(\d+)(?:\/|$)/u.exec(url.pathname);
+  if (match?.[1] === undefined || match[2] === undefined) return null;
+  url.pathname = `/${match[1]}/pull/${match[2]}`;
+  return url.toString();
+}
+
 /** Match a stored PR without requiring its project to remain available. */
 export function matchesLinkedPullRequestUrl(
   linkedPullRequest: ThreadLinkedPullRequest,
@@ -263,13 +250,14 @@ export function useOpenChangeRequestLink(
   >,
   targetUrl: string,
   targetThreadRef?: ScopedThreadRef,
+  targetEnvironmentId?: EnvironmentId,
 ) => boolean {
   const navigate = useNavigate();
   const allProjects = useProjects();
   const serverConfigs = useServerConfigs();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   return useCallback(
-    (event, targetUrl, targetThreadRef) => {
+    (event, targetUrl, targetThreadRef, targetEnvironmentId) => {
       if (shouldOpenPullRequestExternally(event)) return false;
       const resolvedThreadRef = targetThreadRef ?? threadRef;
       const parsed = parseChangeRequestUrl(targetUrl);
@@ -285,13 +273,15 @@ export function useOpenChangeRequestLink(
       // against all of them, the primary first where two hold the same repository.
       const projects = resolvedThreadRef
         ? allProjects.filter((project) => project.environmentId === resolvedThreadRef.environmentId)
-        : allProjects
-            .filter((project) => reads(project.environmentId))
-            .toSorted(
-              (left, right) =>
-                Number(right.environmentId === primaryEnvironmentId) -
-                Number(left.environmentId === primaryEnvironmentId),
-            );
+        : targetEnvironmentId
+          ? allProjects.filter((project) => project.environmentId === targetEnvironmentId)
+          : allProjects
+              .filter((project) => reads(project.environmentId))
+              .toSorted(
+                (left, right) =>
+                  Number(right.environmentId === primaryEnvironmentId) -
+                  Number(left.environmentId === primaryEnvironmentId),
+              );
       const project = findProjectForChangeRequest(projects, parsed);
       if (project === undefined || !reads(project.environmentId)) return false;
       event.preventDefault();

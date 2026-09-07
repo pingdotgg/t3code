@@ -56,7 +56,7 @@ function appendDnsSafeSuffix(prefix: string, suffix: string): string {
  * Alchemy's physical-name helper sanitizes resource names after adding the
  * stage. Keep custom domains and runtime-created resources aligned with it.
  */
-export function relayStageSlug(stage: string): string {
+function relayStageSlug(stage: string): string {
   return stage
     .toLowerCase()
     .replaceAll(/[^a-z0-9-]/g, "-")

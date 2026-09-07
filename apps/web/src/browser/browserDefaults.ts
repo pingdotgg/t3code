@@ -79,6 +79,7 @@ export function getBrowserDefaults(): BrowserDefaults {
  * Opening a preview is asynchronous anyway, and before hydration the snapshot
  * is the schema defaults rather than the user's — a tab opened in that window
  * would be born at the wrong viewport, zoom and appearance and never corrected.
+ * Read failures reject so a new tab cannot use the wrong profile or viewport.
  */
 export async function resolveBrowserDefaults(): Promise<BrowserDefaults> {
   await ensureClientSettingsHydrated();

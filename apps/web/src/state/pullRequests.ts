@@ -130,8 +130,8 @@ function createMergedEnvironmentQuery<Input, A>(
       (override?: ReadonlyArray<EnvironmentQueryTarget<Input>>) => {
         const refreshTargets =
           override ?? (JSON.parse(key) as ReadonlyArray<EnvironmentQueryTarget<Input>>);
-        for (const target of refreshTargets) {
-          appAtomRegistry.refresh(atomFor(target));
+        for (const atom of new Set(refreshTargets.map(atomFor))) {
+          appAtomRegistry.refresh(atom);
         }
       },
       [key],
@@ -173,7 +173,7 @@ export interface MergedPullRequestListView {
   readonly data: MergedPullRequestList | null;
   readonly error: string | null;
   readonly isPending: boolean;
-  readonly refresh: () => void;
+  readonly refresh: (targets?: ReadonlyArray<EnvironmentQueryTarget<PullRequestListInput>>) => void;
 }
 
 /** One listing per environment, merged into the single list the page renders. */

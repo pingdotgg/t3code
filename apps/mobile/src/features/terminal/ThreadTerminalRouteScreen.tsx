@@ -6,6 +6,8 @@ import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/Stac
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Platform, Pressable, View } from "react-native";
+import * as Clipboard from "expo-clipboard";
+import * as Schema from "effect/Schema";
 import {
   KeyboardController,
   KeyboardEvents,
@@ -27,6 +29,7 @@ import { environmentCatalog } from "../../connection/catalog";
 import { useEnvironmentPresentation } from "../../state/presentation";
 import { terminalEnvironment } from "../../state/terminal";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { useServerConfigs } from "../../state/entities";
 import { useWorkspaceState } from "../../state/workspace";
 import {
   MAX_TERMINAL_FONT_SIZE,
@@ -65,6 +68,13 @@ import {
   resolveTerminalSessionLabel,
   type TerminalMenuSession,
 } from "./terminalMenu";
+import {
+  hostPlatformFromOs,
+  resolveModifiedTerminalInput,
+  type HostPlatform,
+  type PendingModifier,
+} from "./terminalInput";
+import { createTerminalPasteSession } from "./terminalPaste";
 import { cacheTerminalGridSize, getCachedTerminalGridSize } from "./terminalUiState";
 
 const DEFAULT_TERMINAL_COLS = 80;
@@ -72,12 +82,19 @@ const DEFAULT_TERMINAL_ROWS = 24;
 const TERMINAL_ACCESSORY_HEIGHT = 52;
 const SHOWCASE_ENABLED = process.env.EXPO_PUBLIC_SHOWCASE === "1";
 
-type PendingModifier = "ctrl" | "meta";
-type HostPlatform = "mac" | "linux" | "windows" | "unknown";
+class TerminalClipboardReadError extends Schema.TaggedErrorClass<TerminalClipboardReadError>()(
+  "TerminalClipboardReadError",
+  { terminalId: Schema.String, cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return `Failed to read the clipboard for a paste into terminal ${this.terminalId}.`;
+  }
+}
 
 type TerminalToolbarAction =
   | { readonly kind: "send"; readonly key: string; readonly label: string; readonly data: string }
   | { readonly kind: "clear"; readonly key: string; readonly label: string }
+  | { readonly kind: "paste"; readonly key: string; readonly label: string }
   | {
       readonly kind: "modifier";
       readonly key: string;
@@ -112,28 +129,6 @@ function inferHostPlatform(environmentLabel: string | null): HostPlatform {
   }
 
   return "unknown";
-}
-
-function applyCtrlModifier(input: string): string {
-  const firstCharacter = input[0];
-  if (!firstCharacter) {
-    return input;
-  }
-
-  const lowerCharacter = firstCharacter.toLowerCase();
-  if (lowerCharacter >= "a" && lowerCharacter <= "z") {
-    return String.fromCharCode(lowerCharacter.charCodeAt(0) - 96);
-  }
-
-  if (firstCharacter === "@") return "\u0000";
-  if (firstCharacter === "[") return "\u001b";
-  if (firstCharacter === "\\") return "\u001c";
-  if (firstCharacter === "]") return "\u001d";
-  if (firstCharacter === "^") return "\u001e";
-  if (firstCharacter === "_") return "\u001f";
-  if (firstCharacter === "?") return "\u007f";
-
-  return input;
 }
 
 function pickRunningTerminalSessionForBootstrap(
@@ -462,9 +457,17 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
     });
   }, [terminal.buffer, terminal.buffer.length, terminalKey]);
   const cwd = terminal.summary?.cwd ?? selectedThreadProject?.workspaceRoot ?? null;
+  const serverConfigs = useServerConfigs();
+  const hostOs =
+    routeEnvironmentId === null
+      ? null
+      : (serverConfigs.get(routeEnvironmentId)?.environment.platform.os ?? null);
+  // The descriptor is authoritative; the label is only a hint until it arrives.
   const hostPlatform = useMemo(
-    () => inferHostPlatform(selectedEnvironmentConnection?.environmentLabel ?? null),
-    [selectedEnvironmentConnection?.environmentLabel],
+    () =>
+      hostPlatformFromOs(hostOs) ??
+      inferHostPlatform(selectedEnvironmentConnection?.environmentLabel ?? null),
+    [hostOs, selectedEnvironmentConnection?.environmentLabel],
   );
 
   const terminalTheme = getMobileTerminalTheme(themeId, appearanceScheme);
@@ -488,6 +491,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
       { kind: "send", key: "esc", label: "esc", data: "\u001b" },
       ...modifierActions,
       { kind: "send", key: "tab", label: "tab", data: "\t" },
+      { kind: "paste", key: "paste", label: "paste" },
       { kind: "clear", key: "clear", label: "clear" },
       { kind: "send", key: "up", label: "↑", data: "\u001b[A" },
       { kind: "send", key: "down", label: "↓", data: "\u001b[B" },
@@ -693,13 +697,14 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
     setHasMeasuredSurface(true);
   }, [routeEnvironmentId, routeThreadId, terminalId]);
 
+  /** Resolves true once the pty accepted the write, false if it was skipped or rejected. */
   const writeInput = useCallback(
-    (data: string) => {
+    async (data: string): Promise<boolean> => {
       if (!selectedThread || !isRunning) {
-        return;
+        return false;
       }
 
-      void writeTerminal({
+      const result = await writeTerminal({
         environmentId: selectedThread.environmentId,
         input: {
           threadId: selectedThread.id,
@@ -707,8 +712,56 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
           data,
         },
       });
+      return result._tag === "Success";
     },
     [isRunning, selectedThread, terminalId, writeTerminal],
+  );
+
+  const pasteSessionRef = useRef<ReturnType<typeof createTerminalPasteSession> | null>(null);
+  if (pasteSessionRef.current === null) {
+    pasteSessionRef.current = createTerminalPasteSession();
+  }
+  const pasteSession = pasteSessionRef.current;
+
+  // Drop delayed clipboard reads whenever the route or attached pty changes.
+  useEffect(() => {
+    pasteSession.reset(isRunning);
+    return () => {
+      pasteSession.reset(false);
+    };
+  }, [isRunning, pasteSession, terminal.lifecycleVersion, terminalKey]);
+
+  const pasteFromClipboard = useCallback(async () => {
+    await pasteSession.paste({
+      readText: Clipboard.getStringAsync,
+      write: writeInput,
+      onReadError: (cause) => {
+        console.error(new TerminalClipboardReadError({ terminalId, cause }));
+      },
+    });
+  }, [pasteSession, terminalId, writeInput]);
+
+  /** Sends a key through the armed toolbar modifier, if any, and disarms it. */
+  const writeModifiedInput = useCallback(
+    (data: string) => {
+      if (pendingModifier === null) {
+        void writeInput(data);
+        return;
+      }
+
+      setPendingModifierState({ terminalId, value: null });
+      const resolved = resolveModifiedTerminalInput({
+        data,
+        modifier: pendingModifier,
+        hostPlatform,
+      });
+      if (resolved.kind === "paste") {
+        void pasteFromClipboard();
+        return;
+      }
+      void writeInput(resolved.data);
+    },
+    [hostPlatform, pasteFromClipboard, pendingModifier, terminalId, writeInput],
   );
 
   const handleInput = useCallback(
@@ -717,17 +770,9 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
         return;
       }
 
-      if (pendingModifier === "ctrl") {
-        setPendingModifierState({ terminalId, value: null });
-        writeInput(applyCtrlModifier(data));
-      } else if (pendingModifier === "meta") {
-        setPendingModifierState({ terminalId, value: null });
-        writeInput(`\u001b${data}`);
-      } else {
-        writeInput(data);
-      }
+      writeModifiedInput(data);
     },
-    [pendingModifier, terminalId, writeInput],
+    [writeModifiedInput],
   );
 
   const handleResize = useCallback(
@@ -1021,16 +1066,15 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
         return;
       }
 
-      setPendingModifierState({ terminalId, value: null });
-      if (pendingModifier === "ctrl") {
-        writeInput(applyCtrlModifier(action.data));
-      } else if (pendingModifier === "meta") {
-        writeInput(`\u001b${action.data}`);
-      } else {
-        writeInput(action.data);
+      if (action.kind === "paste") {
+        setPendingModifierState({ terminalId, value: null });
+        void pasteFromClipboard();
+        return;
       }
+
+      writeModifiedInput(action.data);
     },
-    [handleClearTerminal, pendingModifier, terminalId, writeInput],
+    [handleClearTerminal, pasteFromClipboard, terminalId, writeModifiedInput],
   );
 
   const handleDismissKeyboard = useCallback(() => {

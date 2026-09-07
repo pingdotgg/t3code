@@ -18,7 +18,7 @@ import {
   SelectValue,
 } from "./ui/select";
 
-export const PREVIOUS_WORKTREE_SELECT_VALUE = "previous-worktree";
+const PREVIOUS_WORKTREE_SELECT_VALUE = "previous-worktree";
 
 interface BranchToolbarEnvModeSelectorProps {
   envLocked: boolean;
@@ -114,7 +114,7 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
           </span>
         </span>
       </SelectTrigger>
-      <SelectPopup {...composerFloatingLayerProps}>
+      <SelectPopup alignItemWithTrigger={false} {...composerFloatingLayerProps}>
         <SelectGroup>
           <SelectGroupLabel>Workspace</SelectGroupLabel>
           <SelectItem value="local">

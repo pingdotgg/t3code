@@ -1,4 +1,7 @@
+// @effect-diagnostics nodeBuiltinImport:off - realpathSync.native resolves Windows 8.3 short names, which the Effect realPath does not.
+import * as NodeFS from "node:fs";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { assert, it, describe } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -8,6 +11,7 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Ref from "effect/Ref";
+import * as Result from "effect/Result";
 import * as Scope from "effect/Scope";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
@@ -128,6 +132,51 @@ const initRepoWithCommit = (
     return { initialBranch };
   });
 
+for (const location of ["root", "nested", "worktree"] as const) {
+  it.effect(
+    `skips clean filters while the ${location} index is locked and resumes after unlock`,
+    () =>
+      Effect.gen(function* () {
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const repository = yield* makeTmpDir();
+        yield* initRepoWithCommit(repository);
+        const cwd = location === "worktree" ? yield* makeTmpDir() : repository;
+        if (location === "worktree") {
+          yield* git(repository, ["worktree", "add", "--detach", cwd]);
+        }
+        yield* git(cwd, ["config", "filter.probe.clean", "echo clean >> .filter-runs; cat"]);
+        yield* writeTextFile(cwd, ".gitattributes", "asset.bin filter=probe\n");
+        yield* writeTextFile(cwd, ".gitignore", ".filter-runs\n");
+        yield* writeTextFile(cwd, "asset.bin", "original\n");
+        yield* git(cwd, ["add", "."]);
+        yield* git(cwd, ["commit", "-m", "filtered asset"]);
+        NodeFS.utimesSync(path.join(cwd, "asset.bin"), 1, 1);
+        const runsPath = path.join(cwd, ".filter-runs");
+        yield* fs.remove(runsPath, { force: true });
+        const indexPath = yield* git(cwd, ["rev-parse", "--git-path", "index"]);
+        const lockPath = `${path.resolve(cwd, indexPath)}.lock`;
+        yield* fs.writeFileString(lockPath, "");
+        const statusCwd = location === "nested" ? path.join(cwd, "nested") : cwd;
+        yield* fs.makeDirectory(statusCwd, { recursive: true });
+
+        for (let poll = 0; poll < 3; poll++) {
+          const result = yield* driver.statusDetailsLocal(statusCwd).pipe(Effect.result);
+          assert.isTrue(Result.isFailure(result));
+          if (Result.isFailure(result)) assert.include(result.failure.detail, "index is locked");
+        }
+        assert.isFalse(yield* fs.exists(runsPath));
+        assert.isTrue(yield* fs.exists(lockPath));
+
+        yield* fs.remove(lockPath);
+        const status = yield* driver.statusDetailsLocal(statusCwd);
+        assert.isFalse(status.hasWorkingTreeChanges);
+        assert.include(yield* fs.readFileString(runsPath), "clean");
+      }).pipe(Effect.provide(TestLayer)),
+  );
+}
+
 it.effect("uses stable diagnostics for every parsed non-repository command", () => {
   const commands: Array<{ readonly args: ReadonlyArray<string>; readonly lcAll?: string }> = [];
   const spawner = ChildProcessSpawner.make((command) =>
@@ -160,6 +209,7 @@ it.effect("uses stable diagnostics for every parsed non-repository command", () 
     yield* driver.listRefs({ cwd });
 
     assert.deepStrictEqual(commands, [
+      { args: ["rev-parse", "--git-path", "index"], lcAll: "C" },
       { args: ["status", "--porcelain=2", "--branch"], lcAll: "C" },
       { args: ["rev-parse", "--abbrev-ref", "HEAD"], lcAll: "C" },
       { args: ["rev-parse", "--git-common-dir"], lcAll: "C" },
@@ -570,7 +620,6 @@ it.effect("backs off failed upstream refreshes across linked worktrees", () =>
       const driver = yield* makeGitVcsDriverCore().pipe(
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, failingFetchSpawner),
       );
-      const fileSystem = yield* FileSystem.FileSystem;
       const cwd = yield* makeTmpDir();
       const remote = yield* makeTmpDir("git-vcs-driver-remote-");
       const worktreesRoot = yield* makeTmpDir("git-vcs-driver-worktrees-");
@@ -606,9 +655,11 @@ it.effect("backs off failed upstream refreshes across linked worktrees", () =>
         "rev-parse",
         "--git-common-dir",
       ])).stdout.trim();
+      // Native realpath, since git reports the long form of a directory the
+      // temp dir may name by its 8.3 short form on Windows.
       assert.equal(
-        yield* fileSystem.realPath(pathService.resolve(cwd, rootCommonDir)),
-        yield* fileSystem.realPath(pathService.resolve(worktreePath, linkedCommonDir)),
+        NodeFS.realpathSync.native(pathService.resolve(cwd, rootCommonDir)),
+        NodeFS.realpathSync.native(pathService.resolve(worktreePath, linkedCommonDir)),
       );
       yield* Ref.set(fetchAttempts, 0);
 
@@ -1376,31 +1427,33 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
   });
 
   describe("worktree operations", () => {
-    it.effect("preserves newline characters in worktree paths when listing refs", () =>
-      Effect.gen(function* () {
-        const cwd = yield* makeTmpDir();
-        yield* initRepoWithCommit(cwd);
-        const worktreesRoot = yield* makeTmpDir("git-vcs-driver-worktrees-");
-        const fileSystem = yield* FileSystem.FileSystem;
-        const pathService = yield* Path.Path;
-        const worktreePath = pathService.join(worktreesRoot, "linked\nworktree");
-        const driver = yield* GitVcsDriver.GitVcsDriver;
+    // NTFS rejects a newline in a file name, so there is nothing to preserve there.
+    it.effect.skipIf(HostProcessPlatform.defaultValue() === "win32")(
+      "preserves newline characters in worktree paths when listing refs",
+      () =>
+        Effect.gen(function* () {
+          const cwd = yield* makeTmpDir();
+          yield* initRepoWithCommit(cwd);
+          const worktreesRoot = yield* makeTmpDir("git-vcs-driver-worktrees-");
+          const pathService = yield* Path.Path;
+          const worktreePath = pathService.join(worktreesRoot, "linked\nworktree");
+          const driver = yield* GitVcsDriver.GitVcsDriver;
 
-        yield* git(cwd, ["worktree", "add", "-b", "feature/newline-path", worktreePath]);
+          yield* git(cwd, ["worktree", "add", "-b", "feature/newline-path", worktreePath]);
 
-        const refs = yield* driver.listRefs({ cwd, refresh: true });
-        const listedPath = refs.refs.find(
-          (ref) => ref.name === "feature/newline-path",
-        )?.worktreePath;
+          const refs = yield* driver.listRefs({ cwd, refresh: true });
+          const listedPath = refs.refs.find(
+            (ref) => ref.name === "feature/newline-path",
+          )?.worktreePath;
 
-        if (typeof listedPath !== "string") {
-          return assert.fail("expected the linked branch to include its worktree path");
-        }
-        assert.equal(
-          yield* fileSystem.realPath(listedPath),
-          yield* fileSystem.realPath(worktreePath),
-        );
-      }),
+          if (typeof listedPath !== "string") {
+            return assert.fail("expected the linked branch to include its worktree path");
+          }
+          assert.equal(
+            NodeFS.realpathSync.native(listedPath),
+            NodeFS.realpathSync.native(worktreePath),
+          );
+        }),
     );
 
     it.effect("checks out submodules in a new worktree", () =>

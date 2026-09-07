@@ -425,20 +425,55 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   }
 }
 
+@keyframes live-tool-shine {
+  from {
+    background-position:
+      -4.5rem 0,
+      0 0;
+  }
+  to {
+    background-position:
+      calc(100% + 4.5rem) 0,
+      0 0;
+  }
+}
+
+@utility live-tool-shine {
+  @media (prefers-reduced-motion: no-preference) and (forced-colors: none) {
+    color: transparent;
+    background-image:
+      linear-gradient(to right, transparent, var(--contrast-foreground), transparent),
+      linear-gradient(var(--contrast-secondary-label), var(--contrast-secondary-label));
+    background-size:
+      4.5rem 100%,
+      100% 100%;
+    background-repeat: no-repeat;
+    background-clip: text;
+    animation: live-tool-shine 2.2s steps(30) infinite;
+    animation-play-state: var(--visible-animation-state, paused);
+  }
+}
+
+@utility visible-animate-spin {
+  animation: var(--animate-spin);
+  animation-play-state: var(--visible-animation-state, paused);
+  will-change: var(--visible-animation-will-change, auto);
+}
+
 @keyframes live-activity-focus {
-  0% {
+  from {
     transform: translateX(0);
   }
-  100% {
+  to {
     transform: translateX(100%);
   }
 }
 
 @keyframes live-activity-focus-counter {
-  0% {
+  from {
     transform: translateX(0);
   }
-  100% {
+  to {
     transform: translateX(-100%);
   }
 }
@@ -474,9 +509,10 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   );
   mask-repeat: no-repeat;
   animation: live-activity-focus 2.2s linear infinite;
-  will-change: transform;
+  animation-play-state: var(--visible-animation-state, paused);
+  will-change: var(--visible-animation-will-change, auto);
 
-  @media (prefers-reduced-motion: reduce) {
+  @media (prefers-reduced-motion: reduce), (forced-colors: active) {
     animation: none;
     opacity: 0;
     will-change: auto;
@@ -486,9 +522,10 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 @utility live-activity-focus-counter {
   width: 100%;
   animation: live-activity-focus-counter 2.2s linear infinite;
-  will-change: transform;
+  animation-play-state: var(--visible-animation-state, paused);
+  will-change: var(--visible-animation-will-change, auto);
 
-  @media (prefers-reduced-motion: reduce) {
+  @media (prefers-reduced-motion: reduce), (forced-colors: active) {
     animation: none;
     will-change: auto;
   }
@@ -572,6 +609,18 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 }
 
 @layer components {
+  /* AnimatedHeight owns resizing for its contents. Nested collapsibles must
+     expose their final layout immediately, otherwise each animation frame
+     restarts the parent's transition and the dialog trails behind its content. */
+  [data-slot="animated-height"] [data-slot="collapsible-panel"] {
+    height: auto !important;
+    transition: none !important;
+  }
+
+  [data-slot="animated-height"] [data-slot="collapsible-panel"][data-closed] {
+    display: none;
+  }
+
   /* Each maintainer palette gives the same line art its own material: rose
      vellum, forest drafting paper, marine cyanotype, copper, and violet ink.
      These colors stay deliberately deep at the top edge so the white stage
@@ -1348,9 +1397,7 @@ html[data-theme-id="t3-chat"] [data-app-sidebar] {
   }
 }
 
-/* Contrast stays in ordinary custom properties so both Tailwind utilities and
-   global/imperative chrome styles resolve the same adjusted role. Redeclare on
-   the sidebar because it owns a local semantic palette. */
+/* Recompute contrast wherever a subtree owns its own semantic color palette. */
 :root,
 [data-app-sidebar] {
   --contrast-toolbar-foreground: color-mix(
@@ -1906,24 +1953,6 @@ code {
   color: var(--code-foreground) !important;
 }
 
-@keyframes ultrathink-rainbow {
-  0% {
-    background-position: 0% 50%;
-  }
-  100% {
-    background-position: 200% 50%;
-  }
-}
-
-@keyframes ultrathink-chroma-shift {
-  0% {
-    filter: hue-rotate(0deg) saturate(1.2);
-  }
-  100% {
-    filter: hue-rotate(360deg) saturate(1.2);
-  }
-}
-
 .ultrathink-frame {
   --ultrathink-spectrum: linear-gradient(
     120deg,
@@ -1946,6 +1975,7 @@ code {
   padding: 2px;
   background-image: var(--ultrathink-spectrum);
   background-size: 220% 220%;
+  background-position: 0% 50%;
   pointer-events: none;
   filter: saturate(0.82) brightness(0.92);
   -webkit-mask:
@@ -1956,7 +1986,6 @@ code {
     linear-gradient(#000 0 0) content-box,
     linear-gradient(#000 0 0);
   mask-composite: exclude;
-  animation: ultrathink-rainbow 10s linear infinite;
 }
 
 .ultrathink-frame > * {
@@ -1964,7 +1993,7 @@ code {
 }
 
 .ultrathink-chroma {
-  animation: ultrathink-chroma-shift 10s linear infinite;
+  filter: saturate(1.2);
 }
 
 @keyframes preview-loading-progress {
@@ -1999,5 +2028,20 @@ code {
 
   .preview-loading-progress[data-loading="true"] {
     transform: scaleX(0.9);
+  }
+}
+
+/* Let the sortable rows open label clearance before painting the dividers.
+   This runs once per pickup; rows retain dnd-kit's normal 200ms transitions. */
+.sidebar-drag-boundary-label {
+  animation: sidebar-drag-label-reveal 200ms step-end;
+}
+
+@keyframes sidebar-drag-label-reveal {
+  from {
+    visibility: hidden;
+  }
+  to {
+    visibility: visible;
   }
 }
