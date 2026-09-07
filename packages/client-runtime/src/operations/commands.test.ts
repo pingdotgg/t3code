@@ -534,10 +534,19 @@ describe("V2 environment commands", () => {
       }).pipe(Effect.provide(TEST_CRYPTO_LAYER)),
   );
 
-  it.effect("uses provider.switch when model selection changes provider instance", () =>
+  it.effect("selects a model command by provider instance, not by model name", () =>
     Effect.gen(function* () {
       const commands: OrchestrationV2Command[] = [];
       const supervisor = yield* makeSupervisor({ commands, projects: [] });
+
+      yield* updateThreadMetadata({
+        commandId: CommandId.make("same-provider"),
+        threadId: v2ThreadId,
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "another-model",
+        },
+      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
 
       yield* updateThreadMetadata({
         commandId: CommandId.make("switch-provider"),
@@ -549,6 +558,12 @@ describe("V2 environment commands", () => {
       }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
 
       expect(commands).toEqual([
+        {
+          type: "thread.model-selection.set",
+          commandId: "same-provider",
+          threadId: v2ThreadId,
+          modelSelection: { instanceId: "codex", model: "another-model" },
+        },
         {
           type: "provider.switch",
           commandId: "switch-provider",
