@@ -286,8 +286,7 @@ export const layer = Layer.effect(
       label: configuration.resolvePrimaryLabel,
       configResolve: configuration.resolvePrimary,
       // Window creation errors propagating out of handleBackendReady must
-      // not block the readiness callback (that would prevent restartAttempt
-      // from being reset), so we absorb them here. The window service only
+      // not block the readiness callback, so we absorb them here. The window service only
       // logs on success, so log the failure here before swallowing it —
       // otherwise a post-readiness window-open failure vanishes silently and
       // is near-impossible to diagnose in production.
@@ -300,6 +299,7 @@ export const layer = Layer.effect(
           ),
         ),
       onShutdown: () => desktopWindow.handleBackendNotReady,
+      onFailed: desktopWindow.handleBackendFailed,
       onPreflightFailed: handlePrimaryPreflightFailure,
     });
 

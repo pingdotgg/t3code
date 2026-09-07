@@ -121,6 +121,7 @@ interface MakeInstanceInput {
   readonly backendOutputLog?: Partial<DesktopObservability.DesktopBackendOutputLogShape>;
   readonly onReady?: Effect.Effect<void>;
   readonly onShutdown?: Effect.Effect<void>;
+  readonly onFailed?: (reason: string) => Effect.Effect<void>;
   readonly onPreflightFailed?: (
     failure: DesktopBackendManager.PreflightFailure,
   ) => Effect.Effect<boolean>;
@@ -184,6 +185,7 @@ function makeTestInstance(input: MakeInstanceInput) {
     configResolve: input.configResolve ?? Effect.succeed(input.config ?? baseConfig),
     ...(input.onReady ? { onReady: () => input.onReady! } : {}),
     ...(input.onShutdown ? { onShutdown: () => input.onShutdown! } : {}),
+    ...(input.onFailed ? { onFailed: input.onFailed } : {}),
     ...(input.onPreflightFailed ? { onPreflightFailed: input.onPreflightFailed } : {}),
   });
 
@@ -191,6 +193,118 @@ function makeTestInstance(input: MakeInstanceInput) {
 }
 
 describe("DesktopBackendManager", () => {
+  for (const [becomesReady, preflightRetries] of [
+    [false, 0],
+    [true, 0],
+    [false, 4],
+    [true, 4],
+  ] as const) {
+    it.effect(
+      `stops after five crashes (ready: ${becomesReady}, preflight retries: ${preflightRetries})`,
+      () =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const persisted = yield* Queue.unbounded<string>();
+            const ready = yield* Queue.unbounded<void>();
+            const failures: string[] = [];
+            let starts = 0;
+            let resolves = 0;
+            const instance = yield* makeTestInstance({
+              configResolve: Effect.sync(() =>
+                resolves++ < preflightRetries
+                  ? {
+                      ...baseConfig,
+                      preflightFailure: Option.some({ reason: "WSL is starting", fatal: false }),
+                    }
+                  : baseConfig,
+              ),
+              spawnerLayer: Layer.succeed(
+                ChildProcessSpawner.ChildProcessSpawner,
+                ChildProcessSpawner.make(() =>
+                  Effect.sync(() => {
+                    starts += 1;
+                    return makeProcess({
+                      exitCode: (becomesReady ? Queue.take(ready) : Effect.void).pipe(
+                        Effect.as(ChildProcessSpawner.ExitCode(1)),
+                      ),
+                    });
+                  }),
+                ),
+              ),
+              httpClientLayer: becomesReady
+                ? healthyHttpClientLayer
+                : httpClientLayer(() => Effect.never),
+              onReady: Queue.offer(ready, undefined).pipe(Effect.asVoid),
+              backendOutputLog: {
+                persistFailure: ({ details }) =>
+                  Queue.offer(persisted, details).pipe(Effect.asVoid),
+              },
+              onFailed: (reason) =>
+                Effect.sync(() => {
+                  failures.push(reason);
+                }),
+            });
+            yield* instance.start;
+            if (preflightRetries > 0) yield* TestClock.adjust(7_500);
+            yield* Queue.take(persisted);
+            yield* TestClock.adjust(0);
+            assert.deepEqual(failures, []);
+            for (const delay of [500, 1_000, 2_000, 4_000]) {
+              yield* TestClock.adjust(preflightRetries > 0 ? 10_000 : delay);
+              yield* Queue.take(persisted);
+            }
+            yield* TestClock.adjust(10_000);
+            assert.deepEqual(failures, ["code=1"]);
+            assert.equal(starts, 5);
+            assert.equal((yield* instance.snapshot).desiredRunning, false);
+            assert.equal((yield* instance.snapshot).restartScheduled, false);
+          }).pipe(Effect.provide(TestClock.layer())),
+        ),
+    );
+  }
+
+  it.effect("resets the primary crash allowance after a minute of readiness", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const ready = yield* Queue.unbounded<void>();
+        const exits = yield* Queue.unbounded<void>();
+        const persisted = yield* Queue.unbounded<void>();
+        const failures: string[] = [];
+        const instance = yield* makeTestInstance({
+          spawnerLayer: Layer.succeed(
+            ChildProcessSpawner.ChildProcessSpawner,
+            ChildProcessSpawner.make(() =>
+              Effect.succeed(
+                makeProcess({
+                  exitCode: Queue.take(exits).pipe(Effect.as(ChildProcessSpawner.ExitCode(1))),
+                }),
+              ),
+            ),
+          ),
+          onReady: Queue.offer(ready, undefined).pipe(Effect.asVoid),
+          onFailed: (reason) =>
+            Effect.sync(() => {
+              failures.push(reason);
+            }),
+          backendOutputLog: {
+            persistFailure: () => Queue.offer(persisted, undefined).pipe(Effect.asVoid),
+          },
+        });
+        yield* instance.start;
+        for (const [index, delay] of [500, 1_000, 500, 1_000, 2_000].entries()) {
+          yield* Queue.take(ready);
+          if (index === 2) yield* TestClock.adjust(60_000);
+          yield* Queue.offer(exits, undefined);
+          yield* Queue.take(persisted);
+          yield* TestClock.adjust(delay);
+        }
+        yield* Queue.take(ready);
+        assert.deepEqual(failures, []);
+        assert.equal((yield* instance.snapshot).ready, true);
+      }).pipe(Effect.provide(TestClock.layer())),
+    ),
+  );
+
   it.effect("spawns the backend with fd3 bootstrap and fd4 telemetry", () =>
     Effect.scoped(
       Effect.gen(function* () {

@@ -97,6 +97,7 @@ export class ElectronDialog extends Context.Service<
     ) => Effect.Effect<readonly string[], ElectronDialogPickFilesError>;
     readonly showMessageBox: (
       options: Electron.MessageBoxOptions,
+      owner?: Electron.BrowserWindow,
     ) => Effect.Effect<Electron.MessageBoxReturnValue, ElectronDialogShowMessageBoxError>;
     readonly showErrorBox: (title: string, content: string) => Effect.Effect<void>;
   }
@@ -163,9 +164,12 @@ export const make = ElectronDialog.of({
     });
     return result.canceled ? [] : result.filePaths;
   }),
-  showMessageBox: (options) =>
+  showMessageBox: (options, owner) =>
     Effect.tryPromise({
-      try: () => Electron.dialog.showMessageBox(options),
+      try: () =>
+        owner && !owner.isDestroyed()
+          ? Electron.dialog.showMessageBox(owner, options)
+          : Electron.dialog.showMessageBox(options),
       catch: (cause) =>
         new ElectronDialogShowMessageBoxError({
           type: options.type ?? null,

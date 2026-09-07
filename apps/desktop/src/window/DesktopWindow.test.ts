@@ -3,6 +3,8 @@ import { assert, describe, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
+import * as Queue from "effect/Queue";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
@@ -38,6 +40,7 @@ import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopState from "../app/DesktopState.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopClientSettings from "../settings/DesktopClientSettings.ts";
+import * as ElectronDialog from "../electron/ElectronDialog.ts";
 import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronMenu from "../electron/ElectronMenu.ts";
 import * as ElectronShell from "../electron/ElectronShell.ts";
@@ -209,6 +212,12 @@ function makeTestLayer(input: {
   ) => Effect.Effect<void>;
   readonly openedExternalUrls?: unknown[];
   readonly previewZoomReapplies?: number[];
+  readonly production?: boolean;
+  readonly showMessageBox?: ElectronDialog.ElectronDialog["Service"]["showMessageBox"];
+  readonly copyText?: ElectronShell.ElectronShell["Service"]["copyText"];
+  readonly quit?: Effect.Effect<void>;
+  readonly relaunch?: ElectronApp.ElectronApp["Service"]["relaunch"];
+  readonly readLog?: Effect.Effect<string>;
 }) {
   let desktopSettings = input.desktopSettings ?? DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS;
   const desktopAppSettingsLayer = Layer.succeed(DesktopAppSettings.DesktopAppSettings, {
@@ -267,12 +276,25 @@ function makeTestLayer(input: {
     Layer.provide(
       Layer.mergeAll(
         desktopAssetsLayer,
-        desktopEnvironmentLayer,
+        Layer.effect(
+          DesktopEnvironment.DesktopEnvironment,
+          Effect.gen(function* () {
+            const environment = yield* DesktopEnvironment.DesktopEnvironment;
+            return { ...environment, isDevelopment: !input.production };
+          }),
+        ).pipe(Layer.provide(desktopEnvironmentLayer)),
         desktopAppSettingsLayer,
         desktopClientSettingsLayer,
         desktopServerExposureLayer,
         DesktopState.layer,
-        electronAppLayer,
+        Layer.mock(ElectronApp.ElectronApp)({
+          quit: input.quit ?? Effect.void,
+          ...(input.relaunch ? { relaunch: input.relaunch } : {}),
+        }),
+        FileSystem.layerNoop({ readFileString: () => input.readLog ?? Effect.succeed("") }),
+        Layer.mock(ElectronDialog.ElectronDialog)(
+          input.showMessageBox ? { showMessageBox: input.showMessageBox } : {},
+        ),
         electronMenuLayer,
         Layer.succeed(ElectronShell.ElectronShell, {
           openExternal: (url) =>
@@ -281,7 +303,7 @@ function makeTestLayer(input: {
               return true;
             }),
           openSystemSettings: () => Effect.succeed(true),
-          copyText: () => Effect.void,
+          copyText: input.copyText ?? (() => Effect.void),
         } satisfies ElectronShell.ElectronShell["Service"]),
         electronThemeLayer,
         electronWindowLayer,
@@ -378,6 +400,8 @@ const makeSplashScenario = (createOutcomes: readonly (Electron.BrowserWindow | n
           desktopClientSettingsLayer,
           desktopServerExposureLayer,
           electronAppLayer,
+          NodeServices.layer,
+          Layer.mock(ElectronDialog.ElectronDialog)({}),
           electronMenuLayer,
           Layer.succeed(ElectronShell.ElectronShell, {
             openExternal: () => Effect.succeed(true),
@@ -400,6 +424,57 @@ const makeSplashScenario = (createOutcomes: readonly (Electron.BrowserWindow | n
   });
 
 describe("DesktopWindow", () => {
+  it.effect("surfaces production load failures once and supports copying logs and retrying", () =>
+    Effect.gen(function* () {
+      const fake = makeFakeBrowserWindow();
+      const dialogs = yield* Queue.unbounded<Electron.MessageBoxOptions>();
+      const responses = yield* Queue.unbounded<number>();
+      const copied = yield* Queue.unbounded<string>();
+      const quit = yield* Deferred.make<void>();
+      let relaunched = false;
+      const log = "Error: no such column: branch_pull_request_json";
+      const layer = makeTestLayer({
+        window: fake.window,
+        createCount: yield* Ref.make(0),
+        mainWindow: yield* Ref.make(Option.none<Electron.BrowserWindow>()),
+        production: true,
+        readLog: Effect.succeed(log),
+        showMessageBox: (options) =>
+          Queue.offer(dialogs, options).pipe(
+            Effect.andThen(Queue.take(responses)),
+            Effect.map((response) => ({ response, checkboxChecked: false })),
+          ),
+        copyText: (text) => Queue.offer(copied, text).pipe(Effect.asVoid),
+        relaunch: () =>
+          Effect.sync(() => {
+            relaunched = true;
+          }),
+        quit: Deferred.succeed(quit, undefined).pipe(Effect.asVoid),
+      });
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.createMain;
+        const fail = fake.webContentsListeners.get("did-fail-load")!;
+        fail({}, -3, "ERR_ABORTED", "t3code://app/", true);
+        fail({}, -9, "ERR_UNEXPECTED", "t3code://app/", false);
+        assert.equal(yield* Queue.size(dialogs), 0);
+        fail({}, -9, "ERR_UNEXPECTED", "t3code://app/", true);
+        const dialog = yield* Queue.take(dialogs);
+        assert.include(dialog.detail, log);
+        assert.include(dialog.detail, "ERR_UNEXPECTED (-9)");
+        assert.deepEqual(dialog.buttons, ["Retry", "Copy Logs", "Quit"]);
+        yield* desktopWindow.handleBackendFailed("code=1");
+        assert.equal(yield* Queue.size(dialogs), 0);
+        yield* Queue.offer(responses, 1);
+        assert.include(yield* Queue.take(copied), log);
+        yield* Queue.take(dialogs);
+        yield* Queue.offer(responses, 0);
+        yield* Deferred.await(quit);
+        assert.equal(relaunched, true);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
   it("leaves fullscreen before concealing a pending quit", () => {
     const fakeWindow = makeFakeBrowserWindow();
 
