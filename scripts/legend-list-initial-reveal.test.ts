@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off - reads the installed native JS bundle for synchronous VM tests.
 import * as NodeFS from "node:fs";
 import * as NodeVM from "node:vm";
 import { describe, expect, it, vi } from "vite-plus/test";
