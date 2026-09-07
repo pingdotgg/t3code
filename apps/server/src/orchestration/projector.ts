@@ -116,8 +116,9 @@ function retainThreadMessagesAfterRevert(
   messages: ReadonlyArray<OrchestrationMessage>,
   retainedTurnIds: ReadonlySet<string>,
   turnCount: number,
+  preservedMessageIds: ReadonlySet<string>,
 ): ReadonlyArray<OrchestrationMessage> {
-  const retainedMessageIds = new Set<string>();
+  const retainedMessageIds = new Set(preservedMessageIds);
   for (const message of messages) {
     if (message.role === "system" || isImportedAgentSessionMessageId(message.id)) {
       retainedMessageIds.add(message.id);
@@ -803,6 +804,7 @@ export function projectEvent(
             thread.messages,
             retainedTurnIds,
             payload.turnCount,
+            new Set(payload.preservedMessageIds ?? []),
           ).slice(-MAX_THREAD_MESSAGES);
           const proposedPlans = retainThreadProposedPlansAfterRevert(
             thread.proposedPlans,

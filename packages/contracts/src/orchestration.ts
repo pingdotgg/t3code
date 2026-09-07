@@ -1615,6 +1615,7 @@ export const ThreadCheckpointRevertRequestedPayload = Schema.Struct({
 export const ThreadRevertedPayload = Schema.Struct({
   threadId: ThreadId,
   turnCount: NonNegativeInt,
+  preservedMessageIds: Schema.optional(Schema.Array(MessageId)),
 });
 
 export const ThreadSessionStopRequestedPayload = Schema.Struct({

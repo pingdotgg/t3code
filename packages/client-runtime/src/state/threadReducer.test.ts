@@ -1319,6 +1319,52 @@ describe("applyThreadDetailEvent", () => {
       }
     });
 
+    it("keeps a user message accepted after the revert was requested", () => {
+      const pendingMessageId = MessageId.make("message-accepted-during-revert");
+      const threadWithPendingMessage: OrchestrationThread = {
+        ...baseThread,
+        messages: [
+          {
+            id: MessageId.make("reverted-user-message"),
+            role: "user",
+            text: "Discard this turn",
+            turnId: null,
+            streaming: false,
+            createdAt: "2026-04-01T01:00:00.000Z",
+            updatedAt: "2026-04-01T01:00:00.000Z",
+          },
+          {
+            id: pendingMessageId,
+            role: "user",
+            text: "Continue after revert",
+            turnId: null,
+            streaming: false,
+            createdAt: "2026-04-01T02:00:00.000Z",
+            updatedAt: "2026-04-01T02:00:00.000Z",
+          },
+        ],
+      };
+
+      const result = applyThreadDetailEvent(threadWithPendingMessage, {
+        ...baseEventFields,
+        sequence: 14,
+        occurredAt: "2026-04-01T02:00:01.000Z",
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.reverted",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          turnCount: 0,
+          preservedMessageIds: [pendingMessageId],
+        },
+      });
+
+      expect(result.kind).toBe("updated");
+      if (result.kind === "updated") {
+        expect(result.thread.messages.map((message) => message.id)).toEqual([pendingMessageId]);
+      }
+    });
+
     it("fallback-retains the earliest absolute timestamp across offsets", () => {
       const threadWithOffsetMessages: OrchestrationThread = {
         ...baseThread,

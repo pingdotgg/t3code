@@ -670,6 +670,53 @@ describe("ProviderCommandReactor", () => {
     }),
   );
 
+  effectIt.effect("starts a turn accepted while an earlier checkpoint revert completes", () =>
+    Effect.gen(function* () {
+      const barrier = yield* Deferred.make<void>();
+      const harness = yield* Effect.promise(() =>
+        createHarness({
+          awaitCheckpointSequenceEffect: () => Deferred.await(barrier),
+        }),
+      );
+      const messageId = MessageId.make("message-accepted-during-checkpoint-revert");
+
+      yield* harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-accepted-during-checkpoint-revert"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId,
+          role: "user",
+          text: "Continue after revert",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: "2026-01-01T00:00:01.000Z",
+      });
+      yield* Effect.promise(() =>
+        waitFor(() => harness.awaitCheckpointSequence.mock.calls.length === 1),
+      );
+
+      yield* harness.engine.dispatch({
+        type: "thread.revert.complete",
+        commandId: CommandId.make("cmd-complete-earlier-checkpoint-revert"),
+        threadId: ThreadId.make("thread-1"),
+        turnCount: 0,
+        createdAt: "2026-01-01T00:00:02.000Z",
+      });
+      yield* Deferred.succeed(barrier, undefined);
+      yield* Effect.promise(() => harness.drain());
+
+      expect(harness.sendTurn).toHaveBeenCalledTimes(1);
+      const readModel = yield* Effect.promise(() => harness.readModel());
+      expect(readModel.threads[0]?.messages.some((message) => message.id === messageId)).toBe(true);
+      expect(yield* Effect.promise(() => harness.readPendingTurnStarts())).toEqual([
+        { threadId: "thread-1" },
+      ]);
+    }),
+  );
+
   effectIt.effect.each(["new", "ready", "stopped"] as const)(
     "handles sign-out for a %s thread before worktree repair, text helpers, or startup",
     (sessionStatus) =>

@@ -203,14 +203,16 @@ function retainProjectionMessagesAfterRevert(
   messages: ReadonlyArray<ProjectionThreadMessage>,
   turns: ReadonlyArray<ProjectionTurn>,
   turnCount: number,
+  preservedMessageIds: ReadonlySet<string>,
 ): ReadonlyArray<ProjectionThreadMessage> {
-  const retainedMessageIds = new Set<string>();
+  const retainedMessageIds = new Set(preservedMessageIds);
   const retainedTurnIds = new Set<string>();
   const keptTurns = turns.filter(
     (turn) =>
-      turn.turnId !== null &&
-      turn.checkpointTurnCount !== null &&
-      turn.checkpointTurnCount <= turnCount,
+      (turn.turnId !== null &&
+        turn.checkpointTurnCount !== null &&
+        turn.checkpointTurnCount <= turnCount) ||
+      (turn.turnId === null && turn.pendingMessageId !== null),
   );
   for (const turn of keptTurns) {
     if (turn.turnId !== null) {
@@ -1078,6 +1080,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             existingRows,
             existingTurns,
             event.payload.turnCount,
+            new Set(event.payload.preservedMessageIds ?? []),
           );
           if (keptRows.length === existingRows.length) {
             return;
@@ -1607,9 +1610,10 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           });
           const keptTurns = existingTurns.filter(
             (turn) =>
-              turn.turnId !== null &&
-              turn.checkpointTurnCount !== null &&
-              turn.checkpointTurnCount <= event.payload.turnCount,
+              (turn.turnId !== null &&
+                turn.checkpointTurnCount !== null &&
+                turn.checkpointTurnCount <= event.payload.turnCount) ||
+              (turn.turnId === null && turn.pendingMessageId !== null),
           );
           yield* projectionTurnRepository.deleteByThreadId({
             threadId: event.payload.threadId,
@@ -1618,7 +1622,15 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             keptTurns,
             (turn) =>
               turn.turnId === null
-                ? Effect.void
+                ? turn.pendingMessageId === null
+                  ? Effect.void
+                  : projectionTurnRepository.replacePendingTurnStart({
+                      threadId: turn.threadId,
+                      messageId: turn.pendingMessageId,
+                      sourceProposedPlanThreadId: turn.sourceProposedPlanThreadId,
+                      sourceProposedPlanId: turn.sourceProposedPlanId,
+                      requestedAt: turn.requestedAt,
+                    })
                 : projectionTurnRepository.upsertByTurnId({
                     ...turn,
                     turnId: turn.turnId,

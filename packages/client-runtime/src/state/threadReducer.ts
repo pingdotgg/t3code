@@ -566,6 +566,7 @@ export function applyThreadDetailEvent(
         thread.messages,
         retainedTurnIds,
         event.payload.turnCount,
+        new Set(event.payload.preservedMessageIds ?? []),
       );
       const proposedPlans = pipe(
         thread.proposedPlans,
@@ -760,8 +761,9 @@ function retainMessagesAfterRevert(
   messages: ReadonlyArray<OrchestrationMessage>,
   retainedTurnIds: ReadonlySet<string>,
   turnCount: number,
+  preservedMessageIds: ReadonlySet<string>,
 ): OrchestrationMessage[] {
-  const retainedMessageIds = new Set<string>();
+  const retainedMessageIds = new Set(preservedMessageIds);
   for (const message of messages) {
     if (message.role === "system" || isImportedAgentSessionMessageId(message.id)) {
       retainedMessageIds.add(message.id);
