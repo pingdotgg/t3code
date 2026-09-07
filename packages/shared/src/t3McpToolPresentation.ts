@@ -61,6 +61,7 @@ const T3_MCP_TOOLS: Record<
   t3_thread_configure: { displayName: "Set thread model" },
   t3_thread_fork: { displayName: "Fork this thread" },
   t3_thread_merge_back: { displayName: "Merge thread context" },
+  t3_thread_search: { displayName: "Search thread content" },
   t3_thread_transfers: { displayName: "Read thread transfers" },
   t3_thread_organize: { displayName: "Organize a thread" },
   t3_thread_update: { displayName: "Update T3 thread metadata" },
