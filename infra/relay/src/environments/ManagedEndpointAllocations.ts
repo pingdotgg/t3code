@@ -7,7 +7,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { isSqlError } from "effect/unstable/sql/SqlError";
+import * as SqlError from "effect/unstable/sql/SqlError";
 
 import * as RelayDb from "../db.ts";
 import { isManagedEndpointHostname, managedEndpointForHostname } from "../deploymentConfig.ts";
@@ -569,7 +569,9 @@ export const make = Effect.gen(function* () {
                 ),
               ),
           )
-          .pipe(Effect.mapError((cause) => (isSqlError(cause) ? lockError(cause) : cause)));
+          .pipe(
+            Effect.mapError((cause) => (SqlError.isSqlError(cause) ? lockError(cause) : cause)),
+          );
       },
     ),
     claimDeprovision: Effect.fn("relay.managed_endpoint_allocations.claim_deprovision")(function* (
