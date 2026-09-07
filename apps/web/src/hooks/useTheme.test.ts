@@ -213,6 +213,7 @@ describe("onboarding theme", () => {
     const root = {
       classList: {
         add: (name: string) => classes.add(name),
+        contains: (name: string) => classes.has(name),
         remove: (name: string) => classes.delete(name),
         toggle: (name: string, force?: boolean) => {
           const next = force ?? !classes.has(name);
@@ -298,9 +299,9 @@ describe("onboarding theme", () => {
     expect(styleValues.get("--app-theme-error")).toBe(secondTheme.colors.error);
   });
 
-  it("stays dark during storage changes and restores the latest saved theme", async () => {
+  it("follows the saved appearance and restores the latest saved theme", async () => {
     const storage = createStorage();
-    storage.setItem("t3code:theme", "light");
+    storage.setItem("t3code:theme", "dark");
     const classes = new Set<string>();
     const styleValues = new Map<string, string>();
     const style = {
@@ -361,7 +362,7 @@ describe("onboarding theme", () => {
     });
     vi.stubGlobal("getComputedStyle", () => ({
       backgroundColor:
-        root.dataset.onboardingSurface !== undefined
+        root.dataset.onboardingSurface !== undefined && classes.has("dark")
           ? "rgb(0, 0, 0)"
           : classes.has("dark")
             ? "rgb(10, 10, 10)"
@@ -374,9 +375,10 @@ describe("onboarding theme", () => {
     });
 
     const { mountOnboardingTheme, useTheme } = await import("./useTheme");
-    expect(useTheme().resolvedTheme).toBe("light");
+    expect(useTheme().resolvedTheme).toBe("dark");
     const cleanup = mountOnboardingTheme();
 
+    // A dark preference pins the wizard to true black.
     expect(root.dataset.onboardingSurface).toBe("");
     expect(classes.has("dark")).toBe(true);
     expect(root.style.backgroundColor).toBe("#000");
@@ -384,12 +386,14 @@ describe("onboarding theme", () => {
     expect(useTheme().resolvedTheme).toBe("dark");
     expect(setDesktopTheme).toHaveBeenLastCalledWith("dark");
 
-    storage.setItem("t3code:theme", "dark");
-    storageHandler?.({ key: "t3code:theme" } as StorageEvent);
+    // A light preference switches the wizard to the default light palette.
     storage.setItem("t3code:theme", "light");
     storageHandler?.({ key: "t3code:theme" } as StorageEvent);
-    expect(classes.has("dark")).toBe(true);
-    expect(useTheme().resolvedTheme).toBe("dark");
+    expect(classes.has("dark")).toBe(false);
+    expect(root.style.backgroundColor).toBe("rgb(255, 255, 255)");
+    expect(body.style.backgroundColor).toBe("rgb(255, 255, 255)");
+    expect(useTheme().resolvedTheme).toBe("light");
+    expect(setDesktopTheme).toHaveBeenLastCalledWith("light");
 
     cleanup();
     expect(root.dataset.onboardingSurface).toBeUndefined();

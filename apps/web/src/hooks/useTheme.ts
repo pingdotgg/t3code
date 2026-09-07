@@ -310,9 +310,12 @@ export function syncBrowserChromeTheme() {
     getComputedStyle(resolveBrowserChromeSurface()).backgroundColor,
   );
   const fallbackColor = normalizeThemeColor(getComputedStyle(document.body).backgroundColor);
-  const backgroundColor = onboardingActive
-    ? "#000"
-    : (themeChromeColor ?? surfaceColor ?? fallbackColor);
+  // Dark onboarding pins a true-black canvas; light onboarding uses the
+  // default light palette and reads it back from the document like the app.
+  const backgroundColor =
+    onboardingActive && document.documentElement.classList.contains("dark")
+      ? "#000"
+      : (themeChromeColor ?? surfaceColor ?? fallbackColor);
   if (!backgroundColor) return;
 
   document.documentElement.style.backgroundColor = backgroundColor;
@@ -353,13 +356,7 @@ function applyTheme(theme: Theme, { suppressTransitions = false, preservePreview
     lastAppliedTheme.appearanceMode === appearanceMode &&
     themeHalvesSignature(lastAppliedTheme.themeHalves) === themeHalvesSignature(themeHalves)
   ) {
-    if (onboardingActive) {
-      document.documentElement.classList.add("dark");
-      syncBrowserChromeTheme();
-      syncDesktopTheme("dark", false, "dark");
-    } else {
-      syncDesktopTheme(theme, followSystem, appearanceMode);
-    }
+    syncDesktopTheme(theme, followSystem, appearanceMode);
     return;
   }
 
@@ -373,19 +370,15 @@ function applyTheme(theme: Theme, { suppressTransitions = false, preservePreview
     appearanceMode,
     themeHalves,
   );
-  if (onboardingActive) {
-    document.documentElement.classList.add("dark");
-  } else {
+  // Onboarding follows the saved light/dark appearance but never applies a
+  // custom palette, so the wizard keeps its fixed neutral tokens.
+  if (!onboardingActive) {
     applyThemePalette(resolveThemeHalf(theme, themeHalves, resolvedAppearance), resolvedAppearance);
-    document.documentElement.classList.toggle("dark", resolvedAppearance === "dark");
   }
+  document.documentElement.classList.toggle("dark", resolvedAppearance === "dark");
   lastAppliedTheme = { theme, systemDark, followSystem, appearanceMode, themeHalves };
   syncBrowserChromeTheme();
-  if (onboardingActive) {
-    syncDesktopTheme("dark", false, "dark");
-  } else {
-    syncDesktopTheme(theme, followSystem, appearanceMode);
-  }
+  syncDesktopTheme(theme, followSystem, appearanceMode);
   if (suppressTransitions) {
     // Force a reflow so the no-transitions class takes effect before removal
     void document.documentElement.offsetHeight;
@@ -395,16 +388,20 @@ function applyTheme(theme: Theme, { suppressTransitions = false, preservePreview
   }
 }
 
-/** Own the document-wide dark palette used by the first-run wizard and its portals. */
+/**
+ * Own the document-wide palette used by the first-run wizard and its portals.
+ * The wizard follows the saved light or dark appearance (and system changes)
+ * but drops any custom theme palette until the returned cleanup runs.
+ */
 export function mountOnboardingTheme(): () => void {
   if (typeof document === "undefined" || typeof window === "undefined") return () => {};
 
   const root = document.documentElement;
-  applyThemePalette("dark", "dark");
+  // "system" is a reserved id with no palette, so this clears theme variables.
+  applyThemePalette("system");
   root.dataset.onboardingSurface = "";
-  root.classList.add("dark");
-  syncBrowserChromeTheme();
-  syncDesktopTheme("dark", false, "dark");
+  lastAppliedTheme = null;
+  applyTheme(getStored(), { preservePreview: false });
   emitChange();
 
   return () => {
@@ -478,9 +475,13 @@ function getSnapshot(): ThemeSnapshot {
   const systemDark = followSystem ? getSystemDark() : false;
   const themeHalves = readStoredThemeHalves();
 
-  const resolvedTheme = isOnboardingThemeActive()
-    ? "dark"
-    : resolveThemeAppearance(theme, systemDark, followSystem, appearanceMode, themeHalves);
+  const resolvedTheme = resolveThemeAppearance(
+    theme,
+    systemDark,
+    followSystem,
+    appearanceMode,
+    themeHalves,
+  );
   if (
     lastSnapshot &&
     lastSnapshot.theme === theme &&
