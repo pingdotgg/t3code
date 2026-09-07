@@ -31,11 +31,25 @@ const TestLayer = ElectronWindow.layer.pipe(
   Layer.provide(Layer.succeed(HostProcessPlatform, "linux")),
 );
 
+const WindowsTestLayer = ElectronWindow.layer.pipe(
+  Layer.provide(Layer.succeed(HostProcessPlatform, "win32")),
+);
+
 function makeBrowserWindow(input: { readonly id: number; readonly destroyed: boolean }) {
   return {
     id: input.id,
     isDestroyed: vi.fn(() => input.destroyed),
   } as unknown as Electron.BrowserWindow;
+}
+
+function makeAppearanceWindow(id: number) {
+  const window = {
+    id,
+    isDestroyed: vi.fn(() => false),
+    setBackgroundColor: vi.fn(),
+    setTitleBarOverlay: vi.fn(),
+  };
+  return window as unknown as Electron.BrowserWindow;
 }
 
 describe("ElectronWindow", () => {
@@ -125,6 +139,50 @@ describe("ElectronWindow", () => {
 
       assert.deepEqual(syncedWindows, [liveWindow]);
     }).pipe(Effect.provide(TestLayer)),
+  );
+
+  it.effect("preserves resolved overlay capability through a mixed appearance pass", () =>
+    Effect.gen(function* () {
+      const nativeWindow = makeAppearanceWindow(11);
+      const overlayWindow = makeAppearanceWindow(12);
+      browserWindowMock
+        .mockImplementationOnce(function NativeWindowMock() {
+          return nativeWindow;
+        })
+        .mockImplementationOnce(function OverlayWindowMock() {
+          return overlayWindow;
+        });
+
+      const electronWindow = yield* ElectronWindow.ElectronWindow;
+      yield* electronWindow.create({ frame: true });
+      yield* electronWindow.create({
+        titleBarStyle: "hidden",
+        titleBarOverlay: {
+          color: "#01000000",
+          height: 40,
+          symbolColor: "#f8fafc",
+        },
+      });
+      getAllWindowsMock.mockReturnValue([nativeWindow, overlayWindow]);
+
+      yield* electronWindow.syncAllAppearance((window) =>
+        Effect.sync(() => {
+          window.setBackgroundColor("#0a0a0a");
+          if (ElectronWindow.getAppearanceCapabilities(window)?.titleBarOverlay === true) {
+            window.setTitleBarOverlay({
+              color: "#01000000",
+              height: 40,
+              symbolColor: "#f8fafc",
+            });
+          }
+        }),
+      );
+
+      assert.deepEqual(vi.mocked(nativeWindow.setBackgroundColor).mock.calls, [["#0a0a0a"]]);
+      assert.equal(vi.mocked(nativeWindow.setTitleBarOverlay).mock.calls.length, 0);
+      assert.deepEqual(vi.mocked(overlayWindow.setBackgroundColor).mock.calls, [["#0a0a0a"]]);
+      assert.equal(vi.mocked(overlayWindow.setTitleBarOverlay).mock.calls.length, 1);
+    }).pipe(Effect.provide(WindowsTestLayer)),
   );
 
   it.effect("preserves window enumeration failures as structured defects", () =>
