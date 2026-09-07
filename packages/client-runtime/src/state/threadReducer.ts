@@ -53,7 +53,9 @@ function activityClearsPendingTurnStart(
 ): boolean {
   if (
     thread.pendingTurnStartMessageId == null ||
-    (activity.kind !== "context-compaction" && activity.kind !== "provider.turn.start.failed") ||
+    (activity.kind !== "context-compaction" &&
+      activity.kind !== "provider.turn.start.failed" &&
+      activity.kind !== "provider.auth.signed-out") ||
     !Predicate.isObject(activity.payload)
   ) {
     return false;
@@ -474,13 +476,8 @@ export function applyThreadDetailEvent(
           ...thread,
           session: event.payload.session,
           pendingTurnStartMessageId:
-            (event.payload.session.status === "running" &&
-              event.payload.session.activeTurnId !== null) ||
-            event.payload.session.status === "error" ||
-            event.payload.session.status === "stopped" ||
-            event.payload.session.status === "interrupted" ||
-            (event.payload.session.status === "ready" &&
-              event.commandId?.startsWith("server:provider-session-set:") === true)
+            event.payload.session.status === "running" &&
+            event.payload.session.activeTurnId !== null
               ? null
               : (thread.pendingTurnStartMessageId ?? null),
           latestTurn,

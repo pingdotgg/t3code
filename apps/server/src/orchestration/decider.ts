@@ -1757,7 +1757,8 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           threadId: command.threadId,
           turnCount: command.turnCount,
           preservedMessageIds:
-            thread.pendingTurnStartMessageId == null ? [] : [thread.pendingTurnStartMessageId],
+            thread.pendingCheckpointRevertMessageIds ??
+            (thread.pendingTurnStartMessageId == null ? [] : [thread.pendingTurnStartMessageId]),
         },
       };
     }

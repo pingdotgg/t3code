@@ -191,6 +191,11 @@ const TurnStartMessageLookupInput = Schema.Struct({
   threadId: ThreadId,
   messageId: MessageId,
 });
+const PendingTurnStartRowSchema = Schema.Struct({
+  threadId: ThreadId,
+  messageId: MessageId,
+  requestedAt: IsoDateTime,
+});
 const ThreadActivityKindsLookupInput = Schema.Struct({
   threadId: ThreadId,
   activityKinds: Schema.Array(Schema.String),
@@ -1164,6 +1169,22 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       FROM projection_thread_messages
       WHERE thread_id = ${threadId} AND message_id = ${messageId}
       LIMIT 1
+    `,
+  });
+
+  const listPendingTurnStartRows = SqlSchema.findAll({
+    Request: Schema.Struct({}),
+    Result: PendingTurnStartRowSchema,
+    execute: () => sql`
+      SELECT
+        thread_id AS "threadId",
+        pending_message_id AS "messageId",
+        requested_at AS "requestedAt"
+      FROM projection_turns
+      WHERE turn_id IS NULL
+        AND state = 'pending'
+        AND pending_message_id IS NOT NULL
+      ORDER BY row_id ASC
     `,
   });
 
@@ -2973,6 +2994,16 @@ pending_approval_requests AS (
     }));
   });
 
+  const listPendingTurnStarts: ProjectionSnapshotQueryShape["listPendingTurnStarts"] = () =>
+    listPendingTurnStartRows({}).pipe(
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "ProjectionSnapshotQuery.listPendingTurnStarts:query",
+          "ProjectionSnapshotQuery.listPendingTurnStarts:decodeRow",
+        ),
+      ),
+    );
+
   // Contiguous turn range bounding a windowed detail read; undefined loads the
   // full thread. Resolved from a window request inside the snapshot
   // transaction (see getThreadDetailSnapshot).
@@ -3415,6 +3446,7 @@ pending_approval_requests AS (
     getThreadShellById,
     getThreadRuntimeContext,
     getTurnStartMessage,
+    listPendingTurnStarts,
     getThreadDetailById,
     getThreadDetailSnapshot,
   } satisfies ProjectionSnapshotQueryShape;

@@ -3702,7 +3702,7 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
 it.layer(makeProjectionPipelinePrefixedTestLayer("t3-pending-turn-terminal-test-"))(
   "OrchestrationProjectionPipeline pending turn cleanup",
   (it) => {
-    it.effect("clears pending turn starts when startup reaches a terminal session state", () =>
+    it.effect("keeps newer pending turn starts when a stale session reaches a terminal state", () =>
       Effect.gen(function* () {
         const projectionPipeline = yield* OrchestrationProjectionPipeline;
         const eventStore = yield* OrchestrationEventStore;
@@ -3724,6 +3724,23 @@ it.layer(makeProjectionPipelinePrefixedTestLayer("t3-pending-turn-terminal-test-
             payload: {
               threadId,
               messageId: MessageId.make(`message-terminal-${status}`),
+              runtimeMode: "approval-required",
+              createdAt: requestedAt,
+            },
+          });
+          yield* eventStore.append({
+            type: "thread.turn-start-requested",
+            eventId: EventId.make(`evt-newer-pending-${status}`),
+            aggregateKind: "thread",
+            aggregateId: threadId,
+            occurredAt: requestedAt,
+            commandId: CommandId.make(`cmd-newer-pending-${status}`),
+            causationEventId: null,
+            correlationId: CorrelationId.make(`cmd-newer-pending-${status}`),
+            metadata: {},
+            payload: {
+              threadId,
+              messageId: MessageId.make(`message-newer-${status}`),
               runtimeMode: "approval-required",
               createdAt: requestedAt,
             },
@@ -3755,13 +3772,26 @@ it.layer(makeProjectionPipelinePrefixedTestLayer("t3-pending-turn-terminal-test-
 
         yield* projectionPipeline.bootstrap;
 
-        const pendingRows = yield* sql<{ readonly threadId: string }>`
-          SELECT thread_id AS "threadId"
+        const pendingRows = yield* sql<{
+          readonly threadId: string;
+          readonly messageId: string;
+        }>`
+          SELECT
+            thread_id AS "threadId",
+            pending_message_id AS "messageId"
           FROM projection_turns
           WHERE turn_id IS NULL
             AND state = 'pending'
+          ORDER BY thread_id ASC
         `;
-        assert.deepEqual(pendingRows, []);
+        assert.deepEqual(pendingRows, [
+          { threadId: "thread-terminal-error", messageId: "message-newer-error" },
+          {
+            threadId: "thread-terminal-interrupted",
+            messageId: "message-newer-interrupted",
+          },
+          { threadId: "thread-terminal-stopped", messageId: "message-newer-stopped" },
+        ]);
       }),
     );
 

@@ -789,16 +789,17 @@ const make = Effect.gen(function* () {
 
     yield* providerService.assertConversationRollbackSupported(event.payload.threadId);
 
+    const fromCheckpointRef = thread.checkpoints
+      .filter(
+        (checkpoint) =>
+          checkpoint.status === "ready" && checkpoint.checkpointTurnCount <= currentTurnCount,
+      )
+      .toSorted((left, right) => right.checkpointTurnCount - left.checkpointTurnCount)
+      .at(0)?.checkpointRef;
     const restored = yield* checkpointStore.restoreCheckpoint({
       cwd: sessionRuntime.value.cwd,
       checkpointRef: targetCheckpointRef,
-      ...(currentTurnCount > 0
-        ? {
-            fromCheckpointRef: thread.checkpoints.find(
-              (checkpoint) => checkpoint.checkpointTurnCount === currentTurnCount,
-            )!.checkpointRef,
-          }
-        : {}),
+      ...(fromCheckpointRef !== undefined ? { fromCheckpointRef } : {}),
       fallbackToHead: event.payload.turnCount === 0,
     });
     if (!restored) {

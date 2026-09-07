@@ -1282,7 +1282,10 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
         }
 
         case "thread.activity-appended": {
-          if (event.payload.activity.kind === "context-compaction") {
+          if (
+            event.payload.activity.kind === "context-compaction" ||
+            event.payload.activity.kind === "provider.auth.signed-out"
+          ) {
             const pendingTurnStart = yield* projectionTurnRepository.getPendingTurnStartByThreadId(
               event.payload,
             );
@@ -1314,17 +1317,6 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
         case "thread.session-set": {
           const turnId = event.payload.session.activeTurnId;
           if (turnId === null || event.payload.session.status !== "running") {
-            if (
-              (event.payload.session.status === "ready" &&
-                event.commandId?.startsWith("server:provider-session-set:") === true) ||
-              event.payload.session.status === "error" ||
-              event.payload.session.status === "stopped" ||
-              event.payload.session.status === "interrupted"
-            ) {
-              yield* projectionTurnRepository.deletePendingTurnStartByThreadId({
-                threadId: event.payload.threadId,
-              });
-            }
             // Leaving the "running" session status is the turn-end signal:
             // settle still-running turns so their duration reflects the whole
             // turn rather than the last assistant message.

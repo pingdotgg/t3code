@@ -228,6 +228,16 @@ export interface ProjectionSnapshotQueryShape {
     ProjectionRepositoryError
   >;
 
+  /** Read pending starts that a newly-created hot reactor cannot replay. */
+  readonly listPendingTurnStarts?: () => Effect.Effect<
+    ReadonlyArray<{
+      readonly threadId: ThreadId;
+      readonly messageId: MessageId;
+      readonly requestedAt: string;
+    }>,
+    ProjectionRepositoryError
+  >;
+
   /**
    * Read a single active thread detail snapshot by id.
    */

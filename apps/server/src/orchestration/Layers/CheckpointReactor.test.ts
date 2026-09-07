@@ -1817,7 +1817,10 @@ describe("CheckpointReactor", () => {
         ),
     });
     const createdAt = "2026-01-01T00:00:00.000Z";
-    const pendingMessageId = MessageId.make("message-accepted-during-revert-with-skew");
+    const pendingMessageIds = [
+      MessageId.make("message-accepted-during-revert-with-skew-1"),
+      MessageId.make("message-accepted-during-revert-with-skew-2"),
+    ];
 
     await Effect.runPromise(
       harness.engine.dispatch({
@@ -1877,22 +1880,24 @@ describe("CheckpointReactor", () => {
     );
 
     await Effect.runPromise(Deferred.await(rollbackStarted));
-    await Effect.runPromise(
-      harness.engine.dispatch({
-        type: "thread.turn.start",
-        commandId: CommandId.make("cmd-turn-start-during-revert-with-skew"),
-        threadId: ThreadId.make("thread-1"),
-        message: {
-          messageId: pendingMessageId,
-          role: "user",
-          text: "Continue after revert",
-          attachments: [],
-        },
-        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-        runtimeMode: "approval-required",
-        createdAt: "2025-12-31T23:59:00.000Z",
-      }),
-    );
+    for (const [index, pendingMessageId] of pendingMessageIds.entries()) {
+      await Effect.runPromise(
+        harness.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make(`cmd-turn-start-during-revert-with-skew-${index + 1}`),
+          threadId: ThreadId.make("thread-1"),
+          message: {
+            messageId: pendingMessageId,
+            role: "user",
+            text: `Continue after revert ${index + 1}`,
+            attachments: [],
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          createdAt: `2025-12-31T23:59:0${index}.000Z`,
+        }),
+      );
+    }
     await Effect.runPromise(Deferred.succeed(continueRollback, undefined));
 
     const events = await waitForEvent(harness.engine, (event) => event.type === "thread.reverted");
@@ -1905,12 +1910,12 @@ describe("CheckpointReactor", () => {
     expect(thread.checkpoints).toHaveLength(1);
     expect(thread.checkpoints[0]?.checkpointTurnCount).toBe(1);
     expect(
-      (await harness.readModel()).threads[0]?.messages.some(
-        (message) => message.id === pendingMessageId,
-      ),
-    ).toBe(true);
+      (await harness.readModel()).threads[0]?.messages
+        .filter((message) => pendingMessageIds.includes(message.id))
+        .map((message) => message.id),
+    ).toEqual(pendingMessageIds);
     expect(events.find((event) => event.type === "thread.reverted")?.payload).toMatchObject({
-      preservedMessageIds: [pendingMessageId],
+      preservedMessageIds: pendingMessageIds,
     });
     expect(harness.provider.rollbackConversation).toHaveBeenCalledTimes(1);
     expect(harness.provider.rollbackConversation).toHaveBeenCalledWith({
@@ -1922,6 +1927,71 @@ describe("CheckpointReactor", () => {
       gitRefExists(harness.cwd, checkpointRefForThreadTurn(ThreadId.make("thread-1"), 2)),
     ).toBe(false);
   });
+
+  effectIt.effect("restores a captured target when the newest checkpoint is missing", () =>
+    Effect.gen(function* () {
+      const harness = yield* Effect.promise(() => createHarness());
+      const threadId = ThreadId.make("thread-1");
+      const createdAt = "2026-01-01T00:00:00.000Z";
+
+      yield* harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-session-set-missing-latest"),
+        threadId,
+        session: {
+          threadId,
+          status: "ready",
+          providerName: "codex",
+          runtimeMode: "approval-required",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: createdAt,
+        },
+        createdAt,
+      });
+      yield* harness.engine.dispatch({
+        type: "thread.turn.diff.complete",
+        commandId: CommandId.make("cmd-ready-target-diff"),
+        threadId,
+        turnId: asTurnId("turn-ready-target"),
+        completedAt: createdAt,
+        checkpointRef: checkpointRefForThreadTurn(threadId, 1),
+        status: "ready",
+        files: [],
+        checkpointTurnCount: 1,
+        createdAt,
+      });
+      yield* harness.engine.dispatch({
+        type: "thread.turn.diff.complete",
+        commandId: CommandId.make("cmd-missing-latest-diff"),
+        threadId,
+        turnId: asTurnId("turn-missing-latest"),
+        completedAt: createdAt,
+        checkpointRef: CheckpointRef.make("provider-diff:missing-latest"),
+        status: "missing",
+        files: [],
+        checkpointTurnCount: 2,
+        createdAt,
+      });
+      NodeFS.writeFileSync(NodePath.join(harness.cwd, "README.md"), "v2\n", "utf8");
+
+      yield* harness.engine.dispatch({
+        type: "thread.checkpoint.revert",
+        commandId: CommandId.make("cmd-revert-from-missing-latest"),
+        threadId,
+        turnCount: 1,
+        createdAt,
+      });
+      yield* Effect.promise(harness.drain);
+
+      expect(NodeFS.readFileSync(NodePath.join(harness.cwd, "README.md"), "utf8")).toBe("v2\n");
+      expect(harness.provider.rollbackConversation).toHaveBeenCalledWith({
+        threadId,
+        numTurns: 1,
+      });
+      expect((yield* Effect.promise(harness.readModel)).threads[0]?.checkpoints).toHaveLength(1);
+    }),
+  );
 
   it("executes provider revert and emits thread.reverted for claude sessions", async () => {
     const harness = await createHarness({ providerName: ProviderDriverKind.make("claudeAgent") });

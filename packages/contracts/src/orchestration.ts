@@ -657,6 +657,9 @@ export const OrchestrationThread = Schema.Struct({
   // explicitly so command admission and revert completion never infer queue
   // order from clocks on remote clients.
   pendingTurnStartMessageId: Schema.optional(Schema.NullOr(MessageId)),
+  // User messages accepted after a checkpoint revert begins. The server uses
+  // this pending-only list to preserve every queued start when the revert lands.
+  pendingCheckpointRevertMessageIds: Schema.optional(Schema.NullOr(Schema.Array(MessageId))),
   deletedAt: Schema.NullOr(IsoDateTime),
   messages: Schema.Array(OrchestrationMessage),
   proposedPlans: Schema.Array(OrchestrationProposedPlan).pipe(

@@ -453,6 +453,39 @@ describe("applyThreadDetailEvent", () => {
         expect(adopted.thread.pendingTurnStartMessageId).toBeNull();
       }
     });
+
+    it("does not let a stale terminal session clear a newer pending turn", () => {
+      const newerMessageId = MessageId.make("message-newer-pending-turn-start");
+      const pendingThread = {
+        ...baseThread,
+        pendingTurnStartMessageId: newerMessageId,
+      };
+      const result = applyThreadDetailEvent(pendingThread, {
+        ...baseEventFields,
+        sequence: 6,
+        occurredAt: "2026-04-01T05:00:01.000Z",
+        aggregateKind: "thread",
+        aggregateId: baseThread.id,
+        type: "thread.session-set",
+        payload: {
+          threadId: baseThread.id,
+          session: {
+            threadId: baseThread.id,
+            status: "error",
+            providerName: "codex",
+            runtimeMode: "full-access",
+            activeTurnId: null,
+            lastError: "older request failed",
+            updatedAt: "2026-04-01T05:00:01.000Z",
+          },
+        },
+      });
+
+      expect(result.kind).toBe("updated");
+      if (result.kind === "updated") {
+        expect(result.thread.pendingTurnStartMessageId).toBe(newerMessageId);
+      }
+    });
   });
 
   describe("thread.message-sent", () => {

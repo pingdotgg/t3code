@@ -532,6 +532,67 @@ describe("orchestration projector", () => {
       }),
   );
 
+  effectIt.effect("does not let a stale terminal session clear a newer pending turn", () =>
+    Effect.gen(function* () {
+      const now = "2026-09-07T23:00:00.000Z";
+      const threadId = "thread-stale-terminal";
+      const event = (sequence: number, type: OrchestrationEvent["type"], payload: unknown) =>
+        makeEvent({
+          sequence,
+          type,
+          payload,
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: now,
+          commandId: `stale-terminal-${sequence}`,
+        });
+      let model = yield* projectEvent(
+        createEmptyReadModel(now),
+        event(1, "thread.created", {
+          threadId,
+          projectId: "project-1",
+          title: "Stale terminal",
+          modelSelection: { instanceId: "codex", model: "test" },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          createdAt: now,
+          updatedAt: now,
+        }),
+      );
+      for (const [index, messageId] of ["older-request", "newer-request"].entries()) {
+        model = yield* projectEvent(
+          model,
+          event(index + 2, "thread.turn-start-requested", {
+            threadId,
+            messageId,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            createdAt: now,
+          }),
+        );
+      }
+      model = yield* projectEvent(
+        model,
+        event(4, "thread.session-set", {
+          threadId,
+          session: {
+            threadId,
+            status: "error",
+            providerName: "codex",
+            runtimeMode: "full-access",
+            activeTurnId: null,
+            lastError: "older request failed",
+            updatedAt: now,
+          },
+        }),
+      );
+
+      expect(model.threads[0]?.pendingTurnStartMessageId).toBe("newer-request");
+    }),
+  );
+
   it("updates canonical thread runtime mode from thread.runtime-mode-set", async () => {
     const createdAt = "2026-02-23T08:00:00.000Z";
     const updatedAt = "2026-02-23T08:00:05.000Z";

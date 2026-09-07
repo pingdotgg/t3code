@@ -19,6 +19,7 @@ import {
   ProjectMetaUpdatedPayload,
   ThreadActivityAppendedPayload,
   ThreadArchivedPayload,
+  ThreadCheckpointRevertRequestedPayload,
   ThreadCreatedPayload,
   ThreadDeletedPayload,
   ThreadInteractionModeSetPayload,
@@ -77,7 +78,9 @@ function activityClearsPendingTurnStart(
 ): boolean {
   if (
     thread.pendingTurnStartMessageId == null ||
-    (activity.kind !== "context-compaction" && activity.kind !== "provider.turn.start.failed") ||
+    (activity.kind !== "context-compaction" &&
+      activity.kind !== "provider.turn.start.failed" &&
+      activity.kind !== "provider.auth.signed-out") ||
     !Predicate.isObject(activity.payload)
   ) {
     return false;
@@ -574,15 +577,41 @@ export function projectEvent(
         event.type,
         "payload",
       ).pipe(
+        Effect.map((payload) => {
+          const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+          if (!thread) {
+            return nextBase;
+          }
+          return {
+            ...nextBase,
+            threads: updateThread(nextBase.threads, payload.threadId, {
+              ...(payload.modelSelection !== undefined
+                ? { modelSelection: payload.modelSelection }
+                : {}),
+              runtimeMode: payload.runtimeMode,
+              interactionMode: payload.interactionMode,
+              pendingTurnStartMessageId: payload.messageId,
+              pendingCheckpointRevertMessageIds:
+                thread.pendingCheckpointRevertMessageIds == null
+                  ? null
+                  : [...thread.pendingCheckpointRevertMessageIds, payload.messageId],
+              updatedAt: event.occurredAt,
+            }),
+          };
+        }),
+      );
+
+    case "thread.checkpoint-revert-requested":
+      return decodeForEvent(
+        ThreadCheckpointRevertRequestedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
         Effect.map((payload) => ({
           ...nextBase,
           threads: updateThread(nextBase.threads, payload.threadId, {
-            ...(payload.modelSelection !== undefined
-              ? { modelSelection: payload.modelSelection }
-              : {}),
-            runtimeMode: payload.runtimeMode,
-            interactionMode: payload.interactionMode,
-            pendingTurnStartMessageId: payload.messageId,
+            pendingCheckpointRevertMessageIds: [],
             updatedAt: event.occurredAt,
           }),
         })),
@@ -677,12 +706,7 @@ export function projectEvent(
           threads: updateThread(nextBase.threads, payload.threadId, {
             session,
             pendingTurnStartMessageId:
-              (session.status === "running" && session.activeTurnId !== null) ||
-              session.status === "error" ||
-              session.status === "stopped" ||
-              session.status === "interrupted" ||
-              (session.status === "ready" &&
-                event.commandId?.startsWith("server:provider-session-set:") === true)
+              session.status === "running" && session.activeTurnId !== null
                 ? null
                 : (thread.pendingTurnStartMessageId ?? null),
             latestTurn:
@@ -878,6 +902,7 @@ export function projectEvent(
               proposedPlans,
               activities,
               latestTurn,
+              pendingCheckpointRevertMessageIds: null,
               updatedAt: event.occurredAt,
             }),
           };
@@ -906,12 +931,17 @@ export function projectEvent(
           const pendingTurnStartMessageId = activityClearsPendingTurnStart(thread, payload.activity)
             ? null
             : (thread.pendingTurnStartMessageId ?? null);
+          const pendingCheckpointRevertMessageIds =
+            payload.activity.kind === "checkpoint.revert.failed"
+              ? null
+              : (thread.pendingCheckpointRevertMessageIds ?? null);
 
           return {
             ...nextBase,
             threads: updateThread(nextBase.threads, payload.threadId, {
               activities,
               pendingTurnStartMessageId,
+              pendingCheckpointRevertMessageIds,
               updatedAt: event.occurredAt,
             }),
           };

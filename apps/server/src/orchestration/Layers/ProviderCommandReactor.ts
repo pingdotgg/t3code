@@ -1292,7 +1292,7 @@ const make = Effect.gen(function* () {
           tone: "info",
           kind: "provider.auth.signed-out",
           summary: "Provider signed out",
-          payload: { providerInstanceId: instanceId },
+          payload: { providerInstanceId: instanceId, requestId: event.payload.messageId },
           turnId: null,
           createdAt: event.payload.createdAt,
         },
@@ -1792,6 +1792,19 @@ const make = Effect.gen(function* () {
         ).pipe(Effect.as([]));
       }),
     );
+    const interruptedTurnStarts = yield* (
+      projectionSnapshotQuery.listPendingTurnStarts?.() ?? Effect.succeed([])
+    ).pipe(
+      Effect.catchCause((cause) => {
+        if (Cause.hasInterruptsOnly(cause)) {
+          return Effect.interrupt;
+        }
+        return Effect.logWarning(
+          "provider command reactor failed to find interrupted turn starts",
+          { cause: Cause.pretty(cause) },
+        ).pipe(Effect.as([]));
+      }),
+    );
     const processEvent = Effect.fn("processEvent")(function* (event: OrchestrationEvent) {
       if (
         (event.type === "thread.meta-updated" && event.payload.regenerateTitle === true) ||
@@ -1814,15 +1827,34 @@ const make = Effect.gen(function* () {
     // The domain event stream is hot, so work pending before this reactor
     // starts cannot be resumed. Correlated completions only clear the request
     // captured here, leaving any newer request untouched.
-    const clearInterrupted = clearInterruptedThreadTitleRegenerations(
-      interruptedTitleRegenerations,
+    const clearInterruptedTurnStarts = Effect.forEach(
+      interruptedTurnStarts,
+      (pending) =>
+        appendProviderFailureActivity({
+          threadId: pending.threadId,
+          kind: "provider.turn.start.failed",
+          summary: "Provider turn start failed",
+          detail:
+            "The server restarted before this turn could start. Send the message again to continue.",
+          turnId: null,
+          createdAt: pending.requestedAt,
+          requestId: pending.messageId,
+        }),
+      { concurrency: 1, discard: true },
+    );
+    const clearInterrupted = Effect.all(
+      [
+        clearInterruptedThreadTitleRegenerations(interruptedTitleRegenerations),
+        clearInterruptedTurnStarts,
+      ],
+      { concurrency: 1, discard: true },
     ).pipe(
       Effect.catchCause((cause) => {
         if (Cause.hasInterruptsOnly(cause)) {
           return Effect.interrupt;
         }
         return Effect.logWarning(
-          "provider command reactor failed to clear interrupted title regenerations",
+          "provider command reactor failed to clear interrupted startup work",
           {
             cause: Cause.pretty(cause),
           },

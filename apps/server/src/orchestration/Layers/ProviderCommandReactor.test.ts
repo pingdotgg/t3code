@@ -174,6 +174,7 @@ describe("ProviderCommandReactor", () => {
     readonly unreadableHistory?: boolean;
     readonly titleRegenerationCompletionDispatchFailures?: number;
     readonly titleRegenerationBeforeStart?: "one" | "two";
+    readonly turnStartBeforeStart?: boolean;
     readonly serverActivation?: Effect.Effect<void>;
     readonly beforeReadySessionDispatch?: () => Effect.Effect<void>;
     readonly compactThreadEffect?: () => Effect.Effect<void, ProviderAdapterRequestError>;
@@ -574,6 +575,24 @@ describe("ProviderCommandReactor", () => {
           ),
           threadId,
           regenerateTitle: true,
+        }),
+      );
+    }
+    if (input?.turnStartBeforeStart === true) {
+      await runEffect(
+        engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make("cmd-turn-start-before-reactor-start"),
+          threadId: ThreadId.make("thread-1"),
+          message: {
+            messageId: MessageId.make("message-turn-start-before-reactor-start"),
+            role: "user",
+            text: "This start cannot be replayed after restart",
+            attachments: [],
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          createdAt: now,
         }),
       );
     }
@@ -1769,6 +1788,23 @@ describe("ProviderCommandReactor", () => {
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
     expect(thread?.title).toBe("Thread");
     expect(thread?.titleRegeneration).toBeNull();
+  });
+
+  it("marks a turn start left pending across reactor startup as failed", async () => {
+    const harness = await createHarness({ turnStartBeforeStart: true });
+
+    expect(harness.sendTurn).not.toHaveBeenCalled();
+    expect(await harness.readPendingTurnStarts()).toEqual([]);
+    const readModel = await harness.readModel();
+    expect(readModel.threads[0]?.activities).toContainEqual(
+      expect.objectContaining({
+        kind: "provider.turn.start.failed",
+        payload: expect.objectContaining({
+          requestId: "message-turn-start-before-reactor-start",
+          detail: expect.stringContaining("server restarted"),
+        }),
+      }),
+    );
   });
 
   it("continues clearing startup title regeneration state after one completion fails", async () => {
