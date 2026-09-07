@@ -20,17 +20,19 @@ const prompt: PendingUserInput = {
       multiSelect: false,
     },
   ],
+  dismissible: true,
 };
 
-function renderPanel() {
+function renderPanel(pendingUserInput: PendingUserInput = prompt) {
   return renderToStaticMarkup(
     <ComposerPendingUserInputPanel
-      pendingUserInputs={[prompt]}
+      pendingUserInputs={[pendingUserInput]}
       respondingRequestIds={[]}
       answers={{}}
       questionIndex={0}
       onToggleOption={() => {}}
       onAdvance={() => {}}
+      onDismiss={() => {}}
     />,
   );
 }
@@ -48,6 +50,13 @@ describe("ComposerPendingUserInputPanel", () => {
     const controlledId = toggle?.match(/aria-controls="([^"]+)"/)?.[1];
     expect(controlledId).toBeDefined();
     expect(markup).toMatch(new RegExp(`<div[^>]*\\sid="${controlledId}"`));
+  });
+
+  it("offers dismiss only for async questions", () => {
+    expect(renderPanel()).toContain("data-pending-user-input-dismiss");
+    expect(renderPanel({ ...prompt, dismissible: false })).not.toContain(
+      "data-pending-user-input-dismiss",
+    );
   });
 
   it("starts expanded so the question and its options are visible", () => {

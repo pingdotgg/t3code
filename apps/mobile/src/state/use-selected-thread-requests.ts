@@ -73,6 +73,10 @@ export function useSelectedThreadRequests() {
     threadEnvironment.respondToUserInput,
     "thread user input response",
   );
+  const dismissUserInput = useAtomCommand(
+    threadEnvironment.dismissUserInput,
+    "thread user input dismissal",
+  );
   const { selectedThread: selectedThreadShell } = useThreadSelection();
   const selectedThread = useSelectedThreadDetail();
   const userInputDraftsByRequestKey = useAtomValue(userInputDraftsByRequestKeyAtom);
@@ -170,6 +174,26 @@ export function useSelectedThreadRequests() {
     selectedThreadShell,
   ]);
 
+  // Closes an async question without messaging the agent.
+  const onDismissUserInput = useCallback(async () => {
+    if (!selectedThreadShell || !activePendingUserInput) {
+      return;
+    }
+
+    setRespondingUserInputId(activePendingUserInput.requestId);
+    const result = await dismissUserInput({
+      environmentId: selectedThreadShell.environmentId,
+      input: {
+        threadId: selectedThreadShell.id,
+        requestId: activePendingUserInput.requestId,
+      },
+    });
+    setRespondingUserInputId((current) =>
+      current === activePendingUserInput.requestId ? null : current,
+    );
+    return result;
+  }, [activePendingUserInput, dismissUserInput, selectedThreadShell]);
+
   return {
     activePendingApproval,
     activePendingUserInput,
@@ -181,5 +205,6 @@ export function useSelectedThreadRequests() {
     onSelectUserInputOption,
     onChangeUserInputCustomAnswer,
     onSubmitUserInput,
+    onDismissUserInput,
   };
 }
