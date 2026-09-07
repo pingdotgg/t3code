@@ -21,6 +21,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import {
   GitCommandError,
+  type GitCommandFailureReason,
   type ReviewDiffFileContentsInput,
   type ReviewDiffPreviewInput,
   type ReviewDiffPreviewSource,
@@ -394,6 +395,62 @@ function gitCommandContext(
     cwd: input.cwd,
     argumentCount: input.args.length,
   } as const;
+}
+
+// Git states the actual cause on stderr, but stderr never leaves this module:
+// it echoes argv and remote URLs, which can carry credentials. Matching it
+// against fixed patterns yields a tag the caller can act on and a message that
+// quotes none of the matched text. Patterns run in order, specific first.
+const GIT_FAILURE_REASON_PATTERNS: ReadonlyArray<readonly [RegExp, GitCommandFailureReason]> = [
+  [/would clobber existing tag/i, "tag_would_be_clobbered"],
+  [/is already (?:used by worktree at|checked out at)/i, "branch_checked_out_in_worktree"],
+  [/a branch named .+ already exists/i, "branch_already_exists"],
+  // ssh names the methods it tried, so the parenthesized list varies:
+  // `(publickey)`, `(publickey,password)`, `(keyboard-interactive)`.
+  [
+    /(?:authentication failed|could not read Username|could not read Password|permission denied \([a-z-]+(?:,[a-z-]+)*\)|permission denied, please try again)/i,
+    "authentication_failed",
+  ],
+  // Distinct from a credential failure: the remote answered and the key it
+  // presented is untrusted, so pointing the user at credentials would misdirect.
+  [/host key verification failed/i, "host_key_unverified"],
+  [
+    /(?:could not read from remote repository|does not appear to be a git repository|repository .+ not found)/i,
+    "remote_unreachable",
+  ],
+  // Quoted-path forms only: an unquoted `fatal: <thing> already exists` also
+  // covers tag and ref collisions, which are not path collisions.
+  [/fatal: '[^']+' already exists|destination path .+ already exists/i, "path_already_exists"],
+];
+
+// Hooks write to the same stream git does, and nothing distinguishes their
+// text from git's: a pre-push hook echoing "authentication failed" would
+// otherwise be read as a credential failure. Git prefixes its own diagnostics
+// and states a push rejection on a `! [rejected]` line, so only those are
+// classified. `remote:` is deliberately excluded — git prefixes every byte the
+// server sends that way, remote hook output included, so trusting it would
+// reintroduce the same false positive from the other end of the connection.
+const GIT_DIAGNOSTIC_LINE_PATTERN = /^(?:fatal|error):|^!\s|^\s+!\s/;
+// ssh reports the refusal itself, unprefixed, and git only adds a generic
+// "Could not read from remote repository" after it. Dropping ssh's line would
+// leave that generic one to be read as an unreachable remote when the real
+// cause is credentials, so these specific refusals are classified too.
+const SSH_TRANSPORT_REFUSAL_PATTERN =
+  /Permission denied \((?:publickey|password|keyboard-interactive)|Permission denied, please try again|Host key verification failed/i;
+
+function classifyGitFailure(stderr: string): GitCommandFailureReason | null {
+  const diagnostics = stderr
+    .split(/\r?\n/)
+    .filter(
+      (line) => GIT_DIAGNOSTIC_LINE_PATTERN.test(line) || SSH_TRANSPORT_REFUSAL_PATTERN.test(line),
+    )
+    .join("\n");
+  if (diagnostics.length === 0) return null;
+  if (isNonRepositoryGitStderr(diagnostics)) return "not_a_repository";
+  for (const [pattern, reason] of GIT_FAILURE_REASON_PATTERNS) {
+    if (pattern.test(diagnostics)) return reason;
+  }
+  return null;
 }
 
 function parseDefaultBranchFromRemoteHeadRef(value: string, remoteName: string): string | null {
@@ -817,8 +874,10 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         yield* trace2Monitor.flush;
 
         if (!input.allowNonZeroExit && exitCode !== 0) {
+          const reason = classifyGitFailure(stderr.text);
           return yield* new GitCommandError({
             ...gitCommandContext(commandInput),
+            ...(reason === null ? {} : { reason }),
             detail: "Git command exited with a non-zero status.",
             exitCode,
             stdoutLength: stdout.text.length,
@@ -901,9 +960,11 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         if (options.allowNonZeroExit || result.exitCode === 0) {
           return Effect.succeed(result);
         }
+        const reason = classifyGitFailure(result.stderr);
         return Effect.fail(
           new GitCommandError({
             ...gitCommandContext({ operation, cwd, args }),
+            ...(reason === null ? {} : { reason }),
             detail: options.fallbackErrorDetail ?? "Git command exited with a non-zero status.",
             ...(result.exitCode === null ? {} : { exitCode: result.exitCode }),
             stdoutLength: result.stdout.length,
