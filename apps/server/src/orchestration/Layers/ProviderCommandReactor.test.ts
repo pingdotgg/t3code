@@ -27,6 +27,7 @@ import { serializeAssistantCitation } from "@t3tools/shared/assistantCitations";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Option from "effect/Option";
@@ -46,7 +47,10 @@ import {
 } from "../../provider/Errors.ts";
 import { OrchestrationEventStoreLive } from "../../persistence/Layers/OrchestrationEventStore.ts";
 import { OrchestrationCommandReceiptRepositoryLive } from "../../persistence/Layers/OrchestrationCommandReceipts.ts";
-import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
+import {
+  makeSqlitePersistenceLive,
+  SqlitePersistenceMemory,
+} from "../../persistence/Layers/Sqlite.ts";
 import {
   ProviderService,
   type ProviderServiceShape,
@@ -167,6 +171,7 @@ describe("ProviderCommandReactor", () => {
 
   async function createHarness(input?: {
     readonly baseDir?: string;
+    readonly databasePath?: string;
     readonly threadModelSelection?: ModelSelection;
     readonly sessionModelSwitch?: "unsupported" | "in-session";
     readonly requiresNewThreadForModelChange?: boolean;
@@ -184,6 +189,9 @@ describe("ProviderCommandReactor", () => {
     readonly tryHandlePromptCommandEffect?: ProviderAuthService["Service"]["tryHandlePromptCommand"];
   }) {
     const now = "2026-01-01T00:00:00.000Z";
+    const persistence = input?.databasePath
+      ? makeSqlitePersistenceLive(input.databasePath)
+      : SqlitePersistenceMemory;
     const baseDir =
       input?.baseDir ?? NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3code-reactor-"));
     createdBaseDirs.add(baseDir);
@@ -404,13 +412,13 @@ describe("ProviderCommandReactor", () => {
       Layer.provide(OrchestrationEventStoreLive),
       Layer.provide(OrchestrationCommandReceiptRepositoryLive),
       Layer.provide(RepositoryIdentityResolver.layer),
-      Layer.provide(SqlitePersistenceMemory),
+      Layer.provide(persistence),
     );
     const projectionSnapshotLayer = OrchestrationProjectionSnapshotQueryLive.pipe(
       Layer.provide(ThreadBackgroundLiveness.layer),
       Layer.provide(ThreadPlanProgress.layer),
       Layer.provide(RepositoryIdentityResolver.layer),
-      Layer.provide(SqlitePersistenceMemory),
+      Layer.provide(persistence),
     );
     let titleRegenerationCompletionDispatchAttempts = 0;
     const reactorOrchestrationLayer = Layer.effect(
@@ -476,7 +484,7 @@ describe("ProviderCommandReactor", () => {
         }),
       ),
       Layer.provideMerge(ServerSettingsService.layerTest()),
-      Layer.provideMerge(SqlitePersistenceMemory),
+      Layer.provideMerge(persistence),
       Layer.provideMerge(ServerConfig.layerTest(process.cwd(), baseDir)),
       Layer.provideMerge(NodeServices.layer),
     );
@@ -3826,6 +3834,117 @@ describe("ProviderCommandReactor", () => {
     );
     expect(resolvedActivity).toBeUndefined();
   });
+
+  for (const status of ["missing", "stopped", "running"] as const) {
+    effectIt.effect(
+      `only dismisses an orphaned native question when the session is ${status}`,
+      () =>
+        Effect.gen(function* () {
+          const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-orphan-question-"));
+          const databasePath = NodePath.join(baseDir, "questions.sqlite");
+          let harness = yield* Effect.promise(() =>
+            createHarness({ baseDir, databasePath, unreadableHistory: true }),
+          );
+          const threadId = ThreadId.make("thread-1");
+          const requestId = asApprovalRequestId("orphaned-question");
+          const createdAt = "2026-01-01T00:00:01.000Z";
+          if (status !== "missing") {
+            yield* harness.engine.dispatch({
+              type: "thread.session.set",
+              commandId: CommandId.make("orphan-session"),
+              threadId,
+              createdAt,
+              session: {
+                threadId,
+                status,
+                providerName: "codex",
+                runtimeMode: "approval-required",
+                activeTurnId: null,
+                lastError: null,
+                updatedAt: createdAt,
+              },
+            });
+          }
+          yield* harness.engine.dispatch({
+            type: "thread.activity.append",
+            commandId: CommandId.make("orphan-request"),
+            threadId,
+            createdAt,
+            activity: {
+              id: EventId.make("orphan-request"),
+              kind: "user-input.requested",
+              summary: "User input requested",
+              tone: "info",
+              turnId: asTurnId("old-turn"),
+              createdAt,
+              payload: { requestId, questions: [] },
+            },
+          });
+          // Restart from the persisted projection, whose command snapshot omits
+          // activities entirely, so recovery must query this request directly.
+          if (status === "stopped") {
+            yield* Scope.close(scope!, Exit.void);
+            scope = null;
+            yield* Effect.promise(() => runtime!.dispose());
+            runtime = null;
+            harness = yield* Effect.promise(() => createHarness({ baseDir, databasePath }));
+          }
+          harness.respondToUserInput.mockImplementation(() =>
+            Effect.fail(
+              new ProviderAdapterRequestError({
+                provider: "codex",
+                method: "item/tool/respondToUserInput",
+                detail: "Temporary transport failure",
+              }),
+            ),
+          );
+          for (const suffix of ["first", "retry"]) {
+            const domainEvents = yield* harness.engine.subscribeDomainEvents;
+            const responseProcessed = yield* domainEvents.pipe(
+              Stream.filter(
+                (event) =>
+                  event.type === "thread.activity-appended" &&
+                  event.payload.threadId === threadId &&
+                  event.payload.activity.kind === "provider.user-input.respond.failed",
+              ),
+              Stream.runHead,
+              Effect.forkChild,
+            );
+            yield* harness.engine.dispatch({
+              type: "thread.user-input.respond",
+              commandId: CommandId.make(`orphan-response-${suffix}`),
+              threadId,
+              requestId,
+              answers: { choice: "yes" },
+              createdAt: "2026-01-01T00:00:02.000Z",
+            });
+            yield* Fiber.join(responseProcessed);
+            yield* Effect.promise(() => harness.drain());
+            if (status === "stopped" && suffix === "first") {
+              expect(
+                Option.getOrThrow(
+                  yield* harness.snapshotQuery.getUserInputActivity({ threadId, requestId }),
+                ).kind,
+              ).toBe("user-input.resolved");
+              yield* Scope.close(scope!, Exit.void);
+              scope = null;
+              yield* Effect.promise(() => runtime!.dispose());
+              runtime = null;
+              harness = yield* Effect.promise(() => createHarness({ baseDir, databasePath }));
+            }
+          }
+          const latest = yield* harness.snapshotQuery.getUserInputActivity({ threadId, requestId });
+          expect(Option.getOrThrow(latest)).toMatchObject({
+            kind: status === "running" ? "user-input.requested" : "user-input.resolved",
+            turnId: "old-turn",
+            payload: { requestId },
+          });
+          const shell = yield* harness.snapshotQuery.getThreadShellById(threadId);
+          expect(Option.getOrThrow(shell).hasPendingUserInput).toBe(status === "running");
+          expect(harness.respondToUserInput).toHaveBeenCalledTimes(status === "running" ? 2 : 0);
+        }),
+    );
+  }
 
   it("surfaces non-resumable provider user-input callbacks as stale failures", async () => {
     const harness = await createHarness();

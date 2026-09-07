@@ -1833,14 +1833,14 @@ const make = Effect.gen(function* () {
         });
       }
 
-      if (isTerminalTurn) {
+      if (isTerminalTurn || event.type === "session.exited") {
         const turnId = toTurnId(event.turnId);
-        if (turnId) {
+        if (turnId || event.type === "session.exited") {
           const userInputActivities =
             yield* projectionThreadActivityRepository.listUserInputLifecycleByThreadId({
               threadId: thread.id,
             });
-          const pendingRequestIds = new Set<string>();
+          const pendingRequests = new Map<string, TurnId | null>();
           for (const activity of userInputActivities) {
             const payload =
               typeof activity.payload === "object" && activity.payload !== null
@@ -1850,17 +1850,17 @@ const make = Effect.gen(function* () {
             if (typeof requestId !== "string") continue;
             if (
               activity.kind === "user-input.requested" &&
-              activity.turnId === turnId &&
+              (event.type === "session.exited" || activity.turnId === turnId) &&
               payload?.responseMode !== "message"
             ) {
-              pendingRequestIds.add(requestId);
+              pendingRequests.set(requestId, activity.turnId);
             } else if (activity.kind === "user-input.resolved") {
-              pendingRequestIds.delete(requestId);
+              pendingRequests.delete(requestId);
             }
           }
-          // A terminal turn cannot accept native callback answers. Message-mode
-          // questions may outlive that turn and still accept a later user message.
-          for (const requestId of pendingRequestIds) {
+          // Session exit abandons every native callback, including child and
+          // turnless requests. Message-mode questions can still resume later.
+          for (const [requestId, requestTurnId] of pendingRequests) {
             yield* orchestrationEngine.dispatch({
               type: "thread.activity.append",
               commandId: yield* providerCommandId(event, "terminal-user-input-resolved"),
@@ -1872,11 +1872,16 @@ const make = Effect.gen(function* () {
                 kind: "user-input.resolved",
                 summary: "User input dismissed",
                 payload: { requestId },
-                turnId,
+                turnId: requestTurnId,
               },
               createdAt: now,
             });
           }
+        }
+      }
+      if (isTerminalTurn) {
+        const turnId = toTurnId(event.turnId);
+        if (turnId) {
           const assistantMessageIds = yield* getAssistantMessageIdsForTurn(thread.id, turnId);
           yield* Effect.forEach(
             assistantMessageIds,
