@@ -212,6 +212,7 @@ import {
 } from "./ThreadStatusIndicators";
 import {
   resolveSnoozePresets,
+  snoozePresetExpired,
   snoozeWakeDescription,
   snoozeWakeLabel,
   type SnoozePreset,
@@ -495,9 +496,7 @@ function SnoozePopoverButton(props: {
             onClick={(event) => {
               event.stopPropagation();
               onOpenChange(false);
-              // A menu left open past the limit's reset would snooze into the
-              // past; that row simply stops applying, like mobile's menu.
-              if (Date.parse(preset.snoozedUntil) <= Date.now()) return;
+              if (snoozePresetExpired(preset)) return;
               onSnooze(preset);
             }}
             className="flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-foreground/90 hover:bg-accent hover:text-foreground"
@@ -4147,7 +4146,7 @@ export default function Sidebar() {
             clicked.value === "snooze:custom"
               ? await requestCustomSnooze()
               : snoozePresets.find((candidate) => `snooze:${candidate.id}` === clicked.value);
-          if (preset) attemptSnooze(threadRef, preset);
+          if (preset && !snoozePresetExpired(preset)) attemptSnooze(threadRef, preset);
           return;
         }
         switch (clicked.value) {
