@@ -571,11 +571,18 @@ function SidebarSectionPlaceholder(props: {
       {props.showHint ? (
         <div
           className={cn(
-            "absolute inset-x-0 top-0 flex h-9 items-center justify-center rounded-md border border-dashed border-sidebar-foreground/25 text-xs text-sidebar-foreground/80",
-            props.isDropTarget && "border-primary/40 bg-primary/5 text-primary",
+            "absolute inset-x-0 top-0 flex h-9 items-center gap-2 px-2 text-xs font-medium text-sidebar-foreground/80",
+            props.isDropTarget && "text-primary",
           )}
         >
-          {props.label}
+          <span className="shrink-0">{props.label}</span>
+          <span
+            aria-hidden
+            className={cn(
+              "h-px min-w-2 flex-1",
+              props.isDropTarget ? "bg-primary/50" : "bg-sidebar-foreground/25",
+            )}
+          />
         </div>
       ) : null}
     </SortableSidebarMarker>
@@ -599,13 +606,11 @@ function SidebarDragBoundary(props: {
       className="pointer-events-none relative mx-0.5 h-0"
     >
       {props.visible ? (
-        <div className="sidebar-drag-boundary-label absolute inset-x-2 top-1 flex h-4 items-center gap-1.5">
+        <div className="sidebar-drag-boundary-label absolute inset-x-2 top-1 flex h-4 items-center gap-2">
           <span
             className={cn(
-              "inline-flex h-4 shrink-0 items-center rounded-sm border bg-sidebar px-1.5 text-[10px] leading-none font-medium",
-              props.isDropTarget
-                ? "border-primary/40 text-primary"
-                : "border-sidebar-foreground/25 text-sidebar-foreground/80",
+              "shrink-0 text-xs font-medium",
+              props.isDropTarget ? "text-primary" : "text-sidebar-foreground/80",
             )}
           >
             {props.label}
