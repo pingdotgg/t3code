@@ -14,6 +14,7 @@ import type {
 } from "@t3tools/contracts";
 import { isImportedAgentSessionMessageId } from "@t3tools/contracts";
 import { compareDateTimeStrings } from "@t3tools/shared/dateTime";
+import * as Predicate from "effect/Predicate";
 
 export type ThreadDetailReducerResult =
   | { readonly kind: "updated"; readonly thread: OrchestrationThread }
@@ -45,6 +46,20 @@ const activityIdIndex = new WeakMap<
   ReadonlyArray<OrchestrationThreadActivity>,
   Set<OrchestrationThreadActivity["id"]>
 >();
+
+function activityClearsPendingTurnStart(
+  thread: OrchestrationThread,
+  activity: OrchestrationThreadActivity,
+): boolean {
+  if (
+    thread.pendingTurnStartMessageId == null ||
+    (activity.kind !== "context-compaction" && activity.kind !== "provider.turn.start.failed") ||
+    !Predicate.isObject(activity.payload)
+  ) {
+    return false;
+  }
+  return activity.payload.requestId === thread.pendingTurnStartMessageId;
+}
 
 /**
  * Matches the validity rule in `deriveLatestContextWindowSnapshot` (and the
@@ -284,6 +299,7 @@ export function applyThreadDetailEvent(
             : {}),
           runtimeMode: event.payload.runtimeMode,
           interactionMode: event.payload.interactionMode,
+          pendingTurnStartMessageId: event.payload.messageId,
           updatedAt: event.occurredAt,
         },
       };
@@ -457,6 +473,16 @@ export function applyThreadDetailEvent(
         thread: {
           ...thread,
           session: event.payload.session,
+          pendingTurnStartMessageId:
+            (event.payload.session.status === "running" &&
+              event.payload.session.activeTurnId !== null) ||
+            event.payload.session.status === "error" ||
+            event.payload.session.status === "stopped" ||
+            event.payload.session.status === "interrupted" ||
+            (event.payload.session.status === "ready" &&
+              event.commandId?.startsWith("server:provider-session-set:") === true)
+              ? null
+              : (thread.pendingTurnStartMessageId ?? null),
           latestTurn,
           updatedAt: event.occurredAt,
         },
@@ -616,6 +642,9 @@ export function applyThreadDetailEvent(
       // thread.reverted that discards turns can still resolve a value from
       // the turns that survive.
       const supersedesContextWindow = isResolvableContextWindowActivity(activity);
+      const pendingTurnStartMessageId = activityClearsPendingTurnStart(thread, activity)
+        ? null
+        : (thread.pendingTurnStartMessageId ?? null);
       // Live streams append in order: an unseen id sorting at/after the tail
       // of a known-sorted array appends without re-filtering and re-sorting
       // the whole history on every event. The id set moves forward to the new
@@ -637,6 +666,7 @@ export function applyThreadDetailEvent(
           thread: {
             ...thread,
             activities,
+            pendingTurnStartMessageId,
             updatedAt: event.occurredAt,
           },
         };
@@ -659,7 +689,12 @@ export function applyThreadDetailEvent(
 
       return {
         kind: "updated",
-        thread: { ...thread, activities, updatedAt: event.occurredAt },
+        thread: {
+          ...thread,
+          activities,
+          pendingTurnStartMessageId,
+          updatedAt: event.occurredAt,
+        },
       };
     }
 

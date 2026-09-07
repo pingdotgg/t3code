@@ -406,6 +406,55 @@ describe("applyThreadDetailEvent", () => {
     );
   });
 
+  describe("pending turn start", () => {
+    it("tracks the accepted message until a provider turn adopts it", () => {
+      const messageId = MessageId.make("message-pending-turn-start");
+      const requested = applyThreadDetailEvent(baseThread, {
+        ...baseEventFields,
+        sequence: 5,
+        occurredAt: "2026-04-01T05:00:00.000Z",
+        aggregateKind: "thread",
+        aggregateId: baseThread.id,
+        type: "thread.turn-start-requested",
+        payload: {
+          threadId: baseThread.id,
+          messageId,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          createdAt: "2026-04-01T04:55:00.000Z",
+        },
+      });
+      expect(requested.kind).toBe("updated");
+      if (requested.kind !== "updated") return;
+      expect(requested.thread.pendingTurnStartMessageId).toBe(messageId);
+
+      const adopted = applyThreadDetailEvent(requested.thread, {
+        ...baseEventFields,
+        sequence: 6,
+        occurredAt: "2026-04-01T05:00:01.000Z",
+        aggregateKind: "thread",
+        aggregateId: baseThread.id,
+        type: "thread.session-set",
+        payload: {
+          threadId: baseThread.id,
+          session: {
+            threadId: baseThread.id,
+            status: "running",
+            providerName: "codex",
+            runtimeMode: "full-access",
+            activeTurnId: TurnId.make("turn-pending-turn-start"),
+            lastError: null,
+            updatedAt: "2026-04-01T05:00:01.000Z",
+          },
+        },
+      });
+      expect(adopted.kind).toBe("updated");
+      if (adopted.kind === "updated") {
+        expect(adopted.thread.pendingTurnStartMessageId).toBeNull();
+      }
+    });
+  });
+
   describe("thread.message-sent", () => {
     it("appends a new message", () => {
       const result = applyThreadDetailEvent(baseThread, {

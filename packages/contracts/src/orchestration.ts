@@ -653,6 +653,10 @@ export const OrchestrationThread = Schema.Struct({
   activeOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   // Pending-only state. Optional so older servers remain compatible.
   titleRegeneration: Schema.optional(Schema.NullOr(ThreadTitleRegeneration)),
+  // The accepted user message waiting for a provider turn to adopt it. Kept
+  // explicitly so command admission and revert completion never infer queue
+  // order from clocks on remote clients.
+  pendingTurnStartMessageId: Schema.optional(Schema.NullOr(MessageId)),
   deletedAt: Schema.NullOr(IsoDateTime),
   messages: Schema.Array(OrchestrationMessage),
   proposedPlans: Schema.Array(OrchestrationProposedPlan).pipe(
@@ -1326,7 +1330,6 @@ const ThreadRevertCompleteCommand = Schema.Struct({
   commandId: CommandId,
   threadId: ThreadId,
   turnCount: NonNegativeInt,
-  preservedMessageIds: Schema.Array(MessageId),
   createdAt: IsoDateTime,
 });
 

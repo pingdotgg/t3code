@@ -703,7 +703,6 @@ describe("ProviderCommandReactor", () => {
         commandId: CommandId.make("cmd-complete-earlier-checkpoint-revert"),
         threadId: ThreadId.make("thread-1"),
         turnCount: 0,
-        preservedMessageIds: [messageId],
         createdAt: "2026-01-01T00:00:02.000Z",
       });
       yield* Deferred.succeed(barrier, undefined);

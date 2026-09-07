@@ -82,6 +82,35 @@ function makeSession(status: OrchestrationSession["status"]): OrchestrationSessi
   };
 }
 
+const projectQueuedTurnStart = Effect.fn("projectQueuedTurnStart")(function* (
+  messageId: MessageId,
+  createdAt: string,
+) {
+  let readModel = makeReadModel(null);
+  const result = yield* decideOrchestrationCommand({
+    command: {
+      type: "thread.turn.start",
+      commandId: CommandId.make(`cmd-start-${messageId}`),
+      threadId: ThreadId.make("thread-1"),
+      message: {
+        messageId,
+        role: "user",
+        text: "Continue",
+        attachments: [],
+      },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      createdAt,
+    },
+    readModel,
+  });
+  const events = Array.isArray(result) ? result : [result];
+  for (const [index, event] of events.entries()) {
+    readModel = yield* projectEvent(readModel, { ...event, sequence: index + 1 });
+  }
+  return readModel;
+});
+
 it.layer(NodeServices.layer)("settled thread decider", (it) => {
   it.effect("preserves the activity stamp when automatically settling", () =>
     Effect.gen(function* () {
@@ -898,7 +927,11 @@ it.layer(NodeServices.layer)("settled thread decider", (it) => {
       }).pipe(Effect.flip);
       expect(latestTurnError._tag).toBe("OrchestrationCommandInvariantError");
 
-      const queuedAt = "1969-12-31T23:59:30.000Z";
+      const pendingMessageId = MessageId.make("message-revert-queued");
+      const queuedReadModel = yield* projectQueuedTurnStart(
+        pendingMessageId,
+        "2025-12-31T23:55:00.000Z",
+      );
       const queuedError = yield* decideOrchestrationCommand({
         command: {
           type: "thread.checkpoint.revert",
@@ -907,23 +940,7 @@ it.layer(NodeServices.layer)("settled thread decider", (it) => {
           turnCount: 0,
           createdAt: NOW,
         },
-        readModel: makeReadModel(
-          null,
-          null,
-          null,
-          [],
-          [
-            {
-              id: MessageId.make("message-revert-queued"),
-              role: "user",
-              text: "Continue",
-              turnId: null,
-              streaming: false,
-              createdAt: queuedAt,
-              updatedAt: queuedAt,
-            },
-          ],
-        ),
+        readModel: queuedReadModel,
       }).pipe(Effect.flip);
       expect(queuedError._tag).toBe("OrchestrationCommandInvariantError");
     }),
@@ -932,41 +949,16 @@ it.layer(NodeServices.layer)("settled thread decider", (it) => {
   it.effect("preserves a pending turn start when its client clock is behind", () =>
     Effect.gen(function* () {
       const pendingMessageId = MessageId.make("message-revert-clock-skew");
+      const readModel = yield* projectQueuedTurnStart(pendingMessageId, "2025-12-31T23:55:00.000Z");
       const result = yield* decideOrchestrationCommand({
         command: {
           type: "thread.revert.complete",
           commandId: CommandId.make("cmd-revert-complete-clock-skew"),
           threadId: ThreadId.make("thread-1"),
           turnCount: 0,
-          preservedMessageIds: [pendingMessageId],
           createdAt: "2026-01-01T00:00:13.000Z",
         },
-        readModel: makeReadModel(
-          null,
-          null,
-          null,
-          [],
-          [
-            {
-              id: pendingMessageId,
-              role: "user",
-              text: "Continue after revert",
-              turnId: null,
-              streaming: false,
-              createdAt: "2026-01-01T00:00:09.000Z",
-              updatedAt: "2026-01-01T00:00:09.000Z",
-            },
-          ],
-          {},
-          {
-            turnId: TurnId.make("turn-before-revert"),
-            state: "completed",
-            requestedAt: "2026-01-01T00:00:10.000Z",
-            startedAt: "2026-01-01T00:00:11.000Z",
-            completedAt: "2026-01-01T00:00:12.000Z",
-            assistantMessageId: null,
-          },
-        ),
+        readModel,
       });
 
       expect(result).toMatchObject({

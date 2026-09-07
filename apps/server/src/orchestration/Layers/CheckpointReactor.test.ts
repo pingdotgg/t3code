@@ -1731,6 +1731,21 @@ describe("CheckpointReactor", () => {
           createdAt,
         });
         yield* harness.engine.dispatch({
+          type: "thread.session.set",
+          commandId: CommandId.make(`cmd-unsupported-rewind-running-${turnCount}`),
+          threadId,
+          session: {
+            threadId,
+            status: "running",
+            providerName: "antigravity",
+            runtimeMode: "approval-required",
+            activeTurnId: asTurnId(`turn-unsupported-rewind-${turnCount}`),
+            lastError: null,
+            updatedAt: createdAt,
+          },
+          createdAt,
+        });
+        yield* harness.engine.dispatch({
           type: "thread.turn.diff.complete",
           commandId: CommandId.make(`cmd-unsupported-rewind-diff-${turnCount}`),
           threadId,
@@ -1740,6 +1755,21 @@ describe("CheckpointReactor", () => {
           status: "ready",
           files: [],
           checkpointTurnCount: turnCount,
+          createdAt,
+        });
+        yield* harness.engine.dispatch({
+          type: "thread.session.set",
+          commandId: CommandId.make(`cmd-unsupported-rewind-ready-${turnCount}`),
+          threadId,
+          session: {
+            threadId,
+            status: "ready",
+            providerName: "antigravity",
+            runtimeMode: "approval-required",
+            activeTurnId: null,
+            lastError: null,
+            updatedAt: createdAt,
+          },
           createdAt,
         });
       }

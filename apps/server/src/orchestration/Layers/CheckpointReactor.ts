@@ -40,8 +40,6 @@ import type { OrchestrationDispatchError } from "../Errors.ts";
 import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import * as WorkspaceEntries from "../../workspace/WorkspaceEntries.ts";
 import * as PullRequestService from "../../pullRequest/PullRequestService.ts";
-import { ProjectionTurnRepository } from "../../persistence/Services/ProjectionTurns.ts";
-import { ProjectionTurnRepositoryLive } from "../../persistence/Layers/ProjectionTurns.ts";
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
@@ -93,7 +91,6 @@ const make = Effect.gen(function* () {
   const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
   const vcsStatusBroadcaster = yield* VcsStatusBroadcaster;
   const pullRequests = yield* PullRequestService.PullRequestService;
-  const projectionTurns = yield* ProjectionTurnRepository;
   const startedTurns = new Map<ThreadId, TurnId>();
   const pending = new Set<ThreadId>();
   const domainSequenceState = yield* Ref.make<{
@@ -840,21 +837,12 @@ const make = Effect.gen(function* () {
       });
     }
 
-    // The pending-turn projection records the accepted message identity, so
-    // preservation is independent of clocks on remote clients.
-    const pendingTurnStart = yield* projectionTurns.getPendingTurnStartByThreadId({
-      threadId: event.payload.threadId,
-    });
-
     yield* orchestrationEngine
       .dispatch({
         type: "thread.revert.complete",
         commandId: yield* serverCommandId("checkpoint-revert-complete"),
         threadId: event.payload.threadId,
         turnCount: event.payload.turnCount,
-        preservedMessageIds: Option.isSome(pendingTurnStart)
-          ? [pendingTurnStart.value.messageId]
-          : [],
         createdAt: now,
       })
       .pipe(
@@ -1024,6 +1012,4 @@ const make = Effect.gen(function* () {
   } satisfies CheckpointReactorShape;
 });
 
-export const CheckpointReactorLive = Layer.effect(CheckpointReactor, make).pipe(
-  Layer.provide(ProjectionTurnRepositoryLive),
-);
+export const CheckpointReactorLive = Layer.effect(CheckpointReactor, make);

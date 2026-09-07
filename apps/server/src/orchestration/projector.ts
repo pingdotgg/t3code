@@ -35,6 +35,7 @@ import {
   ThreadUnsnoozedPayload,
   ThreadRevertedPayload,
   ThreadSessionSetPayload,
+  ThreadTurnStartRequestedPayload,
   ThreadTurnDiffCompletedPayload,
 } from "./Schemas.ts";
 
@@ -68,6 +69,20 @@ function checkpointStatusToLatestTurnState(status: "ready" | "missing" | "error"
   if (status === "error") return "error" as const;
   // Match SQL and client projections: a missing git ref is not an interruption.
   return "completed" as const;
+}
+
+function activityClearsPendingTurnStart(
+  thread: OrchestrationThread,
+  activity: OrchestrationThread["activities"][number],
+): boolean {
+  if (
+    thread.pendingTurnStartMessageId == null ||
+    (activity.kind !== "context-compaction" && activity.kind !== "provider.turn.start.failed") ||
+    !Predicate.isObject(activity.payload)
+  ) {
+    return false;
+  }
+  return activity.payload.requestId === thread.pendingTurnStartMessageId;
 }
 
 /**
@@ -552,6 +567,27 @@ export function projectEvent(
         })),
       );
 
+    case "thread.turn-start-requested":
+      return decodeForEvent(
+        ThreadTurnStartRequestedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          threads: updateThread(nextBase.threads, payload.threadId, {
+            ...(payload.modelSelection !== undefined
+              ? { modelSelection: payload.modelSelection }
+              : {}),
+            runtimeMode: payload.runtimeMode,
+            interactionMode: payload.interactionMode,
+            pendingTurnStartMessageId: payload.messageId,
+            updatedAt: event.occurredAt,
+          }),
+        })),
+      );
+
     case "thread.message-sent":
       return Effect.gen(function* () {
         const payload = yield* decodeForEvent(
@@ -640,6 +676,15 @@ export function projectEvent(
           ...nextBase,
           threads: updateThread(nextBase.threads, payload.threadId, {
             session,
+            pendingTurnStartMessageId:
+              (session.status === "running" && session.activeTurnId !== null) ||
+              session.status === "error" ||
+              session.status === "stopped" ||
+              session.status === "interrupted" ||
+              (session.status === "ready" &&
+                event.commandId?.startsWith("server:provider-session-set:") === true)
+                ? null
+                : (thread.pendingTurnStartMessageId ?? null),
             latestTurn:
               session.status === "running" && session.activeTurnId !== null
                 ? {
@@ -858,11 +903,15 @@ export function projectEvent(
               payload.activity,
             ].toSorted(compareThreadActivities),
           );
+          const pendingTurnStartMessageId = activityClearsPendingTurnStart(thread, payload.activity)
+            ? null
+            : (thread.pendingTurnStartMessageId ?? null);
 
           return {
             ...nextBase,
             threads: updateThread(nextBase.threads, payload.threadId, {
               activities,
+              pendingTurnStartMessageId,
               updatedAt: event.occurredAt,
             }),
           };

@@ -636,7 +636,6 @@ it.layer(integrationLayer)("AgentSessionImporter integration", (it) => {
         commandId: CommandId.make("revert-imported-thread-to-baseline"),
         threadId,
         turnCount: 0,
-        preservedMessageIds: [],
         createdAt: "2026-08-24T10:05:00.000Z",
       });
       const afterRevert = yield* snapshots.getThreadDetailById(threadId);
