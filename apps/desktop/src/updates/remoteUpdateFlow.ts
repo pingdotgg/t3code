@@ -31,7 +31,7 @@ export const MAX_REMOTE_UPDATE_CHECKS = 2;
 export const MAX_REMOTE_UPDATE_DOWNLOADS = 3;
 
 /** Same predicate DesktopUpdates.installDownloadedUpdate uses for admission. */
-export function isInstallableDesktopUpdateState(state: DesktopUpdateState): boolean {
+function isInstallableDesktopUpdateState(state: DesktopUpdateState): boolean {
   return (
     state.downloadedVersion !== null &&
     (state.status === "downloaded" ||
