@@ -19,6 +19,7 @@ type CreateProjectInput = {
   input: { projectId: ProjectId; workspaceRoot: string };
 };
 const state = vi.hoisted(() => ({
+  selectedEnvironment: "primary",
   registry: null as AtomRegistry.AtomRegistry | null,
   sessions: new Map<EnvironmentId, Atom.Writable<SessionResult>>(),
   projects: null as Atom.Writable<ReadonlyArray<Project>> | null,
@@ -68,7 +69,7 @@ vi.mock("../../state/environments", () => {
   const primary = environment("primary");
   return {
     usePrimaryEnvironment: () => primary,
-    useEnvironments: () => ({ environments: [primary, environment("remote")] }),
+    useEnvironments: () => ({ environments: [environment(state.selectedEnvironment)] }),
   };
 });
 vi.mock("../../state/server", () => ({
@@ -90,17 +91,28 @@ vi.mock("../../state/agentSessions", () => ({
   agentSessionScan: (query: { environmentId: EnvironmentId }) => query,
   agentSessionImport: "importThreads",
 }));
-vi.mock("../../state/query", () => ({
-  useEnvironmentQuery: (query: { environmentId: EnvironmentId }) => {
-    state.scan(query);
-    return {
-      data: { candidates: state.candidates, truncated: false },
-      isPending: false,
-      error: null,
-      refresh: state.refreshScan,
-    };
-  },
+vi.mock("../../onboarding/useProjectScans", () => ({
+  useProjectScans: (ids: EnvironmentId[]) =>
+    ids.map((environmentId) => {
+      state.scan({ environmentId });
+      return {
+        environmentId,
+        data: { candidates: state.candidates, truncated: false },
+        isPending: false,
+        error: null,
+        refresh: state.refreshScan,
+      };
+    }),
 }));
+vi.mock("../ui/dialog", () => ({
+  Dialog: "div",
+  DialogPopup: "div",
+  DialogTitle: "div",
+  DialogHeader: "div",
+}));
+vi.mock("../ui/wizard", () => ({ WizardPanel: "div", WizardSteps: "div" }));
+vi.mock("../ui/scroll-area", () => ({ ScrollArea: "div" }));
+vi.mock("../ui/tooltip", () => ({ Tooltip: "div", TooltipTrigger: "span", TooltipPopup: "span" }));
 vi.mock("../../connection/onboarding", () => ({ connectPairing: "connectPairing" }));
 vi.mock("../../state/use-atom-command", () => ({
   useAtomCommand: (
@@ -195,6 +207,7 @@ async function click(label: string) {
 }
 
 async function mountImport(remote = false) {
+  state.selectedEnvironment = remote ? "remote" : "primary";
   await act(async () => {
     renderer = create(
       <RegistryContext.Provider value={state.registry!}>
@@ -203,20 +216,13 @@ async function mountImport(remote = false) {
     );
   });
   await click("Continue");
-  if (remote) {
-    await act(async () => {
-      renderer!.root.findByProps({ id: "onboarding-pairing-url" }).props.onChange({
-        currentTarget: { value: "https://remote.example/pair#token=test" },
-      });
-    });
-    await click("Connect");
-  }
-  await click("Skip");
-  expect(text(renderer!.root)).toContain("Your recent projects");
+  await click("Continue");
+  expect(text(renderer!.root)).toContain("Choose your projects");
 }
 
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  vi.stubGlobal("document", { activeElement: null, body: {}, getElementById: () => null });
   state.registry = AtomRegistry.make();
   for (const id of [primaryId, remoteId]) {
     state.sessions.set(
@@ -258,10 +264,8 @@ it("keeps scanning, choosing and skipping available to a paired read-only enviro
   expect(state.scan).toHaveBeenCalledWith(expect.objectContaining({ environmentId: remoteId }));
   expect(text(renderer!.root)).toContain("/projects/first");
   expect(button("Import 2 projects").props.disabled).toBe(true);
-  await click("Choose");
-  expect(button("Import 2").props.disabled).toBe(true);
   expect(text(renderer!.root)).toContain(permissionMessage);
-  await click("Skip");
+  await click("Do not import projects");
   expect(state.createProject).not.toHaveBeenCalled();
   expect(state.importThreads).not.toHaveBeenCalled();
   expect(state.completeOnboarding).toHaveBeenCalledOnce();
@@ -281,16 +285,15 @@ it("waits for the selected grant and enables import when it arrives", async () =
 
 it("preserves selections and denies a retained action using the paired environment's fresh grant", async () => {
   await mountImport(true);
-  await click("Choose");
   await act(async () => {
     renderer!.root.findAllByType("input")[1]!.props.onCheckedChange(false);
   });
-  const retainedImport = button("Import 1").props.onClick;
+  const retainedImport = button("Import 1 project").props.onClick;
   await act(async () => {
     setGrant(remoteId, false);
     retainedImport();
   });
-  expect(button("Import 1").props.disabled).toBe(true);
+  expect(button("Import 1 project").props.disabled).toBe(true);
   expect(renderer!.root.findAllByType("input")[1]!.props.checked).toBe(false);
   expect(text(renderer!.root)).toContain(permissionMessage);
   expect(state.createProject).not.toHaveBeenCalled();
@@ -299,7 +302,7 @@ it("preserves selections and denies a retained action using the paired environme
 
   await act(async () => setGrant(remoteId, true));
   expect(text(renderer!.root)).not.toContain(permissionMessage);
-  await click("Import 1");
+  await click("Import 1 project");
   expect(state.createProject).toHaveBeenCalledExactlyOnceWith(
     expect.objectContaining({ environmentId: remoteId }),
   );
