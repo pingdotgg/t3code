@@ -34,6 +34,7 @@ const T3_MCP_TOOLS: Record<
   delegate_task: { displayName: "Delegate a child task", summaryAction: "delegate" },
   task_status: { displayName: "Get delegated task status", summaryAction: "task-status" },
   task_cancel: { displayName: "Cancel delegated task", summaryAction: "task-cancel" },
+  run_scheduled_task_now: { displayName: "Run scheduled task now" },
   schedule_task: { displayName: "Schedule a recurring task", summaryAction: "schedule-create" },
   list_scheduled_tasks: { displayName: "List scheduled tasks", summaryAction: "schedule-list" },
   update_scheduled_task: {
