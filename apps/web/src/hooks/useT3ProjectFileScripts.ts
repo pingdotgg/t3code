@@ -30,10 +30,17 @@ export interface T3ProjectFileState {
  * file exists but is broken — which the runtime otherwise swallows silently.
  */
 export function useT3ProjectFileState(
-  environmentId: EnvironmentId,
+  environmentId: EnvironmentId | null,
   cwd: string | null,
 ): T3ProjectFileState {
-  const query = useProjectFileQuery(environmentId, cwd ?? "", T3_PROJECT_FILE_NAME, cwd !== null);
+  // The query is disabled without an active environment; the placeholder only
+  // keeps this hook unconditional while a route is resolving.
+  const query = useProjectFileQuery(
+    environmentId ?? ("" as EnvironmentId),
+    cwd ?? "",
+    T3_PROJECT_FILE_NAME,
+    cwd !== null && environmentId !== null,
+  );
   const contents = query.data && !query.data.truncated ? query.data.contents : null;
   const isPending = query.isPending;
   return useMemo(() => {
@@ -58,7 +65,7 @@ export function useT3ProjectFileState(
  * an empty list.
  */
 export function useT3ProjectFileScripts(
-  environmentId: EnvironmentId,
+  environmentId: EnvironmentId | null,
   cwd: string | null,
 ): ReadonlyArray<T3ProjectFileScript> {
   return useT3ProjectFileState(environmentId, cwd).scripts;

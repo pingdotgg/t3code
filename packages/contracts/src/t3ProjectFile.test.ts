@@ -21,11 +21,19 @@ describe("T3ProjectFile", () => {
         },
         { name: "Test", command: "pnpm test" },
       ],
+      repositories: [
+        { path: "frontend", name: "Frontend" },
+        { path: "services/api", name: "API" },
+      ],
     });
 
     expect(decoded.iconPath).toBe("assets/logo.svg");
     expect(decoded.scripts).toHaveLength(2);
     expect(decoded.scripts?.[1]).toEqual({ name: "Test", command: "pnpm test" });
+    expect(decoded.repositories).toEqual([
+      { path: "frontend", name: "Frontend" },
+      { path: "services/api", name: "API" },
+    ]);
   });
 
   it("decodes an empty object and ignores unknown fields", () => {
@@ -57,5 +65,14 @@ describe("T3ProjectFile", () => {
     expect(decode({ defaultThreadEnvMode: "worktree" }).defaultThreadEnvMode).toBe("worktree");
     expect(decode({ defaultThreadEnvMode: "local" }).defaultThreadEnvMode).toBe("local");
     expect(() => decode({ defaultThreadEnvMode: "remote" })).toThrow();
+  });
+
+  it("accepts workspace-relative repository paths and rejects escapes", () => {
+    expect(
+      decode({ repositories: [{ path: "." }, { path: "services/api" }] }).repositories,
+    ).toEqual([{ path: "." }, { path: "services/api" }]);
+    expect(() => decode({ repositories: [{ path: "../outside" }] })).toThrow();
+    expect(() => decode({ repositories: [{ path: "services/../outside" }] })).toThrow();
+    expect(() => decode({ repositories: [{ path: "/absolute" }] })).toThrow();
   });
 });

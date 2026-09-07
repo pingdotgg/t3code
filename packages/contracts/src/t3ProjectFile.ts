@@ -12,6 +12,9 @@ export const T3_PROJECT_FILE_SCHEMA_URL = "https://t3.codes/schema/t3.json";
 
 const T3_PROJECT_FILE_PATH_MAX_LENGTH = 512;
 const T3_PROJECT_FILE_MAX_SCRIPTS = 50;
+const T3_PROJECT_FILE_MAX_REPOSITORIES = 20;
+const WORKSPACE_RELATIVE_PATH_PATTERN =
+  /^(?:\.|(?:(?!\.{1,2}(?:\/|$))[^/\\]+)(?:\/(?:(?!\.{1,2}(?:\/|$))[^/\\]+))*)$/;
 
 // Annotations go on the encoded (string) side so they survive into the
 // published JSON Schema; decoding still trims and re-validates non-emptiness.
@@ -59,6 +62,31 @@ export const T3ProjectFileScript = Schema.Struct({
 });
 export type T3ProjectFileScript = typeof T3ProjectFileScript.Type;
 
+/**
+ * A Git repository inside a project workspace. Paths are intentionally relative
+ * so opening a shared workspace cannot grant the UI access outside it.
+ */
+export const T3ProjectFileRepository = Schema.Struct({
+  path: trimmedNonEmpty(
+    {
+      description:
+        'Workspace-relative Git repository path, such as "frontend" or "services/api". Use "." for the workspace root.',
+    },
+    T3_PROJECT_FILE_PATH_MAX_LENGTH,
+  ).check(Schema.isPattern(WORKSPACE_RELATIVE_PATH_PATTERN)),
+  name: Schema.optionalKey(
+    trimmedNonEmpty(
+      {
+        description: "Optional display name shown when selecting a repository in the diff panel.",
+      },
+      128,
+    ),
+  ),
+}).annotate({
+  description: "A Git repository configured inside a shared T3 Code workspace.",
+});
+export type T3ProjectFileRepository = typeof T3ProjectFileRepository.Type;
+
 export const T3ProjectFile = Schema.Struct({
   $schema: Schema.optionalKey(
     Schema.String.annotate({
@@ -86,6 +114,14 @@ export const T3ProjectFile = Schema.Struct({
         description: "Project scripts shared with everyone who opens this repository in T3 Code.",
       })
       .check(Schema.isMaxLength(T3_PROJECT_FILE_MAX_SCRIPTS)),
+  ),
+  repositories: Schema.optionalKey(
+    Schema.Array(T3ProjectFileRepository)
+      .annotate({
+        description:
+          "Git repositories inside this workspace that can be selected in the diff panel. Git actions remain scoped to the project root.",
+      })
+      .check(Schema.isMaxLength(T3_PROJECT_FILE_MAX_REPOSITORIES)),
   ),
 }).annotate({
   title: "T3 project file",

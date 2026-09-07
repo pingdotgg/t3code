@@ -17,6 +17,28 @@ Install [GitHub CLI](https://cli.github.com/) 2.81.0 or newer, then sign in:
 gh auth login
 ```
 
+### Review a shared workspace with multiple repositories
+
+When a project folder contains separate Git repositories, keep the project pointed at their shared
+parent folder so one agent can work across all of them. Add the repositories to `t3.json` at that
+folder's root:
+
+```json
+{
+  "defaultThreadEnvMode": "local",
+  "repositories": [
+    { "path": "frontend", "name": "Frontend" },
+    { "path": "backend", "name": "Backend" }
+  ]
+}
+```
+
+The Diff panel then lets you choose which repository to inspect, even when the shared parent folder
+is not itself a Git repository. Repository paths must stay inside the project folder. This selection
+is for Git status and diffs; commits, pushes, pull requests, worktrees, and checkpoints continue to
+use the project root. Use local threads for this setup: Git worktrees do not automatically include
+nested repositories.
+
 ### GitLab
 
 Install [GitLab CLI](https://gitlab.com/gitlab-org/cli), then sign in:
