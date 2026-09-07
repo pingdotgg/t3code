@@ -234,7 +234,7 @@ export function UsageLimitsSection({
           ))}
         </View>
       ))}
-      {notices.length > 0 ? (
+      {notices.length > 0 || failedLabels.length > 0 ? (
         <View
           accessible
           accessibilityRole="alert"
@@ -252,13 +252,13 @@ export function UsageLimitsSection({
                 {notice}
               </Text>
             ))}
+            {failedLabels.length > 0 ? (
+              <Text className="text-sm font-t3-medium text-warning-foreground">
+                {failedLabels.join(", ")} could not refresh limits. Showing the last known values.
+              </Text>
+            ) : null}
           </View>
         </View>
-      ) : null}
-      {failedLabels.length ? (
-        <Text className="text-sm text-foreground-muted">
-          {failedLabels.join(", ")} could not refresh limits. Showing the last known values.
-        </Text>
       ) : null}
     </View>
   );
