@@ -86,10 +86,11 @@ Rectangle {
 
             Text {
                 id: projectLabel
+                objectName: "projectLabel"
 
                 Layout.fillWidth: true
                 Layout.minimumWidth: 24
-                Layout.maximumWidth: Math.min(implicitWidth, 160)
+                Layout.maximumWidth: Math.min(Math.ceil(implicitWidth), 160)
                 visible: strip.ready && strip.model.projectTitle !== null
                 text: strip.ready ? (strip.model.projectTitle ?? "") : ""
                 color: projectHover.hovered ? strip.foreground : strip.projectColor
@@ -127,6 +128,7 @@ Rectangle {
 
             Item {
                 id: titleSlot
+                objectName: "titleSlot"
 
                 property bool editing: false
                 property int handledRenameRequest: 0
@@ -188,13 +190,17 @@ Rectangle {
 
                     anchors.left: parent.left
                     anchors.verticalCenter: parent.verticalCenter
-                    width: Math.min(implicitWidth, parent.width)
+                    // Layouts use whole pixels; rounding down a fractional
+                    // text width would elide a title that actually fits.
+                    width: Math.min(Math.ceil(implicitWidth), parent.width)
                     visible: !titleSlot.editing
                     spacing: 4
 
                     Text {
+                        id: threadLabel
+                        objectName: "threadLabel"
                         Layout.fillWidth: true
-                        Layout.maximumWidth: implicitWidth
+                        Layout.maximumWidth: Math.ceil(implicitWidth)
                         text: strip.ready ? strip.model.threadTitle : qsTr("No thread")
                         color: strip.foreground
                         font.pixelSize: 14
