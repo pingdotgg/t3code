@@ -7697,8 +7697,11 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     Effect.gen(function* () {
       const config = yield* buildAppUnderTest();
       const secrets = yield* ServerSecretStore.ServerSecretStore.pipe(
-        Effect.provide(ServerSecretStore.layer),
-        Effect.provide(Layer.succeed(ServerConfig.ServerConfig, config)),
+        Effect.provide(
+          ServerSecretStore.layer.pipe(
+            Layer.provide(Layer.succeed(ServerConfig.ServerConfig, config)),
+          ),
+        ),
       );
 
       // A v1 token carrying the pre-split standard grant (minus review:write,
