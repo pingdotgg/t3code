@@ -7,12 +7,14 @@ export class DesktopState extends Context.Service<
   DesktopState,
   {
     readonly backendReady: Ref.Ref<boolean>;
+    readonly mainWindowCreated: Ref.Ref<boolean>;
     readonly quitting: Ref.Ref<boolean>;
   }
 >()("@t3tools/desktop/app/DesktopState") {}
 
 const make = Effect.all({
   backendReady: Ref.make(false),
+  mainWindowCreated: Ref.make(false),
   quitting: Ref.make(false),
 });
 

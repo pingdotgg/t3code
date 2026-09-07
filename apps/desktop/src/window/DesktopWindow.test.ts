@@ -276,6 +276,7 @@ function makeTestLayer(input: {
     destroyAll: Effect.void,
     syncAllAppearance: (sync) => sync(input.window),
   } satisfies ElectronWindow.ElectronWindow["Service"]);
+  const desktopStateLayer = DesktopState.layer;
 
   return DesktopWindow.layer.pipe(
     Layer.provide(
@@ -285,7 +286,7 @@ function makeTestLayer(input: {
         desktopAppSettingsLayer,
         desktopClientSettingsLayer,
         desktopServerExposureLayer,
-        DesktopState.layer,
+        desktopStateLayer,
         electronAppLayer,
         Layer.succeed(ElectronMenu.ElectronMenu, {
           setApplicationMenu: () => Effect.void,
@@ -318,6 +319,7 @@ function makeTestLayer(input: {
         }),
       ),
     ),
+    Layer.merge(desktopStateLayer),
   );
 }
 
@@ -399,6 +401,7 @@ const makeSplashScenario = (createOutcomes: readonly (Electron.BrowserWindow | n
           DesktopAppSettings.layerTest(),
           desktopClientSettingsLayer,
           desktopServerExposureLayer,
+          DesktopState.layer,
           electronAppLayer,
           electronMenuLayer,
           Layer.succeed(ElectronShell.ElectronShell, {
@@ -729,12 +732,14 @@ describe("DesktopWindow", () => {
 
       yield* Effect.gen(function* () {
         const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        const desktopState = yield* DesktopState.DesktopState;
         yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
 
         assert.equal(createdWindowOptions[0]?.width, 1320);
         assert.equal(createdWindowOptions[0]?.height, 880);
         assert.equal(createdWindowOptions[0]?.x, 120);
         assert.equal(createdWindowOptions[0]?.y, 80);
+        assert.isTrue(yield* Ref.get(desktopState.mainWindowCreated));
       }).pipe(Effect.provide(layer));
     }),
   );
