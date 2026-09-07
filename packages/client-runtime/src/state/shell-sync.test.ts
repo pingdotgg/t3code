@@ -457,7 +457,7 @@ describe("environment shell synchronization", () => {
     }),
   );
 
-  it.effect("refreshes the shell before resuming against servers without completion markers", () =>
+  it.effect("keeps a legacy HTTP refresh non-authoritative until a socket snapshot arrives", () =>
     Effect.gen(function* () {
       const events = yield* Queue.unbounded<OrchestrationShellStreamItem>();
       const wakeups = yield* Queue.unbounded<ConnectionWakeups.ConnectionWakeup>();
@@ -514,15 +514,31 @@ describe("environment shell synchronization", () => {
         ),
       );
 
-      expect(yield* Queue.take(subscribeInputs)).toEqual({ afterSequence: 10 });
-      expect((yield* SubscriptionRef.get(shellState)).status).toBe("live");
+      expect(yield* Queue.take(subscribeInputs)).toEqual({});
+      const initial = yield* SubscriptionRef.get(shellState);
+      expect(initial.status).toBe("synchronizing");
+      expect(Option.getOrThrow(initial.snapshot).snapshotSequence).toBe(10);
 
-      yield* Queue.offer(wakeups, "application-active");
-      expect(yield* Queue.take(subscribeInputs)).toEqual({ afterSequence: 20 });
-      const resumed = yield* SubscriptionRef.get(shellState);
-      expect(resumed.status).toBe("live");
-      expect(Option.getOrThrow(resumed.snapshot).snapshotSequence).toBe(20);
-      expect(yield* Ref.get(loaderCalls)).toBe(2);
+      yield* Queue.offer(events, {
+        kind: "snapshot",
+        snapshot: {
+          ...LIVE_SHELL_SNAPSHOT,
+          snapshotSequence: 11,
+          threads: [{ id: "created-after-http-snapshot" } as never],
+        },
+      });
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        if ((yield* SubscriptionRef.get(shellState)).status === "live") break;
+        yield* Effect.yieldNow;
+      }
+      const live = yield* SubscriptionRef.get(shellState);
+      expect(yield* Queue.size(events)).toBe(0);
+      expect(Option.getOrThrow(live.snapshot).snapshotSequence).toBe(11);
+      expect(live.status).toBe("live");
+      expect(Option.getOrThrow(live.snapshot).threads).toEqual([
+        { id: "created-after-http-snapshot" },
+      ]);
+      expect(yield* Ref.get(loaderCalls)).toBe(1);
     }),
   );
 });
