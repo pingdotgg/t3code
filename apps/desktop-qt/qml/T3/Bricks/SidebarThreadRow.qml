@@ -151,9 +151,13 @@ Item {
     Accessible.name: item.title
 
     Rectangle {
+        id: rowBackground
+        objectName: "rowBackground"
         anchors.fill: parent
         radius: 8
-        color: row.active ? Theme.color("sidebarRowActive", "#2a2a30") : hover.hovered ? Theme.color("sidebarRowHover", "#1c1c21") : "transparent"
+        // Fade alpha without interpolating through black on light themes.
+        readonly property color hoverColor: Theme.color("sidebarRowHover", "#1c1c21")
+        color: row.active ? Theme.color("sidebarRowActive", "#2a2a30") : Qt.alpha(hoverColor, hover.hovered ? hoverColor.a : 0)
         border.width: row.focused ? 1 : 0
         border.color: row.focusColor
 

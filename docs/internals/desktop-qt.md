@@ -281,6 +281,10 @@ with the same code as the HTML sidebar — `partitionSidebarThreads` and
 capped at 50 rows with `settledTotal` carrying the real count. When hosted,
 `AppSidebarLayout` renders no thread sidebar (the settings nav stays HTML).
 
+The QML sidebar reconciles publications into a keyed `ListModel`, updating
+and moving existing rows instead of replacing the list. This preserves row
+hover, keyboard focus and scroll position while thread state changes.
+
 Actions (`Shell.dispatch(name, payload)` in QML → `ShellAction` on the page):
 `thread.open {key}`, `draft.open {draftId}`, `thread.new {projectKey?}`,
 `sidebar.scope {projectKey|null}`, `project.add`, `settings.open`,

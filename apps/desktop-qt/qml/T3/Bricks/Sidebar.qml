@@ -40,6 +40,40 @@ Rectangle {
     readonly property color iconColor: Theme.color("iconMuted", "#8b8b93")
     readonly property color hairline: Theme.color("sidebarBorder", "#27272a")
 
+    // Update rows in place so live publications keep hover, focus and scroll.
+    ListModel {
+        id: rowModel
+        dynamicRoles: true
+    }
+
+    function syncRows() {
+        for (let index = 0; index < rows.length; ++index) {
+            const data = rows[index];
+            const key = data.rowKey ?? data.kind;
+            let existing = index;
+            while (existing < rowModel.count && rowModel.get(existing).stableKey !== key) {
+                existing += 1;
+            }
+            if (existing === rowModel.count) {
+                rowModel.insert(index, {
+                    stableKey: key,
+                    rowData: data
+                });
+            } else {
+                if (existing !== index) {
+                    rowModel.move(existing, index, 1);
+                }
+                rowModel.setProperty(index, "rowData", data);
+            }
+        }
+        if (rowModel.count > rows.length) {
+            rowModel.remove(rows.length, rowModel.count - rows.length);
+        }
+    }
+
+    onRowsChanged: syncRows()
+    Component.onCompleted: syncRows()
+
     implicitWidth: 256
     color: Theme.color("sidebar", "#0a0a0a")
     // Content keeps its width while the shell animates ours.
@@ -292,6 +326,7 @@ Rectangle {
 
         ListView {
             id: list
+            objectName: "list"
 
             // The keyboard cursor, by row key so it survives the list being
             // rebuilt around it. Up/Down/Home/End move it over the rows that
@@ -373,7 +408,7 @@ Rectangle {
             Layout.rightMargin: 8
             Layout.bottomMargin: 4
             clip: true
-            model: sidebar.rows
+            model: rowModel
             reuseItems: true
             spacing: 1
             boundsBehavior: Flickable.StopAtBounds
@@ -419,7 +454,8 @@ Rectangle {
             delegate: Item {
                 id: entry
 
-                required property var modelData
+                required property var rowData
+                readonly property var modelData: rowData
 
                 readonly property string kind: modelData.kind
                 readonly property bool focused: list.activeFocus && modelData.rowKey !== undefined && modelData.rowKey === list.cursorKey
@@ -531,6 +567,7 @@ Rectangle {
                     active: entry.kind === "thread" || entry.kind === "slim" || entry.kind === "draft"
 
                     sourceComponent: SidebarThreadRow {
+                        objectName: "threadRow:" + entry.modelData.rowKey
                         slim: entry.kind !== "thread"
                         section: entry.modelData.section
                         focused: entry.focused
