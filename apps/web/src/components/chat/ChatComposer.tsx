@@ -3652,6 +3652,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       if (
         durable &&
         flightSource &&
+        flightSource.width > 0 &&
+        flightSource.height > 0 &&
+        flightTextWidth > 0 &&
         !window.matchMedia("(prefers-reduced-motion: reduce)").matches
       ) {
         setStashFlight({
