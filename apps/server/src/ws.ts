@@ -1481,18 +1481,29 @@ const makeWsRpcLayer = (
                   ...result,
                   projection: projectThreadProjectionForWire(result.projection),
                 })),
-                Effect.mapError(
-                  (cause) =>
+                Effect.catchTags({
+                  AttachmentClaimError: (cause) =>
                     new OrchestrationV2ThreadLaunchError({
                       commandId: input.commandId,
                       projectId: input.projectId,
-                      message:
-                        cause._tag === "AttachmentClaimError"
-                          ? cause.message
-                          : "Failed to launch thread",
+                      message: cause.message,
                       cause,
                     }),
-                ),
+                  ThreadLaunchError: (cause) =>
+                    new OrchestrationV2ThreadLaunchError({
+                      commandId: input.commandId,
+                      projectId: input.projectId,
+                      message: "Failed to launch thread",
+                      cause,
+                    }),
+                  ServerRuntimeStartupError: (cause) =>
+                    new OrchestrationV2ThreadLaunchError({
+                      commandId: input.commandId,
+                      projectId: input.projectId,
+                      message: "Failed to launch thread",
+                      cause,
+                    }),
+                }),
               ),
             {
               "rpc.aggregate": "orchestration",
