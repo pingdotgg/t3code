@@ -12,6 +12,7 @@ import { McpInvocationContext, type McpInvocationScope } from "../McpInvocationC
 import { OrchestratorToolkit } from "./orchestrator/tools.ts";
 import { PreviewToolkit } from "./preview/tools.ts";
 import { PreviewControlsToolkit } from "./previewControls/tools.ts";
+import { EnvironmentToolkit } from "./environment/tools.ts";
 import { ThreadToolkit } from "./thread/tools.ts";
 import { WorktreeToolkit } from "./worktree/tools.ts";
 
@@ -22,6 +23,7 @@ it("publishes unique tool names with object-root inputs", () => {
     PreviewToolkit,
     WorktreeToolkit,
     ThreadToolkit,
+    EnvironmentToolkit,
     PreviewControlsToolkit,
   ]) {
     for (const tool of Object.values(toolkit.tools)) {

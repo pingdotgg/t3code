@@ -71,6 +71,8 @@ const T3_MCP_TOOLS: Record<
   t3_worktree_status: { displayName: "Get thread worktree status" },
   t3_preview_list: { displayName: "List preview tabs" },
   t3_preview_close: { displayName: "Close a preview tab" },
+  t3_environment_read: { displayName: "Read environment preferences" },
+  t3_environment_preferences_update: { displayName: "Update environment preferences" },
   preview_status: { displayName: "Get preview browser status" },
   preview_open: { displayName: "Open a page in the preview browser" },
   preview_navigate: { displayName: "Navigate the preview browser" },
