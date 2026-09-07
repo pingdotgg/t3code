@@ -476,14 +476,14 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
         );
 
         yield* writeTranscript({
-          filePath: path.join(claudeHomePath, "projects", "-slug", "a.jsonl"),
+          filePath: path.join(claudeHomePath, "projects", "-upper", "a.jsonl"),
           contents: claudeSessionLine(workspaceAlias),
-          mtimeMs: Date.parse("2026-01-01T00:00:00.000Z"),
+          mtimeMs: Date.parse("2026-01-02T00:00:00.000Z"),
         });
         yield* writeTranscript({
-          filePath: path.join(codexHomePath, "sessions", "2026", "01", "02", "rollout-b.jsonl"),
-          contents: codexRolloutLine(workspace),
-          mtimeMs: Date.parse("2026-01-02T00:00:00.000Z"),
+          filePath: path.join(claudeHomePath, "projects", "-lower", "b.jsonl"),
+          contents: claudeSessionLine(workspace),
+          mtimeMs: Date.parse("2026-01-01T00:00:00.000Z"),
         });
 
         const simulatedFileSystem = FileSystem.FileSystem.of({
@@ -501,7 +501,7 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
             path: workspace,
             title: path.basename(workspace),
             projectId: ProjectId.make("project-1"),
-            sources: ["claudeAgent", "codex"],
+            sources: ["claudeAgent"],
             threadCount: 2,
             lastActiveAt: "2026-01-02T00:00:00.000Z",
             alreadyImported: true,
@@ -3064,6 +3064,48 @@ describe("parseAgentSessionTranscript", () => {
     ]);
   });
 
+  it("prefers a saved Codex session title", () => {
+    const thread = AgentSessionScanner.parseAgentSessionTranscript({
+      contents: [
+        encodeTranscriptRecord({
+          type: "session_meta",
+          payload: { id: "codex-session", name: "Saved task title" },
+        }),
+        encodeTranscriptRecord({
+          type: "event_msg",
+          payload: { type: "user_message", message: "Fallback prompt title" },
+        }),
+      ].join("\n"),
+      source: "codex",
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      fallbackSessionId: "fallback",
+      lastActiveAtMs: Date.parse("2026-08-25T08:00:00.000Z"),
+    });
+
+    expect(thread?.title).toBe("Saved task title");
+  });
+
+  it("skips a recommended plugins preamble when deriving a Codex title", () => {
+    const prompt =
+      "<recommended_plugins>\n<plugin>Documents</plugin>\n</recommended_plugins>\n\nFix the imported task title.";
+    const thread = AgentSessionScanner.parseAgentSessionTranscript({
+      contents: [
+        encodeTranscriptRecord({ type: "session_meta", payload: { id: "codex-session" } }),
+        encodeTranscriptRecord({
+          type: "event_msg",
+          payload: { type: "user_message", message: prompt },
+        }),
+      ].join("\n"),
+      source: "codex",
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      fallbackSessionId: "fallback",
+      lastActiveAtMs: Date.parse("2026-08-25T08:00:00.000Z"),
+    });
+
+    expect(thread?.title).toBe("Fix the imported task title.");
+    expect(thread?.messages.map((message) => message.text)).toEqual([prompt]);
+  });
+
   it("preserves context markup in response-only Codex messages", () => {
     const context = "<environment_context>\n<cwd>/tmp/project</cwd>\n</environment_context>";
     const thread = AgentSessionScanner.parseAgentSessionTranscript({
@@ -3097,7 +3139,7 @@ describe("parseAgentSessionTranscript", () => {
       lastActiveAtMs: Date.parse("2026-08-25T08:00:00.000Z"),
     });
 
-    expect(thread?.title).toBe("<environment_context>");
+    expect(thread?.title).toBe("Initialize Git and add a README.");
     expect(thread?.messages.map((message) => message.text)).toEqual([
       context,
       "Initialize Git and add a README.",
@@ -3124,7 +3166,7 @@ describe("parseAgentSessionTranscript", () => {
       lastActiveAtMs: Date.parse("2026-08-25T08:00:00.000Z"),
     });
 
-    expect(thread?.title).toBe("<environment_context>");
+    expect(thread?.title).toBe("Create a useful project.");
     expect(thread?.messages.map((message) => message.text)).toEqual([prompt]);
   });
 
