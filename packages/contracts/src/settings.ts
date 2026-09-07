@@ -31,6 +31,7 @@ import {
   ProviderInstanceId,
   type ProviderDriverKind,
 } from "./providerInstance.ts";
+import { DEFAULT_OPENAI_TRANSCRIPTION_MODEL } from "./transcription.ts";
 
 // ── Client Settings (local-only) ───────────────────────────────
 
@@ -783,6 +784,18 @@ export const ObservabilitySettings = Schema.Struct({
 });
 export type ObservabilitySettings = typeof ObservabilitySettings.Type;
 
+export const TranscriptionSettings = Schema.Struct({
+  openAiApiKey: Schema.Struct({
+    value: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+    sensitive: Schema.Literal(true).pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+    valueRedacted: Schema.optionalKey(Schema.Boolean),
+  }).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  model: TrimmedNonEmptyString.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_OPENAI_TRANSCRIPTION_MODEL)),
+  ),
+});
+export type TranscriptionSettings = typeof TranscriptionSettings.Type;
+
 export const SourceControlWritingStyleMode = Schema.Literals([
   "repo_conventions",
   "conventional_commits",
@@ -975,6 +988,7 @@ export const ServerSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
   observability: ObservabilitySettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  transcription: TranscriptionSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   // Keyed by a user-chosen id so a source keeps its rows across edits. Entries
   // this build cannot decode round-trip untouched, as provider instances do.
   usageLimitSources: Schema.Record(UsageLimitSourceId, UsageLimitSourceConfig).pipe(
@@ -1185,6 +1199,18 @@ export const ServerSettingsPatch = Schema.Struct({
     Schema.Struct({
       otlpTracesUrl: Schema.optionalKey(TrimmedString),
       otlpMetricsUrl: Schema.optionalKey(TrimmedString),
+    }),
+  ),
+  transcription: Schema.optionalKey(
+    Schema.Struct({
+      openAiApiKey: Schema.optionalKey(
+        Schema.Struct({
+          value: Schema.optionalKey(Schema.String),
+          sensitive: Schema.optionalKey(Schema.Literal(true)),
+          valueRedacted: Schema.optionalKey(Schema.Boolean),
+        }),
+      ),
+      model: Schema.optionalKey(TrimmedNonEmptyString),
     }),
   ),
   providers: Schema.optionalKey(

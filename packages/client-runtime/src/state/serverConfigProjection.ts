@@ -73,6 +73,9 @@ export function applyServerConfigProjection(
         config: {
           ...projection.config,
           settings: event.payload.settings,
+          ...(event.payload.transcriptionServices === undefined
+            ? {}
+            : { transcriptionServices: event.payload.transcriptionServices }),
         },
         latestEvent: event,
         source: "live",

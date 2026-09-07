@@ -424,6 +424,29 @@ describe("server state projection", () => {
     expect(result.latestEvent.type).toBe("settingsUpdated");
   });
 
+  it("updates transcription services and preserves them when settings omit the catalog", () => {
+    const services = [{ id: "openai", label: "OpenAI" }];
+    const snapshot = applyServerConfigProjection(Option.none(), snapshotEvent(CONFIG));
+    const updated = applyServerConfigProjection(snapshot, {
+      version: 1,
+      type: "settingsUpdated",
+      payload: { settings: CONFIG.settings, transcriptionServices: services },
+    });
+    expect(Option.getOrThrow(updated).config.transcriptionServices).toEqual(services);
+    const retained = applyServerConfigProjection(updated, {
+      version: 1,
+      type: "settingsUpdated",
+      payload: { settings: CONFIG.settings },
+    });
+    expect(Option.getOrThrow(retained).config.transcriptionServices).toEqual(services);
+    const cleared = applyServerConfigProjection(retained, {
+      version: 1,
+      type: "settingsUpdated",
+      payload: { settings: CONFIG.settings, transcriptionServices: [] },
+    });
+    expect(Option.getOrThrow(cleared).config.transcriptionServices).toEqual([]);
+  });
+
   it("carries published environment themes in and out of the projected snapshot", () => {
     const snapshot = applyServerConfigProjection(Option.none(), {
       version: 1,

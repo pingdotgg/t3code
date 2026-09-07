@@ -938,6 +938,18 @@ export function createServerEnvironmentAtoms<R, E>(
       Atom.withLabel(`environment-data:server:providers:${environmentId}`),
     ),
   );
+  const transcriptionServicesValueAtom = Atom.family((environmentId: EnvironmentId | null) =>
+    environmentId === null
+      ? Atom.make<NonNullable<ServerConfig["transcriptionServices"]>>([]).pipe(
+          Atom.withLabel("environment-data:server:transcription-services:empty"),
+        )
+      : Atom.make((get) => {
+          const config = get(configValueAtom(environmentId));
+          return config?.environment.capabilities.transcription === true
+            ? (config.transcriptionServices ?? [])
+            : [];
+        }).pipe(Atom.withLabel(`environment-data:server:transcription-services:${environmentId}`)),
+  );
   const welcomeStateFamily = Atom.family((environmentId: EnvironmentId) =>
     runtime
       .atom(serverWelcomeStateChanges(environmentId), { initialValue: null })
@@ -965,6 +977,7 @@ export function createServerEnvironmentAtoms<R, E>(
     updateStateAtom,
     settingsValueAtom,
     providersValueAtom,
+    transcriptionServicesValueAtom,
     providerAuthState: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
       label: "environment-data:provider:auth-state",
       tag: WS_METHODS.providerAuthSubscribe,

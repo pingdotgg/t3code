@@ -2,8 +2,8 @@
 
 Transcription edits a composer draft. It does not submit an agent turn. Audio is
 temporary client input, and only normal message submission sends the resulting
-text. The current implementation transcribes locally on supported iOS devices;
-environment-backed transcription is not implemented.
+text. Mobile records the audio and transcribes it either locally on supported iOS
+devices or through an environment-backed OpenAI service.
 
 The [shared controller](../../packages/client-runtime/src/voice-input/controller.ts)
 owns the operation while the client supplies capture and transcription. Preparation
@@ -18,3 +18,11 @@ fires would race that work. The [transcription contract](../../packages/client-r
 therefore requires implementations to settle only after their work has stopped;
 the [Apple binding](../../apps/mobile/src/native/voiceTranscription.ios.ts) checks
 cancellation between native calls and discards late results.
+
+Environment transcription keeps the OpenAI key on the server. The
+[environment transcriber](../../packages/client-runtime/src/voice-input/environmentTranscriber.ts)
+mints a short-lived signed URL, uploads the recording, and receives text in the same
+request; the server calls OpenAI. Clients only ever see service ids and labels. The
+catalog sits behind the `transcription` [environment capability](../../packages/contracts/src/environment.ts),
+so older servers offer no environment services. A device's preferred service is stored
+per stable `environmentId`, because a service id means nothing outside its environment.

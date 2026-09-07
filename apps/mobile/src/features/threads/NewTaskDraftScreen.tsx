@@ -344,6 +344,7 @@ export function NewTaskDraftScreen(props: {
     onUpdateInteractionMode: flow.planModeEnabled ? flow.setInteractionMode : undefined,
   });
   const voiceInput = useVoiceInputController({
+    environmentId: selectedProject?.environmentId ?? null,
     ownerKey: flow.draftKey,
     draftMessage: flow.prompt,
     selection: composerMenu.selection,

@@ -80,7 +80,7 @@ Stashes containing uploaded files must be restored in their original environment
 Those files are retained for 24 hours. After an upload expires, restore the prompt
 and use **Attach again** or remove the missing file before sending.
 
-## Voice input on iPhone
+## Voice input on mobile
 
 On supported iPhones with iOS 26 or later, use the composer's microphone to record,
 then confirm to transcribe. Text is inserted where your selection was when
@@ -91,8 +91,13 @@ Later transcription works offline for that language. Recordings can be up to fiv
 minutes long. Canceling, leaving the screen, or an audio interruption discards the
 recording and preserves your existing draft.
 
-Transcription runs on your device. T3 Code deletes the temporary audio after
-transcription or cancellation; only the message text is sent when you submit.
+When an environment has an OpenAI transcription API key (Settings -> General ->
+Voice input), pick OpenAI as the source in that environment's mobile settings. This
+works on Android and older iPhones. The app sends the recording to the environment,
+which sends it to OpenAI; neither stores the audio.
+
+T3 Code deletes the temporary audio after transcription or cancellation; only the
+message text is sent when you submit.
 
 ## Commands and skills
 
