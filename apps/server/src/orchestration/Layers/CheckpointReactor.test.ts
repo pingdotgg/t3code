@@ -64,6 +64,7 @@ import {
 import { checkpointRefForThreadTurn } from "../../checkpointing/Utils.ts";
 import { ProviderValidationError } from "../../provider/Errors.ts";
 import { ServerConfig } from "../../config.ts";
+import { ServerActivation } from "../../serverActivation.ts";
 import * as WorkspaceEntries from "../../workspace/WorkspaceEntries.ts";
 import * as WorkspacePaths from "../../workspace/WorkspacePaths.ts";
 import { PullRequestService } from "../../pullRequest/PullRequestService.ts";
@@ -304,6 +305,7 @@ describe("CheckpointReactor", () => {
     readonly gitStatusRefreshCalls?: Array<string>;
     readonly pullRequestRefreshCalls?: Array<string>;
     readonly pullRequestRefresh?: Effect.Effect<void>;
+    readonly serverActivation?: Effect.Effect<void>;
   }) {
     const cwd = createGitRepository();
     if (options?.initializeGit === false) {
@@ -401,7 +403,12 @@ describe("CheckpointReactor", () => {
         yield* Stream.runForEach(receiptBus.streamEventsForTest, (receipt) =>
           Queue.offer(receipts, receipt),
         ).pipe(Effect.forkIn(testScope, { startImmediately: true }));
-        yield* reactor.start().pipe(Scope.provide(testScope));
+        yield* reactor
+          .start()
+          .pipe(
+            Scope.provide(testScope),
+            Effect.provideService(ServerActivation, options?.serverActivation),
+          );
         return receipts;
       }),
     );
@@ -529,6 +536,48 @@ describe("CheckpointReactor", () => {
       expect(result.sequence).toBe(targetSequence);
       yield* Fiber.join(waiter);
 
+      expect(
+        yield* harness.checkpointStore.hasCheckpointRef({
+          cwd: harness.cwd,
+          checkpointRef: checkpointRefForThreadTurn(ThreadId.make("thread-1"), 0),
+        }),
+      ).toBe(true);
+    }),
+  );
+
+  effectIt.effect("subscribes to domain events before waiting for server activation", () =>
+    Effect.gen(function* () {
+      const activation = yield* Deferred.make<void>();
+      const harness = yield* Effect.promise(() =>
+        createHarness({
+          seedFilesystemCheckpoints: false,
+          serverActivation: Deferred.await(activation),
+        }),
+      );
+      const targetSequence = (yield* harness.engine.latestSequence) + 2;
+      const waiter = yield* harness.reactor
+        .awaitDomainSequence(targetSequence)
+        .pipe(Effect.forkChild({ startImmediately: true }));
+
+      const result = yield* harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-checkpoint-before-activation"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: MessageId.make("message-checkpoint-before-activation"),
+          role: "user",
+          text: "Start after activation",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: "2026-01-01T00:00:01.000Z",
+      });
+      expect(result.sequence).toBe(targetSequence);
+      expect(waiter.pollUnsafe()).toBeUndefined();
+
+      yield* Deferred.succeed(activation, undefined);
+      yield* Fiber.join(waiter);
       expect(
         yield* harness.checkpointStore.hasCheckpointRef({
           cwd: harness.cwd,
