@@ -59,6 +59,12 @@ export type GetProviderSessionRuntimeInput = typeof GetProviderSessionRuntimeInp
 export const DeleteProviderSessionRuntimeInput = Schema.Struct({ threadId: ThreadId });
 export type DeleteProviderSessionRuntimeInput = typeof DeleteProviderSessionRuntimeInput.Type;
 
+export const TouchProviderSessionRuntimeInput = Schema.Struct({
+  threadId: ThreadId,
+  lastSeenAt: IsoDateTime,
+});
+export type TouchProviderSessionRuntimeInput = typeof TouchProviderSessionRuntimeInput.Type;
+
 export const RecordImportedTranscriptInput = Schema.Struct({
   threadId: ThreadId,
   source: AgentSessionImportSource,
@@ -84,6 +90,15 @@ export class ProviderSessionRuntimeRepository extends Context.Service<
     readonly upsert: (
       runtime: ProviderSessionRuntime,
       options?: ProviderSessionRuntimeUpsertOptions,
+    ) => Effect.Effect<void, ProviderSessionRuntimeRepositoryError>;
+
+    /**
+     * Update only `last_seen_at` for an existing runtime row.
+     *
+     * No-op when no row exists for the thread; never creates a row.
+     */
+    readonly touchByThreadId: (
+      input: TouchProviderSessionRuntimeInput,
     ) => Effect.Effect<void, ProviderSessionRuntimeRepositoryError>;
 
     /** Record one source file without replacing the current session state. */
@@ -267,6 +282,16 @@ export const make = Effect.gen(function* () {
       `,
   });
 
+  const touchRuntimeRow = SqlSchema.void({
+    Request: TouchProviderSessionRuntimeInput,
+    execute: ({ threadId, lastSeenAt }) =>
+      sql`
+        UPDATE provider_session_runtime
+        SET last_seen_at = ${lastSeenAt}
+        WHERE thread_id = ${threadId}
+      `,
+  });
+
   const recordImportedTranscriptRow = SqlSchema.void({
     Request: RecordImportedTranscriptRequestSchema,
     execute: ({ threadId, source }) =>
@@ -374,6 +399,17 @@ export const make = Effect.gen(function* () {
       ),
     );
 
+  const touchByThreadId: ProviderSessionRuntimeRepository["Service"]["touchByThreadId"] = (input) =>
+    touchRuntimeRow(input).pipe(
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "ProviderSessionRuntimeRepository.touchByThreadId:query",
+          "ProviderSessionRuntimeRepository.touchByThreadId:encodeRequest",
+          { threadId: input.threadId },
+        ),
+      ),
+    );
+
   const recordImportedTranscript: ProviderSessionRuntimeRepository["Service"]["recordImportedTranscript"] =
     (input) =>
       recordImportedTranscriptRow(input).pipe(
@@ -464,6 +500,7 @@ export const make = Effect.gen(function* () {
 
   return {
     upsert,
+    touchByThreadId,
     recordImportedTranscript,
     getByThreadId,
     list,
