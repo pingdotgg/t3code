@@ -4184,6 +4184,7 @@ export default function Sidebar() {
       markThreadUnread,
       openProjectSettings,
       projectByKey,
+      providerEntriesByEnvironment,
       serverConfigs,
       startThreadRename,
       updateThreadMetadata,
