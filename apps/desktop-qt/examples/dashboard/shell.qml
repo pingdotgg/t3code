@@ -125,7 +125,7 @@ ShellWindow {
 
         background: Rectangle {
             radius: button.round ? 18 : 12
-            color: button.active ? root.accent : button.hovered || button.visualFocus ? root.accentSoft : button.round ? root.raised : "transparent"
+            color: button.active ? root.accent : button.hovered || button.visualFocus ? root.accentSoft : button.round ? root.raised : Qt.alpha(root.accentSoft, 0)
             scale: button.down ? 0.97 : 1
 
             Behavior on color {

@@ -25,7 +25,7 @@ ComboBox {
 
     background: Rectangle {
         radius: Math.min(Theme.radius, 8)
-        color: control.down || control.hovered || control.popup.visible ? control.hoverFill : control.outline ? Qt.alpha(Theme.color("input", "#27272a"), 0.32) : "transparent"
+        color: control.down || control.hovered || control.popup.visible ? control.hoverFill : control.outline ? Qt.alpha(Theme.color("input", "#27272a"), 0.32) : Qt.alpha(control.hoverFill, 0)
         border.color: control.outline ? (control.activeFocus ? Theme.color("focus", "#3b82f6") : Theme.color("input", "#27272a")) : "transparent"
         border.width: control.outline ? 1 : 0
 

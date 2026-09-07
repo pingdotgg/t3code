@@ -47,7 +47,7 @@ Button {
 
     background: Rectangle {
         radius: control.radius
-        color: control.primary ? (control.down ? Qt.darker(Theme.color("accent", "#2563eb"), 1.15) : control.hovered ? Qt.lighter(Theme.color("accent", "#2563eb"), 1.08) : Theme.color("accent", "#2563eb")) : control.hovered || control.down || control.checked ? control.hoverFill : control.subtle ? "transparent" : Qt.alpha(Theme.color("input", "#27272a"), 0.32)
+        color: control.primary ? (control.down ? Qt.darker(Theme.color("accent", "#2563eb"), 1.15) : control.hovered ? Qt.lighter(Theme.color("accent", "#2563eb"), 1.08) : Theme.color("accent", "#2563eb")) : control.hovered || control.down || control.checked ? control.hoverFill : control.subtle ? Qt.alpha(control.hoverFill, 0) : Qt.alpha(Theme.color("input", "#27272a"), 0.32)
         // Keyboard focus draws the page's ring; pointer focus stays quiet.
         border.color: control.visualFocus ? control.focusRing : control.primary || control.subtle ? "transparent" : Theme.color("input", "#27272a")
         border.width: control.visualFocus || !(control.primary || control.subtle) ? 1 : 0
@@ -59,34 +59,44 @@ Button {
         }
     }
 
-    contentItem: RowLayout {
-        spacing: 6
+    contentItem: Item {
+        implicitWidth: contents.implicitWidth
+        implicitHeight: contents.implicitHeight
 
-        ShellIcon {
-            visible: control.iconName.length > 0
-            name: control.iconName
-            size: control.iconSize
-            color: control.iconTint
-            Layout.alignment: Qt.AlignVCenter
-        }
+        RowLayout {
+            id: contents
+            objectName: "contents"
 
-        Text {
-            visible: control.text.length > 0
-            text: control.text
-            font: control.font
-            color: control.tint
-            elide: Text.ElideRight
-            verticalAlignment: Text.AlignVCenter
-            Layout.fillWidth: true
-            Layout.minimumWidth: 0
-        }
+            anchors.centerIn: parent
+            width: Math.min(parent.width, implicitWidth)
+            spacing: 6
 
-        ShellIcon {
-            visible: control.chevron
-            name: "chevron-down"
-            size: control.chevronSize
-            color: control.text.length > 0 || control.iconName.length > 0 ? Theme.color("iconMuted", "#8b8b93") : control.tint
-            Layout.alignment: Qt.AlignVCenter
+            ShellIcon {
+                visible: control.iconName.length > 0
+                name: control.iconName
+                size: control.iconSize
+                color: control.iconTint
+                Layout.alignment: Qt.AlignVCenter
+            }
+
+            Text {
+                visible: control.text.length > 0
+                text: control.text
+                font: control.font
+                color: control.tint
+                elide: Text.ElideRight
+                verticalAlignment: Text.AlignVCenter
+                Layout.fillWidth: true
+                Layout.minimumWidth: 0
+            }
+
+            ShellIcon {
+                visible: control.chevron
+                name: "chevron-down"
+                size: control.chevronSize
+                color: control.text.length > 0 || control.iconName.length > 0 ? Theme.color("iconMuted", "#8b8b93") : control.tint
+                Layout.alignment: Qt.AlignVCenter
+            }
         }
     }
 }
