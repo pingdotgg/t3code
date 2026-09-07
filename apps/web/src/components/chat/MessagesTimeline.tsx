@@ -223,6 +223,7 @@ interface TimelineRowActivityState {
   isCompacting: boolean;
   isRevertingCheckpoint: boolean;
   latestTurnId: TurnId | null;
+  revertPreviewDiscardedRowIds: ReadonlySet<string> | null;
 }
 
 const TimelineRowCtx = createContext<TimelineRowSharedState>(null!);
@@ -316,6 +317,7 @@ interface MessagesTimelineProps {
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
   supportsConversationRollback: boolean;
   onRevertToTurnCount: (targetTurnCount: number) => void;
+  revertPreviewMessageId?: MessageId | null;
   onUseArtifactTemplate?: (template: CodexArtifactTemplate) => void;
   isRevertingCheckpoint: boolean;
   onImageExpand: (preview: ExpandedImagePreview) => void;
@@ -374,6 +376,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   onOpenTurnDiff,
   supportsConversationRollback,
   onRevertToTurnCount,
+  revertPreviewMessageId = null,
   onUseArtifactTemplate = NOOP_USE_ARTIFACT_TEMPLATE,
   isRevertingCheckpoint,
   onImageExpand,
@@ -716,6 +719,28 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     };
   }, [timelineViewportElement, rows.length, reportContentOverflow]);
 
+  const revertPreview = useMemo(() => {
+    if (revertPreviewMessageId === null) return null;
+    const index = rows.findIndex(
+      (row) => row.kind === "message" && row.message.id === revertPreviewMessageId,
+    );
+    if (index === -1) return null;
+    const discardedRowIds: ReadonlySet<string> = new Set(
+      rows.slice(index + 1).map((row) => row.id),
+    );
+    return { index, discardedRowIds };
+  }, [revertPreviewMessageId, rows]);
+  const revertPreviewIndex = revertPreview?.index ?? null;
+  useEffect(() => {
+    if (revertPreviewIndex === null) return;
+    onManualNavigation();
+    void listRef.current?.scrollToIndex({
+      index: revertPreviewIndex,
+      animated: true,
+      viewOffset: 24,
+    });
+  }, [listRef, onManualNavigation, revertPreviewIndex]);
+
   const sharedState = useMemo<TimelineRowSharedState>(
     () => ({
       citationRequest: readyCitationRequest,
@@ -774,8 +799,16 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       isCompacting,
       isRevertingCheckpoint,
       latestTurnId: latestTurn?.turnId ?? null,
+      revertPreviewDiscardedRowIds: revertPreview?.discardedRowIds ?? null,
     }),
-    [isCompacting, isRevertingCheckpoint, isWorking, isPreparingWorktree, latestTurn?.turnId],
+    [
+      isCompacting,
+      isRevertingCheckpoint,
+      isWorking,
+      isPreparingWorktree,
+      latestTurn?.turnId,
+      revertPreview,
+    ],
   );
 
   // Stable renderItem — no closure deps. Row components read shared state
@@ -1173,6 +1206,7 @@ type TimelineWorkEntry = Extract<MessagesTimelineRow, { kind: "work" }>["grouped
 type TimelineRow = MessagesTimelineRow;
 
 const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: TimelineRow }) {
+  const { revertPreviewDiscardedRowIds } = use(TimelineRowActivityCtx);
   const isExpandedToolGroup = row.kind === "work" && row.isExpandedToolGroup;
   const isExpandedToolGroupHeader =
     (row.kind === "work-toggle" && row.expanded) || (row.kind === "work-live" && row.expanded);
@@ -1201,7 +1235,9 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
           row.kind === "assistant-meta"
           ? "group/assistant"
           : null,
+        revertPreviewDiscardedRowIds?.has(row.id) && "opacity-35 transition-opacity duration-100",
       )}
+      data-revert-preview-discarded={revertPreviewDiscardedRowIds?.has(row.id) || undefined}
       data-timeline-row-id={row.id}
       data-timeline-row-kind={row.kind}
       data-message-id={

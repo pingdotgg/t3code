@@ -165,6 +165,8 @@ import {
 import { measureRestingComposerControls } from "./restingComposerControlsMeasurement";
 import { observeResponsiveBreakpointFade, usePanelAnimationSettings } from "../../panelAnimations";
 import { type ComposerPromptEditorHandle, ComposerPromptEditor } from "../ComposerPromptEditor";
+import { ComposerRevertMenu } from "./ComposerRevertMenu";
+import { type ComposerRevertPicker, type RevertPickerOption } from "./revertPicker.logic";
 import { ProviderModelPicker } from "./ProviderModelPicker";
 import { type ComposerCommandItem, ComposerCommandMenu } from "./ComposerCommandMenu";
 import { ComposerPendingApprovalActions } from "./ComposerPendingApprovalActions";
@@ -248,6 +250,7 @@ type ComposerCommandMenuPosition = {
 };
 
 const COMPOSER_SCROLL_COLLAPSE_THRESHOLD_PX = 24;
+const DOUBLE_ESCAPE_WINDOW_MS = 500;
 const COMPOSER_SCROLL_GESTURE_RESET_MS = 120;
 const COMPOSER_RESTING_TRANSITION_DURATION_MS = 280;
 const COMPOSER_RESTING_TRANSITION_CLEANUP_BUFFER_MS = 50;
@@ -1124,6 +1127,8 @@ export interface ChatComposerHandle {
   openModelPicker: () => void;
   toggleModelPicker: () => void;
   isModelPickerOpen: () => boolean;
+  openRevertMenu: () => void;
+  isRevertMenuOpen: () => boolean;
   compactContext: () => void;
   readSnapshot: () => {
     value: string;
@@ -1196,6 +1201,7 @@ export interface ChatComposerProps {
   bannerItems: readonly ComposerBannerStackItem[];
   /** Picking /usage-limits from the menu is the action itself; the draft keeps nothing of it. */
   onUsageLimitsCommand?: (() => void) | undefined;
+  revert: ComposerRevertPicker | null;
   environmentUnavailable: {
     readonly label: string;
     readonly connection: EnvironmentConnectionPresentation;
@@ -1401,6 +1407,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     setThreadError,
     onExpandImage,
     onFileOpen,
+    revert: revertPicker,
   } = props;
   const activeTasksProgress = props.threadSyncPhase === null ? props.activeTasksProgress : null;
   const activeTaskSteps = props.threadSyncPhase === null ? props.activeTaskSteps : null;
@@ -1824,6 +1831,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const hasWrappedPrompt = useComposerMultilinePrompt(composerMenuAnchor);
   const hasMultilinePrompt = prompt.includes("\n") || hasWrappedPrompt;
   const [isStashMenuOpen, setIsStashMenuOpen] = useState(false);
+  const [isRevertMenuOpen, setIsRevertMenuOpen] = useState(false);
   const [isTasksDrawerOpen, setIsTasksDrawerOpen] = useState(false);
   const [stashPulse, setStashPulse] = useState<{ key: number; active: boolean }>({
     key: 0,
@@ -3707,6 +3715,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     isTasksDrawerOpen ||
     composerMenuOpen ||
     isStashMenuOpen ||
+    isRevertMenuOpen ||
     isDragOverComposer ||
     isPreparingWorktree ||
     noProviderAvailable ||
@@ -4123,17 +4132,94 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     setIsTasksDrawerOpen(false);
   }, [activeThreadId]);
 
-  // Close the stash menu whenever the trigger-driven command menu opens so
-  // the two popovers never stack in the same layer, and when the user
-  // resumes typing (the menu is a transient picker, not a panel).
+  // Close the stash and revert menus whenever the trigger-driven command menu
+  // opens so the popovers never stack in the same layer, and when the user
+  // resumes typing (both are transient pickers, not panels).
   useEffect(() => {
     if (composerMenuOpen) {
       setIsStashMenuOpen(false);
+      setIsRevertMenuOpen(false);
     }
   }, [composerMenuOpen]);
   useEffect(() => {
     setIsStashMenuOpen(false);
+    setIsRevertMenuOpen(false);
   }, [prompt]);
+  useEffect(() => {
+    setIsRevertMenuOpen(false);
+  }, [activeThreadId]);
+
+  const openRevertMenu = useCallback(
+    (options?: { surfaceBlockedReason?: boolean }) => {
+      const revert = revertPicker;
+      if (!revert) return;
+      if (revert.blockedReason !== null) {
+        if (options?.surfaceBlockedReason) setThreadError(activeThreadId, revert.blockedReason);
+        return;
+      }
+      if (!revert.options.some((option) => option.turnCount !== null)) return;
+      setIsStashMenuOpen(false);
+      setIsRevertMenuOpen(true);
+    },
+    [activeThreadId, revertPicker, setThreadError],
+  );
+  const closeRevertMenu = useCallback(() => setIsRevertMenuOpen(false), []);
+  const revertToOption = useCallback(
+    (option: RevertPickerOption) => {
+      if (option.turnCount === null) return;
+      setIsRevertMenuOpen(false);
+      revertPicker?.onRevert(option.turnCount);
+    },
+    [revertPicker],
+  );
+
+  const lastEscapeAtRef = useRef(0);
+  useEffect(() => {
+    if (!revertPicker) return;
+    const handler = (event: globalThis.KeyboardEvent) => {
+      if (event.key !== "Escape" || event.repeat || isRevertMenuOpen) return;
+      if (
+        composerSendState.hasSendableContent ||
+        composerMenuOpen ||
+        isStashMenuOpen ||
+        isComposerModelPickerOpen ||
+        isTasksDrawerOpen ||
+        isComposerApprovalState ||
+        hasBlockingComposerTopDrawer ||
+        revertPicker.blockedReason !== null ||
+        isCommandPaletteOpen() ||
+        getTerminalFocusOwner() !== null ||
+        !(
+          event.target instanceof Element &&
+          event.target.closest('[data-chat-composer-body="true"]')
+        )
+      ) {
+        lastEscapeAtRef.current = 0;
+        return;
+      }
+      const pressedAt = Date.now();
+      const previousPressedAt = lastEscapeAtRef.current;
+      lastEscapeAtRef.current = pressedAt;
+      if (pressedAt - previousPressedAt > DOUBLE_ESCAPE_WINDOW_MS) return;
+      lastEscapeAtRef.current = 0;
+      event.preventDefault();
+      event.stopPropagation();
+      openRevertMenu();
+    };
+    window.addEventListener("keydown", handler, true);
+    return () => window.removeEventListener("keydown", handler, true);
+  }, [
+    composerMenuOpen,
+    composerSendState.hasSendableContent,
+    hasBlockingComposerTopDrawer,
+    isComposerApprovalState,
+    isComposerModelPickerOpen,
+    isRevertMenuOpen,
+    isStashMenuOpen,
+    isTasksDrawerOpen,
+    openRevertMenu,
+    revertPicker,
+  ]);
 
   useEffect(() => {
     const handler = (event: globalThis.KeyboardEvent) => {
@@ -4569,6 +4655,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       },
       compactContext: compactThreadContext,
       isModelPickerOpen: () => isComposerModelPickerOpen,
+      openRevertMenu: () => openRevertMenu({ surfaceBlockedReason: true }),
+      isRevertMenuOpen: () => isRevertMenuOpen,
       readSnapshot: () => {
         return readComposerSnapshot();
       },
@@ -4695,6 +4783,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       getTimelineScrollableNode,
       isTimelineAtLogicalEnd,
       setIsComposerScrollCollapsed,
+      openRevertMenu,
+      isRevertMenuOpen,
     ],
   );
 
@@ -5025,23 +5115,40 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 isComposerResting && "py-2 sm:py-2",
               )}
             >
-              {isStashMenuOpen && !composerMenuOpen && !isComposerApprovalState && (
-                <ComposerCommandMenuLayer anchor={composerMenuAnchor}>
-                  <ComposerStashMenu
-                    entries={stashQueue}
-                    stashShortcutLabel={shortcutLabelForCommand(keybindings, "composer.stash", {
-                      context: {
-                        terminalFocus: false,
-                        terminalOpen,
-                        modelPickerOpen: false,
-                      },
-                    })}
-                    onRestore={restoreStashEntry}
-                    onDelete={deleteStashEntry}
-                    onClose={() => setIsStashMenuOpen(false)}
-                  />
-                </ComposerCommandMenuLayer>
-              )}
+              {isRevertMenuOpen &&
+                revertPicker &&
+                !composerMenuOpen &&
+                !isComposerApprovalState && (
+                  <ComposerCommandMenuLayer anchor={composerMenuAnchor}>
+                    <ComposerRevertMenu
+                      options={revertPicker.options}
+                      onHighlight={revertPicker.onHighlight}
+                      onRevert={revertToOption}
+                      onClose={closeRevertMenu}
+                    />
+                  </ComposerCommandMenuLayer>
+                )}
+
+              {isStashMenuOpen &&
+                !isRevertMenuOpen &&
+                !composerMenuOpen &&
+                !isComposerApprovalState && (
+                  <ComposerCommandMenuLayer anchor={composerMenuAnchor}>
+                    <ComposerStashMenu
+                      entries={stashQueue}
+                      stashShortcutLabel={shortcutLabelForCommand(keybindings, "composer.stash", {
+                        context: {
+                          terminalFocus: false,
+                          terminalOpen,
+                          modelPickerOpen: false,
+                        },
+                      })}
+                      onRestore={restoreStashEntry}
+                      onDelete={deleteStashEntry}
+                      onClose={() => setIsStashMenuOpen(false)}
+                    />
+                  </ComposerCommandMenuLayer>
+                )}
 
               {composerMenuOpen && !isComposerApprovalState && (
                 <ComposerCommandMenuLayer anchor={composerMenuAnchor}>

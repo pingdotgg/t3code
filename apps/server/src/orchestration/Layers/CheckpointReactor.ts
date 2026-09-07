@@ -699,21 +699,18 @@ const make = Effect.gen(function* () {
       return;
     }
 
-    const sessionRuntime = yield* resolveSessionRuntimeForThread(event.payload.threadId);
-    if (Option.isNone(sessionRuntime)) {
+    const projects = yield* resolveThreadProjects(thread.projectId);
+    const checkpointCwd = yield* resolveCheckpointCwd({
+      threadId: thread.id,
+      thread,
+      projects,
+      preferSessionRuntime: true,
+    });
+    if (!checkpointCwd) {
       yield* appendRevertFailureActivity({
         threadId: event.payload.threadId,
         turnCount: event.payload.turnCount,
-        detail: "No active provider session with workspace cwd is bound to this thread.",
-        createdAt: now,
-      }).pipe(Effect.catch(() => Effect.void));
-      return;
-    }
-    if (!(yield* checkpointStore.isGitRepository(sessionRuntime.value.cwd))) {
-      yield* appendRevertFailureActivity({
-        threadId: event.payload.threadId,
-        turnCount: event.payload.turnCount,
-        detail: "Checkpoints are unavailable because this project is not a git repository.",
+        detail: "No Git workspace is available for this thread.",
         createdAt: now,
       }).pipe(Effect.catch(() => Effect.void));
       return;
@@ -754,7 +751,7 @@ const make = Effect.gen(function* () {
     yield* providerService.assertConversationRollbackSupported(event.payload.threadId);
 
     const restored = yield* checkpointStore.restoreCheckpoint({
-      cwd: sessionRuntime.value.cwd,
+      cwd: checkpointCwd,
       checkpointRef: targetCheckpointRef,
       fallbackToHead: event.payload.turnCount === 0,
     });
@@ -770,12 +767,12 @@ const make = Effect.gen(function* () {
 
     // Refresh the workspace entry index so the @-mention file picker
     // reflects the reverted filesystem state.
-    yield* workspaceEntries.refresh(sessionRuntime.value.cwd);
+    yield* workspaceEntries.refresh(checkpointCwd);
 
     const rolledBackTurns = Math.max(0, currentTurnCount - event.payload.turnCount);
     if (rolledBackTurns > 0) {
       yield* providerService.rollbackConversation({
-        threadId: sessionRuntime.value.threadId,
+        threadId: event.payload.threadId,
         numTurns: rolledBackTurns,
       });
     }
@@ -789,7 +786,7 @@ const make = Effect.gen(function* () {
 
     if (staleCheckpointRefs.length > 0) {
       yield* checkpointStore.deleteCheckpointRefs({
-        cwd: sessionRuntime.value.cwd,
+        cwd: checkpointCwd,
         checkpointRefs: staleCheckpointRefs,
       });
     }

@@ -1764,6 +1764,48 @@ describe("CheckpointReactor", () => {
     ).toBe(false);
   });
 
+  it("reverts a stopped thread using its persisted workspace", async () => {
+    const harness = await createHarness({ hasSession: false });
+    const threadId = ThreadId.make("thread-1");
+    const createdAt = "2026-01-01T00:00:00.000Z";
+
+    for (const turnCount of [1, 2]) {
+      await Effect.runPromise(
+        harness.engine.dispatch({
+          type: "thread.turn.diff.complete",
+          commandId: CommandId.make(`cmd-stopped-diff-${turnCount}`),
+          threadId,
+          turnId: asTurnId(`turn-${turnCount}`),
+          completedAt: createdAt,
+          checkpointRef: checkpointRefForThreadTurn(threadId, turnCount),
+          status: "ready",
+          files: [],
+          checkpointTurnCount: turnCount,
+          createdAt,
+        }),
+      );
+    }
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.checkpoint.revert",
+        commandId: CommandId.make("cmd-stopped-revert"),
+        threadId,
+        turnCount: 1,
+        createdAt,
+      }),
+    );
+    await harness.drain();
+
+    const thread = (await harness.readModel()).threads.find((entry) => entry.id === threadId);
+    expect(thread?.checkpoints).toHaveLength(1);
+    expect(harness.provider.rollbackConversation).toHaveBeenCalledWith({
+      threadId,
+      numTurns: 1,
+    });
+    expect(NodeFS.readFileSync(NodePath.join(harness.cwd, "README.md"), "utf8")).toBe("v2\n");
+  });
+
   it("executes provider revert and emits thread.reverted for claude sessions", async () => {
     const harness = await createHarness({ providerName: ProviderDriverKind.make("claudeAgent") });
     const createdAt = "2026-01-01T00:00:00.000Z";

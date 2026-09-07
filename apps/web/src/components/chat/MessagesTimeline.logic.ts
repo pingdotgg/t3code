@@ -777,11 +777,11 @@ function attachTrailingToolGroupsToAssistant(
   return result;
 }
 
-/** Match each user message to the next assistant checkpoint. */
-function buildRevertTurnCountByUserMessageId(input: {
+export function buildRevertTurnCountByUserMessageId(input: {
   supportsConversationRollback: boolean;
   timelineEntries: ReadonlyArray<TimelineEntry>;
   turnDiffSummaryByAssistantMessageId: ReadonlyMap<MessageId, TurnDiffSummary>;
+  turnDiffSummaryByTurnId: ReadonlyMap<TurnId, TurnDiffSummary>;
   inferredCheckpointTurnCountByTurnId: Readonly<Record<string, number | undefined>>;
 }): Map<MessageId, number> {
   const byUserMessageId = new Map<MessageId, number>();
@@ -800,7 +800,11 @@ function buildRevertTurnCountByUserMessageId(input: {
       if (nextEntry.message.role === "user") {
         break;
       }
-      const summary = input.turnDiffSummaryByAssistantMessageId.get(nextEntry.message.id);
+      const summary =
+        input.turnDiffSummaryByAssistantMessageId.get(nextEntry.message.id) ??
+        (nextEntry.message.turnId === null
+          ? undefined
+          : input.turnDiffSummaryByTurnId.get(nextEntry.message.turnId));
       if (!summary) {
         continue;
       }
@@ -828,7 +832,9 @@ export function deriveMessagesTimelineRows(input: {
   supportsConversationRollback: boolean;
 }): MessagesTimelineRow[] {
   const turnDiffSummaryByAssistantMessageId = new Map<MessageId, TurnDiffSummary>();
+  const turnDiffSummaryByTurnId = new Map<TurnId, TurnDiffSummary>();
   for (const summary of input.turnDiffSummaries) {
+    turnDiffSummaryByTurnId.set(summary.turnId, summary);
     if (summary.assistantMessageId) {
       turnDiffSummaryByAssistantMessageId.set(summary.assistantMessageId, summary);
     }
@@ -837,6 +843,7 @@ export function deriveMessagesTimelineRows(input: {
     supportsConversationRollback: input.supportsConversationRollback,
     timelineEntries: input.timelineEntries,
     turnDiffSummaryByAssistantMessageId,
+    turnDiffSummaryByTurnId,
     inferredCheckpointTurnCountByTurnId: input.supportsConversationRollback
       ? inferCheckpointTurnCountByTurnId(input.turnDiffSummaries)
       : {},

@@ -197,6 +197,12 @@ import {
 } from "@t3tools/client-runtime/state/subagentRuntime";
 import { BranchToolbar } from "./BranchToolbar";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
+import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
+import {
+  type ComposerRevertPicker,
+  deriveRevertPickerOptions,
+  type RevertPickerOption,
+} from "./chat/revertPicker.logic";
 import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
 import {
   AlarmClockIcon,
@@ -1602,6 +1608,11 @@ export default function ChatView(props: ChatViewProps) {
   >({});
   const [isConnecting, _setIsConnecting] = useState(false);
   const [isRevertingCheckpoint, setIsRevertingCheckpoint] = useState(false);
+  const [revertPreviewMessageId, setRevertPreviewMessageId] = useState<MessageId | null>(null);
+  const onRevertPreviewHighlight = useCallback((option: RevertPickerOption | null) => {
+    setRevertPreviewMessageId(option?.messageId ?? null);
+  }, []);
+  const revertPickerRef = useRef<ComposerRevertPicker | null>(null);
   const [maximizedRightPanelThreadKey, setMaximizedRightPanelThreadKey] = useState<string | null>(
     null,
   );
@@ -6047,6 +6058,26 @@ export default function ChatView(props: ChatViewProps) {
         return;
       }
 
+      if (command === "chat.revert" || command === "chat.revertLast") {
+        const picker = revertPickerRef.current;
+        if (!picker) return;
+        event.preventDefault();
+        event.stopPropagation();
+        if (event.repeat) return;
+        if (command === "chat.revert") {
+          composerRef.current?.openRevertMenu();
+          return;
+        }
+        if (picker.blockedReason !== null) {
+          setThreadError(activeThreadId, picker.blockedReason);
+          return;
+        }
+        const latest = picker.options.find((option) => option.turnCount !== null);
+        if (latest?.turnCount === undefined || latest.turnCount === null) return;
+        picker.onRevert(latest.turnCount);
+        return;
+      }
+
       const scriptId = projectScriptIdFromCommand(command);
       if (!scriptId || !activeProject) return;
       const script = activeProjectScripts.find((entry) => entry.id === scriptId);
@@ -6080,6 +6111,7 @@ export default function ChatView(props: ChatViewProps) {
     handleUnsettleActiveThread,
     isServerThread,
     onToggleDiff,
+    setThreadError,
     pinThread,
     settleThread,
     supportsPinning,
@@ -6112,7 +6144,7 @@ export default function ChatView(props: ChatViewProps) {
   }, [activeThreadId, composerRef]);
 
   const onRevertToTurnCount = useCallback(
-    async (turnCount: number) => {
+    async (turnCount: number, options?: { skipConfirm?: boolean }) => {
       const localApi = readLocalApi();
       if (!localApi || !activeThread || isRevertingCheckpoint) return;
 
@@ -6134,16 +6166,18 @@ export default function ChatView(props: ChatViewProps) {
         setThreadError(activeThread.id, "Interrupt the current turn before reverting checkpoints.");
         return;
       }
-      const confirmed = await localApi.dialogs.confirm(
-        [
-          `Revert this thread to checkpoint ${turnCount}?`,
-          "This will discard newer messages and turn diffs in this thread.",
-          "This action cannot be undone.",
-        ].join("\n"),
-        { variant: "destructive" },
-      );
-      if (!confirmed) {
-        return;
+      if (options?.skipConfirm !== true) {
+        const confirmed = await localApi.dialogs.confirm(
+          [
+            `Revert this thread to checkpoint ${turnCount}?`,
+            "This will discard newer messages and turn diffs in this thread.",
+            "This action cannot be undone.",
+          ].join("\n"),
+          { variant: "destructive" },
+        );
+        if (!confirmed) {
+          return;
+        }
       }
 
       setIsRevertingCheckpoint(true);
@@ -7635,6 +7669,62 @@ export default function ChatView(props: ChatViewProps) {
   const onRevertTimelineTurn = useCallback((targetTurnCount: number) => {
     void onRevertToTurnCountRef.current(targetTurnCount);
   }, []);
+  const onRevertPickedTurn = useCallback((targetTurnCount: number) => {
+    void onRevertToTurnCountRef.current(targetTurnCount, { skipConfirm: true });
+  }, []);
+  const { turnDiffSummaries, inferredCheckpointTurnCountByTurnId } =
+    useTurnDiffSummaries(activeThread);
+  const revertPickerOptions = useMemo(
+    () =>
+      deriveRevertPickerOptions({
+        supportsConversationRollback,
+        timelineEntries,
+        turnDiffSummaries,
+        inferredCheckpointTurnCountByTurnId,
+      }),
+    [
+      inferredCheckpointTurnCountByTurnId,
+      supportsConversationRollback,
+      timelineEntries,
+      turnDiffSummaries,
+    ],
+  );
+  const revertBlockedReason = useMemo(() => {
+    if (activeEnvironmentUnavailable && activeEnvironmentUnavailableLabel) {
+      return `Reconnect ${activeEnvironmentUnavailableLabel} before reverting checkpoints.`;
+    }
+    if (isRevertingCheckpoint) return "A revert is already running in this thread.";
+    if (phase === "running" || isSendBusy || isConnecting) {
+      return "Interrupt the current turn before reverting checkpoints.";
+    }
+    return null;
+  }, [
+    activeEnvironmentUnavailable,
+    activeEnvironmentUnavailableLabel,
+    isConnecting,
+    isRevertingCheckpoint,
+    isSendBusy,
+    phase,
+  ]);
+  const revertPicker = useMemo<ComposerRevertPicker | null>(
+    () =>
+      supportsConversationRollback
+        ? {
+            options: revertPickerOptions,
+            blockedReason: revertBlockedReason,
+            onHighlight: onRevertPreviewHighlight,
+            onRevert: onRevertPickedTurn,
+          }
+        : null,
+    [
+      onRevertPickedTurn,
+      onRevertPreviewHighlight,
+      revertBlockedReason,
+      revertPickerOptions,
+      supportsConversationRollback,
+    ],
+  );
+  revertPickerRef.current = revertPicker;
 
   // Empty state: no active thread
   if (!activeThread) {
@@ -7950,6 +8040,7 @@ export default function ChatView(props: ChatViewProps) {
                 routeThreadKey={routeThreadKey}
                 onOpenTurnDiff={onOpenTurnDiff}
                 supportsConversationRollback={supportsConversationRollback}
+                revertPreviewMessageId={revertPreviewMessageId}
                 onRevertToTurnCount={onRevertTimelineTurn}
                 onUseArtifactTemplate={useArtifactTemplate}
                 isRevertingCheckpoint={isRevertingCheckpoint}
@@ -8088,6 +8179,7 @@ export default function ChatView(props: ChatViewProps) {
                                 : undefined
                             }
                             environmentUnavailable={activeEnvironmentUnavailableState}
+                            revert={revertPicker}
                             activePendingApproval={activePendingApproval}
                             pendingApprovals={pendingApprovals}
                             pendingUserInputs={pendingUserInputs}

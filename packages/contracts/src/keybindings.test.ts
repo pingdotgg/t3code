@@ -90,6 +90,18 @@ it.effect("parses keybinding rules", () =>
     });
     assert.strictEqual(parsedLocal.command, "chat.newLocal");
 
+    const parsedRevert = yield* decode(KeybindingRule, {
+      key: "mod+shift+z",
+      command: "chat.revert",
+    });
+    assert.strictEqual(parsedRevert.command, "chat.revert");
+
+    const parsedRevertLast = yield* decode(KeybindingRule, {
+      key: "mod+z",
+      command: "chat.revertLast",
+    });
+    assert.strictEqual(parsedRevertLast.command, "chat.revertLast");
+
     const parsedModelPickerToggle = yield* decode(KeybindingRule, {
       key: "mod+shift+m",
       command: "modelPicker.toggle",

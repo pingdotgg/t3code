@@ -141,6 +141,7 @@ const DEFAULT_BINDINGS = compile([
   },
   { shortcut: modShortcut("o", { shiftKey: true }), command: "chat.new" },
   { shortcut: modShortcut("n", { shiftKey: true }), command: "chat.newLocal" },
+  { shortcut: modShortcut("z", { shiftKey: true }), command: "chat.revert" },
   { shortcut: modShortcut("o"), command: "editor.openFavorite" },
   { shortcut: modShortcut("[", { shiftKey: true }), command: "thread.previous" },
   { shortcut: modShortcut("]", { shiftKey: true }), command: "thread.next" },
@@ -570,6 +571,21 @@ describe("chat/editor shortcuts", () => {
         platform: "Linux",
       }),
       "chat.newLocal",
+    );
+  });
+
+  it("matches chat.revert shortcut", () => {
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "z", metaKey: true, shiftKey: true }), DEFAULT_BINDINGS, {
+        platform: "MacIntel",
+      }),
+      "chat.revert",
+    );
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "z", ctrlKey: true, shiftKey: true }), DEFAULT_BINDINGS, {
+        platform: "Linux",
+      }),
+      "chat.revert",
     );
   });
 
