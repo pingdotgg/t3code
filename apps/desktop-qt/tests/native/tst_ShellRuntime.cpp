@@ -20,6 +20,34 @@ signals:
   void scriptFinished(const QVariant& result);
 
 private slots:
+  void themeRecoversAfterReadFailureWithoutAcceptingInvalidJson() {
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    QFile file(directory.filePath("theme.json"));
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.write("{\"colors\":{\"canvas\":\"#123456\"}}");
+    file.close();
+    ThemeStore theme(directory.path());
+    QVERIFY(theme.lastError().isEmpty());
+    const auto permissions = file.permissions();
+    QVERIFY(file.setPermissions(QFile::WriteOwner));
+    theme.reload();
+    QVERIFY(!theme.lastError().isEmpty());
+    QVERIFY(file.setPermissions(permissions));
+    theme.reload();
+    QVERIFY(theme.lastError().isEmpty());
+    QCOMPARE(theme.color("canvas", Qt::black), QColor("#123456"));
+
+    QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Truncate));
+    file.write("invalid JSON");
+    file.close();
+    theme.reload();
+    QVERIFY(!theme.lastError().isEmpty());
+    theme.reload();
+    QVERIFY(!theme.lastError().isEmpty());
+    QCOMPARE(theme.color("canvas", Qt::black), QColor("#123456"));
+  }
+
   void themeBootstrapHandsOffWithoutRewritingThePage() {
     QTemporaryDir directory;
     QVERIFY(directory.isValid());
@@ -151,6 +179,25 @@ Window {
     QTRY_COMPARE(runtime.generation(), 6);
     verifySingletons(window());
     QCOMPARE(window()->property("revision").toInt(), 6);
+
+    QVERIFY(writeSource(shellPath, "import QtQml\nQtObject {}"));
+    runtime.reload();
+    QVERIFY(window());
+    verifySingletons(window());
+    QCOMPARE(window()->property("revision").toInt(), 4);
+    QVERIFY(!runtime.usingUserShell());
+    QVERIFY(runtime.lastError().contains("Window"));
+    auto* engine = runtime.findChild<QQmlApplicationEngine*>();
+    QVERIFY(engine);
+    QTRY_COMPARE(engine->rootObjects().size(), 1);
+
+    working = window();
+    const int generation = runtime.generation();
+    QVERIFY(writeSource(defaultPath, "import QtQml\nQtObject {}"));
+    runtime.reload();
+    QCOMPARE(window(), working.data());
+    QCOMPARE(runtime.generation(), generation);
+    QCOMPARE(engine->rootObjects().size(), 1);
   }
 };
 

@@ -164,7 +164,18 @@ bool ShellRuntime::loadGeneration(const QUrl& rootUrl, QString* errorOut) {
   engine->load(rootUrl);
   disconnect(warningsDuringLoad);
   disconnect(creationFailed);
-  if (failed || engine->rootObjects().size() == previousRootCount) {
+  const auto roots = engine->rootObjects();
+  bool hasWindow = false;
+  for (auto index = previousRootCount; index < roots.size(); ++index) {
+    hasWindow |= qobject_cast<QQuickWindow*>(roots.at(index)) != nullptr;
+  }
+  if (failed || !hasWindow) {
+    for (auto index = previousRootCount; index < roots.size(); ++index) {
+      delete roots.at(index);
+    }
+    if (!failed && roots.size() > previousRootCount) {
+      messages << QStringLiteral("Shell root must be a QQuickWindow: %1").arg(rootUrl.toString());
+    }
     if (errorOut != nullptr) {
       *errorOut = messages.isEmpty()
                       ? QStringLiteral("Failed to load %1").arg(rootUrl.toString())

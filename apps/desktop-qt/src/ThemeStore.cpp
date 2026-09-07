@@ -109,7 +109,7 @@ void ThemeStore::applyDefaults() {
 void ThemeStore::reload() {
   QFile file(m_path);
   if (!file.exists()) {
-    if (m_loaded || !m_lastContent.isEmpty()) {
+    if (m_loaded || !m_lastContent.isEmpty() || !m_lastError.isEmpty()) {
       m_lastContent.clear();
       applyDefaults();
       emit themeChanged();
@@ -122,7 +122,7 @@ void ThemeStore::reload() {
     return;
   }
   const QByteArray content = file.readAll();
-  if (content == m_lastContent) {
+  if (content == m_lastContent && m_loaded && m_lastError.isEmpty()) {
     return;
   }
   m_lastContent = content;
