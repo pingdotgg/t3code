@@ -1794,6 +1794,74 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
   });
 
   describe("remote operations", () => {
+    for (const localWork of [
+      "untracked",
+      "unstaged",
+      "staged",
+      "overlapping",
+      "untracked-collision",
+      "diverged",
+    ] as const) {
+      it.effect(`pull preserves ${localWork} local work with autostash configured`, () =>
+        Effect.gen(function* () {
+          const remote = yield* makeTmpDir();
+          const cwd = yield* makeTmpDir();
+          yield* initRepoWithCommit(remote);
+          yield* git(cwd, ["clone", remote, "."]);
+          yield* git(cwd, ["config", "pull.rebase", "true"]);
+          yield* git(cwd, ["config", "merge.autoStash", "true"]);
+          yield* git(cwd, ["config", "rebase.autoStash", "true"]);
+          const localPath =
+            localWork === "untracked" || localWork === "untracked-collision"
+              ? "local.txt"
+              : "README.md";
+          yield* writeTextFile(cwd, localPath, "local work\n");
+          if (localWork === "staged" || localWork === "diverged") {
+            yield* git(cwd, ["add", localPath]);
+          }
+          if (localWork === "diverged") {
+            yield* git(cwd, [
+              "-c",
+              "user.name=Test",
+              "-c",
+              "user.email=test@test.com",
+              "commit",
+              "-m",
+              "local commit",
+            ]);
+          }
+          const incomingPath =
+            localWork === "overlapping"
+              ? "README.md"
+              : localWork === "untracked-collision"
+                ? "local.txt"
+                : "incoming.txt";
+          yield* writeTextFile(remote, incomingPath, "upstream work\n");
+          yield* git(remote, ["add", "."]);
+          yield* git(remote, ["commit", "-m", "upstream update"]);
+          const beforeHead = yield* git(cwd, ["rev-parse", "HEAD"]);
+          const beforeStatus = yield* git(cwd, ["status", "--porcelain"]);
+          const driver = yield* GitVcsDriver.GitVcsDriver;
+          const result = yield* driver.pullCurrentBranch(cwd).pipe(Effect.result);
+          const blocked =
+            localWork === "overlapping" ||
+            localWork === "untracked-collision" ||
+            localWork === "diverged";
+          assert.equal(Result.isFailure(result), blocked);
+          assert.equal(
+            yield* git(cwd, ["rev-parse", "HEAD"]),
+            blocked ? beforeHead : yield* git(remote, ["rev-parse", "HEAD"]),
+          );
+          assert.equal(yield* git(cwd, ["status", "--porcelain"]), beforeStatus);
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          assert.equal(yield* fs.readFileString(path.join(cwd, localPath)), "local work\n");
+          assert.equal(yield* git(cwd, ["stash", "list"]), "");
+          assert.equal(yield* git(cwd, ["ls-files", "--unmerged"]), "");
+        }),
+      );
+    }
+
     it.effect("ensureRemote reuses an existing remote across ssh/https transport variants", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();

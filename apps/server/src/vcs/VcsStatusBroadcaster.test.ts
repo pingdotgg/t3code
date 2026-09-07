@@ -146,7 +146,7 @@ function makeBackgroundPolicyLayer(shouldRunScopeWork: (scope: BackgroundScope) 
 
 describe("VcsStatusBroadcaster", () => {
   it.effect.skipIf(!symlinksSupported)(
-    "automatically pulls an enabled clean default branch when status detects it is behind",
+    "automatically pulls an enabled dirty default branch when status detects it is behind",
     () => {
       let remoteStatus: VcsStatusRemoteResult = { ...baseRemoteStatus, behindCount: 2 };
       let pullCalls = 0;
@@ -154,6 +154,7 @@ describe("VcsStatusBroadcaster", () => {
       const localStatus: VcsStatusLocalResult = {
         ...baseLocalStatus,
         isDefaultRef: true,
+        hasWorkingTreeChanges: true,
         refName: "main",
       };
       const testLayer = VcsStatusBroadcaster.layer.pipe(
