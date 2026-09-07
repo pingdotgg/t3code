@@ -27,6 +27,7 @@ const style = {
 const setItem = vi.fn();
 const cancelAnimationFrame = vi.fn();
 let events: EventTarget;
+let frame: FrameRequestCallback | undefined;
 
 function pointer(clientX = 100) {
   return {
@@ -55,6 +56,7 @@ function Panel() {
 
 beforeEach(async () => {
   captured = false;
+  frame = undefined;
   style.cursor = "";
   style.userSelect = "";
   events = new EventTarget();
@@ -65,7 +67,10 @@ beforeEach(async () => {
     localStorage: { getItem: () => null, setItem },
   });
   vi.stubGlobal("document", { body: { style } });
-  vi.stubGlobal("requestAnimationFrame", () => 42);
+  vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+    frame = callback;
+    return 42;
+  });
   vi.stubGlobal("cancelAnimationFrame", cancelAnimationFrame);
   await act(() => {
     renderer = create(<Panel />);
@@ -86,6 +91,10 @@ describe("panel resize cleanup", () => {
         result.handlers.onPointerDown(pointer());
         result.handlers.onPointerMove(pointer(50));
       });
+      await act(() => frame?.(0));
+      expect(result.width).toBe(450);
+      // Queue another move to check that interruption cancels pending work too.
+      await act(() => result.handlers.onPointerMove(pointer(25)));
       expect(style.cursor).toBe("col-resize");
       expect(style.userSelect).toBe("none");
       await act(() => {
@@ -99,7 +108,7 @@ describe("panel resize cleanup", () => {
       expect(captured).toBe(false);
       expect(cancelAnimationFrame).toHaveBeenCalledWith(42);
       expect(setItem).not.toHaveBeenCalled();
-      expect(result.width).toBe(400);
+      if (reason !== "unmount") expect(result.width).toBe(400);
     },
   );
 
