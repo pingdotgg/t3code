@@ -485,6 +485,7 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
   );
   const threadAccessibilityLabel = [
     thread.title,
+    status?.label,
     pr?.accessibilityLabel,
     props.hasQueuedMessages ? "messages queued to send" : null,
   ]

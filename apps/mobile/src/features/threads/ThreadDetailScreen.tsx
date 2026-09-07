@@ -96,6 +96,7 @@ import {
   ThreadComposer,
 } from "./ThreadComposer";
 import { ThreadFeed } from "./ThreadFeed";
+import { resolveThreadStatus } from "./threadPresentation";
 import type { ThreadContentPresentation } from "./threadContentPresentation";
 import { resolveThreadFeedSubmissionAnchor } from "./thread-feed-live-follow";
 
@@ -344,6 +345,12 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
     }
     if (props.activeWorkStartedAt !== null && contentPresentationKind === "ready") {
       return { kind: "working", startedAt: props.activeWorkStartedAt };
+    }
+    if (contentPresentationKind === "ready") {
+      const status = resolveThreadStatus(props.selectedThread);
+      if (status?.kind === "monitoring" || status?.kind === "working") {
+        return { kind: "background", label: status.label };
+      }
     }
     return null;
   })();

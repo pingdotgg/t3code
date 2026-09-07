@@ -32,6 +32,8 @@ import {
   sortThreadsForListV2,
 } from "./threadListV2";
 
+import { resolveThreadStatus } from "./threadPresentation";
+
 const environmentId = EnvironmentId.make("environment-1");
 
 function makeThread(
@@ -140,6 +142,67 @@ describe("resolveThreadListV2Enabled", () => {
 });
 
 describe("resolveThreadListV2Status", () => {
+  it("distinguishes background monitoring, work, and cleared liveness in both lists", () => {
+    const thread = makeThread({
+      id: ThreadId.make("t"),
+      title: "t",
+      latestTurn: {
+        turnId: TurnId.make("turn"),
+        state: "completed",
+        requestedAt: NOW,
+        startedAt: NOW,
+        completedAt: NOW,
+        assistantMessageId: null,
+      },
+    });
+    for (const backgroundLiveness of ["monitoring", "working", null] as const) {
+      const current = { ...thread, backgroundLiveness };
+      expect.soft(resolveThreadListV2Status(current)).toBe(backgroundLiveness ?? "ready");
+      const status = resolveThreadStatus(current);
+      expect.soft(status?.kind ?? null).toBe(backgroundLiveness);
+      if (backgroundLiveness !== null) {
+        expect
+          .soft(status?.label)
+          .toBe(backgroundLiveness === "monitoring" ? "Monitoring" : "Working");
+        expect.soft(status?.pulse).toBe(backgroundLiveness === "working");
+      }
+    }
+  });
+
+  it.each(["monitoring", "working"] as const)(
+    "preserves status priority over %s",
+    (backgroundLiveness) => {
+      const thread = makeThread({ id: ThreadId.make("t"), title: "t", backgroundLiveness });
+      expect(resolveThreadListV2Status({ ...thread, hasPendingApprovals: true })).toBe("approval");
+      expect(resolveThreadStatus({ ...thread, hasPendingApprovals: true })?.kind).toBe(
+        "pending-approval",
+      );
+      expect(resolveThreadListV2Status({ ...thread, hasPendingUserInput: true })).toBe("input");
+      expect(resolveThreadStatus({ ...thread, hasPendingUserInput: true })?.kind).toBe(
+        "awaiting-input",
+      );
+      for (const status of ["running", "starting", "error"] as const) {
+        const current = {
+          ...thread,
+          session: {
+            threadId: thread.id,
+            status,
+            providerName: "Codex",
+            providerInstanceId: ProviderInstanceId.make("codex"),
+            runtimeMode: "full-access" as const,
+            activeTurnId: null,
+            lastError: null,
+            updatedAt: NOW,
+          },
+        };
+        expect(resolveThreadListV2Status(current)).toBe(status === "error" ? "failed" : "working");
+        expect(resolveThreadStatus(current)?.kind).toBe(
+          status === "running" ? "working" : status === "starting" ? "connecting" : "error",
+        );
+      }
+    },
+  );
+
   it("prioritizes approval over a running session", () => {
     const thread = makeThread({
       id: ThreadId.make("t"),

@@ -1,10 +1,14 @@
 import type { StatusTone } from "../../components/StatusPill";
-import type { OrchestrationLatestTurn, OrchestrationSession } from "@t3tools/contracts";
-import { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
+import type {
+  OrchestrationLatestTurn,
+  OrchestrationSession,
+  OrchestrationThreadShell,
+} from "@t3tools/contracts";
 
 export type ThreadStatusKind =
   | "pending-approval"
   | "awaiting-input"
+  | "monitoring"
   | "working"
   | "connecting"
   | "error"
@@ -36,7 +40,7 @@ function isLatestTurnSettled(
  * Mirrors `resolveThreadStatusPill` in apps/web/src/components/Sidebar.logic.ts.
  */
 export function resolveThreadStatus(
-  thread: EnvironmentThreadShell,
+  thread: OrchestrationThreadShell,
 ): ThreadStatusPresentation | null {
   if (thread.hasPendingApprovals) {
     return {
@@ -111,6 +115,18 @@ export function resolveThreadStatus(
       iconColor: "#bf5af2",
       iconBackground: "rgba(191,90,242,0.22)",
       pulse: false,
+    };
+  }
+
+  if (thread.backgroundLiveness) {
+    return {
+      kind: thread.backgroundLiveness,
+      label: thread.backgroundLiveness === "monitoring" ? "Monitoring" : "Working",
+      pillClassName: "bg-primary/10",
+      textClassName: "text-foreground-secondary",
+      iconColor: "#0a84ff",
+      iconBackground: "rgba(10,132,255,0.22)",
+      pulse: thread.backgroundLiveness === "working",
     };
   }
 
