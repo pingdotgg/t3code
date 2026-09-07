@@ -5,7 +5,7 @@ import * as Effect from "effect/Effect";
 import * as Semaphore from "effect/Semaphore";
 
 import type { ProviderServiceError } from "../provider/Errors.ts";
-import { ProviderService } from "../provider/Services/ProviderService.ts";
+import * as ProviderService from "../provider/Services/ProviderService.ts";
 import {
   evaluateHandoverStartLimits,
   evaluateTurnStartLimits,
@@ -32,7 +32,7 @@ export class UsageLimitReservations extends Context.Service<
 >()("t3/orchestration/UsageLimitReservations") {}
 
 export const make = Effect.gen(function* () {
-  const providerService = yield* ProviderService;
+  const providerService = yield* ProviderService.ProviderService;
   const reservations = new Map<string, Reservation>();
   const reservationMutex = yield* Semaphore.make(1);
 

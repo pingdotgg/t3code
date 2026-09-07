@@ -2,15 +2,15 @@ import type { ProviderSession, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Layer from "effect/Layer";
-import { ProviderService } from "../provider/Services/ProviderService.ts";
+import * as ProviderService from "../provider/Services/ProviderService.ts";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 
 import { MAX_CONCURRENT_PROVIDER_TURNS } from "./ConcurrentTurnPolicy.ts";
 import { make as makeService, layer, UsageLimitReservations } from "./UsageLimitReservations.ts";
 
-const make = (listSessions: ProviderService["Service"]["listSessions"]) =>
-  makeService.pipe(Effect.provide(Layer.mock(ProviderService)({ listSessions })));
+const make = (listSessions: ProviderService.ProviderService["Service"]["listSessions"]) =>
+  makeService.pipe(Effect.provide(Layer.mock(ProviderService.ProviderService)({ listSessions })));
 
 function session(index: number): ProviderSession {
   return {
@@ -109,7 +109,7 @@ describe("UsageLimitReservations", () => {
       Effect.provide(
         layer.pipe(
           Layer.provide(
-            Layer.mock(ProviderService)({
+            Layer.mock(ProviderService.ProviderService)({
               listSessions: () =>
                 Effect.succeed(
                   Array.from({ length: MAX_CONCURRENT_PROVIDER_TURNS - 1 }, (_, index) =>
