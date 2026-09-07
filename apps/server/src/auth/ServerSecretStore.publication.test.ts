@@ -204,4 +204,89 @@ it.layer(NodeServices.layer)("secret publication", (it) => {
       if ((yield* HostProcessPlatform) !== "win32") assert.equal(stat.mode & 0o777, 0o600);
     }).pipe(Effect.provide(configLayer())),
   );
+
+  it.effect("flushes the published directory entry before reporting success", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const config = yield* ServerConfig.ServerConfig;
+      const flushing = yield* Deferred.make<void>();
+      const resume = yield* Deferred.make<void>();
+      let complete = false;
+      const store = yield* ServerSecretStore.make.pipe(
+        Effect.provideService(FileSystem.FileSystem, {
+          ...fs,
+          open: (path, options) =>
+            fs.open(path, options).pipe(
+              Effect.map((file) =>
+                path === config.secretsDir
+                  ? {
+                      ...file,
+                      sync: Deferred.succeed(flushing, undefined).pipe(
+                        Effect.andThen(Deferred.await(resume)),
+                      ),
+                    }
+                  : file,
+              ),
+            ),
+        }),
+      );
+      const writer = yield* store.create("signing-key", new Uint8Array(32)).pipe(
+        Effect.tap(() =>
+          Effect.sync(() => {
+            complete = true;
+          }),
+        ),
+        Effect.forkChild,
+      );
+      yield* Deferred.await(flushing);
+      assert.isFalse(complete);
+      assert.lengthOf(Option.getOrThrow(yield* store.get("signing-key")), 32);
+      yield* Deferred.succeed(resume, undefined);
+      yield* Fiber.join(writer);
+      assert.isTrue(complete);
+    }).pipe(Effect.provide(configLayer())),
+  );
+
+  for (const [platform, code, succeeds] of [
+    ["win32", "EPERM", true],
+    ["linux", "EPERM", false],
+    ["win32", "EIO", false],
+    ["linux", "EIO", false],
+  ] as const) {
+    it.effect(`handles directory flush ${code} on ${platform} without losing published bytes`, () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const config = yield* ServerConfig.ServerConfig;
+        const failure = PlatformError.systemError({
+          _tag: code === "EPERM" ? "PermissionDenied" : "Unknown",
+          module: "FileSystem",
+          method: "sync",
+          pathOrDescriptor: config.secretsDir,
+          cause: Object.assign(new Error("Injected directory sync failure"), { code }),
+        });
+        const store = yield* ServerSecretStore.make.pipe(
+          Effect.provideService(HostProcessPlatform, platform),
+          Effect.provideService(FileSystem.FileSystem, {
+            ...fs,
+            open: (path, options) =>
+              fs
+                .open(path, options)
+                .pipe(
+                  Effect.map((file) =>
+                    path === config.secretsDir ? { ...file, sync: Effect.fail(failure) } : file,
+                  ),
+                ),
+          }),
+        );
+        const result = yield* store.create("signing-key", new Uint8Array(32)).pipe(Effect.result);
+        assert.equal(result._tag, succeeds ? "Success" : "Failure");
+        if (result._tag === "Failure") {
+          assert.instanceOf(result.failure, ServerSecretStore.SecretStorePersistError);
+          assert.equal(result.failure.cause, failure);
+        }
+        assert.lengthOf(Option.getOrThrow(yield* store.get("signing-key")), 32);
+        assert.deepEqual(yield* fs.readDirectory(config.secretsDir), ["signing-key.bin"]);
+      }).pipe(Effect.provide(configLayer())),
+    );
+  }
 });

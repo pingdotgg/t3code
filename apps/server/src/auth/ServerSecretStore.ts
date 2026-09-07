@@ -8,6 +8,7 @@ import * as Path from "effect/Path";
 import * as Predicate from "effect/Predicate";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
 import * as ServerConfig from "../config.ts";
 
@@ -154,6 +155,7 @@ export const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const serverConfig = yield* ServerConfig.ServerConfig;
+  const platform = yield* HostProcessPlatform;
 
   yield* fileSystem.makeDirectory(serverConfig.secretsDir, { recursive: true });
   yield* fileSystem.chmod(serverConfig.secretsDir, 0o700).pipe(
@@ -243,6 +245,16 @@ export const make = Effect.gen(function* () {
         );
         // Publish complete bytes without replacing a concurrent creator's secret.
         yield* fileSystem.link(temporaryPath, secretPath);
+        const directory = yield* fileSystem.open(serverConfig.secretsDir, { flag: "r" });
+        yield* directory.sync.pipe(
+          Effect.catch((cause) =>
+            platform === "win32" &&
+            Predicate.hasProperty(cause.reason.cause, "code") &&
+            cause.reason.cause.code === "EPERM"
+              ? Effect.void
+              : Effect.fail(cause),
+          ),
+        );
       }),
     ).pipe(
       Effect.mapError(
