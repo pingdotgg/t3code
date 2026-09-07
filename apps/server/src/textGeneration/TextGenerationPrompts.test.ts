@@ -309,6 +309,7 @@ describe("normalizeCliError", () => {
     const existing = new TextGenerationCliUnavailableError({
       operation: "generateThreadTitle",
       cliName: "codex",
+      cause: new Error("Command not found: codex"),
     });
 
     const result = normalizeCliError("codex", "generateThreadTitle", existing, "fallback");

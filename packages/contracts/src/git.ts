@@ -389,7 +389,7 @@ export class TextGenerationCliUnavailableError extends Schema.TaggedError<TextGe
   {
     operation: Schema.String,
     cliName: Schema.Literals(["codex", "claude"]),
-    cause: Schema.optional(Schema.Defect()),
+    cause: Schema.Defect(),
   },
 ) {
   get detail(): string {
