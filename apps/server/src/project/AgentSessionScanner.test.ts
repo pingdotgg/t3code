@@ -213,6 +213,7 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
             threadCount: 1,
             lastActiveAt: "2026-03-01T00:00:00.000Z",
             alreadyImported: false,
+            git: null,
           },
           {
             path: olderWorkspace,
@@ -221,6 +222,7 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
             threadCount: 2,
             lastActiveAt: "2026-01-02T00:00:00.000Z",
             alreadyImported: false,
+            git: null,
           },
         ]);
       }),
@@ -263,6 +265,7 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
             threadCount: 1,
             lastActiveAt: "2026-02-09T11:00:00.000Z",
             alreadyImported: false,
+            git: null,
           },
           {
             path: workspace,
@@ -271,6 +274,7 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
             threadCount: 2,
             lastActiveAt: "2026-02-09T10:00:00.000Z",
             alreadyImported: false,
+            git: null,
           },
         ]);
       }),
@@ -389,6 +393,7 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
             threadCount: 2,
             lastActiveAt: "2026-04-01T09:00:00.000Z",
             alreadyImported: true,
+            git: null,
           },
         ]);
       }),
@@ -421,6 +426,7 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
           path: workspace,
           projectId: ProjectId.make("project-1"),
           alreadyImported: true,
+          git: null,
         });
       }),
     );
@@ -452,6 +458,7 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
           path: workspaceAlias,
           projectId: ProjectId.make("project-1"),
           alreadyImported: true,
+          git: null,
         });
       }),
     );
@@ -498,6 +505,7 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
             threadCount: 2,
             lastActiveAt: "2026-01-02T00:00:00.000Z",
             alreadyImported: true,
+            git: null,
           },
         ]);
       }),
@@ -852,6 +860,92 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
         const result = yield* runScan({ claudeHomePath, codexHomePath });
 
         expect(result.candidates).toEqual([]);
+      }),
+    );
+
+    it.effect("excludes Codex scratch directories and Downloads", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+        const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+        const home = NodeOS.homedir();
+        const scratch = path.join(home, "Documents", "Codex", "2026-09-01", "t3code-scanner-test");
+        const downloads = path.join(home, "Downloads", "t3code-scanner-test");
+        const keep = yield* makeTempDir("t3code-workspace-keep-");
+        yield* fileSystem.makeDirectory(scratch, { recursive: true });
+        yield* fileSystem.makeDirectory(downloads, { recursive: true });
+        yield* Effect.addFinalizer(() =>
+          Effect.all([
+            fileSystem.remove(scratch, { recursive: true }).pipe(Effect.ignore),
+            fileSystem.remove(downloads, { recursive: true }).pipe(Effect.ignore),
+          ]),
+        );
+
+        for (const [index, cwd] of [scratch, downloads, keep].entries()) {
+          yield* writeTranscript({
+            filePath: path.join(
+              codexHomePath,
+              "sessions",
+              "2026",
+              "09",
+              "01",
+              `rollout-${index}.jsonl`,
+            ),
+            contents: codexRolloutLine(cwd),
+            mtimeMs: Date.parse("2026-09-01T00:00:00.000Z"),
+          });
+        }
+
+        const result = yield* runScan({ claudeHomePath, codexHomePath });
+
+        expect(result.candidates.map((candidate) => candidate.path)).toEqual([keep]);
+      }),
+    );
+
+    it.effect("skips linked git worktrees and reports the origin of real checkouts", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+        const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+        const repo = yield* makeTempDir("t3code-workspace-repo-");
+        const worktree = yield* makeTempDir("t3code-workspace-worktree-");
+        const plain = yield* makeTempDir("t3code-workspace-plain-");
+        const noRemote = yield* makeTempDir("t3code-workspace-noremote-");
+
+        yield* fileSystem.makeDirectory(path.join(repo, ".git"));
+        yield* fileSystem.writeFileString(
+          path.join(repo, ".git", "config"),
+          '[core]\n\tbare = false\n[remote "origin"]\n\turl = git@github.com:pingdotgg/t3code.git\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n',
+        );
+        yield* fileSystem.writeFileString(
+          path.join(worktree, ".git"),
+          `gitdir: ${path.join(repo, ".git", "worktrees", "wt")}\n`,
+        );
+        yield* fileSystem.makeDirectory(path.join(noRemote, ".git"));
+        yield* fileSystem.writeFileString(path.join(noRemote, ".git", "config"), "[core]\n");
+
+        for (const [index, cwd] of [repo, worktree, plain, noRemote].entries()) {
+          yield* writeTranscript({
+            filePath: path.join(claudeHomePath, "projects", `-slug-${index}`, "a.jsonl"),
+            contents: claudeSessionLine(cwd),
+            mtimeMs: Date.parse(`2026-01-0${index + 1}T00:00:00.000Z`),
+          });
+        }
+
+        const result = yield* runScan({ claudeHomePath, codexHomePath });
+
+        expect(
+          result.candidates.map((candidate) => ({ path: candidate.path, git: candidate.git })),
+        ).toEqual([
+          { path: noRemote, git: { remoteKey: null, repository: null } },
+          { path: plain, git: null },
+          {
+            path: repo,
+            git: { remoteKey: "github.com/pingdotgg/t3code", repository: "pingdotgg/t3code" },
+          },
+        ]);
       }),
     );
 
@@ -1231,6 +1325,7 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
             threadCount: 1,
             lastActiveAt: "2026-05-03T00:00:00.000Z",
             alreadyImported: false,
+            git: null,
           },
         ]);
       }),

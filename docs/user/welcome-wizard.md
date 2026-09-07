@@ -46,9 +46,15 @@ terminal metadata while the terminal process can use them.
 
 ## Import your projects
 
-T3 Code finds directories that Claude Code or Codex has used. The default
-selection includes projects active within the last 30 days. Use the checkboxes
-to include older projects or change the selection.
+T3 Code finds directories that Claude Code or Codex has used. Git repositories
+are listed first, newest activity on top, with the GitHub repository name when
+the origin is on GitHub. Clones of the same repository share one group.
+Directories that are not git repositories sit under "Other folders".
+
+The default selection includes git repositories active within the last 30 days
+with at least three conversations. Use the checkboxes, or "Select all" and
+"Select none", to change the selection. Linked git worktrees, Codex scratch
+directories, Downloads, and temporary directories are not offered.
 
 A large or malformed history can reach the scan limit. T3 Code keeps the
 projects it found and warns when projects or conversations may be missing.

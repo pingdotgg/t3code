@@ -37,6 +37,18 @@ export type AgentSessionScanInput = typeof AgentSessionScanInput.Type;
  * T3 Code project. `alreadyImported` marks candidates that already have an
  * active project rooted at the same path.
  */
+/**
+ * Git identity of a candidate directory, read from `.git/config` without
+ * spawning git. `remoteKey` is the normalized origin URL, shared by every
+ * clone of the same repository so the client can group them. `repository`
+ * is the GitHub `owner/name` when the origin is on GitHub.
+ */
+export const AgentSessionProjectGit = Schema.Struct({
+  remoteKey: Schema.NullOr(Schema.String),
+  repository: Schema.NullOr(Schema.String),
+});
+export type AgentSessionProjectGit = typeof AgentSessionProjectGit.Type;
+
 export const AgentSessionProjectCandidate = Schema.Struct({
   path: TrimmedNonEmptyString,
   title: TrimmedNonEmptyString,
@@ -45,6 +57,8 @@ export const AgentSessionProjectCandidate = Schema.Struct({
   threadCount: NonNegativeInt,
   lastActiveAt: Schema.NullOr(IsoDateTime),
   alreadyImported: Schema.Boolean,
+  /** `null` when the directory is not the root of a git repository. */
+  git: Schema.NullOr(AgentSessionProjectGit),
 });
 export type AgentSessionProjectCandidate = typeof AgentSessionProjectCandidate.Type;
 

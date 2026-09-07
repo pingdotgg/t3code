@@ -144,6 +144,29 @@ export function normalizeGitRemoteUrl(value: string): string {
 }
 
 /**
+ * Read `remote.origin.url` from raw `.git/config` text. Avoids spawning git
+ * for callers that only need the origin, such as project discovery scans.
+ */
+export function parseOriginUrlFromGitConfig(configText: string): string | null {
+  let inOrigin = false;
+  for (const rawLine of configText.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (line.length === 0 || line.startsWith("#") || line.startsWith(";")) continue;
+    if (line.startsWith("[")) {
+      inOrigin = /^\[\s*remote\s+"origin"\s*\]$/i.test(line);
+      continue;
+    }
+    if (!inOrigin) continue;
+    const match = /^url\s*=\s*(.+)$/i.exec(line);
+    if (match?.[1]) {
+      const url = match[1].trim();
+      return url.length > 0 ? url : null;
+    }
+  }
+  return null;
+}
+
+/**
  * Best-effort parse of a GitHub `owner/repo` identifier from common remote URL shapes.
  */
 export function parseGitHubRepositoryNameWithOwnerFromRemoteUrl(url: string | null): string | null {

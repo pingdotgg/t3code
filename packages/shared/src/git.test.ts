@@ -7,6 +7,7 @@ import {
   isTemporaryWorktreeBranch,
   normalizeGitRemoteUrl,
   parseGitHubRepositoryNameWithOwnerFromRemoteUrl,
+  parseOriginUrlFromGitConfig,
   WORKTREE_BRANCH_PREFIX,
 } from "./git.ts";
 
@@ -48,6 +49,28 @@ describe("normalizeGitRemoteUrl", () => {
     expect(normalizeGitRemoteUrl("deploy@bitbucket.org:workspace/repo.git")).toBe(
       "bitbucket.org/workspace/repo",
     );
+  });
+});
+
+describe("parseOriginUrlFromGitConfig", () => {
+  it("reads the origin url and ignores other remotes", () => {
+    const config = [
+      "[core]",
+      "\trepositoryformatversion = 0",
+      '[remote "upstream"]',
+      "\turl = https://github.com/other/repo.git",
+      '[remote "origin"]',
+      "\turl = git@github.com:pingdotgg/t3code.git",
+      "\tfetch = +refs/heads/*:refs/remotes/origin/*",
+      '[branch "main"]',
+      "\tremote = origin",
+    ].join("\n");
+    expect(parseOriginUrlFromGitConfig(config)).toBe("git@github.com:pingdotgg/t3code.git");
+  });
+
+  it("returns null when there is no origin section", () => {
+    expect(parseOriginUrlFromGitConfig("[core]\n\tbare = false\n")).toBeNull();
+    expect(parseOriginUrlFromGitConfig("")).toBeNull();
   });
 });
 
