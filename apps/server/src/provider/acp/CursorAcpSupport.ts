@@ -22,7 +22,7 @@ type CursorAcpRuntimeCursorSettings = Pick<CursorSettings, "apiEndpoint" | "bina
 function cursorAcpPermissionArgs(runtimeMode?: RuntimeMode): ReadonlyArray<string> {
   switch (runtimeMode) {
     case "auto":
-      return ["--auto-review"];
+      return ["--auto-review", "--sandbox", "enabled"];
     case "full-access":
       return ["--force"];
     default:
