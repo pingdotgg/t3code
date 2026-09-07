@@ -1492,6 +1492,18 @@ describe("ClaudeAdapterLive", () => {
             event,
           } as unknown as SDKMessage);
         const owners = [null, "task-a", "task-b"] as const;
+        for (const owner of ["task-a", "task-b"]) {
+          harness.query.emit({
+            type: "system",
+            subtype: "task_started",
+            task_id: `agent-${owner}`,
+            tool_use_id: owner,
+            description: owner,
+            task_type: "local_agent",
+            session_id: "sdk-isolated",
+            uuid: `started-${owner}`,
+          } as unknown as SDKMessage);
+        }
         stream(null, {
           type: "content_block_start",
           index: 1,
@@ -1590,6 +1602,7 @@ describe("ClaudeAdapterLive", () => {
           assert.equal(event?.type, "item.completed");
           if (event?.type !== "item.completed") return;
           assert.equal(event.payload.parentToolUseId, owner ?? undefined);
+          assert.equal(event.payload.agentId, owner === null ? undefined : `agent-${owner}`);
           assert.equal(
             event.payload.status,
             ending === "stream-failed" || (ending === "results" && owner === "task-b")
