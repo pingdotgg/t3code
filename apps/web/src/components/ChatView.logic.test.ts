@@ -1864,10 +1864,14 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
 });
 
 describe("shouldRefocusComposerOnWindowFocus", () => {
-  function element(tagName: string, options?: { editable?: boolean; within?: string }) {
+  function element(
+    tagName: string,
+    options?: { editable?: boolean; role?: string; within?: string },
+  ) {
     return {
       tagName,
       isContentEditable: options?.editable ?? false,
+      getAttribute: (name: string) => (name === "role" ? (options?.role ?? null) : null),
       closest: (selector: string) =>
         options?.within !== undefined && selector.includes(options.within) ? ({} as Element) : null,
     };
@@ -1886,6 +1890,13 @@ describe("shouldRefocusComposerOnWindowFocus", () => {
     expect(shouldRefocusComposerOnWindowFocus(element("INPUT"))).toBe(false);
     expect(shouldRefocusComposerOnWindowFocus(element("TEXTAREA"))).toBe(false);
     expect(shouldRefocusComposerOnWindowFocus(element("DIV", { editable: true }))).toBe(false);
+    expect(shouldRefocusComposerOnWindowFocus(element("DIV", { role: "textbox" }))).toBe(false);
+  });
+
+  it("leaves a focused terminal alone in the drawer and the right panel", () => {
+    expect(
+      shouldRefocusComposerOnWindowFocus(element("BUTTON", { within: "data-terminal-owner" })),
+    ).toBe(false);
   });
 
   it("leaves focus inside a dialog or popup alone", () => {
