@@ -125,10 +125,12 @@ describe("settledPrHoverColorClass", () => {
     ["merged", "text-violet-600"],
     ["closed", "text-red-600"],
   ] as const)("restores the %s pull request color on row hover", (state, colorClass) => {
-    expect(settledPrHoverColorClass(state)).toContain(`group-hover/v2-row:${colorClass}`);
+    expect(settledPrHoverColorClass(state)).toContain(`group-hover/sidebar-row:${colorClass}`);
   });
 
   it("keeps draft pull requests gray on row hover", () => {
-    expect(settledPrHoverColorClass("open", true)).toContain("group-hover/v2-row:text-zinc-500");
+    expect(settledPrHoverColorClass("open", true)).toContain(
+      "group-hover/sidebar-row:text-zinc-500",
+    );
   });
 });
