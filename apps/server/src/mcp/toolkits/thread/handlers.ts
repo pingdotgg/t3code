@@ -8,6 +8,7 @@ import {
   type OrchestrationV2Command,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import { modelSelectionCommandType } from "@t3tools/shared/model";
 
 import { newCommandId, readThread, readWritableThread, unavailable } from "../../threadAccess.ts";
 import { queuedRunsInDeliveryOrder } from "../../../orchestration-v2/QueuedRunOrder.ts";
@@ -78,10 +79,7 @@ export const ThreadToolkitHandlersLive = ThreadToolkit.toLayer({
         threads,
         projection: { thread },
       } = yield* readWritableThread();
-      const type =
-        thread.modelSelection.instanceId === input.modelSelection.instanceId
-          ? "thread.model-selection.set"
-          : "provider.switch";
+      const type = modelSelectionCommandType(thread.providerInstanceId, input.modelSelection);
       const result = yield* threads
         .dispatch({
           type,
