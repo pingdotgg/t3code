@@ -65,6 +65,65 @@ private slots:
     QCOMPARE(theme.color("canvas", Qt::black), QColor("#123456"));
   }
 
+  void legacyThemeRemovalRestoresDocumentState() {
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    QFile file(directory.filePath("theme.json"));
+    const QByteArray source = "{\"id\":\"shell-night\",\"appearance\":\"dark\",\"colors\":{\"canvas\":\"#123456\",\"chrome\":\"#234567\"}}";
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.write(source);
+    file.close();
+    ThemeStore theme(directory.path());
+    QWebEngineProfile profile;
+    QWebEnginePage page(&profile);
+    QSignalSpy loaded(&page, &QWebEnginePage::loadFinished);
+    page.setHtml("<!doctype html><html><body>Legacy theme test</body></html>");
+    QVERIFY(loaded.wait());
+    const auto evaluate = [&](const QString& script) {
+      QSignalSpy completed(this, &ShellRuntimeTest::scriptFinished);
+      page.runJavaScript(script, [this](const QVariant& result) { emit scriptFinished(result); });
+      if (completed.isEmpty() && !completed.wait()) return QVariant();
+      return completed.first().first();
+    };
+    evaluate(R"(
+      const root = document.documentElement;
+      root.dataset.themeId = 'page';
+      root.dataset.themeSelected = 'false';
+      root.classList.add('unrelated');
+      root.style.setProperty('background-color', 'rgb(12, 34, 56)', 'important');
+      root.style.setProperty('--app-theme-canvas', '#654321', 'important');
+      window.snapshot = () => JSON.stringify([
+        root.getAttribute('data-theme-id'), root.getAttribute('data-theme-selected'),
+        root.className, root.style.getPropertyValue('background-color'),
+        root.style.getPropertyPriority('background-color'),
+        root.style.getPropertyValue('--app-theme-canvas'),
+        root.style.getPropertyPriority('--app-theme-canvas')
+      ]);
+    )");
+    const auto original = evaluate("snapshot()");
+    evaluate(theme.injectionScript());
+    QVERIFY(evaluate("snapshot()") != original);
+    evaluate(theme.injectionScript());
+    QVERIFY(file.remove());
+    theme.reload();
+    evaluate(theme.injectionScript());
+    QCOMPARE(evaluate("snapshot()"), original);
+    QCOMPARE(evaluate("window.__t3ShellTheme.observer === null").toBool(), true);
+    QCOMPARE(evaluate("document.documentElement.style.getPropertyValue('--app-theme-chrome')").toString(), QString());
+
+    evaluate("document.documentElement.removeAttribute('data-theme-id'); document.documentElement.removeAttribute('data-theme-selected');");
+    const auto withoutAttributes = evaluate("snapshot()");
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.write(source);
+    file.close();
+    theme.reload();
+    evaluate(theme.injectionScript());
+    QVERIFY(file.remove());
+    theme.reload();
+    evaluate(theme.injectionScript());
+    QCOMPARE(evaluate("snapshot()"), withoutAttributes);
+  }
+
   void themeBootstrapHandsOffWithoutRewritingThePage() {
     QTemporaryDir directory;
     QVERIFY(directory.isValid());
