@@ -9,14 +9,15 @@ tools_dir="${build_dir}/tools"
 mkdir -p "${tools_dir}"
 
 fetch() {
-  local url="$1" out="$2"
-  if [ ! -x "${out}" ]; then
+  local url="$1" out="$2" digest="$3"
+  if [ ! -f "${out}" ]; then
     curl -fsSL "${url}" -o "${out}"
-    chmod +x "${out}"
   fi
+  printf '%s  %s\n' "${digest}" "${out}" | sha256sum --check --status
+  chmod +x "${out}"
 }
-fetch "https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage" "${tools_dir}/linuxdeploy"
-fetch "https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-x86_64.AppImage" "${tools_dir}/linuxdeploy-plugin-qt"
+fetch "https://github.com/linuxdeploy/linuxdeploy/releases/download/1-alpha-20251107-1/linuxdeploy-x86_64.AppImage" "${tools_dir}/linuxdeploy-1-alpha-20251107-1" "c20cd71e3a4e3b80c3483cef793cda3f4e990aca14014d23c544ca3ce1270b4d"
+fetch "https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/1-alpha-20250213-1/linuxdeploy-plugin-qt-x86_64.AppImage" "${tools_dir}/linuxdeploy-plugin-qt" "15106be885c1c48a021198e7e1e9a48ce9d02a86dd0a1848f00bdbf3c1c92724"
 
 rm -rf "${app_dir}"
 cmake --install "${build_dir}" --prefix "${app_dir}/usr"
@@ -40,5 +41,5 @@ node "$(dirname "$0")/stage-runtime.mjs" "${app_dir}/usr/share/t3code"
 
 export QML_SOURCES_PATHS="$(cd "$(dirname "$0")/.." && pwd)/qml"
 export OUTPUT="${build_dir}/t3code-qt-x86_64.AppImage"
-"${tools_dir}/linuxdeploy" --appdir "${app_dir}" --plugin qt --output appimage
+"${tools_dir}/linuxdeploy-1-alpha-20251107-1" --appdir "${app_dir}" --plugin qt --output appimage
 echo "AppImage at ${OUTPUT}"

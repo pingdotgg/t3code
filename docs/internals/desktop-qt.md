@@ -9,7 +9,7 @@ layout, colours - a set of QML "bricks" a user can rearrange and restyle from
 
 ## Process model
 
-```
+```text
 t3code-qt (C++/QML, the shell)
   └─ spawns ─► node apps/desktop-qt/host/main.ts  (the desktop host)
                  └─ spawns ─► node apps/server/src/bin.ts --no-browser  (the server)
@@ -103,14 +103,13 @@ starts from: theme-driven colour, opacity and frame, `sidebarCollapsed` /
 overlay and the page's window commands), `ShellCard` (a rounded, hairlined
 panel), `ShellButton` (outline, `subtle` ghost, `primary`), `ShellComboBox`
 (ghost, `outline: true` for a field), `ShellSplitButton` (the header's action
-
-- chevron pill), `ShellMenu` / `ShellMenuItem`, `ShellTextField`, `ShellIcon`,
-  `WindowControls` (glyph buttons, or macOS traffic lights with
-  `trafficLights: true`), `TitleBar` and `T3Wordmark` (the web app's "T3"
-  mark as a filled `Shape`, sized by its height). `ShellIcon` draws the page's
-  lucide icons as a `Shape` from the path table in `js/lucide.js`, so bricks
-  pass an icon name (`iconName: "git-branch"`) and get the same glyph the HTML
-  shows, at any size or color.
+and chevron pill), `ShellMenu` / `ShellMenuItem`, `ShellTextField`, `ShellIcon`,
+`WindowControls` (glyph buttons, or macOS traffic lights with
+`trafficLights: true`), `TitleBar` and `T3Wordmark` (the web app's "T3"
+mark as a filled `Shape`, sized by its height). `ShellIcon` draws the page's
+lucide icons as a `Shape` from the path table in `js/lucide.js`, so bricks
+pass an icon name (`iconName: "git-branch"`) and get the same glyph the HTML
+shows, at any size or color.
 
 `DefaultShell` is laid out like the page: the sidebar's brand band ("T3 Code"
 plus the collapse toggle), a 52 px header strip with the breadcrumb and the

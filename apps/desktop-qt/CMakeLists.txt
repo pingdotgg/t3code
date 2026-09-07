@@ -2,6 +2,10 @@ cmake_minimum_required(VERSION 3.21)
 
 project(t3code-qt VERSION 0.0.1 LANGUAGES CXX)
 
+if(APPLE)
+  enable_language(OBJCXX)
+endif()
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
@@ -14,41 +18,31 @@ qt_policy(SET QTP0001 NEW)
 # edits hot-reload without a rebuild; release builds only use the compiled-in
 # copies. T3_QML_SOURCE_DIR="" disables disk loading for any build type.
 if(NOT DEFINED T3_QML_SOURCE_DIR)
-  if(CMAKE_BUILD_TYPE STREQUAL "Release")
-    set(T3_QML_SOURCE_DIR "")
-  else()
-    set(T3_QML_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/qml")
-  endif()
+  set(T3_QML_SOURCE_DIR "$<IF:$<CONFIG:Release>,,${CMAKE_CURRENT_SOURCE_DIR}/qml>")
 endif()
 
 # The Node desktop host entry. In-repo builds point at the TypeScript source.
 # Release builds resolve an installed path relative to the executable.
 if(NOT DEFINED T3_HOST_ENTRY)
-  if(CMAKE_BUILD_TYPE STREQUAL "Release")
-    if(APPLE)
-      set(T3_HOST_ENTRY "../Resources/t3code/host/main.ts")
-    else()
-      set(T3_HOST_ENTRY "../share/t3code/host/main.ts")
-    endif()
+  if(APPLE)
+    set(_t3_installed_host "../Resources/t3code/host/main.ts")
   else()
-    set(T3_HOST_ENTRY "${CMAKE_CURRENT_SOURCE_DIR}/host/main.ts")
+    set(_t3_installed_host "../share/t3code/host/main.ts")
   endif()
+  set(T3_HOST_ENTRY "$<IF:$<CONFIG:Release>,${_t3_installed_host},${CMAKE_CURRENT_SOURCE_DIR}/host/main.ts>")
 endif()
 
 # Release packages carry the same Node executable that installed their native
 # dependencies. Development builds keep using the command from PATH.
 if(NOT DEFINED T3_NODE_ENTRY)
-  if(CMAKE_BUILD_TYPE STREQUAL "Release")
-    if(APPLE)
-      set(T3_NODE_ENTRY "../Resources/t3code/bin/node")
-    elseif(WIN32)
-      set(T3_NODE_ENTRY "../share/t3code/bin/node.exe")
-    else()
-      set(T3_NODE_ENTRY "../share/t3code/bin/node")
-    endif()
+  if(APPLE)
+    set(_t3_installed_node "../Resources/t3code/bin/node")
+  elseif(WIN32)
+    set(_t3_installed_node "../share/t3code/bin/node.exe")
   else()
-    set(T3_NODE_ENTRY "node")
+    set(_t3_installed_node "../share/t3code/bin/node")
   endif()
+  set(T3_NODE_ENTRY "$<IF:$<CONFIG:Release>,${_t3_installed_node},node>")
 endif()
 
 # qwebchannel.js is the browser half of Qt WebChannel. Qt installs it as data

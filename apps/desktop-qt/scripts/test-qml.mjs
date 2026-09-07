@@ -19,7 +19,7 @@ function findRunner() {
   const binDirectories = [
     process.env.QT_ROOT_DIR,
     process.env.QT_PREFIX,
-    process.env.CMAKE_PREFIX_PATH,
+    ...(process.env.CMAKE_PREFIX_PATH?.split(NodePath.delimiter) ?? []),
   ]
     .filter(Boolean)
     .map((prefix) => NodePath.join(prefix, "bin"));
