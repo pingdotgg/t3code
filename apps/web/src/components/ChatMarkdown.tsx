@@ -2775,7 +2775,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
               input: {
                 projectId: pullRequestProject.id,
                 repository:
-                  pullRequestProject.repositoryIdentity?.displayName ??
+                  pullRequestRepositoryOf(pullRequestProject.repositoryIdentity) ??
                   pullRequestCandidate.repository,
                 number: pullRequestCandidate.number,
               },

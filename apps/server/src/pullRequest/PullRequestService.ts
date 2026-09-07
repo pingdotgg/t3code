@@ -1468,8 +1468,14 @@ export const make = Effect.gen(function* () {
    */
   const filesViewedRepositoryOf = (project: SupportedProject) => {
     if (project.api.kind !== "azure-devops") return project.repository;
-    const path = project.project.repositoryIdentity?.displayName?.trim();
-    return path === undefined || path.length === 0 ? project.repository : path;
+    const identity = project.project.repositoryIdentity;
+    const path = identity?.displayName?.trim();
+    if (path !== undefined && path.length > 0) return path;
+    // The scope carries no project id, so the bare name Azure is addressed by would put two
+    // repositories called `api` on one row. The canonical remote repeats the host this scope
+    // already holds, and is the only other spelling that keeps the whole identity.
+    const canonical = identity?.canonicalKey?.trim();
+    return canonical === undefined || canonical.length === 0 ? project.repository : canonical;
   };
 
   /**
