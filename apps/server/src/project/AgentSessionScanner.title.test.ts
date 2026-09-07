@@ -22,9 +22,30 @@ describe("Codex imported thread titles", () => {
     expect(thread?.title).toBe("Saved task title");
   });
 
+  it("uses threadName when a saved name is unavailable", () => {
+    const thread = parseCodexTranscript([
+      { type: "session_meta", payload: { id: "codex-session", threadName: "Saved thread name" } },
+      { type: "event_msg", payload: { type: "user_message", message: "Fallback prompt title" } },
+    ]);
+
+    expect(thread?.title).toBe("Saved thread name");
+  });
+
   it("skips a recommended plugins preamble while preserving the imported message", () => {
     const prompt =
       "<recommended_plugins>\n<plugin>Documents</plugin>\n</recommended_plugins>\n\nFix the imported task title.";
+    const thread = parseCodexTranscript([
+      { type: "session_meta", payload: { id: "codex-session" } },
+      { type: "event_msg", payload: { type: "user_message", message: prompt } },
+    ]);
+
+    expect(thread?.title).toBe("Fix the imported task title.");
+    expect(thread?.messages.map((message) => message.text)).toEqual([prompt]);
+  });
+
+  it("skips user instructions while preserving the imported message", () => {
+    const prompt =
+      "<user_instructions>\nAlways inspect the repository first.\n</user_instructions>\n\nFix the imported task title.";
     const thread = parseCodexTranscript([
       { type: "session_meta", payload: { id: "codex-session" } },
       { type: "event_msg", payload: { type: "user_message", message: prompt } },
