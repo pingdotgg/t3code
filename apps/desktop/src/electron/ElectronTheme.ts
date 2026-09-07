@@ -28,7 +28,8 @@ export class ElectronTheme extends Context.Service<
   }
 >()("@t3tools/desktop/electron/ElectronTheme") {}
 
-const make = ElectronTheme.of({
+/** @public Service construction is part of the module API alongside layer. */
+export const make = ElectronTheme.of({
   shouldUseDarkColors: Effect.sync(() => Electron.nativeTheme.shouldUseDarkColors),
   setSource: (theme) =>
     Effect.try({

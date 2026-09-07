@@ -179,7 +179,8 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   return preferences;
 }
 
-const make = Effect.fn("MobilePreferencesStore.make")(function* () {
+/** @public Service construction is part of the module API alongside layer. */
+export const make = Effect.fn("MobilePreferencesStore.make")(function* () {
   const database = yield* MobileDatabase.MobileDatabase;
   const secureStorage = yield* MobileSecureStorage.MobileSecureStorage;
   const lock = yield* Semaphore.make(1);

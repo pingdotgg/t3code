@@ -378,7 +378,8 @@ function bitbucketReviewPosition(
   }
 }
 
-const make = Effect.gen(function* () {
+/** @public Service construction is part of the module API alongside layer. */
+export const make = Effect.gen(function* () {
   const bitbucket = yield* BitbucketApi.BitbucketApi;
 
   /**

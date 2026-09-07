@@ -142,7 +142,8 @@ function buildHealth(input: {
   };
 }
 
-const make = Effect.fn("resourceTelemetry.resourceTelemetry.make")(function* () {
+/** @public Service construction is part of the module API alongside layer. */
+export const make = Effect.fn("resourceTelemetry.resourceTelemetry.make")(function* () {
   const nativeClient = yield* NativeTelemetryClient.NativeTelemetryClient;
   const desktopReceiver = yield* DesktopTelemetryReceiver.DesktopTelemetryReceiver;
   const attribution = yield* ResourceAttribution.ResourceAttribution;

@@ -360,7 +360,8 @@ export function canCommandNativeTelemetrySidecar(
   return hasHandle && (status === "healthy" || status === "degraded");
 }
 
-const make = Effect.fn("resourceTelemetry.nativeTelemetryClient.make")(function* () {
+/** @public Service construction is part of the module API alongside layer. */
+export const make = Effect.fn("resourceTelemetry.nativeTelemetryClient.make")(function* () {
   const binary = yield* ResourceMonitorBinary.ResourceMonitorBinary;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const crypto = yield* Crypto.Crypto;

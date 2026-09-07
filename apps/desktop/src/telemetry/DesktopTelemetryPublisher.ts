@@ -145,7 +145,8 @@ function sampleInterval(
   return LIVE_SAMPLE_INTERVAL;
 }
 
-const make = Effect.fn("desktop.telemetryPublisher.make")(function* () {
+/** @public Service construction is part of the module API alongside layer. */
+export const make = Effect.fn("desktop.telemetryPublisher.make")(function* () {
   const electronApp = yield* ElectronApp.ElectronApp;
   const powerMonitor = yield* ElectronPowerMonitor.ElectronPowerMonitor;
   yield* electronApp.whenReady;

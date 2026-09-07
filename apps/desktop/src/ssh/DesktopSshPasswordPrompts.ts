@@ -222,7 +222,8 @@ const failPending = (
   error: DesktopSshPasswordPromptRequestError,
 ) => Deferred.fail(pending.deferred, error).pipe(Effect.asVoid);
 
-const make = Effect.fn("desktop.sshPasswordPrompts.make")(function* (
+/** @public Service construction is part of the module API alongside layer. */
+export const make = Effect.fn("desktop.sshPasswordPrompts.make")(function* (
   options: DesktopSshPasswordPromptsOptions = {},
 ) {
   const electronWindow = yield* ElectronWindow.ElectronWindow;

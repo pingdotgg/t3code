@@ -980,7 +980,8 @@ function actionArgs(
   }
 }
 
-const make = Effect.gen(function* () {
+/** @public Service construction is part of the module API alongside layer. */
+export const make = Effect.gen(function* () {
   const github = yield* GitHubCli.GitHubCli;
   const graphQlBudget = yield* GitHubGraphQlBudget.GitHubGraphQlBudget;
 

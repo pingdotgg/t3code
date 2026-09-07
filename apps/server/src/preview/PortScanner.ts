@@ -289,7 +289,8 @@ const serversEqual = (
   return true;
 };
 
-const make = Effect.gen(function* PortDiscoveryMake() {
+/** @public Service construction is part of the module API alongside layer. */
+export const make = Effect.gen(function* PortDiscoveryMake() {
   const net = yield* Net.NetService;
   const processRunner = yield* ProcessRunner.ProcessRunner;
   const hostPlatform = yield* HostProcessPlatform;

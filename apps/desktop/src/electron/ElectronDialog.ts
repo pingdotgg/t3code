@@ -102,7 +102,8 @@ export class ElectronDialog extends Context.Service<
   }
 >()("@t3tools/desktop/electron/ElectronDialog") {}
 
-const make = ElectronDialog.of({
+/** @public Service construction is part of the module API alongside layer. */
+export const make = ElectronDialog.of({
   pickFolder: Effect.fn("desktop.electron.dialog.pickFolder")(function* (input) {
     const ownerWindowId = Option.match(input.owner, {
       onNone: () => null,

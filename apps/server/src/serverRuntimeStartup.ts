@@ -803,7 +803,8 @@ export const autoPullProjects = Effect.fn("autoPullProjects")(function* (
   );
 });
 
-const make = (options?: StartupOptions) =>
+/** @public Service construction is part of the module API alongside layer. */
+export const make = (options?: StartupOptions) =>
   Effect.gen(function* () {
     const serverConfig = yield* ServerConfig.ServerConfig;
     const keybindings = yield* Keybindings.Keybindings;

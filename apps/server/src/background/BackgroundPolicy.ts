@@ -208,7 +208,8 @@ function computeSnapshot(input: {
   };
 }
 
-const make = Effect.fn("background.policy.make")(function* () {
+/** @public Service construction is part of the module API alongside layer. */
+export const make = Effect.fn("background.policy.make")(function* () {
   const hostPowerMonitor = yield* HostPowerMonitor.HostPowerMonitor;
   const serverSettings = yield* ServerSettingsService;
   const leasesRef = yield* Ref.make(new Map<string, ClientActivityLease>());

@@ -159,7 +159,8 @@ const encodeScopeForDigest = (scope: string): Uint8Array =>
       ),
   );
 
-const make = Effect.gen(function* BrowserSessionMake() {
+/** @public Service construction is part of the module API alongside layer. */
+export const make = Effect.gen(function* BrowserSessionMake() {
   const crypto = yield* Crypto.Crypto;
   const sessionsRef = yield* SynchronizedRef.make<ReadonlyMap<string, Session>>(new Map());
 

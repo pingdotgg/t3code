@@ -411,7 +411,8 @@ function readTraceFile(
   );
 }
 
-const make = Effect.gen(function* () {
+/** @public Service construction is part of the module API alongside layer. */
+export const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
 
   const read: TraceDiagnostics["Service"]["read"] = Effect.fn("TraceDiagnostics.read")(

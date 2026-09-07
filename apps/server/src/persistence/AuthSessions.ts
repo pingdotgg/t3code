@@ -200,7 +200,8 @@ function toPersistenceSqlOrDecodeError(
         });
 }
 
-const make = Effect.gen(function* () {
+/** @public Service construction is part of the module API alongside layer. */
+export const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
   const createSessionRow = SqlSchema.void({

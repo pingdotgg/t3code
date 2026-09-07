@@ -75,7 +75,8 @@ const onSpeedLimitChange: ElectronPowerMonitor["Service"]["onSpeedLimitChange"] 
   ).pipe(Effect.asVoid);
 };
 
-const make = ElectronPowerMonitor.of({
+/** @public Service construction is part of the module API alongside layer. */
+export const make = ElectronPowerMonitor.of({
   isOnBatteryPower: Effect.sync(() => Electron.powerMonitor.isOnBatteryPower()),
   getSystemIdleTime: Effect.sync(() => Electron.powerMonitor.getSystemIdleTime()),
   getSystemIdleState: (idleThresholdSeconds) =>

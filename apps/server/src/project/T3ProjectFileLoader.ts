@@ -59,7 +59,8 @@ const logT3ProjectFileLoadError = (error: T3ProjectFileLoadError) =>
     }),
   );
 
-const make = Effect.gen(function* () {
+/** @public Service construction is part of the module API alongside layer. */
+export const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
 

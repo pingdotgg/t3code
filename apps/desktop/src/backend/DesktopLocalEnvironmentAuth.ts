@@ -42,7 +42,8 @@ export class DesktopLocalEnvironmentAuth extends Context.Service<
   }
 >()("@t3tools/desktop/backend/DesktopLocalEnvironmentAuth") {}
 
-const make = Effect.gen(function* () {
+/** @public Service construction is part of the module API alongside layer. */
+export const make = Effect.gen(function* () {
   const pool = yield* DesktopBackendPool.DesktopBackendPool;
   const httpClient = yield* HttpClient.HttpClient;
   const tokenRef = yield* Ref.make(Option.none<string>());

@@ -206,7 +206,8 @@ const resolveNativeAppIconUncached = Effect.fn("NativeAppIconResolver.resolveUnc
   return yield* existingFile(cachePath);
 });
 
-const make = Effect.gen(function* () {
+/** @public Service construction is part of the module API alongside layer. */
+export const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const hostPlatform = yield* HostProcessPlatform;
   const resolutionSemaphore = yield* Semaphore.make(2);

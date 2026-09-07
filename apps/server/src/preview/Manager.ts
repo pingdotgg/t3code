@@ -153,7 +153,8 @@ const buildIdleSnapshot = (input: {
   updatedAt: input.updatedAt,
 });
 
-const make = Effect.gen(function* PreviewManagerMake() {
+/** @public Service construction is part of the module API alongside layer. */
+export const make = Effect.gen(function* PreviewManagerMake() {
   const serverEpoch = NodeCrypto.randomUUID();
   const stateRef = yield* SynchronizedRef.make<ManagerState>(initialState);
   // Unbounded PubSub is fine here — events are tiny and we don't want to

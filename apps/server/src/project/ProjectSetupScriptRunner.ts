@@ -83,7 +83,8 @@ export class ProjectSetupScriptRunner extends Context.Service<
   }
 >()("t3/project/ProjectSetupScriptRunner") {}
 
-const make = Effect.gen(function* () {
+/** @public Service construction is part of the module API alongside layer. */
+export const make = Effect.gen(function* () {
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
   const terminalManager = yield* TerminalManager.TerminalManager;
   const serverSettings = yield* ServerSettings.ServerSettingsService;

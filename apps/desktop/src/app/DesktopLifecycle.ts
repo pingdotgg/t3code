@@ -159,7 +159,8 @@ function quitFromSignal(
   );
 }
 
-const make = DesktopLifecycle.of({
+/** @public Service construction is part of the module API alongside layer. */
+export const make = DesktopLifecycle.of({
   relaunch: Effect.fn("desktop.lifecycle.relaunch")(function* (reason) {
     const electronApp = yield* ElectronApp.ElectronApp;
     const environment = yield* DesktopEnvironment.DesktopEnvironment;

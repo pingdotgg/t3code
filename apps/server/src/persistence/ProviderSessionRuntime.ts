@@ -166,7 +166,8 @@ function toPersistenceSqlOrDecodeError(
         });
 }
 
-const make = Effect.gen(function* () {
+/** @public Service construction is part of the module API alongside layer. */
+export const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
   // Runtime writes can carry stale payloads. Only recordImportedTranscript may

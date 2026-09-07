@@ -614,7 +614,8 @@ function sameTranscriptIdentity(
   );
 }
 
-const make = Effect.gen(function* () {
+/** @public Service construction is part of the module API alongside layer. */
+export const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   // Different project imports can arrive concurrently from multiple clients.
   // Only one transcript may hold its selected-history budget at a time.

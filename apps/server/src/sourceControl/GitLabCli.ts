@@ -408,7 +408,8 @@ function parseRepositoryPath(repository: string): {
   return { namespacePath, projectPath };
 }
 
-const make = Effect.gen(function* () {
+/** @public Service construction is part of the module API alongside layer. */
+export const make = Effect.gen(function* () {
   const process = yield* VcsProcess.VcsProcess;
 
   const run = (

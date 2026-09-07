@@ -14,7 +14,8 @@ export class EnvironmentAuthPolicy extends Context.Service<
   }
 >()("t3/auth/EnvironmentAuthPolicy") {}
 
-const make = Effect.gen(function* () {
+/** @public Service construction is part of the module API alongside layer. */
+export const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
   const serverEnvironment = yield* ServerEnvironment.ServerEnvironmentIdentity;
   const isRemoteReachable = isRemoteReachableHost(config.host);

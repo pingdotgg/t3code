@@ -511,7 +511,8 @@ function actionArgs(
   }
 }
 
-const make = Effect.gen(function* () {
+/** @public Service construction is part of the module API alongside layer. */
+export const make = Effect.gen(function* () {
   const gitlab = yield* GitLabCli.GitLabCli;
 
   const api = (input: {

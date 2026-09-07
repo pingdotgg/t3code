@@ -129,7 +129,8 @@ const encodeRelayAgentActivityAggregateStateJson = Schema.encodeEffect(
   Schema.fromJsonString(RelayAgentActivityAggregateStateSchema),
 );
 
-const make = Effect.gen(function* () {
+/** @public Service construction is part of the module API alongside layer. */
+export const make = Effect.gen(function* () {
   const db = yield* RelayDb.RelayDb;
 
   return LiveActivities.of({

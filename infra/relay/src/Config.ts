@@ -30,7 +30,9 @@ export class RelayConfiguration extends Context.Service<
   }
 >()("t3code-relay/Config/RelayConfiguration") {}
 
-const make = (configuration: RelayConfiguration["Service"]) => RelayConfiguration.of(configuration);
+/** @public Service construction is part of the module API alongside layer. */
+export const make = (configuration: RelayConfiguration["Service"]) =>
+  RelayConfiguration.of(configuration);
 
 export const layer = (configuration: RelayConfiguration["Service"]) =>
   Layer.succeed(RelayConfiguration, make(configuration));

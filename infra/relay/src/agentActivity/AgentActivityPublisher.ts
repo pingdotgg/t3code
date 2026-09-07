@@ -47,7 +47,8 @@ export class AgentActivityPublisher extends Context.Service<
   }
 >()("t3code-relay/agentActivity/AgentActivityPublisher") {}
 
-const make = Effect.gen(function* () {
+/** @public Service construction is part of the module API alongside layer. */
+export const make = Effect.gen(function* () {
   const rows = yield* AgentActivityRows.AgentActivityRows;
   const links = yield* EnvironmentLinks.EnvironmentLinks;
   const liveActivities = yield* LiveActivities.LiveActivities;

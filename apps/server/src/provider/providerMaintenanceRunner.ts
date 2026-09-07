@@ -211,7 +211,8 @@ function makeUpdateState(input: {
   };
 }
 
-const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
+/** @public Service construction is part of the module API alongside layer. */
+export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
   const providerRegistry = yield* ProviderRegistry;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const httpClient = yield* HttpClient.HttpClient;

@@ -67,7 +67,8 @@ export class ElectronShell extends Context.Service<
   }
 >()("@t3tools/desktop/electron/ElectronShell") {}
 
-const make = ElectronShell.of({
+/** @public Service construction is part of the module API alongside layer. */
+export const make = ElectronShell.of({
   openExternal: (rawUrl) =>
     Option.match(parseSafeExternalUrl(rawUrl), {
       onNone: () => Effect.succeed(false),

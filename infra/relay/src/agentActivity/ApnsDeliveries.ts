@@ -692,7 +692,8 @@ export class ApnsDeliveries extends Context.Service<
   }
 >()("t3code-relay/agentActivity/ApnsDeliveries") {}
 
-const make = Effect.gen(function* () {
+/** @public Service construction is part of the module API alongside layer. */
+export const make = Effect.gen(function* () {
   const attempts = yield* DeliveryAttempts.DeliveryAttempts;
   const liveActivities = yield* LiveActivities.LiveActivities;
   const deliveryQueue = yield* ApnsDeliveryQueue.ApnsDeliveryQueue;

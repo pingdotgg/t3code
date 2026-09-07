@@ -4589,7 +4589,8 @@ export class PreviewManager extends Context.Service<
   }
 >()("@t3tools/desktop/preview/Manager/PreviewManager") {}
 
-const make = Effect.gen(function* PreviewManagerMake() {
+/** @public Service construction is part of the module API alongside layer. */
+export const make = Effect.gen(function* PreviewManagerMake() {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const browserSession = yield* BrowserSession.BrowserSession;
   const operations = yield* makeNativeOperations(

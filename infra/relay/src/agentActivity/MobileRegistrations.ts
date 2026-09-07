@@ -40,7 +40,8 @@ export class MobileRegistrations extends Context.Service<
   }
 >()("t3code-relay/agentActivity/MobileRegistrations") {}
 
-const make = Effect.gen(function* () {
+/** @public Service construction is part of the module API alongside layer. */
+export const make = Effect.gen(function* () {
   const rows = yield* AgentActivityRows.AgentActivityRows;
   const devices = yield* Devices.Devices;
   const liveActivities = yield* LiveActivities.LiveActivities;

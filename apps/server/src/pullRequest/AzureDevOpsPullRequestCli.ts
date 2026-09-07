@@ -261,7 +261,8 @@ function isReviewerName(value: string): boolean {
   return name.length > 0 && !name.startsWith("-");
 }
 
-const make = Effect.gen(function* () {
+/** @public Service construction is part of the module API alongside layer. */
+export const make = Effect.gen(function* () {
   const azure = yield* AzureDevOpsCli.AzureDevOpsCli;
 
   // Every command resolves the organization, project and repository from the checkout, which is

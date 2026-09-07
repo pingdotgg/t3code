@@ -117,7 +117,8 @@ export class MobileStorage extends Context.Service<
   }
 >()("@t3tools/mobile/persistence/MobileStorage") {}
 
-const make = Effect.fn("MobileStorage.make")(function* () {
+/** @public Service construction is part of the module API alongside layer. */
+export const make = Effect.fn("MobileStorage.make")(function* () {
   const secureStorage = yield* MobileSecureStorage.MobileSecureStorage;
 
   const parseJson = <A>(key: string, raw: string): A | null => {

@@ -26,7 +26,8 @@ export class RemoteOpenTargets extends Context.Service<
   }
 >()("t3/environment/RemoteOpenTargets") {}
 
-const make = Effect.gen(function* () {
+/** @public Service construction is part of the module API alongside layer. */
+export const make = Effect.gen(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const net = yield* NetService.NetService;
 

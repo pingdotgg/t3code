@@ -35,7 +35,8 @@ function resolveRequestedKind(
   return Effect.succeed(kind);
 }
 
-const make = Effect.gen(function* () {
+/** @public Service construction is part of the module API alongside layer. */
+export const make = Effect.gen(function* () {
   const registry = yield* VcsDriverRegistry.VcsDriverRegistry;
 
   const initRepository: VcsProvisioningService["Service"]["initRepository"] = Effect.fn(

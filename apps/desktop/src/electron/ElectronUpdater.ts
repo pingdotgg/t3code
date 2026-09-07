@@ -80,7 +80,8 @@ export class ElectronUpdater extends Context.Service<
   }
 >()("@t3tools/desktop/electron/ElectronUpdater") {}
 
-const make = ElectronUpdater.of({
+/** @public Service construction is part of the module API alongside layer. */
+export const make = ElectronUpdater.of({
   setFeedURL: (options) =>
     Effect.suspend(() => {
       autoUpdater.setFeedURL(options);
