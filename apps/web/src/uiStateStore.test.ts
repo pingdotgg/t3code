@@ -1,6 +1,7 @@
-import { ProjectId, ThreadId } from "@t3tools/contracts";
+import { type OrchestrationLatestTurn, ProjectId, ThreadId } from "@t3tools/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
+import { hasUnseenCompletion } from "./components/Sidebar.logic";
 import {
   legacyProjectCwdPreferenceKey,
   markThreadUnread,
@@ -11,6 +12,7 @@ import {
   persistState,
   reorderProjects,
   resolveProjectExpanded,
+  resolveThreadVisitedAt,
   setDefaultAdvertisedEndpointKey,
   setProjectExpanded,
   setSidebarProjectScopeKey,
@@ -40,6 +42,44 @@ describe("uiStateStore pure functions", () => {
     expect(visited.threadLastVisitedAtById[threadId]).toBe("2026-02-25T12:30:00.700Z");
     expect(markThreadVisited(visited, threadId, "2026-02-25T12:30:00.000Z")).toBe(visited);
     expect(markThreadVisited(visited, threadId, "not-a-date")).toBe(visited);
+  });
+
+  it("shows a new thread's first completion as unseen after the user leaves", () => {
+    const threadId = ThreadId.make("thread-first-completion");
+    const createdAt = "2026-03-09T10:00:00.000Z";
+    const completedAt = "2026-03-09T10:05:00.000Z";
+    const completedTurn: OrchestrationLatestTurn = {
+      turnId: "turn-1" as never,
+      state: "completed",
+      assistantMessageId: null,
+      requestedAt: createdAt,
+      startedAt: createdAt,
+      completedAt,
+    };
+    const unseen = (state: UiState) =>
+      hasUnseenCompletion({
+        hasActionableProposedPlan: false,
+        hasPendingApprovals: false,
+        hasPendingUserInput: false,
+        interactionMode: "default",
+        latestTurn: completedTurn,
+        lastVisitedAt: state.threadLastVisitedAtById[threadId],
+        session: null,
+      });
+
+    const openedBeforeFirstCompletion = markThreadVisited(
+      makeUiState(),
+      threadId,
+      resolveThreadVisitedAt(createdAt, null),
+    );
+    expect(unseen(openedBeforeFirstCompletion)).toBe(true);
+
+    const reopenedAfterCompletion = markThreadVisited(
+      openedBeforeFirstCompletion,
+      threadId,
+      resolveThreadVisitedAt(createdAt, completedAt),
+    );
+    expect(unseen(reopenedAfterCompletion)).toBe(false);
   });
 
   it("marks a completed thread unread using the server completion timestamp", () => {

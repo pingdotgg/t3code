@@ -154,7 +154,7 @@ import {
   togglePendingUserInputOptionSelection,
   type PendingUserInputDraftAnswer,
 } from "../pendingUserInput";
-import { useUiStateStore } from "../uiStateStore";
+import { resolveThreadVisitedAt, useUiStateStore } from "../uiStateStore";
 import {
   latestWorkspaceMutationId,
   useWorkspaceMutationRefresh,
@@ -2116,20 +2116,20 @@ export default function ChatView(props: ChatViewProps) {
   const activeRunningTurnId =
     (activeThread?.session?.status === "running" ? activeThread.session.activeTurnId : null) ??
     (activeLatestTurn?.state === "running" ? activeLatestTurn.turnId : null);
-  // Reading a finished thread clears the sidebar's Done badge. The visit is
-  // stamped at the turn's completion time — not now/updatedAt — so it clears
-  // exactly the completion the user is looking at: a wake or completion that
-  // lands later still gets its signal (markThreadVisited never moves the
-  // timestamp backwards).
+  // Reading a thread clears the sidebar's Completed badge. The visit is stamped
+  // at the turn's completion time, not now, so a wake or completion that lands
+  // later still gets its signal (markThreadVisited never moves backwards). A
+  // thread with no completed turn is stamped at creation: an unstamped thread
+  // reads as seen, which would hide its first completion.
   useEffect(() => {
-    const completedAt = serverThread?.latestTurn?.completedAt;
-    if (!serverThread?.id || !completedAt) return;
+    if (!serverThread?.id) return;
     markThreadVisited(
       scopedThreadKey(scopeThreadRef(serverThread.environmentId, serverThread.id)),
-      completedAt,
+      resolveThreadVisitedAt(serverThread.createdAt, serverThread.latestTurn?.completedAt),
     );
   }, [
     markThreadVisited,
+    serverThread?.createdAt,
     serverThread?.environmentId,
     serverThread?.id,
     serverThread?.latestTurn?.completedAt,

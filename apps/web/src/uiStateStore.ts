@@ -270,6 +270,13 @@ export function markThreadVisited(state: UiState, threadId: string, visitedAt: s
   };
 }
 
+export function resolveThreadVisitedAt(
+  createdAt: string,
+  latestTurnCompletedAt: string | null | undefined,
+): string {
+  return latestTurnCompletedAt ?? createdAt;
+}
+
 export function markThreadUnread(
   state: UiState,
   threadId: string,
