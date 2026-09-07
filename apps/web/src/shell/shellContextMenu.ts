@@ -22,29 +22,28 @@ function ensureListener(): void {
 
 function toShellItems<T extends string>(
   items: readonly ContextMenuItem<T>[],
+  parentDisabled = false,
 ): ReadonlyArray<ShellContextMenuItem> {
-  return items.map((item) => ({
-    id: item.id,
-    label: item.label,
-    ...(item.destructive !== undefined ? { destructive: item.destructive } : {}),
-    ...(item.disabled !== undefined ? { disabled: item.disabled } : {}),
-    ...(item.header !== undefined ? { header: item.header } : {}),
-    ...(item.separatorBefore !== undefined ? { separatorBefore: item.separatorBefore } : {}),
-    ...(item.children
-      ? {
-          children: item.children.map((child) => ({
-            id: child.id,
-            label: child.label,
-            ...(child.destructive !== undefined ? { destructive: child.destructive } : {}),
-            ...(child.disabled !== undefined ? { disabled: child.disabled } : {}),
-            ...(child.header !== undefined ? { header: child.header } : {}),
-            ...(child.separatorBefore !== undefined
-              ? { separatorBefore: child.separatorBefore }
-              : {}),
-          })),
-        }
-      : {}),
-  }));
+  return items.flatMap((item): ShellContextMenuItem[] => {
+    const entry = {
+      id: item.id,
+      label: item.label,
+      ...(item.destructive !== undefined ? { destructive: item.destructive } : {}),
+      ...(parentDisabled || item.disabled !== undefined
+        ? { disabled: parentDisabled || item.disabled }
+        : {}),
+      ...(item.header !== undefined ? { header: item.header } : {}),
+      ...(item.separatorBefore !== undefined ? { separatorBefore: item.separatorBefore } : {}),
+    };
+    // Qt presents submenus as labelled sections. Flatten every depth here so
+    // the shell's bounded wire model never silently drops a descendant.
+    return item.children?.length
+      ? [
+          { ...entry, header: true },
+          ...toShellItems(item.children, parentDisabled || item.disabled === true),
+        ]
+      : [entry];
+  });
 }
 
 /**

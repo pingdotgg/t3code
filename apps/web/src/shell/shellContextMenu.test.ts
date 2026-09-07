@@ -45,6 +45,39 @@ afterEach(() => {
 });
 
 describe("showShellContextMenu", () => {
+  it("keeps nested descendants selectable and preserves Qt section headers", async () => {
+    const result = showShellContextMenu([
+      { id: "heading", label: "Project", header: true },
+      {
+        id: "parent",
+        label: "Actions",
+        children: [
+          {
+            id: "nested",
+            label: "More",
+            children: [{ id: "leaf", label: "Rename", separatorBefore: true }],
+          },
+        ],
+      },
+      {
+        id: "disabled",
+        label: "Unavailable",
+        disabled: true,
+        children: [{ id: "child", label: "Delete", destructive: true }],
+      },
+    ]);
+    const published = lastPublished<{ requestId: string; items: unknown[] }>();
+    expect(published.items).toEqual([
+      { id: "heading", label: "Project", header: true },
+      { id: "parent", label: "Actions", header: true },
+      { id: "nested", label: "More", header: true },
+      { id: "leaf", label: "Rename", separatorBefore: true },
+      { id: "disabled", label: "Unavailable", header: true, disabled: true },
+      { id: "child", label: "Delete", destructive: true, disabled: true },
+    ]);
+    select(published.requestId, "leaf");
+    await expect(result).resolves.toBe("leaf");
+  });
   it("publishes the menu for the calling surface and resolves the selected id", async () => {
     const result = showShellContextMenu(items, { x: 10, y: 20 });
     await Promise.resolve();
