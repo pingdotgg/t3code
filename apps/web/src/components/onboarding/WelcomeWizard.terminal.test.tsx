@@ -61,7 +61,7 @@ vi.mock("../../rpc/atomRegistry", () => ({
   },
 }));
 vi.mock("../../state/environments", () => ({
-  useEnvironments: () => ({ environments: [primaryEnvironment, remoteEnvironment] }),
+  useEnvironments: () => ({ environments: [remoteEnvironment] }),
   usePrimaryEnvironment: () => primaryEnvironment,
 }));
 vi.mock("../../state/server", () => ({
@@ -86,14 +86,20 @@ vi.mock("../../state/agentSessions", () => ({
 }));
 vi.mock("../../state/projects", () => ({ projectEnvironment: { create: "createProject" } }));
 vi.mock("../../state/entities", () => ({ readProjects: () => [], useProjects: () => [] }));
-vi.mock("../../state/query", () => ({
-  useEnvironmentQuery: () => ({
-    data: { candidates: [] },
-    error: null,
-    isPending: false,
-    refresh: vi.fn(),
-  }),
+vi.mock("../../onboarding/useProjectScans", () => ({ useProjectScans: () => [] }));
+vi.mock("../ui/dialog", () => ({
+  Dialog: "div",
+  DialogPopup: "div",
+  DialogTitle: "div",
+  DialogHeader: "div",
 }));
+vi.mock("../ui/wizard", () => ({
+  WizardPanel: "div",
+  WizardSteps: ({ onStepChange }: { onStepChange: (step: number) => void }) => (
+    <button onClick={() => onStepChange(0)}>Back</button>
+  ),
+}));
+vi.mock("../ui/scroll-area", () => ({ ScrollArea: "div" }));
 vi.mock("../../onboarding/firstRun", () => ({ useCompleteOnboarding: () => state.complete }));
 vi.mock("../../hooks/useTheme", () => ({ mountOnboardingTheme: () => undefined }));
 vi.mock("../../hooks/useLocalStorage", () => ({ useLocalStorage: () => [false, vi.fn()] }));
@@ -225,24 +231,13 @@ async function enterRemoteAgents() {
       </RegistryContext.Provider>,
     );
   });
-  await act(async () => {
-    renderer!.root
-      .findAllByType("button")
-      .find((node) => text(node).startsWith("Pair a server"))!
-      .props.onClick();
-  });
   await click("Continue");
-  await act(async () => {
-    renderer!.root.findByType("input").props.onChange({
-      currentTarget: { value: "http://paired.example/pair#token=fixture" },
-    });
-  });
-  await click("Connect");
-  expect(text(renderer!.root)).toContain("Detected on Paired computer.");
+  expect(text(renderer!.root)).toContain("Paired computer");
 }
 
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  vi.stubGlobal("document", { activeElement: null, body: {}, getElementById: () => null });
   state.registry = AtomRegistry.make();
   for (const id of [primaryId, remoteId]) {
     state.sessions.set(
@@ -309,7 +304,7 @@ describe("welcome agent terminal setup", () => {
     expect(state.write).not.toHaveBeenCalled();
     expect(state.close).not.toHaveBeenCalled();
     await click("Continue");
-    await click("Start coding");
+    await click("Do not import projects");
     expect(state.complete).toHaveBeenCalledOnce();
     expect(state.done).toHaveBeenCalledExactlyOnceWith(undefined);
   });
@@ -426,8 +421,8 @@ describe("welcome agent terminal setup", () => {
     await click("Close");
     expect(hasViewport()).toBe(false);
     expect(state.close).not.toHaveBeenCalled();
-    await click("Skip");
-    expect(text(renderer!.root)).toContain("Your projects");
+    await click("Continue");
+    expect(text(renderer!.root)).toContain("Choose your projects");
   });
 
   it("settles accepted pretyping locally after revocation without closing the PTY", async () => {
@@ -463,6 +458,6 @@ describe("welcome agent terminal setup", () => {
       writing.resolve(AsyncResult.success(undefined));
     });
     expect(state.close).not.toHaveBeenCalled();
-    expect(text(renderer!.root)).toContain("Pair a server");
+    expect(text(renderer!.root)).toContain("Connect your computers");
   });
 });
