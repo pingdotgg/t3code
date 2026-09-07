@@ -1,4 +1,4 @@
-import { closestCenter, type CollisionDetection } from "@dnd-kit/core";
+import { closestCenter, type CollisionDetection, type Modifier } from "@dnd-kit/core";
 import { verticalListSortingStrategy, type SortingStrategy } from "@dnd-kit/sortable";
 import {
   resolveSidebarDropTarget,
@@ -13,6 +13,17 @@ const stationary = { x: 0, y: 0, scaleX: 1, scaleY: 1 };
 const hidden = { ...stationary, scaleY: 0 };
 type ThreadItem = Extract<SidebarListItem, { kind: "thread" }>;
 type Layout = Parameters<SortingStrategy>[0];
+
+/** Keep the lifted card below the Pins label, including when Pins is empty.
+ * The container rect follows scrolling; the offset is measured once at pickup. */
+export function restrictBelowSidebarLabel(
+  { transform, containerNodeRect, draggingNodeRect }: Parameters<Modifier>[0],
+  offset: number,
+) {
+  if (!containerNodeRect || !draggingNodeRect) return transform;
+  const minimumY = containerNodeRect.top + offset - draggingNodeRect.top;
+  return transform.y < minimumY ? { ...transform, y: minimumY } : transform;
+}
 
 /** Reject the nearest unsupported target without selecting another section.
  * Recreate this detector when drop eligibility changes. */
