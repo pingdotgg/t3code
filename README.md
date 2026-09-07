@@ -44,6 +44,12 @@ Install the latest version of the desktop app from [GitHub Releases](https://git
 winget install T3Tools.T3Code
 ```
 
+#### Windows (`scoop`)
+
+```bash
+scoop install t3code
+```
+
 #### macOS (Homebrew)
 
 ```bash
