@@ -62,6 +62,8 @@ export interface HomeListLayout {
   readonly stickyHeaderIndices: ReadonlyArray<number>;
 }
 
+export const EMPTY_HOME_LIST_LAYOUT: HomeListLayout = { items: [], stickyHeaderIndices: [] };
+
 export type HomeGroupDisplayAction = "toggle-collapsed" | "show-more" | "show-less";
 
 export function nextGroupDisplayState(
@@ -171,7 +173,7 @@ export function buildHomeListLayout(input: {
     for (const [pendingIndex, pendingTask] of group.pendingTasks.entries()) {
       items.push({
         type: "pending-task",
-        key: `pending-task:${pendingTask.message.messageId}`,
+        key: pendingTask.key,
         pendingTask,
         isLast:
           pendingIndex === group.pendingTasks.length - 1 &&

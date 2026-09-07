@@ -1,7 +1,9 @@
+import { Spinner } from "~/components/ui/spinner";
 import type {
   EnvironmentId,
   ProjectId,
   PullRequestInvolvement,
+  ProjectIconOverride,
   PullRequestListFilters,
   PullRequestListState,
   SourceControlProviderKind,
@@ -16,7 +18,6 @@ import {
   GitPullRequestDraftIcon,
   LayersIcon,
   ListFilterIcon,
-  LoaderIcon,
   SearchIcon,
   TagIcon,
   UserRoundIcon,
@@ -36,6 +37,7 @@ import {
   MenuPopup,
   MenuRadioGroup,
   MenuRadioItem,
+  MenuRadioItemIndicator,
   MenuSeparator,
   MenuSub,
   MenuSubPopup,
@@ -58,6 +60,8 @@ export interface PullRequestFilterOption<Value extends string> {
   readonly favicon?: {
     readonly environmentId: EnvironmentId;
     readonly cwd: string;
+    readonly faviconPath?: string | null;
+    readonly projectIcon?: ProjectIconOverride | null;
   };
   /** Why it cannot be chosen, carried onto the item as its title. */
   readonly unavailable?: string | undefined;
@@ -72,7 +76,9 @@ export function PullRequestFilterOptionIcon<Value extends string>({
     <ProjectFavicon
       environmentId={option.favicon.environmentId}
       cwd={option.favicon.cwd}
-      fallbackIcon={FolderGit2Icon}
+      projectName={option.label}
+      faviconPath={option.favicon.faviconPath}
+      projectIcon={option.favicon.projectIcon}
       className="size-3.5"
     />
   ) : (
@@ -114,7 +120,7 @@ export function PullRequestSearchInput({
   return (
     <InputGroup className="min-w-0 flex-1 **:[input]:h-9 sm:**:[input]:h-8">
       <InputGroupAddon>
-        {busy ? <LoaderIcon aria-hidden className="animate-spin" /> : <SearchIcon aria-hidden />}
+        {busy ? <Spinner aria-hidden /> : <SearchIcon aria-hidden />}
       </InputGroupAddon>
       <InputGroupInput
         type="search"
@@ -200,6 +206,7 @@ function PullRequestFilterRadioGroup<Value extends string>({
               <PullRequestFilterOptionIcon option={option} />
               <span className="min-w-0 flex-1 truncate">{option.label}</span>
               {option.unavailable ? <span className="shrink-0">· Unavailable</span> : null}
+              <MenuRadioItemIndicator />
             </span>
           </MenuRadioItem>
         );
@@ -450,6 +457,8 @@ export function PullRequestFiltersMenu({
     readonly environmentId: EnvironmentId;
     readonly title: string;
     readonly workspaceRoot: string;
+    readonly faviconPath?: string | null | undefined;
+    readonly projectIcon?: ProjectIconOverride | null | undefined;
   }>;
   projectId: ProjectId | undefined;
   /**
@@ -505,7 +514,12 @@ export function PullRequestFiltersMenu({
         value: pullRequestProjectKey(project),
         label: project.title,
         Icon: FolderGit2Icon,
-        favicon: { environmentId: project.environmentId, cwd: project.workspaceRoot },
+        favicon: {
+          environmentId: project.environmentId,
+          cwd: project.workspaceRoot,
+          faviconPath: project.faviconPath ?? null,
+          projectIcon: project.projectIcon ?? null,
+        },
         ...(unavailable.has(pullRequestProjectKey(project))
           ? { unavailable: unavailable.get(pullRequestProjectKey(project)) }
           : {}),
@@ -524,7 +538,7 @@ export function PullRequestFiltersMenu({
         <ListFilterIcon className="size-4" />
         <span>Filters</span>
         {filterCount > 0 ? (
-          <span className="rounded-full bg-primary/10 px-1.5 text-xs text-primary tabular-nums">
+          <span className="rounded-full bg-muted px-1.5 text-xs text-muted-foreground tabular-nums">
             {filterCount}
           </span>
         ) : null}

@@ -3,7 +3,11 @@ import { describe, expect, it } from "vite-plus/test";
 import { ProviderInstanceId, type ProviderOptionSelection } from "@t3tools/contracts";
 
 import type { ModelOption } from "../../lib/modelOptions";
-import { modelMatchesCatalogQuery, pendingModelAfterPress } from "./thread-settings-sheet-state";
+import {
+  canCommitPendingModel,
+  modelMatchesCatalogQuery,
+  pendingModelAfterPress,
+} from "./thread-settings-sheet-state";
 
 function modelOption(
   model: string,
@@ -95,5 +99,21 @@ describe("thread settings sheet state", () => {
         pressedIsApplied: false,
       }),
     ).toBe(pressed);
+  });
+
+  it("cannot save a staged model after sign-out removes it from the catalog", () => {
+    const pending = modelOption("gemini-native");
+    const group = { providerKey: "codex", providerLabel: "Codex", models: [pending] };
+
+    expect(canCommitPendingModel(pending, [group])).toBe(true);
+    expect(canCommitPendingModel(pending, [])).toBe(false);
+    expect(
+      canCommitPendingModel(pending, [
+        {
+          ...group,
+          models: [{ ...pending, isUnavailable: true }],
+        },
+      ]),
+    ).toBe(false);
   });
 });

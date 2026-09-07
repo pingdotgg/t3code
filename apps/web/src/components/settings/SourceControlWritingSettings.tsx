@@ -1,6 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
+import { useNavigate } from "@tanstack/react-router";
 import { useRef } from "react";
-import type { SourceControlWritingStyleMode } from "@t3tools/contracts";
+import type { ProviderInstanceId, SourceControlWritingStyleMode } from "@t3tools/contracts";
 import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
 import { createModelSelection } from "@t3tools/shared/model";
 import { resolveSourceControlWriterModelSelection } from "@t3tools/shared/serverSettings";
@@ -16,11 +17,17 @@ import {
   resolveAppModelSelectionState,
 } from "../../modelSelection";
 import { primaryServerProvidersAtom } from "../../state/server";
+import { usePrimaryEnvironmentId } from "../../state/environments";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
 import { Textarea } from "../ui/textarea";
-import { SettingResetButton, SettingsRow, SettingsSection } from "./settingsLayout";
+import {
+  SETTINGS_PICKER_TRIGGER_CLASSNAME,
+  SettingResetButton,
+  SettingsRow,
+  SettingsSection,
+} from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 
 const MODE_OPTIONS: Record<SourceControlWritingStyleMode, { label: string; description: string }> =
@@ -31,19 +38,20 @@ const MODE_OPTIONS: Record<SourceControlWritingStyleMode, { label: string; descr
     },
     conventional_commits: {
       label: "Conventional Commits",
-      description:
-        "Uses Conventional Commit prefixes for change descriptions; change request titles and descriptions stay concise.",
+      description: "Use Conventional Commit prefixes and keep change request text concise.",
     },
     custom: {
       label: "Custom instructions",
       description:
-        "Applies your instructions to change descriptions and change request titles and descriptions in every project.",
+        "Use your instructions for change descriptions and change requests in every project.",
     },
   };
 
 export function SourceControlWritingSettingsSection() {
   const settings = usePrimarySettings();
   const updateSettings = useUpdatePrimarySettings();
+  const navigate = useNavigate();
+  const environmentId = usePrimaryEnvironmentId();
   const serverProviders = useAtomValue(primaryServerProvidersAtom);
   const customInstructionsRef = useRef<HTMLTextAreaElement>(null);
   const style = settings.sourceControlWritingStyle;
@@ -51,28 +59,37 @@ export function SourceControlWritingSettingsSection() {
   const isSourceControlWritingStyleDirty =
     style.mode !== defaults.mode || style.customInstructions !== defaults.customInstructions;
 
-  const defaultModelSelection = resolveAppModelSelectionState(settings, serverProviders);
-  const usesDedicatedModel = settings.sourceControlWriterModelSelection !== null;
-  const resolvedSourceControlWriterSelection = resolveSourceControlWriterModelSelection(
-    settings,
-    serverProviders,
+  const textGenerationProviders = serverProviders.filter(
+    (provider) => provider.supportsTextGeneration !== false,
   );
-  const activeSelection =
-    resolvedSourceControlWriterSelection === settings.textGenerationModelSelection
-      ? defaultModelSelection
-      : resolvedSourceControlWriterSelection;
+  const defaultModelSelection = resolveAppModelSelectionState(settings, textGenerationProviders);
+  const usesDedicatedModel = settings.sourceControlWriterModelSelection !== null;
+  const activeSelection = resolveAppModelSelectionState(
+    {
+      ...settings,
+      textGenerationModelSelection: resolveSourceControlWriterModelSelection(
+        settings,
+        textGenerationProviders,
+      ),
+    },
+    textGenerationProviders,
+  );
   const instanceEntries = sortProviderInstanceEntries(
-    applyProviderInstanceSettings(deriveProviderInstanceEntries(serverProviders), settings),
+    applyProviderInstanceSettings(deriveProviderInstanceEntries(textGenerationProviders), settings),
+  );
+  const canEnableDedicatedModel = instanceEntries.some(
+    (entry) =>
+      entry.instanceId === defaultModelSelection.instanceId && entry.enabled && entry.isAvailable,
   );
   const modelOptionsByInstance = getCustomModelOptionsByInstance(
     settings,
-    serverProviders,
+    textGenerationProviders,
     activeSelection.instanceId,
     activeSelection.model,
   );
 
   return (
-    <SettingsSection title="Text generation">
+    <SettingsSection id="source-control-text-generation" title="Text generation">
       <SettingsRow
         serverScoped
         {...searchableSetting("source-control-writing-style")}
@@ -105,7 +122,11 @@ export function SourceControlWritingSettingsSection() {
               });
             }}
           >
-            <SelectTrigger className="w-full sm:w-56" aria-label="Source control writing style">
+            <SelectTrigger
+              size="sm"
+              className="w-full sm:w-56"
+              aria-label="Source control writing style"
+            >
               <SelectValue>{MODE_OPTIONS[style.mode].label}</SelectValue>
             </SelectTrigger>
             <SelectPopup align="end" alignItemWithTrigger={false}>
@@ -141,7 +162,7 @@ export function SourceControlWritingSettingsSection() {
       <SettingsRow
         serverScoped
         {...searchableSetting("follow-change-request-templates")}
-        description="Structures change request descriptions using the current repository's template when one is available."
+        description="Use the repository's template for change request descriptions when available."
         resetAction={
           style.followChangeRequestTemplates !== defaults.followChangeRequestTemplates ? (
             <SettingResetButton
@@ -174,10 +195,15 @@ export function SourceControlWritingSettingsSection() {
       <SettingsRow
         serverScoped
         {...searchableSetting("source-control-writer-model")}
-        description="Optional model override for change descriptions, change request titles and descriptions, and branch or bookmark names. Off uses the global text generation model."
+        description="Model for source control text and branch or bookmark names. Off uses the global default."
         control={
           <div className="flex flex-wrap items-center justify-end gap-2">
-            {usesDedicatedModel ? (
+            {usesDedicatedModel && !canEnableDedicatedModel ? (
+              <span className="text-sm text-muted-foreground">
+                No text generation providers available.
+              </span>
+            ) : null}
+            {usesDedicatedModel && canEnableDedicatedModel ? (
               <ProviderModelPicker
                 activeInstanceId={activeSelection.instanceId}
                 model={activeSelection.model}
@@ -185,8 +211,18 @@ export function SourceControlWritingSettingsSection() {
                 instanceEntries={instanceEntries}
                 modelOptionsByInstance={modelOptionsByInstance}
                 triggerVariant="outline"
-                triggerClassName="min-w-0 max-w-none shrink-0 text-foreground/90 hover:text-foreground"
+                triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
                 triggerAriaLabel="Source control writer model"
+                {...(environmentId
+                  ? {
+                      onOpenProviderSetup: (instanceId: ProviderInstanceId) => {
+                        void navigate({
+                          to: "/settings/providers",
+                          search: { environmentId, instanceId },
+                        });
+                      },
+                    }
+                  : {})}
                 onInstanceModelChange={(instanceId, model) => {
                   updateSettings({
                     sourceControlWriterModelSelection: createModelSelection(instanceId, model),
@@ -196,6 +232,7 @@ export function SourceControlWritingSettingsSection() {
             ) : null}
             <Switch
               checked={usesDedicatedModel}
+              disabled={!usesDedicatedModel && !canEnableDedicatedModel}
               onCheckedChange={(checked) =>
                 updateSettings({
                   sourceControlWriterModelSelection: checked

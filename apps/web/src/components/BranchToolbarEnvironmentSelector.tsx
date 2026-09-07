@@ -1,8 +1,10 @@
 import type { EnvironmentId } from "@t3tools/contracts";
-import { CloudIcon, MonitorIcon } from "lucide-react";
+import { ScaleIcon } from "lucide-react";
 import { memo, useMemo } from "react";
 
 import type { EnvironmentOption } from "./BranchToolbar.logic";
+import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
+import { composerFloatingLayerProps } from "./chat/composerEventScope";
 import {
   Select,
   SelectGroup,
@@ -14,6 +16,8 @@ import {
 } from "./ui/select";
 
 interface BranchToolbarEnvironmentSelectorProps {
+  autoEnvironmentLabel?: string | undefined;
+  onAutoEnvironment?: (() => void) | undefined;
   envLocked: boolean;
   environmentId: EnvironmentId;
   availableEnvironments: readonly EnvironmentOption[];
@@ -23,6 +27,8 @@ interface BranchToolbarEnvironmentSelectorProps {
 }
 
 export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvironmentSelector({
+  autoEnvironmentLabel,
+  onAutoEnvironment,
   envLocked,
   environmentId,
   availableEnvironments,
@@ -33,12 +39,16 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
   }, [availableEnvironments, environmentId]);
 
   const environmentItems = useMemo(
-    () =>
-      availableEnvironments.map((env) => ({
+    () => [
+      ...(onAutoEnvironment
+        ? [{ value: "auto", label: autoEnvironmentLabel ?? "Auto balance" }]
+        : []),
+      ...availableEnvironments.map((env) => ({
         value: env.environmentId,
         label: env.label,
       })),
-    [availableEnvironments],
+    ],
+    [availableEnvironments, autoEnvironmentLabel, onAutoEnvironment],
   );
 
   // The static label carries the xs control's height (h-7 sm:h-6) as well as
@@ -49,21 +59,20 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
   if (envLocked || onEnvironmentChange === undefined) {
     return (
       <span
-        className="inline-flex h-7 min-w-0 max-w-full items-center gap-1 border border-transparent px-[calc(--spacing(3)-1px)] text-sm font-medium text-muted-foreground/70 sm:h-6 sm:text-xs"
+        className="inline-flex h-7 min-w-0 max-w-full items-center gap-1 border border-transparent px-[calc(--spacing(2)-1px)] font-normal text-muted-foreground/70 text-xs sm:h-6"
         data-composer-context-control
       >
-        {activeEnvironment?.isPrimary ? (
-          <MonitorIcon className="size-3 shrink-0" />
-        ) : (
-          <CloudIcon className="size-3 shrink-0" />
-        )}
+        <EnvironmentMachineIcon
+          kind={activeEnvironment?.machine ?? "server"}
+          className="size-3 shrink-0"
+        />
         <span
           data-composer-label
           className="min-w-0 max-w-[240px] group-data-[compact]/composer-context:max-w-0"
         >
           <span
             data-composer-label-motion
-            className="block w-full min-w-0 max-w-[240px] origin-left truncate transition-[opacity,transform] duration-180 ease-[cubic-bezier(0.32,0.72,0,1)] group-data-[compact]/composer-context:[transform:translateX(-0.25rem)_scaleX(0.95)] group-data-[compact]/composer-context:opacity-0 motion-reduce:transform-none motion-reduce:transition-opacity"
+            className="block w-full min-w-0 max-w-[240px] truncate transition-opacity duration-180 ease-[cubic-bezier(0.32,0.72,0,1)] group-data-[compact]/composer-context:opacity-0 motion-reduce:transition-none"
           >
             {activeEnvironment?.label ?? "Run on"}
           </span>
@@ -75,21 +84,26 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
   return (
     <Select
       modal={false}
-      value={environmentId}
-      onValueChange={(value) => onEnvironmentChange(value as EnvironmentId)}
+      value={autoEnvironmentLabel ? "auto" : environmentId}
+      onValueChange={(value) =>
+        value === "auto" ? onAutoEnvironment?.() : onEnvironmentChange(value as EnvironmentId)
+      }
       items={environmentItems}
     >
       <SelectTrigger
         variant="ghost"
         size="xs"
-        className="min-w-0 max-w-full font-medium"
+        className="min-w-0 max-w-full font-normal text-xs!"
         aria-label="Run on"
         data-composer-context-control
       >
-        {activeEnvironment?.isPrimary ? (
-          <MonitorIcon className="size-3 shrink-0" />
+        {autoEnvironmentLabel ? (
+          <ScaleIcon className="size-3 shrink-0" aria-hidden="true" />
         ) : (
-          <CloudIcon className="size-3 shrink-0" />
+          <EnvironmentMachineIcon
+            kind={activeEnvironment?.machine ?? "server"}
+            className="size-3 shrink-0"
+          />
         )}
         <span
           data-composer-label
@@ -97,23 +111,32 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
         >
           <span
             data-composer-label-motion
-            className="block w-full min-w-0 max-w-[240px] origin-left truncate transition-[opacity,transform] duration-180 ease-[cubic-bezier(0.32,0.72,0,1)] group-data-[compact]/composer-context:[transform:translateX(-0.25rem)_scaleX(0.95)] group-data-[compact]/composer-context:opacity-0 motion-reduce:transform-none motion-reduce:transition-opacity"
+            className="block w-full min-w-0 max-w-[240px] truncate transition-opacity duration-180 ease-[cubic-bezier(0.32,0.72,0,1)] group-data-[compact]/composer-context:opacity-0 motion-reduce:transition-none"
           >
             <SelectValue />
           </span>
         </span>
       </SelectTrigger>
-      <SelectPopup>
+      <SelectPopup alignItemWithTrigger={false} {...composerFloatingLayerProps}>
         <SelectGroup>
           <SelectGroupLabel>Run on</SelectGroupLabel>
+          {onAutoEnvironment && (
+            <SelectItem
+              value="auto"
+              onClick={() => {
+                if (autoEnvironmentLabel) onAutoEnvironment?.();
+              }}
+            >
+              <span className="inline-flex items-center gap-1.5">
+                <ScaleIcon className="size-3" aria-hidden="true" />
+                {autoEnvironmentLabel ?? "Auto balance"}
+              </span>
+            </SelectItem>
+          )}
           {availableEnvironments.map((env) => (
             <SelectItem key={env.environmentId} value={env.environmentId}>
               <span className="inline-flex items-center gap-1.5">
-                {env.isPrimary ? (
-                  <MonitorIcon className="size-3" />
-                ) : (
-                  <CloudIcon className="size-3" />
-                )}
+                <EnvironmentMachineIcon kind={env.machine} className="size-3" />
                 {env.label}
               </span>
             </SelectItem>

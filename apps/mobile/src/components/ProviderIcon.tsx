@@ -1,3 +1,4 @@
+import { Image } from "expo-image";
 import { Path, Svg } from "react-native-svg";
 import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
 
@@ -11,6 +12,16 @@ export function ProviderIcon(props: ProviderIconProps) {
   const isDarkMode = themeAppearance === "dark";
   const size = props.size ?? 16;
   const mono = isDarkMode ? "#e5e5e5" : "#171717";
+
+  if (props.provider?.trim().toLowerCase() === "antigravity") {
+    return (
+      <Image
+        source={require("../../assets/antigravity.png")}
+        style={{ width: size, height: size }}
+        contentFit="contain"
+      />
+    );
+  }
 
   if (props.provider === "claudeAgent") {
     return (

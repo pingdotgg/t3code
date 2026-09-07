@@ -215,14 +215,7 @@ describe("versionSkew", () => {
   });
 
   it("matches version-drift guidance to the advertised update path", () => {
-    expect(serverUpdateGuidance("respawn", "Remote server")).toBe(
-      "Update the Remote server so they stay in sync.",
-    );
-    expect(serverUpdateGuidance("desktop-managed", "Desktop server")).toBe(
-      "Update the desktop app that runs the Desktop server.",
-    );
-    expect(serverUpdateGuidance(null, "Local server")).toBe(
-      "Relaunch the Local server with the copied command to sync them.",
-    );
+    expect(serverUpdateGuidance("respawn")).toBe("Update to stay in sync");
+    expect(serverUpdateGuidance("desktop-managed")).toBe("Update the desktop app");
   });
 });

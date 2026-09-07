@@ -254,6 +254,61 @@ describe("resolveMarkdownFileLinkTarget", () => {
     });
   });
 
+  it("does not classify a case-distinct POSIX sibling as a workspace file", () => {
+    expect(
+      resolveMarkdownFileLinkMeta(
+        "/tmp/t3code-case-test/project/probe.txt",
+        "/tmp/t3code-case-test/Project",
+      ),
+    ).toMatchObject({
+      displayPath: "/tmp/t3code-case-test/project/probe.txt",
+      workspaceRelativePath: null,
+    });
+  });
+
+  it("keeps Windows workspace comparisons case-insensitive", () => {
+    expect(
+      resolveMarkdownFileLinkMeta("C:/Users/MIKE/Project/src/main.ts", "c:/users/mike/project"),
+    ).toMatchObject({
+      displayPath: "project/src/main.ts",
+      workspaceRelativePath: "src/main.ts",
+    });
+  });
+
+  it("keeps drive-root workspace comparisons case-insensitive", () => {
+    expect(resolveMarkdownFileLinkMeta("C:/Users/MIKE/project.ts", "c:/")).toMatchObject({
+      displayPath: "c:/Users/MIKE/project.ts",
+      workspaceRelativePath: "Users/MIKE/project.ts",
+    });
+  });
+
+  it("keeps backslash UNC workspace comparisons case-insensitive", () => {
+    expect(
+      resolveMarkdownFileLinkMeta(
+        "\\\\server\\share\\PROJECT\\src\\main.ts",
+        "\\\\Server\\Share\\Project",
+      ),
+    ).toMatchObject({
+      displayPath: "Project/src/main.ts",
+      workspaceRelativePath: "src/main.ts",
+    });
+  });
+
+  it.each([
+    ["/tmp/repo/file.ts", "/", "tmp/repo/file.ts"],
+    ["C:/Users/MIKE/file.ts", "c:/", "Users/MIKE/file.ts"],
+    ["\\\\server\\SHARE\\file.ts", "\\\\Server\\Share\\", "file.ts"],
+    ["/tmp/repo/file.ts%20", "/tmp/repo", "file.ts "],
+  ])("preserves the preview target for %s in workspace %s", (href, cwd, workspaceRelativePath) => {
+    expect(resolveMarkdownFileLinkMeta(href, cwd)).toMatchObject({ workspaceRelativePath });
+  });
+
+  it("keeps an encoded final space in the absolute target", () => {
+    expect(resolveMarkdownFileLinkTarget("/tmp/repo/file.ts%20", "/tmp/repo")).toBe(
+      "/tmp/repo/file.ts ",
+    );
+  });
+
   it("normalizes slash-prefixed windows drive paths before resolving", () => {
     expect(
       resolveMarkdownFileLinkTarget(
@@ -270,8 +325,15 @@ describe("resolveMarkdownFileLinkTarget", () => {
     ).toBe("D:/Programme/t3code/apps/web/src/components/ChatMarkdown.tsx:1");
   });
 
-  it("does not treat app routes as file links", () => {
+  it("does not treat app routes as file links, even with a line anchor", () => {
     expect(resolveMarkdownFileLinkTarget("/chat/settings")).toBeNull();
+    expect(resolveMarkdownFileLinkTarget("/chat/settings#L3", "/repo")).toBeNull();
+  });
+
+  it("decodes an encoded drive colon in a file uri before dropping its slash", () => {
+    expect(resolveMarkdownFileLinkTarget("file:///c%3A/Users/x/shot.png")).toBe(
+      "c:/Users/x/shot.png",
+    );
   });
 });
 

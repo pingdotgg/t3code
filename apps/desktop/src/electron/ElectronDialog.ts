@@ -73,7 +73,6 @@ export const ElectronDialogError = Schema.Union([
   ElectronDialogShowErrorBoxError,
 ]);
 export type ElectronDialogError = typeof ElectronDialogError.Type;
-export const isElectronDialogError = Schema.is(ElectronDialogError);
 
 export interface ElectronDialogPickFolderInput {
   readonly owner: Option.Option<Electron.BrowserWindow>;
