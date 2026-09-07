@@ -622,16 +622,18 @@ const applyCloudRelayConfig = Effect.fn("environment.cloud.applyRelayConfig")(fu
       cloudUserId: payload.cloudUserId,
     });
     yield* validateCloudMintPublicKey(payload.cloudMintPublicKey);
+    // Reject unsupported runtimes before touching the connector so a bad
+    // payload cannot stop a healthy tunnel on its way to a 503.
     if (
       payload.endpointRuntime !== null &&
       payload.endpointRuntime.providerKind !== "cloudflare_tunnel"
     ) {
-      const endpointRuntimeStatus = yield* dependencies.endpointRuntime.applyConfig(
-        payload.endpointRuntime,
-      );
       return yield* new EnvironmentCloudEndpointUnavailableError({
         message: "Managed endpoint runtime could not be started.",
-        endpointRuntimeStatus,
+        endpointRuntimeStatus: {
+          status: "unsupported",
+          providerKind: payload.endpointRuntime.providerKind,
+        },
       });
     }
     yield* dependencies.endpointRuntime.applyConfig(null);

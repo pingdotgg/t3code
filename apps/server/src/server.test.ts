@@ -3286,9 +3286,8 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(relayConfigResponse.status, 503);
       assert.equal(relayConfigBody._tag, "EnvironmentCloudEndpointUnavailableError");
       assert.equal(relayConfigBody.endpointRuntimeStatus?.status, "unsupported");
-      assert.deepEqual(appliedRuntimeConfigs, [
-        { providerKind: "manual", connectorToken: "manual-token" },
-      ]);
+      // The connector is never touched for a rejected runtime.
+      assert.deepEqual(appliedRuntimeConfigs, []);
       assert.equal(linkStateResponse.status, 200);
       assert.equal(linkStateBody.linked, false);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
