@@ -502,6 +502,12 @@ importers:
       node-pty:
         specifier: ^1.1.0
         version: 1.1.0
+      stream-chain:
+        specifier: ^4.2.5
+        version: 4.2.5
+      stream-json:
+        specifier: 3.6.0
+        version: 3.6.0
       yaml:
         specifier: ^2.9.0
         version: 2.9.0
@@ -9847,6 +9853,13 @@ packages:
   stream-buffers@2.2.0:
     resolution: {integrity: sha512-uyQK/mx5QjHun80FLJTfaWE7JtwfRMKBLkMne6udYOmvH0CawotVa7TfgYHzAnpphn4+TweIx1QKMnRIbipmUg==}
     engines: {node: '>= 0.10.0'}
+
+  stream-chain@4.2.5:
+    resolution: {integrity: sha512-Wtyq3bNE3ggLR0v2vftqvuhltym3WbZAkZpfIrkr5F/6vpeUmWmwTgXa16zD87gpahwJ/Qulq3zVfUlgIc0J2A==}
+    engines: {node: '>=22'}
+
+  stream-json@3.6.0:
+    resolution: {integrity: sha512-NiJdqxKyau579z/E8vfqcjWfSDWxW/AT99javFXdPXF147Z5za85LRXSHEmSX9TKOakB7gaIccfD0fOIctb7KQ==}
 
   strict-event-emitter@0.5.1:
     resolution: {integrity: sha512-vMgjE/GGEPEFnhFub6pa4FmJBRBVOLpIII2hvCZ8Kzb7K0hlHo7mQv6xYrBvCL2LtAIBwFUK8wvuJgTVSQ5MFQ==}
@@ -20964,6 +20977,12 @@ snapshots:
   stdin-discarder@0.3.2: {}
 
   stream-buffers@2.2.0: {}
+
+  stream-chain@4.2.5: {}
+
+  stream-json@3.6.0:
+    dependencies:
+      stream-chain: 4.2.5
 
   strict-event-emitter@0.5.1:
     optional: true

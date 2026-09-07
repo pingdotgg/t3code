@@ -31,6 +31,8 @@
     "effect": "catalog:",
     "msgpackr-extract": "3.0.4",
     "node-pty": "^1.1.0",
+    "stream-chain": "^4.2.5",
+    "stream-json": "3.6.0",
     "yaml": "catalog:",
     "yauzl": "^3.4.0"
   },
