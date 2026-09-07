@@ -2,6 +2,7 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { expect, it } from "@effect/vitest";
 import {
   DEFAULT_SERVER_SETTINGS,
+  ChatImageAttachment,
   EnvironmentId,
   ProviderInstanceId,
   ThreadId,
@@ -21,6 +22,7 @@ import { EnvironmentToolkit } from "./environment/tools.ts";
 import * as EnvironmentHandlers from "./environment/handlers.ts";
 import { ProjectToolkit } from "./project/tools.ts";
 import { AttachmentToolkit } from "./attachment/tools.ts";
+import * as AttachmentHandlers from "./attachment/handlers.ts";
 import { ThreadToolkit } from "./thread/tools.ts";
 import { WorktreeToolkit } from "./worktree/tools.ts";
 
@@ -138,3 +140,23 @@ it("keeps MCP preference output allowlisted and Unicode-bounded", () => {
     truncated: true,
   });
 });
+
+it.effect("resolves reused attachment references from stored metadata", () =>
+  Effect.gen(function* () {
+    const stored = ChatImageAttachment.make({
+      type: "image",
+      id: "owned-image",
+      name: "original.png",
+      mimeType: "image/png",
+      sizeBytes: 12,
+    });
+    const forged = { ...stored, name: "changed.jpg", mimeType: "image/jpeg", sizeBytes: 99 };
+    const result = yield* AttachmentHandlers.resolveAttachmentReferences([forged], [stored]);
+    expect(result).toEqual([stored]);
+    const failure = yield* AttachmentHandlers.resolveAttachmentReferences(
+      [{ ...forged, id: "other-image" }],
+      [stored],
+    ).pipe(Effect.flip);
+    expect(failure.code).toBe("invalid_request");
+  }),
+);
