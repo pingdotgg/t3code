@@ -116,6 +116,46 @@ it.layer(TestLayer)("CheckpointStore.layer", (it) => {
     );
   });
 
+  it.effect("preserves unrelated files created after the checkpoint", () =>
+    Effect.gen(function* () {
+      const tmp = yield* makeTmpDir();
+      yield* initRepoWithCommit(tmp);
+      const store = yield* CheckpointStore.CheckpointStore;
+      const fs = yield* FileSystem.FileSystem;
+      const checkpointRef = checkpointRefForThreadTurn(ThreadId.make("unrelated-file"), 0);
+      yield* store.captureCheckpoint({ cwd: tmp, checkpointRef });
+      yield* writeTextFile(NodePath.join(tmp, "unrelated.txt"), "Human bytes\n");
+      expect(yield* store.restoreCheckpoint({ cwd: tmp, checkpointRef })).toBe(true);
+      expect(yield* fs.readFileString(NodePath.join(tmp, "unrelated.txt"))).toBe("Human bytes\n");
+    }),
+  );
+
+  it.effect("removes checkpoint additions without cleaning later unrelated files", () =>
+    Effect.gen(function* () {
+      const tmp = yield* makeTmpDir();
+      yield* initRepoWithCommit(tmp);
+      const store = yield* CheckpointStore.CheckpointStore;
+      const fs = yield* FileSystem.FileSystem;
+      const thread = ThreadId.make("checkpoint-additions");
+      const checkpointRef = checkpointRefForThreadTurn(thread, 0);
+      const fromCheckpointRef = checkpointRefForThreadTurn(thread, 1);
+      yield* store.captureCheckpoint({ cwd: tmp, checkpointRef });
+      yield* fs.makeDirectory(NodePath.join(tmp, "new directory"));
+      yield* writeTextFile(NodePath.join(tmp, "new directory/agent.txt"), "Agent bytes\n");
+      yield* writeTextFile(NodePath.join(tmp, "README.md"), "Agent edit\n");
+      yield* store.captureCheckpoint({ cwd: tmp, checkpointRef: fromCheckpointRef });
+      yield* writeTextFile(NodePath.join(tmp, "new directory/human.txt"), "Human bytes\n");
+      expect(yield* store.restoreCheckpoint({ cwd: tmp, checkpointRef, fromCheckpointRef })).toBe(
+        true,
+      );
+      expect(yield* fs.exists(NodePath.join(tmp, "new directory/agent.txt"))).toBe(false);
+      expect(yield* fs.readFileString(NodePath.join(tmp, "new directory/human.txt"))).toBe(
+        "Human bytes\n",
+      );
+      expect(yield* fs.readFileString(NodePath.join(tmp, "README.md"))).toBe("# test\n");
+    }),
+  );
+
   describe("diffCheckpoints", () => {
     it.effect("returns full oversized checkpoint diffs without truncation", () =>
       Effect.gen(function* () {

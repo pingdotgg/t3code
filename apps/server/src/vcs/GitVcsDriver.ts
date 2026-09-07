@@ -811,15 +811,18 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         return false;
       }
 
+      if (input.fromCheckpointRef) {
+        const current = yield* resolveCheckpointCommit(input.cwd, input.fromCheckpointRef);
+        if (!current) return false;
+        // Seed only the recorded checkpoint files into the index. Git restore
+        // can then remove agent-created files without cleaning unrelated files.
+        yield* execute({ operation, cwd: input.cwd, args: ["read-tree", current] });
+      }
+
       yield* execute({
         operation,
         cwd: input.cwd,
         args: ["restore", "--source", commitOid, "--worktree", "--staged", "--", "."],
-      });
-      yield* execute({
-        operation,
-        cwd: input.cwd,
-        args: ["clean", "-fd", "--", "."],
       });
 
       const headExists = yield* hasHeadCommit(input.cwd);

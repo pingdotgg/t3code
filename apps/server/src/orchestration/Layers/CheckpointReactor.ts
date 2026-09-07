@@ -756,6 +756,13 @@ const make = Effect.gen(function* () {
     const restored = yield* checkpointStore.restoreCheckpoint({
       cwd: sessionRuntime.value.cwd,
       checkpointRef: targetCheckpointRef,
+      ...(currentTurnCount > 0
+        ? {
+            fromCheckpointRef: thread.checkpoints.find(
+              (checkpoint) => checkpoint.checkpointTurnCount === currentTurnCount,
+            )!.checkpointRef,
+          }
+        : {}),
       fallbackToHead: event.payload.turnCount === 0,
     });
     if (!restored) {
