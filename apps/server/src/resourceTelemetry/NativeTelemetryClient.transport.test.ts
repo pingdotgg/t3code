@@ -7,6 +7,7 @@ import {
   type ResourceMonitorCommand as MonitorCommand,
 } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -167,7 +168,11 @@ describe("native telemetry transport deadlines", () => {
         });
         expect(yield* Fiber.join(blockedWrite)).toMatchObject({
           _tag: "Failure",
-          failure: { _tag: "NativeTelemetryCommandFailed", operation: "setExternalProcesses" },
+          failure: {
+            _tag: "NativeTelemetryCommandTimedOut",
+            operation: "setExternalProcesses",
+            timeoutMs: 5000,
+          },
         });
       }).pipe(Effect.provide(NodeServices.layer)),
     );
@@ -211,6 +216,85 @@ describe("native telemetry transport deadlines", () => {
       });
       expect(yield* client.health).toMatchObject({ sampleIntervalMs: 5000 });
     }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect.each([false, true])(
+    "corrects partial control with rollback stalled=%s",
+    (stallRollback) =>
+      Effect.gen(function* () {
+        const enabling = yield* Deferred.make<void>();
+        const commands: Array<MonitorCommand> = [];
+        let interval = 5000;
+        let streaming = false;
+        let rollbackStalled = false;
+        const { client, configured } = yield* makeClient((command) =>
+          Effect.gen(function* () {
+            if (command.type === "setSampleInterval") {
+              commands.push(command);
+              interval = command.sampleIntervalMs;
+            }
+            if (command.type === "setStreaming") {
+              commands.push(command);
+              streaming = command.enabled;
+              if (command.enabled) {
+                yield* Deferred.succeed(enabling, undefined);
+                return yield* Effect.never;
+              }
+              if (stallRollback && !rollbackStalled) {
+                rollbackStalled = true;
+                return yield* Effect.never;
+              }
+            }
+          }),
+        );
+        yield* Deferred.await(configured);
+        const subscription = yield* client.snapshots.pipe(
+          Stream.runDrain,
+          Effect.result,
+          Effect.forkChild,
+        );
+        yield* Deferred.await(enabling);
+        expect(interval).toBe(1000);
+        expect(streaming).toBe(true);
+        yield* TestClock.adjust("5 seconds");
+        if (stallRollback) yield* TestClock.adjust("5 seconds");
+        expect(subscription.pollUnsafe()).toBeDefined();
+        expect(yield* Fiber.join(subscription)).toMatchObject({
+          _tag: "Failure",
+          failure: { operation: "setStreaming" },
+        });
+        expect(commands).toEqual([
+          {
+            version: RESOURCE_MONITOR_PROTOCOL_VERSION,
+            type: "setSampleInterval",
+            sampleIntervalMs: 1000,
+          },
+          { version: RESOURCE_MONITOR_PROTOCOL_VERSION, type: "setStreaming", enabled: true },
+          {
+            version: RESOURCE_MONITOR_PROTOCOL_VERSION,
+            type: "setSampleInterval",
+            sampleIntervalMs: 5000,
+          },
+          { version: RESOURCE_MONITOR_PROTOCOL_VERSION, type: "setStreaming", enabled: false },
+        ]);
+        expect(interval).toBe(5000);
+        expect(streaming).toBe(false);
+        if (stallRollback) {
+          yield* client.setHostPowerState({
+            source: "unknown",
+            idle: "unknown",
+            idleSeconds: null,
+            locked: "unknown",
+            suspended: false,
+            onBattery: "unknown",
+            lowPowerMode: "unknown",
+            thermalState: "unknown",
+            stale: true,
+            updatedAt: yield* DateTime.now,
+          });
+          expect(commands.slice(4)).toEqual(commands.slice(2, 4));
+        }
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("finishes scoped subscription release when disabling streaming stalls", () =>

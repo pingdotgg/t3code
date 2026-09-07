@@ -123,6 +123,18 @@ export class NativeTelemetryCommandFailed extends Schema.TaggedErrorClass<Native
   }
 }
 
+export class NativeTelemetryCommandTimedOut extends Schema.TaggedErrorClass<NativeTelemetryCommandTimedOut>()(
+  "NativeTelemetryCommandTimedOut",
+  {
+    operation: Schema.String,
+    timeoutMs: Schema.Number,
+  },
+) {
+  override get message(): string {
+    return `Resource monitor command '${this.operation}' timed out after ${this.timeoutMs}ms.`;
+  }
+}
+
 export class NativeTelemetryExited extends Schema.TaggedErrorClass<NativeTelemetryExited>()(
   "NativeTelemetryExited",
   {
@@ -162,6 +174,7 @@ export type NativeTelemetryClientError =
   | NativeTelemetryProtocolMismatch
   | NativeTelemetryDecodeFailed
   | NativeTelemetryCommandFailed
+  | NativeTelemetryCommandTimedOut
   | NativeTelemetryExited
   | NativeTelemetryStreamClosed
   | NativeTelemetryUnavailable;
@@ -385,6 +398,7 @@ export const make = Effect.fn("resourceTelemetry.nativeTelemetryClient.make")(fu
     sampleIntervalMs: UNKNOWN_BACKGROUND_SAMPLE_INTERVAL_MS,
   });
   const appliedCollectionControl = yield* Ref.make(yield* Ref.get(collectionControl));
+  const collectionControlNeedsSync = yield* Ref.make(false);
   const externalProcesses = yield* Ref.make<ReadonlyArray<ResourceMonitorExternalProcess>>([]);
   const pendingSamples = yield* Ref.make(
     new Map<string, Deferred.Deferred<NativeTelemetrySnapshot, NativeTelemetryClientError>>(),
@@ -459,9 +473,9 @@ export const make = Effect.fn("resourceTelemetry.nativeTelemetryClient.make")(fu
           duration: COMMAND_WRITE_TIMEOUT,
           orElse: () =>
             Effect.fail(
-              new NativeTelemetryCommandFailed({
+              new NativeTelemetryCommandTimedOut({
                 operation: command.type,
-                cause: `Resource monitor command write timed out after ${Duration.toMillis(COMMAND_WRITE_TIMEOUT)}ms.`,
+                timeoutMs: Duration.toMillis(COMMAND_WRITE_TIMEOUT),
               }),
             ),
         }),
@@ -684,7 +698,10 @@ export const make = Effect.fn("resourceTelemetry.nativeTelemetryClient.make")(fu
           ...current,
           status: "healthy" as const,
           hello: Option.some(hello),
-        })).pipe(Effect.andThen(publishHealth)),
+        })).pipe(
+          Effect.andThen(Ref.set(collectionControlNeedsSync, false)),
+          Effect.andThen(publishHealth),
+        ),
       );
 
       yield* writeCommand(handle, {
@@ -794,7 +811,11 @@ export const make = Effect.fn("resourceTelemetry.nativeTelemetryClient.make")(fu
     const current = yield* Ref.get(state);
     if (canCommandNativeTelemetrySidecar(current.status, Option.isSome(current.handle))) {
       const handle = Option.getOrThrow(current.handle);
-      if (previous.sampleIntervalMs !== next.sampleIntervalMs) {
+      const needsSync = yield* Ref.get(collectionControlNeedsSync);
+      // A failed write may already have reached the sidecar, so the next update
+      // must resend both settings even when the last confirmed values match.
+      yield* Ref.set(collectionControlNeedsSync, true);
+      if (needsSync || previous.sampleIntervalMs !== next.sampleIntervalMs) {
         yield* writeCommand(handle, {
           version: RESOURCE_MONITOR_PROTOCOL_VERSION,
           type: "setSampleInterval",
@@ -803,13 +824,14 @@ export const make = Effect.fn("resourceTelemetry.nativeTelemetryClient.make")(fu
       }
       const wasStreaming = previous.liveSubscriberCount > 0;
       const isStreaming = next.liveSubscriberCount > 0;
-      if (wasStreaming !== isStreaming) {
+      if (needsSync || wasStreaming !== isStreaming) {
         yield* writeCommand(handle, {
           version: RESOURCE_MONITOR_PROTOCOL_VERSION,
           type: "setStreaming",
           enabled: isStreaming,
         });
       }
+      yield* Ref.set(collectionControlNeedsSync, false);
     }
   });
 
