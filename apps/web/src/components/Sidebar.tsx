@@ -554,17 +554,31 @@ function SortableSidebarMarker(props: {
   );
 }
 
-// Empty targets stay measurable without reserving space at rest. During a
-// drag their section header supplies the label; the target only opens a slot.
+// Empty targets stay measurable without reserving space at rest. The sorting
+// strategy opens their hint space during a drag.
 function SidebarSectionPlaceholder(props: {
   marker: "active-placeholder" | "settled-placeholder";
+  label: string;
+  showHint: boolean;
+  isDropTarget: boolean;
 }) {
   return (
     <SortableSidebarMarker
       marker={props.marker}
       data-testid={`sidebar-${props.marker}`}
       className="relative mx-0.5 h-0"
-    />
+    >
+      {props.showHint ? (
+        <div
+          className={cn(
+            "absolute inset-x-0 top-0 flex h-9 items-center justify-center rounded-md border border-dashed border-sidebar-foreground/25 text-xs text-sidebar-foreground/80",
+            props.isDropTarget && "border-primary/40 bg-primary/5 text-primary",
+          )}
+        >
+          {props.label}
+        </div>
+      ) : null}
+    </SortableSidebarMarker>
   );
 }
 
@@ -4788,6 +4802,9 @@ export default function Sidebar() {
                               <SidebarSectionPlaceholder
                                 key="active-placeholder"
                                 marker="active-placeholder"
+                                label="Active"
+                                showHint={from !== null}
+                                isDropTarget={dragTargetSection === "active"}
                               />,
                             );
                             break;
@@ -4832,6 +4849,9 @@ export default function Sidebar() {
                               <SidebarSectionPlaceholder
                                 key="settled-placeholder"
                                 marker="settled-placeholder"
+                                label="Settled"
+                                showHint={from !== null && from !== "settled"}
+                                isDropTarget={dragTargetSection === "settled"}
                               />,
                             );
                             break;
