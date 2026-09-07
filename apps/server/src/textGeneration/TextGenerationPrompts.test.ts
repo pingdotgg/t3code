@@ -216,6 +216,35 @@ describe("buildThreadTitlePrompt", () => {
 });
 
 describe("sanitizeThreadTitle", () => {
+  it.each([
+    '{"title": "Refresh ev-stg APP ASG instances"}',
+    '{\n  "title": "Refresh ev-stg APP ASG instances"\n}',
+  ])("unwraps a JSON title before normalizing: %s", (raw) => {
+    expect(sanitizeThreadTitle(raw)).toBe("Refresh ev-stg APP ASG instances");
+  });
+
+  it.each([
+    "Rolling ES Refresh ev-stg",
+    "Fix {title} interpolation",
+    '{"title": 42}',
+    '{"subject": "Fix parsing"}',
+    '{"title": "unfinished}',
+  ])("preserves text that is not a JSON title: %s", (raw) => {
+    expect(sanitizeThreadTitle(raw)).toBe(raw);
+  });
+
+  it("normalizes the extracted title", () => {
+    expect(sanitizeThreadTitle('{"title": "  Fix   reconnect failures  "}')).toBe(
+      "Fix reconnect failures",
+    );
+    expect(sanitizeThreadTitle('{"title": "  "}')).toBe("New thread");
+    expect(
+      sanitizeThreadTitle(
+        '{"title": "Reconnect failures after restart because the session state does not recover"}',
+      ),
+    ).toBe("Reconnect failures after restart because the se...");
+  });
+
   it("truncates long titles with the shared sidebar-safe limit", () => {
     expect(
       sanitizeThreadTitle(
