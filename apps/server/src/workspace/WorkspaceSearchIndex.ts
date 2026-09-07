@@ -478,11 +478,12 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
     // Grep cursors advance by file, so whole-word post-filtering needs enough
     // raw candidates from the current file before moving to the next one.
     const rawPageSize = input.wholeWord
-      ? Math.max(input.limit, CONTENT_SEARCH_MAX_MATCHES_PER_FILE)
-      : input.limit;
+      ? Math.max(input.limit, CONTENT_SEARCH_MAX_MATCHES_PER_FILE) + 1
+      : input.limit + 1;
     const matches: Array<ProjectSearchContentsResult["matches"][number]> = [];
     let nextCursor: GrepCursor | null = null;
     let regexFallbackError: string | undefined;
+    let perFileTruncated = false;
 
     do {
       const remainingTimeBudgetMs = Math.max(1, Math.ceil(deadline - performance.now()));
@@ -491,14 +492,23 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
           mode: regexMode ? "regex" : "plain",
           smartCase: !input.caseSensitive && !regexMode,
           // A single dense file must not consume the whole result page.
-          maxMatchesPerFile: Math.min(CONTENT_SEARCH_MAX_MATCHES_PER_FILE, rawPageSize),
+          maxMatchesPerFile: Math.min(CONTENT_SEARCH_MAX_MATCHES_PER_FILE + 1, rawPageSize),
           pageSize: rawPageSize,
           cursor: nextCursor,
           timeBudgetMs: remainingTimeBudgetMs,
         }),
       );
 
+      // The native cursor advances by file and does not report per-file truncation.
+      // Read one extra line to distinguish a full file from a capped one.
+      const linesByPath = new Map<string, number>();
       for (const match of result.items) {
+        const lineCount = (linesByPath.get(match.relativePath) ?? 0) + 1;
+        linesByPath.set(match.relativePath, lineCount);
+        if (lineCount > CONTENT_SEARCH_MAX_MATCHES_PER_FILE) {
+          perFileTruncated = true;
+          continue;
+        }
         const matchRanges = mapContentMatchRanges(match.lineContent, match.matchRanges).filter(
           (range) => !input.wholeWord || isWholeWordRange(match.lineContent, range),
         );
@@ -516,7 +526,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
 
     return {
       matches: matches.slice(0, input.limit),
-      truncated: matches.length > input.limit || nextCursor !== null,
+      truncated: perFileTruncated || matches.length > input.limit || nextCursor !== null,
       ...(regexFallbackError !== undefined ? { regexFallbackError } : {}),
     };
   });
