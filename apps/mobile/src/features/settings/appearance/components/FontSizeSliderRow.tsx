@@ -52,11 +52,12 @@ export function FontSizeSliderRow(props: {
   }, [dragging, fraction, progress]);
 
   const commit = useCallback((next: number) => {
-    if (next === latest.current.value) {
+    const current = latest.current;
+    if (next === current.value) {
       return;
     }
     Haptics.selectionAsync().catch(() => undefined);
-    latest.current.onChange(next);
+    current.onChange(next);
   }, []);
 
   const gesture = useMemo(() => {
@@ -90,17 +91,19 @@ export function FontSizeSliderRow(props: {
         dragging.value = true;
         const f = fractionAt(event.x);
         progress.value = f;
-        runOnJS(commit)(valueAtFraction(f));
       })
-      .onFinalize(() => {
+      .onFinalize((_event, success) => {
         if (!dragging.value) {
           return;
         }
         dragging.value = false;
-        progress.value = withTiming(
-          fractionOfValue(valueAtFraction(progress.value)),
-          SNAP_ANIMATION,
-        );
+        if (!success) {
+          progress.value = withTiming(fractionOfValue(value), SNAP_ANIMATION);
+          return;
+        }
+        const next = valueAtFraction(progress.value);
+        progress.value = withTiming(fractionOfValue(next), SNAP_ANIMATION);
+        runOnJS(commit)(next);
       });
 
     const tap = Gesture.Tap()
@@ -112,7 +115,7 @@ export function FontSizeSliderRow(props: {
       });
 
     return Gesture.Race(pan, tap);
-  }, [commit, disabled, dragging, max, min, progress, step, trackWidth]);
+  }, [commit, disabled, dragging, max, min, progress, step, trackWidth, value]);
 
   const fillStyle = useAnimatedStyle(() => ({
     width: THUMB_SIZE / 2 + progress.value * Math.max(0, trackWidth.value - THUMB_SIZE),
