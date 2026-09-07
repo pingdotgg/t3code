@@ -44,6 +44,7 @@ const UNKNOWN_BACKGROUND_SAMPLE_INTERVAL_MS = 5_000;
 const BATTERY_SAMPLE_INTERVAL_MS = 5_000;
 const CONSTRAINED_SAMPLE_INTERVAL_MS = 15_000;
 const HANDSHAKE_TIMEOUT = Duration.seconds(5);
+const COMMAND_WRITE_TIMEOUT = Duration.seconds(5);
 const SAMPLE_REQUEST_TIMEOUT = Duration.seconds(5);
 const PROCESS_TABLE_REQUEST_TIMEOUT = Duration.seconds(5);
 const HISTORY_REQUEST_TIMEOUT = Duration.seconds(15);
@@ -430,28 +431,41 @@ export const make = Effect.fn("resourceTelemetry.nativeTelemetryClient.make")(fu
     handle: ChildProcessSpawner.ChildProcessHandle,
     command: ResourceMonitorCommand,
   ): Effect.Effect<void, NativeTelemetryClientError> =>
-    commandMutex.withPermits(1)(
-      encodeMonitorCommand(command).pipe(
-        Effect.map((encoded) => `${encoded}\n`),
-        Effect.mapError(
-          (cause) =>
-            new NativeTelemetryCommandFailed({
-              operation: command.type,
-              cause,
-            }),
+    commandMutex
+      .withPermits(1)(
+        encodeMonitorCommand(command).pipe(
+          Effect.map((encoded) => `${encoded}\n`),
+          Effect.mapError(
+            (cause) =>
+              new NativeTelemetryCommandFailed({
+                operation: command.type,
+                cause,
+              }),
+          ),
+          Effect.flatMap((encoded) =>
+            Stream.run(Stream.encodeText(Stream.make(encoded)), handle.stdin),
+          ),
+          Effect.mapError(
+            (cause) =>
+              new NativeTelemetryCommandFailed({
+                operation: command.type,
+                cause,
+              }),
+          ),
         ),
-        Effect.flatMap((encoded) =>
-          Stream.run(Stream.encodeText(Stream.make(encoded)), handle.stdin),
-        ),
-        Effect.mapError(
-          (cause) =>
-            new NativeTelemetryCommandFailed({
-              operation: command.type,
-              cause,
-            }),
-        ),
-      ),
-    );
+      )
+      .pipe(
+        Effect.timeoutOrElse({
+          duration: COMMAND_WRITE_TIMEOUT,
+          orElse: () =>
+            Effect.fail(
+              new NativeTelemetryCommandFailed({
+                operation: command.type,
+                cause: `Resource monitor command write timed out after ${Duration.toMillis(COMMAND_WRITE_TIMEOUT)}ms.`,
+              }),
+            ),
+        }),
+      );
 
   const processEvent = (
     event: ResourceMonitorEvent,
@@ -832,8 +846,11 @@ export const make = Effect.fn("resourceTelemetry.nativeTelemetryClient.make")(fu
   const liveSnapshots = Stream.unwrap(
     Effect.gen(function* () {
       const subscription = yield* PubSub.subscribe(snapshots);
-      yield* Effect.acquireRelease(changeLiveSubscriberCount(1), () =>
-        changeLiveSubscriberCount(-1).pipe(Effect.ignore),
+      yield* Effect.acquireRelease(
+        changeLiveSubscriberCount(1).pipe(
+          Effect.onError(() => changeLiveSubscriberCount(-1).pipe(Effect.ignore)),
+        ),
+        () => changeLiveSubscriberCount(-1).pipe(Effect.ignore),
       );
       return Stream.fromSubscription(subscription);
     }),
@@ -885,22 +902,19 @@ export const make = Effect.fn("resourceTelemetry.nativeTelemetryClient.make")(fu
         requestId,
         windowMs: Math.max(0, Math.round(windowMs)),
       }).pipe(
-        Effect.andThen(
-          Deferred.await(deferred).pipe(
-            Effect.timeoutOption(HISTORY_REQUEST_TIMEOUT),
-            Effect.flatMap(
-              Option.match({
-                onNone: () =>
-                  Effect.fail(
-                    new NativeTelemetryRequestTimedOut({
-                      operation: "readHistory",
-                      timeoutMs: Duration.toMillis(HISTORY_REQUEST_TIMEOUT),
-                    }),
-                  ),
-                onSome: Effect.succeed,
-              }),
-            ),
-          ),
+        Effect.andThen(Deferred.await(deferred)),
+        Effect.timeoutOption(HISTORY_REQUEST_TIMEOUT),
+        Effect.flatMap(
+          Option.match({
+            onNone: () =>
+              Effect.fail(
+                new NativeTelemetryRequestTimedOut({
+                  operation: "readHistory",
+                  timeoutMs: Duration.toMillis(HISTORY_REQUEST_TIMEOUT),
+                }),
+              ),
+            onSome: Effect.succeed,
+          }),
         ),
         Effect.ensuring(
           Ref.update(pendingHistories, (pending) => {
@@ -940,22 +954,19 @@ export const make = Effect.fn("resourceTelemetry.nativeTelemetryClient.make")(fu
       type: "sampleNow",
       requestId,
     }).pipe(
-      Effect.andThen(
-        Deferred.await(deferred).pipe(
-          Effect.timeoutOption(SAMPLE_REQUEST_TIMEOUT),
-          Effect.flatMap(
-            Option.match({
-              onNone: () =>
-                Effect.fail(
-                  new NativeTelemetryRequestTimedOut({
-                    operation: "sampleNow",
-                    timeoutMs: Duration.toMillis(SAMPLE_REQUEST_TIMEOUT),
-                  }),
-                ),
-              onSome: Effect.succeed,
-            }),
-          ),
-        ),
+      Effect.andThen(Deferred.await(deferred)),
+      Effect.timeoutOption(SAMPLE_REQUEST_TIMEOUT),
+      Effect.flatMap(
+        Option.match({
+          onNone: () =>
+            Effect.fail(
+              new NativeTelemetryRequestTimedOut({
+                operation: "sampleNow",
+                timeoutMs: Duration.toMillis(SAMPLE_REQUEST_TIMEOUT),
+              }),
+            ),
+          onSome: Effect.succeed,
+        }),
       ),
       Effect.ensuring(
         Ref.update(pendingSamples, (pending) => {
@@ -994,22 +1005,19 @@ export const make = Effect.fn("resourceTelemetry.nativeTelemetryClient.make")(fu
       type: "processTable",
       requestId,
     }).pipe(
-      Effect.andThen(
-        Deferred.await(deferred).pipe(
-          Effect.timeoutOption(PROCESS_TABLE_REQUEST_TIMEOUT),
-          Effect.flatMap(
-            Option.match({
-              onNone: () =>
-                Effect.fail(
-                  new NativeTelemetryRequestTimedOut({
-                    operation: "processTable",
-                    timeoutMs: Duration.toMillis(PROCESS_TABLE_REQUEST_TIMEOUT),
-                  }),
-                ),
-              onSome: Effect.succeed,
-            }),
-          ),
-        ),
+      Effect.andThen(Deferred.await(deferred)),
+      Effect.timeoutOption(PROCESS_TABLE_REQUEST_TIMEOUT),
+      Effect.flatMap(
+        Option.match({
+          onNone: () =>
+            Effect.fail(
+              new NativeTelemetryRequestTimedOut({
+                operation: "processTable",
+                timeoutMs: Duration.toMillis(PROCESS_TABLE_REQUEST_TIMEOUT),
+              }),
+            ),
+          onSome: Effect.succeed,
+        }),
       ),
       Effect.ensuring(
         Ref.update(pendingProcessTables, (pending) => {
