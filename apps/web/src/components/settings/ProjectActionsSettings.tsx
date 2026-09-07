@@ -1,3 +1,4 @@
+import { AuthSettingsWriteScope } from "@t3tools/contracts";
 import { EnvironmentId, type T3ProjectFileScript } from "@t3tools/contracts";
 import {
   isAtomCommandInterrupted,
@@ -213,6 +214,7 @@ export function ProjectActionsSettings() {
         />
       ) : null}
       <ProjectScriptEditorDialog
+        editScope={AuthSettingsWriteScope}
         request={request}
         scripts={scripts}
         onSubmit={submit}

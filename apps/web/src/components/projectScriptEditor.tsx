@@ -143,6 +143,7 @@ export function editorRequestForScript(
  */
 export function ProjectScriptEditorDialog({
   environmentId,
+  editScope = AuthOrchestrationOperateScope,
   request,
   scripts,
   onSubmit,
@@ -150,6 +151,7 @@ export function ProjectScriptEditorDialog({
   onClose,
 }: {
   environmentId: EnvironmentId;
+  editScope?: typeof AuthOrchestrationOperateScope | typeof AuthSettingsWriteScope;
   request: ProjectScriptEditorRequest | null;
   /** Existing scripts, used to derive a unique id for new scripts. */
   scripts: ReadonlyArray<ProjectScript>;
@@ -160,19 +162,19 @@ export function ProjectScriptEditorDialog({
   onDelete: (scriptId: string) => void;
   onClose: () => void;
 }) {
-  const canEditProject = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
+  const canEditActions = useEnvironmentScope(environmentId, editScope);
   const canWriteSettings = useEnvironmentScope(environmentId, AuthSettingsWriteScope);
   const formId = React.useId();
   const [name, setName] = useState("");
   const [command, setCommand] = useState("");
   const [icon, setIcon] = useState<ProjectScriptIcon>("play");
-  const [iconPickerOpen, setIconPickerOpen] = useComposerMenuState(!canEditProject);
+  const [iconPickerOpen, setIconPickerOpen] = useComposerMenuState(!canEditActions);
   const [runOnWorktreeCreate, setRunOnWorktreeCreate] = useState(false);
   const [keybinding, setKeybinding] = useState("");
   const [previewUrl, setPreviewUrl] = useState("");
   const [autoOpenPreview, setAutoOpenPreview] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
-  const [deleteConfirmOpen, setDeleteConfirmOpen] = useComposerMenuState(!canEditProject);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useComposerMenuState(!canEditActions);
   const [savingRequest, setSavingRequest] = useState<ProjectScriptEditorRequest | null>(null);
   const pendingSubmissionRef = useRef<{ request: ProjectScriptEditorRequest } | null>(null);
 
@@ -213,7 +215,7 @@ export function ProjectScriptEditorDialog({
   };
 
   const captureKeybinding = (event: KeyboardEvent<HTMLInputElement>) => {
-    if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return;
+    if (!readEnvironmentScope(environmentId, editScope)) return;
     if (!readEnvironmentScope(environmentId, AuthSettingsWriteScope)) return;
     if (event.key === "Tab") return;
     event.preventDefault();
@@ -229,7 +231,7 @@ export function ProjectScriptEditorDialog({
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     if (!request || pendingSubmissionRef.current !== null) return;
-    if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) {
+    if (!readEnvironmentScope(environmentId, editScope)) {
       setValidationError("This connection cannot change project actions.");
       return;
     }
@@ -327,7 +329,7 @@ export function ProjectScriptEditorDialog({
           </DialogHeader>
           <DialogPanel>
             <form id={formId} onSubmit={submit}>
-              <fieldset className="space-y-4" disabled={isSaving || !canEditProject}>
+              <fieldset className="space-y-4" disabled={isSaving || !canEditActions}>
                 <div className="space-y-1.5">
                   <Label htmlFor="script-name">Name</Label>
                   <div className="flex items-center gap-2">
@@ -444,7 +446,7 @@ export function ProjectScriptEditorDialog({
                 type="button"
                 variant="destructive-outline"
                 className="mr-auto"
-                disabled={isSaving || !canEditProject}
+                disabled={isSaving || !canEditActions}
                 onClick={() => setDeleteConfirmOpen(true)}
               >
                 Delete
@@ -453,14 +455,14 @@ export function ProjectScriptEditorDialog({
             <Button type="button" variant="outline" onClick={close}>
               Cancel
             </Button>
-            <Button form={formId} type="submit" disabled={isSaving || !canEditProject}>
+            <Button form={formId} type="submit" disabled={isSaving || !canEditActions}>
               {isSaving ? "Saving…" : isEditing ? "Save changes" : "Save action"}
             </Button>
           </DialogFooter>
         </DialogPopup>
       </Dialog>
 
-      <AlertDialog open={deleteConfirmOpen && canEditProject} onOpenChange={setDeleteConfirmOpen}>
+      <AlertDialog open={deleteConfirmOpen && canEditActions} onOpenChange={setDeleteConfirmOpen}>
         <AlertDialogPopup>
           <AlertDialogHeader>
             <AlertDialogTitle>Delete action "{name}"?</AlertDialogTitle>
@@ -470,10 +472,10 @@ export function ProjectScriptEditorDialog({
             <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
             <Button
               variant="destructive"
-              disabled={isSaving || !canEditProject}
+              disabled={isSaving || !canEditActions}
               onClick={() => {
                 if (!request?.scriptId) return;
-                if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) {
+                if (!readEnvironmentScope(environmentId, editScope)) {
                   setValidationError("This connection cannot change project actions.");
                   return;
                 }
