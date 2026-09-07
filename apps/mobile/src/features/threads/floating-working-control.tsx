@@ -24,6 +24,7 @@ import { SymbolView } from "../../components/AppSymbol";
 import { ControlPill } from "../../components/ControlPill";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import type { FloatingWorkingStatus } from "./floating-working-status";
+import { ShimmeringWorkContent } from "./thread-work-log";
 
 const CONTROL_HEIGHT = 38.5; // h-11 with the mobile 14px rem
 // The collapsed composer capsule starts 6 below its overlay's top edge, so
@@ -276,6 +277,32 @@ function FloatingStatusLabel(props: {
         <Text className="max-w-[260px] font-t3-medium text-xs text-foreground" numberOfLines={1}>
           {props.status.label}
         </Text>
+      </StatusLabelRow>
+    );
+  }
+  if (props.status.kind === "preparing") {
+    return (
+      <StatusLabelRow
+        key="preparing"
+        accessibilityLabel={props.status.label}
+        className="gap-1.5"
+        onLayout={props.onLayout}
+      >
+        <SymbolView
+          name="arrow.triangle.branch"
+          size={13}
+          tintColorClassName="foreground"
+          type="monochrome"
+        />
+        <ShimmeringWorkContent
+          className="flex-none"
+          textClassName="font-t3-medium"
+          compact
+          icon="arrow.triangle.branch"
+          iconSubtleColor="transparent"
+          label={props.status.label}
+          showIcon={false}
+        />
       </StatusLabelRow>
     );
   }

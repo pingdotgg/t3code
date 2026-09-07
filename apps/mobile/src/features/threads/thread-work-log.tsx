@@ -139,6 +139,7 @@ export function ThreadDisclosureChevron(props: {
 }
 
 function ShimmerWorkContent(props: {
+  readonly textClassName?: string;
   readonly compact?: boolean;
   readonly environmentId?: EnvironmentId;
   readonly highlighted: boolean;
@@ -176,6 +177,7 @@ function ShimmerWorkContent(props: {
           "min-w-0 shrink",
           props.compact ? "text-xs" : "text-sm",
           props.highlighted ? "text-foreground" : "text-foreground-muted",
+          props.textClassName,
         )}
         numberOfLines={1}
         onTextLayout={props.onTextLayout}
@@ -187,6 +189,8 @@ function ShimmerWorkContent(props: {
 }
 
 export function ShimmeringWorkContent(props: {
+  readonly className?: string;
+  readonly textClassName?: string;
   /** Secondary line: no icon slot, caption size. */
   readonly compact?: boolean;
   readonly environmentId?: EnvironmentId;
@@ -259,10 +263,11 @@ export function ShimmeringWorkContent(props: {
 
   return (
     <View
-      className="min-w-0 flex-1 overflow-hidden"
+      className={cn("min-w-0 flex-1 overflow-hidden", props.className)}
       onLayout={(event) => setAvailableWidth(event.nativeEvent.layout.width)}
     >
       <ShimmerWorkContent
+        textClassName={props.textClassName}
         compact={props.compact}
         environmentId={props.environmentId}
         highlighted={false}
@@ -304,6 +309,7 @@ export function ShimmeringWorkContent(props: {
           >
             <Animated.View style={[{ width: availableWidth }, counterSweepStyle]}>
               <ShimmerWorkContent
+                textClassName={props.textClassName}
                 compact={props.compact}
                 environmentId={props.environmentId}
                 highlighted
