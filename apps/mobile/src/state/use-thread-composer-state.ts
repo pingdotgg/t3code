@@ -279,10 +279,18 @@ export function useThreadComposerState() {
       return null;
     }
 
+    // The last user message is the floor for a running session whose turn has
+    // not reported startedAt yet — otherwise the pill blinks out between the
+    // prompt landing and the agent starting, which web never does.
+    const latestUserMessageAt =
+      selectedThreadDetail?.messages.findLast((message) => message.role === "user")?.createdAt ??
+      selectedThreadShell?.latestUserMessageAt ??
+      null;
     return deriveActiveWorkStartedAt(
       selectedThread.latestTurn,
       selectedThreadSessionActivity,
       null,
+      latestUserMessageAt,
     );
   }, [selectedThreadDetail, selectedThreadSessionActivity, selectedThreadShell]);
 

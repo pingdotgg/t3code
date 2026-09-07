@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { formatDuration } from "./orchestrationTiming.ts";
+import { formatDuration, deriveActiveWorkStartedAt } from "./orchestrationTiming.ts";
 
 describe("formatDuration", () => {
   it.each([
@@ -27,5 +27,59 @@ describe("formatDuration", () => {
 
   it.each([-1, NaN, Infinity, -Infinity])("handles invalid durations: %s", (durationMs) => {
     expect(formatDuration(durationMs)).toBe("0ms");
+  });
+});
+
+describe("deriveActiveWorkStartedAt", () => {
+  const running = { orchestrationStatus: "running", activeTurnId: "turn-1" } as const;
+  const requestedTurn = {
+    turnId: "turn-1",
+    startedAt: null,
+    completedAt: null,
+  };
+
+  // The gap this closes: a queued prompt lands and the session goes running,
+  // but the provider has not stamped startedAt yet. Returning null there blinks
+  // the working indicator out between "Setting up worktree…" and "Working for".
+  it("counts from the last user message while a running turn has no startedAt", () => {
+    expect(
+      deriveActiveWorkStartedAt(requestedTurn, running, null, "2026-09-06T23:21:00.000Z"),
+    ).toBe("2026-09-06T23:21:00.000Z");
+  });
+
+  it("prefers the turn's own startedAt once the provider reports it", () => {
+    expect(
+      deriveActiveWorkStartedAt(
+        { ...requestedTurn, startedAt: "2026-09-06T23:21:05.000Z" },
+        running,
+        null,
+        "2026-09-06T23:21:00.000Z",
+      ),
+    ).toBe("2026-09-06T23:21:05.000Z");
+  });
+
+  it("stops counting once the turn settles, despite a user message being present", () => {
+    expect(
+      deriveActiveWorkStartedAt(
+        {
+          turnId: "turn-1",
+          startedAt: "2026-09-06T23:21:05.000Z",
+          completedAt: "2026-09-06T23:21:09.000Z",
+        },
+        { orchestrationStatus: "idle", activeTurnId: null },
+        null,
+        "2026-09-06T23:21:00.000Z",
+      ),
+    ).toBeNull();
+  });
+
+  it("keeps counting an unsettled turn when no session is running", () => {
+    expect(
+      deriveActiveWorkStartedAt(
+        { turnId: "turn-1", startedAt: "2026-09-06T23:21:05.000Z", completedAt: null },
+        null,
+        null,
+      ),
+    ).toBe("2026-09-06T23:21:05.000Z");
   });
 });
