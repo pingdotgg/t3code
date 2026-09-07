@@ -196,19 +196,6 @@ describe("homepage motion", () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
-  it.each(["wheel", "pointerdown", "keydown"])("hands control to the user after %s", (event) => {
-    const { endorsements, observer } = fixture();
-    observer.report(endorsements, true);
-    endorsements.dispatchEvent(new Event(event));
-    observer.report(endorsements, false);
-    observer.report(endorsements, true);
-    endorsements.dispatchEvent(new Event("pointerleave"));
-    viewport.dispatchEvent(new Event("resize"));
-    vi.advanceTimersByTime(60_000);
-    expect(vi.getTimerCount()).toBe(0);
-    expect(endorsements.scrollTo).not.toHaveBeenCalled();
-  });
-
   it("cancels pending work and ignores events after cleanup", () => {
     const { hero, mark, endorsements, observer } = fixture();
     observer.report(mark, true);

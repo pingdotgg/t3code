@@ -21,7 +21,6 @@ export function startHomeMotion({
   let disposed = false;
   let hovered = endorsements.matches(":hover");
   let focused = endorsements.contains(document.activeElement);
-  let userControlled = false;
   let direction = 1;
   let automaticScroll = false;
   let pageTimer: ReturnType<typeof setTimeout> | undefined;
@@ -38,7 +37,6 @@ export function startHomeMotion({
     canMove(endorsements) &&
     !hovered &&
     !focused &&
-    !userControlled &&
     endorsements.scrollWidth > endorsements.clientWidth;
 
   function resetPointer() {
@@ -153,13 +151,6 @@ export function startHomeMotion({
     },
     eventOptions,
   );
-  const takeControl = () => {
-    userControlled = true;
-    updatePaging();
-  };
-  endorsements.addEventListener("wheel", takeControl, { ...eventOptions, passive: true });
-  endorsements.addEventListener("pointerdown", takeControl, eventOptions);
-  endorsements.addEventListener("keydown", takeControl, eventOptions);
   document.addEventListener("visibilitychange", update, eventOptions);
   window.addEventListener("resize", update, eventOptions);
   reducedMotion.addEventListener("change", update, eventOptions);
