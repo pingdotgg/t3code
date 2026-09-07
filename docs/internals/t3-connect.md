@@ -65,6 +65,35 @@ teardown, because a database failure must leave the active link usable. Failed
 teardown retains enough state to retry. See the
 [managed endpoint lifecycle](../../infra/relay/src/environments/ManagedEndpointProvider.ts).
 
+## Idle tunnels are reclaimed and recovered
+
+Cloudflare bills a tunnel whether or not a connector is attached, so a laptop
+that sleeps with a linked environment leaves a paid tunnel behind. The relay's
+five-minute maintenance job can reclaim those tunnels. `RELAY_TUNNEL_CLEANUP_MODE`
+selects `off`, `dry-run`, or `enabled`, with `off` as the default. A candidate is
+a same-stage tunnel that Cloudflare reports down for at least five minutes, or
+one that never connected and is at least that old.
+
+Cleanup deletes only tunnels whose host has registered recovery, or tunnels with
+no allocation record at all. Allocations without recovery registration belong to
+hosts that cannot replace a deleted tunnel and are left alone. Allocations with
+no recorded tunnel ID, or a different tunnel ID, are skipped because a provision
+may own them. Each sweep is bounded: at most ten list requests, 100 deletions, a
+two-minute deadline, and an early stop on a Cloudflare rate limit. See the
+[reaper](../../infra/relay/src/environments/ManagedEndpointReaper.ts).
+
+A host registers recovery at startup by sending its tunnel ID and loopback
+origin with a short-lived signature from the environment key. Registration
+touches Cloudflare only when the local port changed. The host stores a
+confirmed-origin marker with the connector config, and a later boot starts the
+connector before registration only when that marker matches the current config
+and port. If the connector exits, or `cloudflared` reports repeated tunnel
+authorization rejections, the host asks the relay for a replacement. The relay
+provisions under the same allocation, so the hostname and DNS record survive
+and clients keep their bindings. Every mutation on an allocation bumps its
+`generation`, and deletion locks the row at the generation it claimed, so a
+host that reconnects mid-sweep wins.
+
 ## OAuth traps
 
 Interactive clients and the headless CLI use the same Clerk application but

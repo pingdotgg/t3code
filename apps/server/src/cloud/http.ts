@@ -98,7 +98,7 @@ import {
 import * as CliTokenManager from "./CliTokenManager.ts";
 import { getOrCreateEnvironmentKeyPairFromSecretStore } from "./environmentKeys.ts";
 import { traceRelayRequest } from "./traceRelayRequest.ts";
-import { filterRelayResponse, relayRequestError } from "./relayResponse.ts";
+import { filterRelayResponse, relayRequestError, shouldRetryCloudLink } from "./relayResponse.ts";
 
 const CLOUD_MINT_NONCE_PREFIX = "cloud-mint-nonce-";
 const CLOUD_MINT_JTI_PREFIX = "cloud-mint-jti-";
@@ -703,9 +703,8 @@ const cloudRelayConfigHandler = Effect.fn("environment.cloud.relayConfig")(
         Effect.retry({
           times: 2,
           while: (error) =>
-            error._tag !== "EnvironmentCloudEndpointUnavailableError" &&
-            error._tag !== "EnvironmentHttpUnauthorizedError" &&
-            error._tag !== "EnvironmentHttpConflictError",
+            shouldRetryCloudLink(error) &&
+            error._tag !== "EnvironmentCloudEndpointUnavailableError",
         }),
       );
       if (registration.status === "superseded") {

@@ -1040,8 +1040,8 @@ describe("releaseManagedTunnelOnShutdown", () => {
 
   it.effect.each([
     { status: 401, errorTag: "EnvironmentHttpUnauthorizedError" },
-    { status: 403, errorTag: "EnvironmentHttpUnauthorizedError" },
-    { status: 409, errorTag: "EnvironmentHttpConflictError" },
+    { status: 403, errorTag: "EnvironmentHttpForbiddenError" },
+    { status: 409, errorTag: "EnvironmentHttpBadRequestError" },
   ])("preserves a permanent $status relay recovery failure", ({ status, errorTag }) => {
     const { store } = makeMemorySecretStore([
       [CLOUD_ENDPOINT_RUNTIME_CONFIG, "old-config"],
