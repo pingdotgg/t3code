@@ -23,7 +23,8 @@ function createList(bundle: string) {
   const scrollTo = vi.fn();
   const onLoad = vi.fn();
   const state = {
-    props: { initialScrollAtEnd: true, data: ["message"], onLoad, drawDistance: 500 },
+    props: { data: ["message"], onLoad, drawDistance: 500 },
+    initialScroll: { index: 0, viewPosition: 1 },
     loadStartTime: 0,
     didContainersLayout: true,
     didFinishInitialScroll: true,

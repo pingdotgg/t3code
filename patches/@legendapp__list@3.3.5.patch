@@ -241,7 +241,7 @@ index ce1fe00001c9e5aee6c6ea8bb2d4757d4586d002..3ccf6f16067152dfcb0c143371e2ec6a
       * Number of columns to render items in.
       * @default 1
 diff --git a/react-native.js b/react-native.js
-index b3c5a306b293f797a8b338adfca3060c0f6db22b..4e8f9a7d4c650cf8ea8314ef353433900a86bbde 100644
+index b3c5a306b293f797a8b338adfca3060c0f6db22b..c239dae7390aead3968863fc0d5a4de165521bc6 100644
 --- a/react-native.js
 +++ b/react-native.js
 @@ -717,6 +717,15 @@ function hasActiveInitialScroll(state) {
@@ -277,7 +277,7 @@ index b3c5a306b293f797a8b338adfca3060c0f6db22b..4e8f9a7d4c650cf8ea8314ef35343390
 +  // Native contentOffset can seed an end target without dispatchInitialScroll.
 +  // Both overflow completion paths must wait for the native end landing.
 +  // Underflow needs no scroll: preserve UIKit's untouched resting position.
-+  if (state.didContainersLayout && state.didFinishInitialScroll && state.props.initialScrollAtEnd && state.props.data.length > 0) {
++  if (state.didContainersLayout && state.didFinishInitialScroll && state.initialScroll && state.initialScroll.viewPosition === 1 && state.props.data.length > 0) {
 +    const insetStartAdjustment = getContentInsetStartAdjustment(ctx);
 +    if (insetStartAdjustment > 0 && getContentSize(ctx) > state.scrollLength - insetStartAdjustment + 1) {
 +      startInsetEndSettleWatchdog(ctx);
@@ -809,7 +809,7 @@ index b3c5a306b293f797a8b338adfca3060c0f6db22b..4e8f9a7d4c650cf8ea8314ef35343390
        recycleItems,
        refreshControl: refreshControlElement ? stylePaddingTopState > 0 ? React2__namespace.cloneElement(refreshControlElement, {
 diff --git a/react-native.mjs b/react-native.mjs
-index 40e87cda8c9bc79a889e5542f29af429a24b24d4..792fed9a2b9597cc22a3ea89617088a85aabd1ef 100644
+index 40e87cda8c9bc79a889e5542f29af429a24b24d4..c5c131969e03afab6859c04022b8620cc43e7e5e 100644
 --- a/react-native.mjs
 +++ b/react-native.mjs
 @@ -696,6 +696,15 @@ function hasActiveInitialScroll(state) {
@@ -845,7 +845,7 @@ index 40e87cda8c9bc79a889e5542f29af429a24b24d4..792fed9a2b9597cc22a3ea89617088a8
 +  // Native contentOffset can seed an end target without dispatchInitialScroll.
 +  // Both overflow completion paths must wait for the native end landing.
 +  // Underflow needs no scroll: preserve UIKit's untouched resting position.
-+  if (state.didContainersLayout && state.didFinishInitialScroll && state.props.initialScrollAtEnd && state.props.data.length > 0) {
++  if (state.didContainersLayout && state.didFinishInitialScroll && state.initialScroll && state.initialScroll.viewPosition === 1 && state.props.data.length > 0) {
 +    const insetStartAdjustment = getContentInsetStartAdjustment(ctx);
 +    if (insetStartAdjustment > 0 && getContentSize(ctx) > state.scrollLength - insetStartAdjustment + 1) {
 +      startInsetEndSettleWatchdog(ctx);
