@@ -25,6 +25,7 @@ const makeEnvironment = (overrides: Record<string, unknown> = {}) =>
     displayName: "T3 Code (Alpha)",
     linuxWmClass: "t3code",
     linuxApplicationsDir: "/home/alice/.local/share/applications",
+    desktopExecutable: Option.none(),
     appImagePath: Option.some("/home/alice/Applications/T3-Code.AppImage"),
     path: { join: (...parts: ReadonlyArray<string>) => parts.join("/") },
     ...overrides,
@@ -190,15 +191,52 @@ describe("DesktopLinuxUrlHandler", () => {
     });
   });
 
-  it.effect("does nothing on other platforms or unpackaged builds", () => {
+  it.effect("prefers a configured distro launcher over AppImage metadata", () => {
+    const recorded = emptyRecording();
+
+    return Effect.gen(function* () {
+      yield* runRegister(recorded, {
+        environment: {
+          isPackaged: false,
+          desktopExecutable: Option.some("/nix/store/t3code/bin/t3code-desktop"),
+        },
+      });
+
+      assert.include(recorded.files[0]?.content, 'Exec="/nix/store/t3code/bin/t3code-desktop" %U');
+    });
+  });
+
+  it.effect("does nothing for unpackaged production launches without an explicit launcher", () => {
+    const recorded = emptyRecording();
+
+    return Effect.gen(function* () {
+      yield* runRegister(recorded, { environment: { isPackaged: false } });
+
+      assert.deepEqual(recorded.directories, []);
+      assert.deepEqual(recorded.files, []);
+      assert.deepEqual(recorded.commands, []);
+    });
+  });
+
+  it.effect("preserves packaged launches while skipping development distro launchers", () => {
     const nonLinux = emptyRecording();
-    const unpackaged = emptyRecording();
+    const packagedDevelopment = emptyRecording();
+    const distroDevelopment = emptyRecording();
 
     return Effect.gen(function* () {
       yield* runRegister(nonLinux, { environment: { platform: "darwin" } });
-      yield* runRegister(unpackaged, { environment: { isPackaged: false } });
+      yield* runRegister(packagedDevelopment, { environment: { isDevelopment: true } });
+      yield* runRegister(distroDevelopment, {
+        environment: {
+          isPackaged: false,
+          isDevelopment: true,
+          desktopExecutable: Option.some("/nix/store/t3code/bin/t3code-desktop"),
+        },
+      });
 
-      for (const recorded of [nonLinux, unpackaged]) {
+      assert.equal(packagedDevelopment.files.length, 1);
+      assert.equal(packagedDevelopment.commands.length, 1);
+      for (const recorded of [nonLinux, distroDevelopment]) {
         assert.deepEqual(recorded.directories, []);
         assert.deepEqual(recorded.files, []);
         assert.deepEqual(recorded.commands, []);
