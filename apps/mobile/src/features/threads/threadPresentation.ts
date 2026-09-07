@@ -67,7 +67,7 @@ export function resolveThreadStatus(
       kind: "working",
       label: "Working",
       pillClassName: "bg-primary/10",
-      textClassName: "text-foreground-secondary",
+      textClassName: "text-adaptive-sky-600-400",
       iconColor: "#0a84ff",
       iconBackground: "rgba(10,132,255,0.22)",
       pulse: true,
