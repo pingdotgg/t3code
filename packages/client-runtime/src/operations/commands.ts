@@ -25,6 +25,7 @@ import {
 } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
+import { modelSelectionCommandType } from "@t3tools/shared/model";
 
 import { request } from "../rpc/client.ts";
 
@@ -524,10 +525,10 @@ export const updateThreadMetadata = Effect.fn("EnvironmentCommands.updateThreadM
     }
     if (input.modelSelection !== undefined) {
       const projection = yield* getProjection(input.threadId);
-      const type =
-        projection.thread.providerInstanceId === input.modelSelection.instanceId
-          ? ("thread.model-selection.set" as const)
-          : ("provider.switch" as const);
+      const type = modelSelectionCommandType(
+        projection.thread.providerInstanceId,
+        input.modelSelection,
+      );
       result = yield* dispatch({
         type,
         commandId: result === null ? commandId : CommandId.make(`${commandId}:model-selection`),
