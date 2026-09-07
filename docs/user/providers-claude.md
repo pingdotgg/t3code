@@ -37,6 +37,14 @@ state. Claude does not have Codex's shared-home and shadow-home arrangement.
 For presets that differ only in API keys or endpoints, use the instance's
 **Environment variables**. Variable assignments do not belong in **Launch arguments**.
 
+If a Claude login expires, T3 Code shows a **Reauthenticate** action on the
+thread error. The sign-in dialog opens Claude in the browser on the device you
+are using, including for remote environments and mobile clients. If Claude
+provides a code, paste it into the dialog. The login process still runs on the
+environment machine, so the refreshed credential is saved in the right place.
+After authentication, T3 Code reports separately whether the failed task was
+continued; signing in does not guarantee that continuation succeeded.
+
 ## Compact long conversations
 
 Set **Auto-compact after** in the Claude provider settings to an integer between

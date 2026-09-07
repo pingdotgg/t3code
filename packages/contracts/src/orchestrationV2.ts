@@ -830,6 +830,7 @@ export const OrchestrationV2TurnItemStatus = Schema.Literals([
 export type OrchestrationV2TurnItemStatus = typeof OrchestrationV2TurnItemStatus.Type;
 
 export const OrchestrationV2ProviderFailureClass = Schema.Literals([
+  "auth_error",
   "provider_error",
   "transport_error",
   "permission_error",

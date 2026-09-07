@@ -7,7 +7,13 @@ import {
 } from "@react-navigation/native";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import * as Option from "effect/Option";
-import { EnvironmentId, ThreadId, type ProjectScript } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  ProviderDriverKind,
+  ThreadId,
+  type ProjectScript,
+} from "@t3tools/contracts";
+import { getClaudeReauthenticationTarget } from "@t3tools/client-runtime/claude-reauthentication";
 import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
 import { Platform, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -53,6 +59,10 @@ import {
 } from "./ThreadGitControls";
 import { GitOverviewSheet } from "./git/GitOverviewSheet";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { useAtomQueryRunner } from "../../state/use-atom-query-runner";
+import { serverEnvironment } from "../../state/server";
+import type { ClaudeReauthenticationActions } from "./ClaudeReauthenticationSheet";
+import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { useSelectedThreadGitActions } from "../../state/use-selected-thread-git-actions";
 import { useSelectedThreadGitState } from "../../state/use-selected-thread-git-state";
 import { useSelectedThreadRequests } from "../../state/use-selected-thread-requests";
@@ -290,6 +300,86 @@ function ThreadRouteContent(
   const routeConnectionState =
     routeEnvironmentRuntime?.connectionState ?? (environmentId ? "available" : connectionState);
   const routeConnectionError = routeEnvironmentRuntime?.connectionError ?? null;
+  const beginReauth = useAtomCommand(serverEnvironment.beginProviderReauthentication, {
+    reportFailure: false,
+  });
+  const submitReauth = useAtomCommand(serverEnvironment.submitProviderReauthenticationCode, {
+    reportFailure: false,
+  });
+  const statusReauth = useAtomQueryRunner(serverEnvironment.providerReauthenticationStatus, {
+    reportFailure: false,
+    refresh: true,
+  });
+  const cancelReauth = useAtomCommand(serverEnvironment.cancelProviderReauthentication, {
+    reportFailure: false,
+  });
+  const claudeReauthenticationActions = useMemo<ClaudeReauthenticationActions>(
+    () => ({
+      begin: async (request) => {
+        const result = await beginReauth({
+          environmentId: request.environmentId,
+          input: {
+            provider: ProviderDriverKind.make("claudeAgent"),
+            threadId: request.threadId,
+            ...(request.providerInstanceId === undefined
+              ? {}
+              : { instanceId: request.providerInstanceId }),
+          },
+        });
+        if (result._tag === "Failure") {
+          throw squashAtomCommandFailure(result);
+        }
+        return {
+          attemptId: result.value.attemptId,
+          authorizationUrl: result.value.authorizationUrl,
+        };
+      },
+      submitCode: async (request) => {
+        const result = await submitReauth({
+          environmentId: request.environmentId,
+          input: { attemptId: request.attemptId, code: request.code },
+        });
+        if (result._tag === "Failure") {
+          throw squashAtomCommandFailure(result);
+        }
+        return result.value;
+      },
+      getStatus: async (request) => {
+        const result = await statusReauth({
+          environmentId: request.environmentId,
+          input: { attemptId: request.attemptId },
+        });
+        if (result._tag === "Failure") {
+          throw squashAtomCommandFailure(result);
+        }
+        return result.value;
+      },
+      cancel: async (request) => {
+        const result = await cancelReauth({
+          environmentId: request.environmentId,
+          input: { attemptId: request.attemptId },
+        });
+        if (result._tag === "Failure") {
+          throw squashAtomCommandFailure(result);
+        }
+      },
+    }),
+    [beginReauth, cancelReauth, statusReauth, submitReauth],
+  );
+  const claudeReauthenticationTarget = useMemo(
+    () =>
+      selectedThreadDetail === null
+        ? null
+        : getClaudeReauthenticationTarget(
+            selectedThreadDetail,
+            routeEnvironmentRuntime?.serverConfig?.providers ?? [],
+          ),
+    [routeEnvironmentRuntime?.serverConfig?.providers, selectedThreadDetail],
+  );
+  const claudeReauthentication = useMemo(
+    () => ({ actions: claudeReauthenticationActions, target: claudeReauthenticationTarget }),
+    [claudeReauthenticationActions, claudeReauthenticationTarget],
+  );
   const selectedThreadWithDraftSettings = useMemo(
     () =>
       selectedThread
@@ -813,6 +903,7 @@ function ThreadRouteContent(
           onSelectUserInputOption={requests.onSelectUserInputOption}
           onChangeUserInputCustomAnswer={requests.onChangeUserInputCustomAnswer}
           onSubmitUserInput={requests.onSubmitUserInput}
+          claudeReauthentication={claudeReauthentication}
         />
       </View>
     </>

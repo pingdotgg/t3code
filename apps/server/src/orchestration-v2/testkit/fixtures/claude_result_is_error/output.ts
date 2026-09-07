@@ -49,7 +49,7 @@ export function assertClaudeResultIsErrorOutput(
   if (errorItem?.type !== "error") throw new Error("expected error item");
   assert.equal(errorItem.failure.message, AUTH_ERROR_TEXT);
   assert.equal(errorItem.failure.code, "api_error_401");
-  assert.equal(errorItem.failure.class, "provider_error");
+  assert.equal(errorItem.failure.class, "auth_error");
 
   // The SDK's synthetic assistant message still surfaces as ordinary
   // assistant text (that is what the stream contained), but the error text

@@ -36,9 +36,11 @@ export function isThreadErrorBannerDismissedForSession(bannerKey: string | null)
 export const ThreadErrorBanner = memo(function ThreadErrorBanner({
   error,
   onDismiss,
+  onAction,
 }: {
   error: string | null;
   onDismiss?: () => void;
+  onAction?: { readonly label: string; readonly onClick: () => void; readonly disabled?: boolean };
 }) {
   if (!error) return null;
   return (
@@ -58,6 +60,18 @@ export const ThreadErrorBanner = memo(function ThreadErrorBanner({
             </TooltipPopup>
           </Tooltip>
         </AlertDescription>
+        {onAction ? (
+          <AlertAction>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={onAction.onClick}
+              disabled={onAction.disabled}
+            >
+              {onAction.label}
+            </Button>
+          </AlertAction>
+        ) : null}
         {onDismiss && (
           <AlertAction>
             <Button variant="ghost" size="icon-xs" aria-label="Dismiss error" onClick={onDismiss}>

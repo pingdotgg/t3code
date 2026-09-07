@@ -1,4 +1,5 @@
 import { type EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
+import type { ClaudeReauthenticationTarget } from "@t3tools/client-runtime/claude-reauthentication";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentThreadStatus } from "@t3tools/client-runtime/state/threads";
 import { useKeyboardChatComposerInset, useKeyboardScrollToEnd } from "@legendapp/list/keyboard";
@@ -55,6 +56,12 @@ import Animated, {
   withTiming,
 } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { ErrorBanner } from "../../components/ErrorBanner";
+import {
+  ClaudeReauthenticationSheet,
+  type ClaudeReauthenticationActions,
+  type ClaudeReauthenticationRequest,
+} from "./ClaudeReauthenticationSheet";
 
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import type { ComposerEditorHandle } from "../../components/ComposerEditor";
@@ -130,6 +137,10 @@ export interface ThreadDetailScreenProps {
   readonly usesAutomaticContentInsets?: boolean;
   readonly onHeaderMaterialVisibilityChange?: (visible: boolean) => void;
   readonly onOpenConnectionEditor: () => void;
+  readonly claudeReauthentication?: {
+    readonly actions: ClaudeReauthenticationActions;
+    readonly target: ClaudeReauthenticationTarget | null;
+  };
   readonly onChangeDraftMessage: (value: string) => void;
   readonly onPickDraftMedia: () => Promise<void>;
   readonly onPickDraftFiles: () => Promise<void>;
@@ -745,9 +756,42 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   const handleFeedTouchCancel = useCallback(() => {
     feedTouchStartRef.current = null;
   }, []);
+  const [claudeReauthenticationVisible, setClaudeReauthenticationVisible] = useState(false);
+  const [claudeReauthenticationRequest, setClaudeReauthenticationRequest] =
+    useState<ClaudeReauthenticationRequest | null>(null);
+  const claudeReauthenticationTarget = props.claudeReauthentication?.target ?? null;
+  const handleOpenClaudeReauthentication = useCallback(() => {
+    if (claudeReauthenticationTarget === null) {
+      return;
+    }
+    setClaudeReauthenticationRequest(
+      Object.freeze({
+        environmentId: props.environmentId,
+        threadId: claudeReauthenticationTarget.threadId,
+        providerInstanceId: claudeReauthenticationTarget.instanceId,
+      }),
+    );
+    setClaudeReauthenticationVisible(true);
+  }, [claudeReauthenticationTarget, props.environmentId]);
+  useEffect(() => {
+    setClaudeReauthenticationVisible(false);
+    setClaudeReauthenticationRequest(null);
+  }, [selectedThreadKey]);
 
   return (
     <View className="flex-1">
+      {claudeReauthenticationTarget ? (
+        <View className="px-4 pt-3">
+          <ErrorBanner
+            message={claudeReauthenticationTarget.message}
+            action={{
+              label: "Reauthenticate",
+              onPress: handleOpenClaudeReauthentication,
+              disabled: claudeReauthenticationVisible,
+            }}
+          />
+        </View>
+      ) : null}
       {showContent ? (
         <View
           className="flex-1"
@@ -912,6 +956,19 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
             </View>
           </Animated.View>
         </KeyboardStickyView>
+      ) : null}
+      {props.claudeReauthentication && claudeReauthenticationRequest ? (
+        <ClaudeReauthenticationSheet
+          key={selectedThreadKey}
+          visible={
+            claudeReauthenticationVisible &&
+            claudeReauthenticationRequest.threadId === props.selectedThread.id &&
+            claudeReauthenticationRequest.environmentId === props.environmentId
+          }
+          request={claudeReauthenticationRequest}
+          actions={props.claudeReauthentication.actions}
+          onRequestClose={() => setClaudeReauthenticationVisible(false)}
+        />
       ) : null}
     </View>
   );

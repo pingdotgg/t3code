@@ -10,6 +10,8 @@ import {
 import { createModelSelection } from "@t3tools/shared/model";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
 import * as Duration from "effect/Duration";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -73,6 +75,43 @@ const recordProviderUsage = (provider: string, instanceId: string | null = provi
   });
 
 it.layer(NodeServices.layer)("server settings", (it) => {
+  const assertSettingsLock = Effect.gen(function* () {
+    const settings = yield* ServerSettingsModule.ServerSettingsService;
+    const before = yield* settings.getSettings;
+    const entered = yield* Deferred.make<void>();
+    const release = yield* Deferred.make<void>();
+    const updateStarted = yield* Deferred.make<void>();
+    const guarded = yield* settings
+      .withSettingsLock(
+        Deferred.succeed(entered, undefined).pipe(Effect.andThen(Deferred.await(release))),
+      )
+      .pipe(Effect.forkChild);
+    yield* Deferred.await(entered);
+    const writer = yield* Deferred.succeed(updateStarted, undefined).pipe(
+      Effect.andThen(
+        settings.updateSettings({ sidebarAutoSettleOnMerge: !before.sidebarAutoSettleOnMerge }),
+      ),
+      Effect.forkChild,
+    );
+    yield* Deferred.await(updateStarted);
+    yield* Effect.yieldNow;
+    assert.strictEqual(
+      (yield* settings.getSettings).sidebarAutoSettleOnMerge,
+      before.sidebarAutoSettleOnMerge,
+    );
+    yield* Deferred.succeed(release, undefined);
+    yield* Fiber.join(guarded);
+    const after = yield* Fiber.join(writer);
+    assert.strictEqual(after.sidebarAutoSettleOnMerge, !before.sidebarAutoSettleOnMerge);
+  });
+
+  it.effect("holds persisted settings updates until guarded work completes", () =>
+    assertSettingsLock.pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+  it.effect("holds in-memory settings updates until guarded work completes", () =>
+    assertSettingsLock.pipe(Effect.provide(ServerSettingsModule.layerTest())),
+  );
+
   it.effect("preserves context when reading a provider environment secret fails", () => {
     const platformCause = PlatformError.systemError({
       _tag: "PermissionDenied",

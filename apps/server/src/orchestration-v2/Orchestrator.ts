@@ -1,3 +1,4 @@
+import * as NodeUtil from "node:util";
 import {
   type ChatAttachment,
   CommandId,
@@ -176,11 +177,33 @@ export interface OrchestratorV2DispatchResult {
   readonly storedEvents: ReadonlyArray<OrchestrationV2StoredEvent>;
 }
 
+/** Correlation captured before Claude OAuth starts, so a later failed turn
+ * cannot accidentally be replayed by a delayed auth callback. */
+export interface ClaudeReauthenticationCapture {
+  readonly threadId: ThreadId;
+  readonly instanceId: ProviderInstanceId;
+  /** The thread selection at login start, including same-instance model changes. */
+  readonly modelSelection: ModelSelection;
+  readonly runId: RunId;
+  readonly messageId: MessageId;
+  readonly text: string;
+  readonly attachments: ReadonlyArray<ChatAttachment>;
+  readonly providerSessionId: ProviderSessionId | null;
+  readonly cwd: string;
+}
+
 export interface OrchestratorV2Shape {
   readonly resumeQueuedRuns: Effect.Effect<number, OrchestratorV2Error>;
   readonly dispatch: (
     command: OrchestrationV2Command,
   ) => Effect.Effect<OrchestratorV2DispatchResult, OrchestratorV2Error>;
+  readonly prepareReauthentication: (input: {
+    readonly threadId: ThreadId;
+    readonly instanceId: ProviderInstanceId;
+  }) => Effect.Effect<ClaudeReauthenticationCapture | null, OrchestratorV2Error>;
+  readonly continueAfterReauthentication: (
+    capture: ClaudeReauthenticationCapture,
+  ) => Effect.Effect<"resumed" | "skipped", OrchestratorV2Error>;
   readonly getThreadProjection: (
     threadId: ThreadId,
   ) => Effect.Effect<OrchestrationV2ThreadProjection, OrchestratorV2Error>;
@@ -7186,6 +7209,156 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const dispatchWithReceipt = (command: OrchestrationV2Command) =>
     threadDispatch.withLock(commandThreadId(command), dispatchWithReceiptEffect(command));
 
+  const findReauthenticationCapture = (input: {
+    readonly threadId: ThreadId;
+    readonly instanceId: ProviderInstanceId;
+  }) =>
+    Effect.gen(function* () {
+      const projection = yield* projectionStore
+        .getThreadProjection(input.threadId)
+        .pipe(
+          Effect.mapError(
+            (cause) => new OrchestratorProjectionError({ threadId: input.threadId, cause }),
+          ),
+        );
+      if (
+        projection.thread.archivedAt !== null ||
+        projection.thread.deletedAt !== null ||
+        projection.thread.providerInstanceId !== input.instanceId
+      )
+        return null;
+      const run = projection.runs.toSorted((left, right) => right.ordinal - left.ordinal)[0];
+      if (
+        run === undefined ||
+        run.providerInstanceId !== input.instanceId ||
+        run.status !== "failed"
+      )
+        return null;
+      if (
+        projection.runs.some((candidate) =>
+          ["queued", "preparing", "starting", "running", "waiting"].includes(candidate.status),
+        )
+      )
+        return null;
+      const message = projection.messages.find((candidate) => candidate.id === run.userMessageId);
+      const failure = projection.turnItems.findLast(
+        (item) => item.runId === run.id && item.nodeId === run.rootNodeId && item.type === "error",
+      );
+      if (
+        message !== undefined &&
+        failure?.type === "error" &&
+        failure.failure.class === "auth_error"
+      ) {
+        const providerThread =
+          run.providerThreadId === null
+            ? undefined
+            : projection.providerThreads.find((candidate) => candidate.id === run.providerThreadId);
+        const providerSession =
+          providerThread?.providerSessionId === null ||
+          providerThread?.providerSessionId === undefined
+            ? undefined
+            : projection.providerSessions.find(
+                (candidate) => candidate.id === providerThread.providerSessionId,
+              );
+        const policy = yield* runtimePolicy
+          .resolve({ thread: projection.thread, modelSelection: run.modelSelection })
+          .pipe(
+            Effect.mapError(
+              (cause) => new OrchestratorProjectionError({ threadId: input.threadId, cause }),
+            ),
+          );
+        return {
+          threadId: input.threadId,
+          instanceId: input.instanceId,
+          modelSelection: projection.thread.modelSelection,
+          runId: run.id,
+          messageId: message.id,
+          text: message.text,
+          attachments: message.attachments,
+          providerSessionId: providerThread?.providerSessionId ?? null,
+          cwd:
+            policy.cwd ?? projection.thread.worktreePath ?? providerSession?.cwd ?? process.cwd(),
+        } satisfies ClaudeReauthenticationCapture;
+      }
+      return null;
+    });
+
+  const prepareReauthentication = (input: {
+    readonly threadId: ThreadId;
+    readonly instanceId: ProviderInstanceId;
+  }) => threadDispatch.withLock(input.threadId, findReauthenticationCapture(input));
+
+  const continueAfterReauthentication = (capture: ClaudeReauthenticationCapture) =>
+    threadDispatch.withLock(
+      capture.threadId,
+      Effect.gen(function* () {
+        const current = yield* findReauthenticationCapture({
+          threadId: capture.threadId,
+          instanceId: capture.instanceId,
+        });
+        if (
+          current === null ||
+          current.runId !== capture.runId ||
+          !modelSelectionsEqual(current.modelSelection, capture.modelSelection) ||
+          current.messageId !== capture.messageId ||
+          current.text !== capture.text ||
+          current.cwd !== capture.cwd ||
+          current.providerSessionId !== capture.providerSessionId ||
+          !NodeUtil.isDeepStrictEqual(current.attachments, capture.attachments)
+        ) {
+          return "skipped" as const;
+        }
+        if (capture.providerSessionId !== null) {
+          yield* providerSessions
+            .release({
+              providerSessionId: capture.providerSessionId,
+              reason: "runtime_error",
+              detail: "Claude OAuth session was reauthenticated.",
+            })
+            .pipe(
+              Effect.mapError(
+                (cause) =>
+                  new OrchestratorDispatchError({
+                    commandId: CommandId.make(`command:claude-reauth-release:${capture.runId}`),
+                    commandType: "provider-session.detach",
+                    cause,
+                  }),
+              ),
+            );
+        }
+        const retryCommandId = yield* idAllocator.allocate
+          .command({
+            fixtureName: "claude-reauth",
+            commandName: `retry:${capture.runId}`,
+          })
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new OrchestratorDispatchError({
+                  commandId: CommandId.make(
+                    `command:claude-reauth-retry-allocation:${capture.runId}`,
+                  ),
+                  commandType: "message.dispatch",
+                  cause,
+                }),
+            ),
+          );
+        const command = {
+          type: "message.dispatch" as const,
+          createdBy: "user" as const,
+          creationSource: "server" as const,
+          commandId: retryCommandId,
+          threadId: capture.threadId,
+          messageId: MessageId.make(`message:claude-reauth-retry:${capture.runId}`),
+          text: capture.text,
+          attachments: [...capture.attachments],
+          dispatchMode: { type: "start_immediately" as const },
+        } satisfies Extract<OrchestrationV2Command, { readonly type: "message.dispatch" }>;
+        yield* dispatchWithReceiptEffect(command);
+        return "resumed" as const;
+      }),
+    );
+
   const handleTerminalRun = (stored: OrchestrationV2StoredEvent) =>
     Effect.gen(function* () {
       const threadId = stored.event.threadId;
@@ -7335,6 +7508,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   return OrchestratorV2.of({
     resumeQueuedRuns,
     dispatch: dispatchWithReceipt,
+    prepareReauthentication,
+    continueAfterReauthentication,
     getThreadProjection: (threadId) =>
       projectionStore
         .getThreadProjection(threadId)
@@ -7440,6 +7615,21 @@ export const layerUnavailable: Layer.Layer<OrchestratorV2> = Layer.succeed(
         new OrchestratorDispatchError({
           commandId: command.commandId,
           commandType: command.type,
+          cause: "Orchestration V2 live runtime is not configured.",
+        }),
+      ),
+    prepareReauthentication: () =>
+      Effect.fail(
+        new OrchestratorProjectionError({
+          threadId: ThreadId.make("thread:unavailable"),
+          cause: "Orchestration V2 live runtime is not configured.",
+        }),
+      ),
+    continueAfterReauthentication: () =>
+      Effect.fail(
+        new OrchestratorDispatchError({
+          commandId: CommandId.make("command:system:claude-reauth"),
+          commandType: "message.dispatch",
           cause: "Orchestration V2 live runtime is not configured.",
         }),
       ),

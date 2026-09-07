@@ -296,6 +296,7 @@ describe("makeManagedServerProvider", () => {
         const serverSettingsLayer = Layer.succeed(
           ServerSettingsService,
           ServerSettingsService.of({
+            withSettingsLock: (effect) => effect,
             start: Effect.void,
             ready: Effect.void,
             getSettings: Ref.get(serverSettingsRef),

@@ -81,6 +81,7 @@ import { discoverClaudeSkills } from "../../provider/Drivers/ClaudeSkills.ts";
 import { compileClaudeModelSelection } from "../../claudeModelOptions.ts";
 import { ServerConfig } from "../../config.ts";
 import { makeClaudeEnvironment } from "../../provider/Drivers/ClaudeHome.ts";
+import { supportsClaudeSubscriptionLogin } from "../../provider/claudeAuthentication.ts";
 import {
   BUNDLED_CLAUDE_MODEL_CATALOG,
   resolveClaudeCatalogContextWindow,
@@ -2056,24 +2057,42 @@ function isClaudeTaskNotificationOriginResult(message: SDKMessage): message is S
   return message.type === "result" && message.origin?.kind === "task-notification";
 }
 
-function providerFailureFromResult(
+const claudeAuthenticationErrorPattern =
+  /failed to authenticate|authentication failed|not logged in|invalid authentication credentials|oauth (?:token|session) (?:has )?expired/i;
+
+export function providerFailureFromResult(
   message: SDKResultMessage,
+  assistantError?: string | null,
+  firstPartyOAuth = false,
 ): OrchestrationV2ProviderFailure | null {
   if (message.subtype !== "success") {
+    const authenticationText = claudeAuthenticationErrorPattern.test(message.errors.join("\n"));
     return makeProviderFailure({
       message: resultUserFacingError(message) ?? message.errors.join("\n"),
       code: message.subtype,
-      class: "provider_error",
+      class:
+        firstPartyOAuth &&
+        message.subtype === "error_during_execution" &&
+        (assistantError === "authentication_failed" || authenticationText)
+          ? "auth_error"
+          : "provider_error",
     });
   }
   if (!message.is_error) {
     return null;
   }
   const apiErrorStatus = message.api_error_status ?? null;
+  const authenticationText = claudeAuthenticationErrorPattern.test(message.result);
+  // The SDK uses both a success/is_error 401 and error_during_execution for
+  // OAuth failures across CLI versions. The environment gate is essential:
+  // API keys, alternate endpoints, and Bedrock/Vertex credentials must remain
+  // ordinary provider errors even when they use the same SDK marker.
+  const authenticationFailure =
+    firstPartyOAuth && (assistantError === "authentication_failed" || authenticationText);
   return makeProviderFailure({
     message: message.result,
     code: apiErrorStatus === null ? "sdk_result_error" : `api_error_${apiErrorStatus}`,
-    class: "provider_error",
+    class: authenticationFailure ? "auth_error" : "provider_error",
     retryable: apiErrorStatus === 429 || apiErrorStatus === 529 ? true : null,
   });
 }
@@ -2238,6 +2257,7 @@ interface ActiveClaudeTurnContext {
     fallbackText: string;
     fallbackNativeItemId: string;
     emittedNativeItemIds: Set<string>;
+    error: string | null;
   };
   readonly toolCalls: Map<string, ActiveClaudeToolCall>;
   readonly ignoredTaskIds: Set<string>;
@@ -2440,6 +2460,7 @@ export function makeClaudeAdapterV2(
   adapterOptions: ClaudeAdapterV2Options,
 ): ProviderAdapterV2Shape {
   const { attachmentsDir, fileSystem, path, idAllocator, queryRunner } = adapterOptions;
+  const firstPartyOAuth = supportsClaudeSubscriptionLogin(adapterOptions.environment);
   const continuationRequests = adapterOptions.continuationRequests ?? {
     offer: () => Effect.void,
   };
@@ -4461,6 +4482,7 @@ export function makeClaudeAdapterV2(
 
           if (message.type === "assistant") {
             context.nativeMessageCursor = message.uuid;
+            context.assistant.error = message.error ?? null;
           }
 
           if (message.type === "system" && message.subtype === "compact_boundary") {
@@ -4933,7 +4955,9 @@ export function makeClaudeAdapterV2(
               next.delete(context.providerTurnId);
               return next;
             });
-            const resultFailure = interrupted ? null : providerFailureFromResult(message);
+            const resultFailure = interrupted
+              ? null
+              : providerFailureFromResult(message, context.assistant.error, firstPartyOAuth);
             yield* finalizeActiveTurn({
               context,
               status: interrupted ? "interrupted" : terminalStatusFromResult(message),
@@ -5394,6 +5418,7 @@ export function makeClaudeAdapterV2(
                 fallbackText: "",
                 fallbackNativeItemId: `assistant:${turnInput.runId}`,
                 emittedNativeItemIds: new Set(),
+                error: null,
               },
               toolCalls: new Map(),
               ignoredTaskIds: new Set(),

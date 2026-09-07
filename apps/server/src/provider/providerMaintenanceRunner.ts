@@ -1,4 +1,11 @@
+import * as NodeUtil from "node:util";
 import {
+  ClaudeSettings,
+  ServerProviderReauthenticateError,
+  type ServerProviderReauthenticateBeginInput,
+  type ServerProviderReauthenticateCodeInput,
+  type ServerProviderReauthenticateStatusInput,
+  type ServerProviderReauthenticateStatusResult,
   defaultInstanceIdForDriver,
   ProviderDriverKind,
   ServerProviderUpdateError,
@@ -8,6 +15,7 @@ import {
   type ServerProviderUpdateState,
 } from "@t3tools/contracts";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
+import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Data from "effect/Data";
@@ -17,11 +25,18 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { HttpClient } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { ProviderRegistry } from "./Services/ProviderRegistry.ts";
+import { makeClaudeEnvironment } from "./Drivers/ClaudeHome.ts";
+import { mergeProviderInstanceEnvironment } from "./ProviderInstanceEnvironment.ts";
+import * as ClaudeAuthFlow from "./claudeAuthFlow.ts";
+import { supportsClaudeSubscriptionLogin } from "./claudeAuthentication.ts";
+import { ServerSettingsService } from "../serverSettings.ts";
+import { OrchestratorV2 } from "../orchestration-v2/Orchestrator.ts";
 import { makeProviderMaintenanceCommandCoordinator } from "./providerMaintenanceCommandCoordinator.ts";
 import {
   enrichProviderSnapshotWithVersionAdvisory,
@@ -31,6 +46,8 @@ import {
 import type { ProviderMaintenanceCapabilities } from "./providerMaintenance.ts";
 import { collectUint8StreamText } from "../stream/collectUint8StreamText.ts";
 const isServerProviderUpdateError = Schema.is(ServerProviderUpdateError);
+const decodeClaudeSettings = Schema.decodeUnknownEffect(ClaudeSettings);
+const CLAUDE_DRIVER = ProviderDriverKind.make("claudeAgent");
 
 const UPDATE_TIMEOUT_MS = 5 * 60_000;
 const UPDATE_OUTPUT_MAX_BYTES = 10_000;
@@ -53,6 +70,18 @@ export interface ProviderMaintenanceRunnerShape {
           readonly instanceId?: ProviderInstanceId | undefined;
         },
   ) => Effect.Effect<ServerProviderUpdatedPayload, ServerProviderUpdateError>;
+  readonly beginProviderReauthentication: (
+    input: ServerProviderReauthenticateBeginInput,
+  ) => Effect.Effect<ServerProviderReauthenticateStatusResult, ServerProviderReauthenticateError>;
+  readonly submitProviderReauthenticationCode: (
+    input: ServerProviderReauthenticateCodeInput,
+  ) => Effect.Effect<ServerProviderReauthenticateStatusResult, ServerProviderReauthenticateError>;
+  readonly getProviderReauthenticationStatus: (
+    input: ServerProviderReauthenticateStatusInput,
+  ) => Effect.Effect<ServerProviderReauthenticateStatusResult, ServerProviderReauthenticateError>;
+  readonly cancelProviderReauthentication: (
+    input: ServerProviderReauthenticateStatusInput,
+  ) => Effect.Effect<ServerProviderReauthenticateStatusResult, ServerProviderReauthenticateError>;
 }
 
 export class ProviderMaintenanceRunner extends Context.Service<
@@ -213,6 +242,11 @@ function makeUpdateState(input: {
 
 export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
   const providerRegistry = yield* ProviderRegistry;
+  const serverSettings = yield* ServerSettingsService;
+  const hostEnvironment = yield* HostProcessEnvironment;
+  const path = yield* Path.Path;
+  const claudeAuthFlow = yield* ClaudeAuthFlow.ClaudeAuthFlow;
+  const orchestrator = yield* OrchestratorV2;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const httpClient = yield* HttpClient.HttpClient;
   const versionCache = yield* ProviderVersionCache;
@@ -300,6 +334,104 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
         );
       }),
     );
+
+  const resolveClaudeAuthenticationConfig = Effect.fn(
+    "ProviderMaintenanceRunner.resolveClaudeAuthenticationConfig",
+  )(function* (input: {
+    readonly provider: ProviderDriverKind;
+    readonly instanceId?: ProviderInstanceId | undefined;
+  }) {
+    if (input.provider !== CLAUDE_DRIVER) {
+      return yield* new ServerProviderReauthenticateError({
+        provider: input.provider,
+        reason: `Reauthentication is not supported for ${input.provider}`,
+      });
+    }
+
+    const defaultInstanceId = defaultInstanceIdForDriver(CLAUDE_DRIVER);
+    const instanceId = input.instanceId ?? defaultInstanceId;
+    const settings = yield* serverSettings.getSettings.pipe(
+      Effect.mapError(
+        (cause) =>
+          new ServerProviderReauthenticateError({
+            provider: input.provider,
+            reason: "Failed to read provider settings.",
+            cause,
+          }),
+      ),
+    );
+    const instance = settings.providerInstances[instanceId];
+    if (
+      input.instanceId !== undefined &&
+      instance === undefined &&
+      instanceId !== defaultInstanceId
+    ) {
+      return yield* new ServerProviderReauthenticateError({
+        provider: input.provider,
+        reason: `Provider instance ${instanceId} was not found.`,
+      });
+    }
+    if (instance !== undefined && instance.driver !== CLAUDE_DRIVER) {
+      return yield* new ServerProviderReauthenticateError({
+        provider: input.provider,
+        reason: `Provider instance ${instanceId} is not a Claude instance.`,
+      });
+    }
+
+    const claudeSettings = yield* decodeClaudeSettings(
+      instance === undefined
+        ? settings.providers.claudeAgent
+        : instance.config === undefined
+          ? {}
+          : instance.config,
+    ).pipe(
+      Effect.mapError(
+        (cause) =>
+          new ServerProviderReauthenticateError({
+            provider: input.provider,
+            reason: `Provider instance ${instanceId} has invalid Claude settings.`,
+            cause,
+          }),
+      ),
+    );
+    const environment = yield* makeClaudeEnvironment(
+      claudeSettings,
+      mergeProviderInstanceEnvironment(instance?.environment, hostEnvironment),
+    ).pipe(Effect.provideService(Path.Path, path));
+
+    // `claude auth login` only repairs Claude subscription OAuth. An API key
+    // or cloud-provider credential is configured outside that flow, so do not
+    // offer a login link that cannot fix the failed run.
+    const configuredProvider = yield* providerRegistry.getProviders.pipe(
+      Effect.map((providers) =>
+        providers.find(
+          (provider) => provider.instanceId === instanceId && provider.driver === CLAUDE_DRIVER,
+        ),
+      ),
+    );
+    if (
+      instance?.enabled === false ||
+      claudeSettings.enabled === false ||
+      configuredProvider?.enabled !== true
+    ) {
+      return yield* new ServerProviderReauthenticateError({
+        provider: input.provider,
+        reason: "This Claude provider instance is disabled or unavailable.",
+      });
+    }
+    if (!supportsClaudeSubscriptionLogin(environment, configuredProvider.auth.type)) {
+      return yield* new ServerProviderReauthenticateError({
+        provider: input.provider,
+        reason: "Claude reauthentication is only available for Claude subscription OAuth.",
+      });
+    }
+
+    return {
+      instanceId,
+      command: claudeSettings.binaryPath,
+      environment,
+    };
+  });
 
   const updateProvider: ProviderMaintenanceRunnerShape["updateProvider"] = Effect.fn(
     "ProviderMaintenanceRunner.updateProvider",
@@ -465,9 +597,97 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
       );
   });
 
+  const beginProviderReauthentication: ProviderMaintenanceRunnerShape["beginProviderReauthentication"] =
+    Effect.fn("ProviderMaintenanceRunner.beginProviderReauthentication")(function* (input) {
+      const configuration = yield* resolveClaudeAuthenticationConfig(input);
+      const capture = yield* orchestrator
+        .prepareReauthentication({
+          threadId: input.threadId,
+          instanceId: configuration.instanceId,
+        })
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new ServerProviderReauthenticateError({
+                provider: input.provider,
+                reason: "Could not inspect the failed Claude task.",
+                cause,
+              }),
+          ),
+        );
+      if (capture === null) {
+        return yield* new ServerProviderReauthenticateError({
+          provider: input.provider,
+          reason:
+            "This thread no longer has a Claude authentication failure. Try sending your message again.",
+        });
+      }
+      return yield* claudeAuthFlow.begin({
+        provider: input.provider,
+        instanceId: configuration.instanceId,
+        threadId: input.threadId,
+        command: configuration.command,
+        cwd: capture.cwd,
+        args: ["auth", "login"],
+        // `true` is Claude's no-browser sentinel. Without it, Claude opens a
+        // browser on the server and withholds the URL remote clients need.
+        env: { ...configuration.environment, BROWSER: "true" },
+        onSuccess: () =>
+          Effect.gen(function* () {
+            const providers = yield* providerRegistry.refreshInstance(configuration.instanceId);
+            return yield* serverSettings.withSettingsLock(
+              Effect.gen(function* () {
+                const current = yield* resolveClaudeAuthenticationConfig(input).pipe(Effect.option);
+                if (
+                  Option.isNone(current) ||
+                  current.value.command !== configuration.command ||
+                  !NodeUtil.isDeepStrictEqual(current.value.environment, configuration.environment)
+                ) {
+                  return { providers, continuation: "skipped" as const, continuationError: null };
+                }
+                const continuation = yield* orchestrator
+                  .continueAfterReauthentication(capture)
+                  .pipe(
+                    Effect.mapError(
+                      (cause) =>
+                        new ServerProviderReauthenticateError({
+                          provider: input.provider,
+                          reason: "Claude is signed in, but the task could not resume.",
+                          cause,
+                        }),
+                    ),
+                  );
+                return { providers, continuation, continuationError: null };
+              }),
+            );
+          }),
+      });
+    });
+
+  const submitProviderReauthenticationCode: ProviderMaintenanceRunnerShape["submitProviderReauthenticationCode"] =
+    Effect.fn("ProviderMaintenanceRunner.submitProviderReauthenticationCode")(function* (input) {
+      return yield* claudeAuthFlow.submitCode(input);
+    });
+
+  const getProviderReauthenticationStatus: ProviderMaintenanceRunnerShape["getProviderReauthenticationStatus"] =
+    Effect.fn("ProviderMaintenanceRunner.getProviderReauthenticationStatus")(function* (input) {
+      return yield* claudeAuthFlow.status(input.attemptId);
+    });
+
+  const cancelProviderReauthentication: ProviderMaintenanceRunnerShape["cancelProviderReauthentication"] =
+    Effect.fn("ProviderMaintenanceRunner.cancelProviderReauthentication")(function* (input) {
+      return yield* claudeAuthFlow.cancel(input.attemptId);
+    });
+
   return ProviderMaintenanceRunner.of({
     updateProvider,
+    beginProviderReauthentication,
+    submitProviderReauthenticationCode,
+    getProviderReauthenticationStatus,
+    cancelProviderReauthentication,
   });
 });
 
-export const layer = Layer.effect(ProviderMaintenanceRunner, make());
+export const layer = Layer.effect(ProviderMaintenanceRunner, make()).pipe(
+  Layer.provide(ClaudeAuthFlow.layer),
+);

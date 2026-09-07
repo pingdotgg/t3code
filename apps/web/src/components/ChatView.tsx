@@ -30,6 +30,7 @@ import {
   TerminalOpenInput,
 } from "@t3tools/contracts";
 import { type EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
+import { getClaudeReauthenticationTarget } from "@t3tools/client-runtime/claude-reauthentication";
 import { deriveThreadTitleSeed } from "@t3tools/client-runtime/operations";
 import { effectiveSnoozed, threadWokeAt } from "@t3tools/client-runtime/state/thread-settled";
 import { useThreadActions } from "../hooks/useThreadActions";
@@ -284,6 +285,11 @@ import {
 } from "../state/entities";
 import { environmentShell } from "../state/shell";
 import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
+import {
+  ClaudeReauthenticationDialog,
+  type ClaudeReauthenticationActions,
+  type ClaudeReauthenticationRequest,
+} from "./chat/ClaudeReauthenticationDialog";
 import { createPageScrollController, type PageScrollKey } from "./chat/pageScrollController";
 import { DraftHeroHeadline } from "./chat/DraftHeroHeadline";
 import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
@@ -1329,6 +1335,11 @@ function chatActionErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "An error occurred.";
 }
 
+function unwrapAtomCommandResult<A, E>(result: AtomCommandResult<A, E>): A {
+  if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+  return result.value;
+}
+
 const ENVIRONMENT_UNAVAILABLE_SEND_TOAST_TRAIL_SIZE = 3;
 
 /**
@@ -1365,6 +1376,22 @@ export default function ChatView(props: ChatViewProps) {
   const upsertKeybinding = useAtomCommand(serverEnvironment.upsertKeybinding, {
     reportFailure: false,
   });
+  const beginProviderReauthentication = useAtomCommand(
+    serverEnvironment.beginProviderReauthentication,
+    { reportFailure: false },
+  );
+  const submitProviderReauthenticationCode = useAtomCommand(
+    serverEnvironment.submitProviderReauthenticationCode,
+    { reportFailure: false },
+  );
+  const getProviderReauthenticationStatus = useAtomQueryRunner(
+    serverEnvironment.providerReauthenticationStatus,
+    { reportFailure: false, refresh: true },
+  );
+  const cancelProviderReauthentication = useAtomCommand(
+    serverEnvironment.cancelProviderReauthentication,
+    { reportFailure: false },
+  );
   const openTerminal = useAtomCommand(terminalEnvironment.open, "terminal open");
   const writeTerminal = useAtomCommand(terminalEnvironment.write, "terminal write");
   const closeTerminalMutation = useAtomCommand(terminalEnvironment.close, "terminal close");
@@ -2680,6 +2707,89 @@ export default function ChatView(props: ChatViewProps) {
     versionMismatchServerLabel,
   ]);
   const providerStatuses = serverConfig?.providers ?? EMPTY_PROVIDERS;
+  const claudeReauthenticationTarget = useMemo(
+    () =>
+      isServerThread ? getClaudeReauthenticationTarget(serverProjection, providerStatuses) : null,
+    [isServerThread, providerStatuses, serverProjection],
+  );
+  const [claudeReauthenticationDialogOpen, setClaudeReauthenticationDialogOpen] = useState(false);
+  const [claudeReauthenticationRequest, setClaudeReauthenticationRequest] =
+    useState<ClaudeReauthenticationRequest | null>(null);
+  const claudeReauthenticationActions = useMemo<ClaudeReauthenticationActions>(
+    () => ({
+      begin: async (request) => {
+        const result = await beginProviderReauthentication({
+          environmentId: request.environmentId,
+          input: {
+            provider: ProviderDriverKind.make("claudeAgent"),
+            threadId: request.threadId,
+            ...(request.providerInstanceId === undefined
+              ? {}
+              : { instanceId: request.providerInstanceId }),
+          },
+        });
+        const value = unwrapAtomCommandResult(result);
+        return {
+          attemptId: value.attemptId,
+          authorizationUrl: value.authorizationUrl,
+        };
+      },
+      submitCode: async (request) =>
+        unwrapAtomCommandResult(
+          await submitProviderReauthenticationCode({
+            environmentId: request.environmentId,
+            input: { attemptId: request.attemptId, code: request.code },
+          }),
+        ),
+      getStatus: async (request) =>
+        unwrapAtomCommandResult(
+          await getProviderReauthenticationStatus({
+            environmentId: request.environmentId,
+            input: { attemptId: request.attemptId },
+          }),
+        ),
+      cancel: async (request) => {
+        unwrapAtomCommandResult(
+          await cancelProviderReauthentication({
+            environmentId: request.environmentId,
+            input: { attemptId: request.attemptId },
+          }),
+        );
+      },
+    }),
+    [
+      beginProviderReauthentication,
+      cancelProviderReauthentication,
+      getProviderReauthenticationStatus,
+      submitProviderReauthenticationCode,
+    ],
+  );
+  const canReauthenticateClaude =
+    visibleThreadError !== null && claudeReauthenticationTarget !== null;
+  const handleReauthenticateClaude = useCallback(() => {
+    if (
+      !canReauthenticateClaude ||
+      activeThread === undefined ||
+      claudeReauthenticationTarget === null
+    ) {
+      return;
+    }
+    setClaudeReauthenticationRequest(
+      Object.freeze({
+        environmentId: activeThread.environmentId,
+        threadId: claudeReauthenticationTarget.threadId,
+        providerInstanceId: claudeReauthenticationTarget.instanceId,
+      }),
+    );
+    setClaudeReauthenticationDialogOpen(true);
+  }, [activeThread, canReauthenticateClaude, claudeReauthenticationTarget]);
+  const handleClaudeReauthenticationDialogOpenChange = useCallback((open: boolean) => {
+    setClaudeReauthenticationDialogOpen(open);
+  }, []);
+  useEffect(() => {
+    setClaudeReauthenticationDialogOpen(false);
+    setClaudeReauthenticationRequest(null);
+  }, [routeThreadKey]);
   const providerInstanceEntries = useMemo(
     () =>
       sortProviderInstanceEntries(
@@ -8297,12 +8407,29 @@ export default function ChatView(props: ChatViewProps) {
               />
               <ThreadErrorBanner
                 error={visibleThreadError}
+                {...(canReauthenticateClaude
+                  ? {
+                      onAction: {
+                        label: "Reauthenticate",
+                        onClick: handleReauthenticateClaude,
+                        disabled: claudeReauthenticationDialogOpen,
+                      },
+                    }
+                  : {})}
                 onDismiss={() => {
                   setThreadError(activeThread.id, null);
                   dismissThreadErrorBannerForSession(threadErrorBannerKey);
                   setThreadErrorBannerDismissTick((tick) => tick + 1);
                 }}
               />
+              {claudeReauthenticationRequest !== null ? (
+                <ClaudeReauthenticationDialog
+                  open={claudeReauthenticationDialogOpen}
+                  request={claudeReauthenticationRequest}
+                  actions={claudeReauthenticationActions}
+                  onOpenChange={handleClaudeReauthenticationDialogOpenChange}
+                />
+              ) : null}
             </div>
             {/* Messages Wrapper */}
             <div className="relative flex min-h-0 flex-1 flex-col">

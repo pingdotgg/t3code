@@ -1,6 +1,7 @@
 import type {
   Query as ClaudeQuery,
   SDKMessage,
+  SDKResultMessage,
   SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
 import type { AskUserQuestionInput } from "@anthropic-ai/claude-agent-sdk/sdk-tools";
@@ -79,6 +80,7 @@ import {
   awaitClaudeApprovalDecision,
   loggedClaudeQueryOptions,
   makeClaudeAdapterV2,
+  providerFailureFromResult,
   makeClaudeAgentSdkProtocolLogger,
   makeClaudeQueryOptions,
   permissionResultFromDecision,
@@ -415,6 +417,82 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
       allowDangerouslySkipPermissions: true,
       installPermissionCallback: false,
     });
+  });
+
+  it("classifies first party OAuth errors across Claude result shapes", () => {
+    const executionError = providerFailureFromResult(
+      {
+        type: "result",
+        subtype: "error_during_execution",
+        errors: ["Failed to authenticate: OAuth session expired"],
+      } as SDKResultMessage,
+      "authentication_failed",
+      true,
+    );
+    assert.equal(executionError?.class, "auth_error");
+
+    assert.equal(
+      providerFailureFromResult(
+        {
+          type: "result",
+          subtype: "error_during_execution",
+          errors: [
+            "OAuth token has expired. Please obtain a new token or refresh your existing token.",
+          ],
+        } as SDKResultMessage,
+        null,
+        true,
+      )?.class,
+      "auth_error",
+    );
+
+    const genericApiKeyError = providerFailureFromResult(
+      {
+        type: "result",
+        subtype: "success",
+        is_error: true,
+        api_error_status: 401,
+        result: "Invalid authentication credentials",
+      } as SDKResultMessage,
+      "authentication_failed",
+      false,
+    );
+    assert.equal(genericApiKeyError?.class, "provider_error");
+
+    const oauthApiError = {
+      type: "result",
+      subtype: "success",
+      is_error: true,
+      api_error_status: 401,
+      result: "Invalid authentication credentials",
+    } as SDKResultMessage;
+    assert.equal(
+      providerFailureFromResult(oauthApiError, "authentication_failed", true)?.class,
+      "auth_error",
+    );
+    assert.equal(
+      providerFailureFromResult(
+        {
+          ...oauthApiError,
+          result: "Unauthorized",
+        } as SDKResultMessage,
+        null,
+        true,
+      )?.class,
+      "provider_error",
+    );
+    assert.equal(
+      providerFailureFromResult(
+        {
+          type: "result",
+          subtype: "error_max_turns",
+          errors: ["Maximum turns reached"],
+        } as SDKResultMessage,
+        "authentication_failed",
+        true,
+      )?.class,
+      "provider_error",
+    );
   });
 });
 

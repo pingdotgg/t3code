@@ -426,6 +426,7 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
   };
 
   const serverSettings = ServerSettingsService.of({
+    withSettingsLock: (effect) => effect,
     start: Effect.void,
     ready: Effect.void,
     getSettings: Ref.get(settings),

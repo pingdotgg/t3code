@@ -816,6 +816,87 @@ export class ServerProviderUpdateError extends Schema.TaggedErrorClass<ServerPro
   }
 }
 
+/**
+ * A Claude login attempt is owned by the server process rather than by a
+ * WebSocket connection. The server correlates the failed run before starting
+ * login and only retries that run if it is still current when login completes.
+ */
+export const ServerProviderReauthenticateAttemptId = TrimmedNonEmptyString.pipe(
+  Schema.brand("ServerProviderReauthenticateAttemptId"),
+);
+export type ServerProviderReauthenticateAttemptId =
+  typeof ServerProviderReauthenticateAttemptId.Type;
+
+export const ServerProviderReauthenticateStatus = Schema.Literals([
+  "starting",
+  "awaiting_code",
+  "succeeded",
+  "failed",
+  "cancelled",
+  "expired",
+]);
+export type ServerProviderReauthenticateStatus = typeof ServerProviderReauthenticateStatus.Type;
+
+export const ServerProviderReauthenticateBeginInput = Schema.Struct({
+  provider: ProviderDriverKind,
+  instanceId: Schema.optionalKey(ProviderInstanceId),
+  threadId: ThreadId,
+});
+export type ServerProviderReauthenticateBeginInput =
+  typeof ServerProviderReauthenticateBeginInput.Type;
+
+export const ServerProviderReauthenticateStatusResult = Schema.Struct({
+  attemptId: ServerProviderReauthenticateAttemptId,
+  provider: ProviderDriverKind,
+  instanceId: ProviderInstanceId,
+  threadId: ThreadId,
+  status: ServerProviderReauthenticateStatus,
+  /** Authentication and retry have separate outcomes. */
+  continuation: Schema.NullOr(Schema.Literals(["resumed", "skipped", "failed"])),
+  continuationError: Schema.NullOr(TrimmedNonEmptyString),
+  /** The CLI's HTTPS authorization URL, once it has printed one. */
+  authorizationUrl: Schema.NullOr(TrimmedNonEmptyString),
+  expiresAt: IsoDateTime,
+  /** A stable, user-facing summary. Raw CLI output is never included. */
+  error: Schema.NullOr(TrimmedNonEmptyString),
+  /** Present after the provider refresh has completed successfully. */
+  providers: Schema.optionalKey(ServerProviders),
+});
+export type ServerProviderReauthenticateStatusResult =
+  typeof ServerProviderReauthenticateStatusResult.Type;
+
+export const ServerProviderReauthenticateCodeInput = Schema.Struct({
+  attemptId: ServerProviderReauthenticateAttemptId,
+  code: TrimmedNonEmptyString.check(Schema.isMaxLength(4_096)),
+});
+export type ServerProviderReauthenticateCodeInput =
+  typeof ServerProviderReauthenticateCodeInput.Type;
+
+export const ServerProviderReauthenticateStatusInput = Schema.Struct({
+  attemptId: ServerProviderReauthenticateAttemptId,
+});
+export type ServerProviderReauthenticateStatusInput =
+  typeof ServerProviderReauthenticateStatusInput.Type;
+
+export const ServerProviderReauthenticateCancelInput = Schema.Struct({
+  attemptId: ServerProviderReauthenticateAttemptId,
+});
+export type ServerProviderReauthenticateCancelInput =
+  typeof ServerProviderReauthenticateCancelInput.Type;
+
+export class ServerProviderReauthenticateError extends Schema.TaggedErrorClass<ServerProviderReauthenticateError>()(
+  "ServerProviderReauthenticateError",
+  {
+    provider: ProviderDriverKind,
+    reason: TrimmedNonEmptyString,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    return `Provider reauthentication failed for ${this.provider}: ${this.reason}`;
+  }
+}
+
 export const ServerSelfUpdateInput = Schema.Struct({
   /** Exact npm version of the `t3` package to install (never a dist-tag, so
       the server and the acknowledging client agree on what was requested). */

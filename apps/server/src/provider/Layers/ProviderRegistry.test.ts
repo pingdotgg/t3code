@@ -328,6 +328,7 @@ function makeMutableServerSettingsService(
       start: Effect.void,
       ready: Effect.void,
       getSettings: Ref.get(settingsRef),
+      withSettingsLock: <A, E, R>(effect: Effect.Effect<A, E, R>) => effect,
       updateSettings: (patch) =>
         Effect.gen(function* () {
           const current = yield* Ref.get(settingsRef);

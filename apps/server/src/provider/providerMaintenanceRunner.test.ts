@@ -1,13 +1,21 @@
 import { describe, it, assert } from "@effect/vitest";
 import {
+  ThreadId,
+  RunId,
+  MessageId,
   ProviderDriverKind,
   ProviderInstanceId,
+  type ModelSelection,
   type ServerProvider,
   type ServerProviderUpdateState,
 } from "@t3tools/contracts";
 import { ServerProviderUpdateError } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
+import * as NodePath from "@effect/platform-node/NodePath";
+import * as ServerSettings from "../serverSettings.ts";
+import { OrchestratorV2 } from "../orchestration-v2/Orchestrator.ts";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -35,6 +43,8 @@ const OPENCODE_DRIVER = ProviderDriverKind.make("opencode");
 const CODEX_INSTANCE_ID = ProviderInstanceId.make("codex");
 const NATIVE_CLI_INSTANCE_ID = ProviderInstanceId.make("nativeCli");
 const OPENCODE_INSTANCE_ID = ProviderInstanceId.make("opencode");
+const CLAUDE_DRIVER = ProviderDriverKind.make("claudeAgent");
+const CLAUDE_INSTANCE_ID = ProviderInstanceId.make("claude-work");
 const encoder = new TextEncoder();
 
 // Pin a non-win32 platform so `resolveSpawnCommand` is a no-op and the raw
@@ -208,22 +218,264 @@ function makeRegistry(
   });
 }
 
-const makeTestRunner = (registry: ProviderRegistryShape) =>
+const makeTestRunnerLayer = (
+  registry: ProviderRegistryShape,
+  settings: Parameters<typeof ServerSettings.layerTest>[0] = {},
+) =>
+  ProviderMaintenanceRunner.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.succeed(ProviderRegistry, registry),
+        Layer.sync(ProviderVersionCache, () => new Map()),
+        ServerSettings.layerTest(settings),
+        Layer.mock(OrchestratorV2)({
+          prepareReauthentication: ({ threadId, instanceId }) =>
+            Effect.succeed({
+              threadId,
+              instanceId,
+              modelSelection: {
+                instanceId,
+                model: "claude-sonnet-4-5",
+              } satisfies ModelSelection,
+              runId: RunId.make("failed-run"),
+              messageId: MessageId.make("failed-message"),
+              text: "Resume this task",
+              attachments: [],
+              providerSessionId: null,
+              cwd: "/workspace/project",
+            }),
+          continueAfterReauthentication: () => Effect.succeed("resumed" as const),
+        }),
+        NodePath.layer,
+      ),
+    ),
+  );
+
+const makeTestRunner = (
+  registry: ProviderRegistryShape,
+  settings: Parameters<typeof ServerSettings.layerTest>[0] = {},
+) =>
   Effect.service(ProviderMaintenanceRunner.ProviderMaintenanceRunner).pipe(
-    Effect.provide(
-      ProviderMaintenanceRunner.layer.pipe(
-        Layer.provide(
-          Layer.mergeAll(
-            Layer.succeed(ProviderRegistry, registry),
-            // Fresh per runner so a version cached by one test cannot leak into another.
-            Layer.sync(ProviderVersionCache, () => new Map()),
+    Effect.provide(makeTestRunnerLayer(registry, settings)),
+  );
+
+describe("providerMaintenanceRunner", () => {
+  it.effect("forces interactive Claude auth to print its browser URL", () => {
+    const calls: Array<{ env: NodeJS.ProcessEnv | undefined }> = [];
+    return Effect.gen(function* () {
+      const { registry } = yield* makeRegistry({
+        ...baseProvider,
+        instanceId: CLAUDE_INSTANCE_ID,
+        driver: CLAUDE_DRIVER,
+      });
+      yield* Effect.gen(function* () {
+        const runner = yield* ProviderMaintenanceRunner.ProviderMaintenanceRunner;
+        const started = yield* runner.beginProviderReauthentication({
+          provider: CLAUDE_DRIVER,
+          instanceId: CLAUDE_INSTANCE_ID,
+          threadId: ThreadId.make("thread-claude-reauth"),
+        });
+
+        assert.strictEqual(started.status, "awaiting_code");
+        yield* runner.cancelProviderReauthentication({ attemptId: started.attemptId });
+        assert.strictEqual(calls[0]?.env?.BROWSER, "true");
+      }).pipe(
+        Effect.provide(
+          makeTestRunnerLayer(registry, {
+            providerInstances: {
+              [CLAUDE_INSTANCE_ID]: { driver: "claudeAgent" },
+            },
+          }),
+        ),
+      );
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          NonWindowsPlatform,
+          NodePath.layer,
+          latestVersionHttpClient("0.0.0"),
+          Layer.succeed(
+            ChildProcessSpawner.ChildProcessSpawner,
+            ChildProcessSpawner.make((command) => {
+              const childProcess = command as unknown as {
+                readonly options: { readonly env?: NodeJS.ProcessEnv };
+              };
+              calls.push({ env: childProcess.options.env });
+              return Effect.gen(function* () {
+                const exit = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
+                return ChildProcessSpawner.makeHandle({
+                  pid: ChildProcessSpawner.ProcessId(1),
+                  exitCode: Deferred.await(exit),
+                  isRunning: Effect.succeed(true),
+                  kill: () =>
+                    Deferred.succeed(exit, ChildProcessSpawner.ExitCode(143)).pipe(Effect.asVoid),
+                  unref: Effect.succeed(Effect.void),
+                  stdin: Sink.drain,
+                  stdout: Stream.empty,
+                  stderr: Stream.empty,
+                  all: Stream.make(
+                    encoder.encode(
+                      "If the browser didn't open, visit: https://claude.ai/oauth/authorize?state=test\n",
+                    ),
+                  ),
+                  getInputFd: () => Sink.drain,
+                  getOutputFd: () => Stream.empty,
+                });
+              });
+            }),
           ),
+        ),
+      ),
+    );
+  });
+
+  it.effect("does not offer OAuth reauthentication for API key Claude auth", () =>
+    Effect.gen(function* () {
+      const { registry } = yield* makeRegistry({
+        ...baseProvider,
+        instanceId: CLAUDE_INSTANCE_ID,
+        driver: CLAUDE_DRIVER,
+        auth: { status: "authenticated", type: "apiKey", label: "Claude API Key" },
+      });
+      const runner = yield* makeTestRunner(registry, {
+        providerInstances: { [CLAUDE_INSTANCE_ID]: { driver: "claudeAgent" } },
+      });
+      const error = yield* runner
+        .beginProviderReauthentication({
+          provider: CLAUDE_DRIVER,
+          instanceId: CLAUDE_INSTANCE_ID,
+          threadId: ThreadId.make("thread-claude-api-key"),
+        })
+        .pipe(Effect.flip);
+      assert.match(error.reason, /only available for Claude subscription OAuth/);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          NonWindowsPlatform,
+          NodePath.layer,
+          latestVersionHttpClient("0.0.0"),
+          mockSpawnerLayer(() => ({ stdout: "unexpected" })),
         ),
       ),
     ),
   );
 
-describe("providerMaintenanceRunner", () => {
+  it.effect(
+    "keeps sign-in successful but skips retry when the instance is disabled during login",
+    () =>
+      Effect.gen(function* () {
+        const { registry, providersRef } = yield* makeRegistry({
+          ...baseProvider,
+          instanceId: CLAUDE_INSTANCE_ID,
+          driver: CLAUDE_DRIVER,
+        });
+        const result = yield* Effect.gen(function* () {
+          const runner = yield* ProviderMaintenanceRunner.ProviderMaintenanceRunner;
+          return yield* runner.beginProviderReauthentication({
+            provider: CLAUDE_DRIVER,
+            instanceId: CLAUDE_INSTANCE_ID,
+            threadId: ThreadId.make("changed-claude"),
+          });
+        }).pipe(
+          Effect.provide(
+            makeTestRunnerLayer(
+              {
+                ...registry,
+                refreshInstance: () =>
+                  Ref.updateAndGet(providersRef, (providers) =>
+                    providers.map((provider) => ({ ...provider, enabled: false })),
+                  ),
+              },
+              {
+                providerInstances: { [CLAUDE_INSTANCE_ID]: { driver: "claudeAgent" } },
+              },
+            ),
+          ),
+        );
+        assert.equal(result.status, "succeeded");
+        assert.equal(result.continuation, "skipped");
+        assert.isNull(result.continuationError);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            NonWindowsPlatform,
+            NodePath.layer,
+            latestVersionHttpClient("0.0.0"),
+            mockSpawnerLayer(() => ({ code: 0 })),
+          ),
+        ),
+      ),
+  );
+
+  it.effect("rejects newly disabled Claude instances before the registry refreshes", () =>
+    Effect.gen(function* () {
+      const { registry } = yield* makeRegistry({
+        ...baseProvider,
+        instanceId: CLAUDE_INSTANCE_ID,
+        driver: CLAUDE_DRIVER,
+        enabled: true,
+      });
+      const runner = yield* makeTestRunner(registry, {
+        providerInstances: { [CLAUDE_INSTANCE_ID]: { driver: "claudeAgent", enabled: false } },
+      });
+      const error = yield* runner
+        .beginProviderReauthentication({
+          provider: CLAUDE_DRIVER,
+          instanceId: CLAUDE_INSTANCE_ID,
+          threadId: ThreadId.make("disabled-claude"),
+        })
+        .pipe(Effect.flip);
+      assert.match(error.reason, /disabled or unavailable/);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          NonWindowsPlatform,
+          NodePath.layer,
+          latestVersionHttpClient("0.0.0"),
+          mockSpawnerLayer(() => {
+            throw new Error("Login must not spawn for a disabled instance");
+          }),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("rejects nested disabled Claude config before the registry refreshes", () =>
+    Effect.gen(function* () {
+      const { registry } = yield* makeRegistry({
+        ...baseProvider,
+        instanceId: CLAUDE_INSTANCE_ID,
+        driver: CLAUDE_DRIVER,
+        enabled: true,
+      });
+      const runner = yield* makeTestRunner(registry, {
+        providerInstances: {
+          [CLAUDE_INSTANCE_ID]: { driver: "claudeAgent", config: { enabled: false } },
+        },
+      });
+      const error = yield* runner
+        .beginProviderReauthentication({
+          provider: CLAUDE_DRIVER,
+          instanceId: CLAUDE_INSTANCE_ID,
+          threadId: ThreadId.make("disabled-claude"),
+        })
+        .pipe(Effect.flip);
+      assert.match(error.reason, /disabled or unavailable/);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          NonWindowsPlatform,
+          NodePath.layer,
+          latestVersionHttpClient("0.0.0"),
+          mockSpawnerLayer(() => {
+            throw new Error("Login must not spawn for a disabled instance");
+          }),
+        ),
+      ),
+    ),
+  );
+
   it.effect("runs the allowlisted provider update command and records success", () => {
     const calls: Array<{ command: string; args: ReadonlyArray<string> }> = [];
     return Effect.gen(function* () {
