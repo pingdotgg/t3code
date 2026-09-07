@@ -82,11 +82,10 @@ import { ComposerFeedback } from "./ComposerFeedback";
 import { ComposerUsageLimits } from "./ComposerUsageLimits";
 import { PendingUserInputCard } from "./PendingUserInputCard";
 import {
-  connectionFloatingStatus,
   FLOATING_WORKING_CONTROL_COVERAGE,
   FloatingWorkingControl,
-  type FloatingWorkingStatus,
 } from "./floating-working-control";
+import { connectionFloatingStatus, type FloatingWorkingStatus } from "./floating-working-status";
 import {
   derivePendingUserInputMaxHeight,
   ESTIMATED_KEYBOARD_HEIGHT,

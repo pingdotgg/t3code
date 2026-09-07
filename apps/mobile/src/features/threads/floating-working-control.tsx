@@ -1,4 +1,3 @@
-import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 import { GlassContainer, GlassView } from "expo-glass-effect";
 import { type ReactNode, useEffect, useRef, useState } from "react";
@@ -24,6 +23,7 @@ import { AppText as Text } from "../../components/AppText";
 import { SymbolView } from "../../components/AppSymbol";
 import { ControlPill } from "../../components/ControlPill";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
+import type { FloatingWorkingStatus } from "./floating-working-status";
 
 const CONTROL_HEIGHT = 38.5; // h-11 with the mobile 14px rem
 // The collapsed composer capsule starts 6 below its overlay's top edge, so
@@ -57,63 +57,6 @@ const AnimatedGlassView = Animated.createAnimatedComponent(UniwindGlassView);
 
 const CONTROL_OVERLAY_OFFSET = CONTROL_HEIGHT + CONTROL_GAP - COMPOSER_CAPSULE_INSET;
 export const FLOATING_WORKING_CONTROL_COVERAGE = CONTROL_OVERLAY_OFFSET + CONTROL_GAP;
-
-/**
- * What the floating pill says. Connection, syncing, and working share one
- * element so the label swaps in place instead of one pill fading out for
- * another. The connection variant is tappable and triggers a reconnect.
- */
-export type FloatingWorkingStatus =
-  | { readonly kind: "working"; readonly startedAt: string }
-  | { readonly kind: "syncing"; readonly label: string }
-  | { readonly kind: "compacting" }
-  | {
-      readonly kind: "connection";
-      readonly tone: "reconnecting" | "unavailable";
-      readonly label: string;
-      readonly onPress: () => void;
-    };
-
-export function connectionFloatingStatus(input: {
-  readonly connectionError: string | null;
-  readonly connectionState: EnvironmentConnectionPhase;
-  readonly environmentLabel: string | null;
-  readonly onReconnect: () => void;
-}): FloatingWorkingStatus | null {
-  const environmentLabel = input.environmentLabel ?? "Environment";
-  const unavailable = (label: string): FloatingWorkingStatus => ({
-    kind: "connection",
-    tone: "unavailable",
-    label,
-    onPress: input.onReconnect,
-  });
-
-  switch (input.connectionState) {
-    case "connecting":
-    case "reconnecting":
-      return {
-        kind: "connection",
-        tone: "reconnecting",
-        label:
-          input.connectionError === null
-            ? `Reconnecting to ${environmentLabel}...`
-            : `Failed to connect. Retrying ${environmentLabel}...`,
-        onPress: input.onReconnect,
-      };
-    case "offline":
-      return unavailable("You are offline");
-    case "error":
-      return unavailable(
-        input.connectionError
-          ? `Failed to connect to ${environmentLabel}: ${input.connectionError}`
-          : `Failed to connect to ${environmentLabel}`,
-      );
-    case "available":
-      return unavailable(`${environmentLabel} is not connected`);
-    case "connected":
-      return null;
-  }
-}
 
 export function FloatingWorkingControl(props: {
   readonly colorScheme: "light" | "dark";
