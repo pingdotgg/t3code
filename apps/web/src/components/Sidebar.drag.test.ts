@@ -40,7 +40,7 @@ function layout(
         ? (item.section === "pinned" || item.section === "active" ? cardHeight : 36) * scale
         : item.marker === "pinned-header" || item.marker === "pinned-divider"
           ? 0
-          : (item.marker.endsWith("placeholder") ? 36 : 32) * scale;
+          : (item.marker.endsWith("placeholder") ? 0 : 32) * scale;
     const rect = { top, height, bottom: top + height, left: 0, right: 260, width: 260 };
     top += height + 1;
     return rect;
@@ -317,7 +317,7 @@ describe("sidebar drag projection", () => {
     }
   });
 
-  it("leaves canonically sorted settled peers in place", () => {
+  it("preserves settled order while opening the zero-height Active target", () => {
     const items = [
       pinnedHeader,
       divider,
@@ -331,7 +331,10 @@ describe("sidebar drag projection", () => {
       "second",
       "first",
     );
-    expect([...result.values()]).toEqual(items.map(() => stationary));
+    expect(result.get(sidebarMarkerId("active-placeholder"))).toEqual(stationary);
+    expect(result.get(sidebarMarkerId("settled-header"))).toEqual({ ...stationary, y: 36 });
+    expect(result.get("first")).toEqual({ ...stationary, y: 36 });
+    expect(result.get("second")).toEqual(stationary);
   });
 
   it.each([
@@ -467,8 +470,8 @@ describe("sidebar drag projection", () => {
   });
 
   it.each([
-    ["p", -83, -37],
-    ["s", 0, 46],
+    ["p", -83, -1],
+    ["s", 0, 82],
   ] as const)(
     "replaces the empty Active target when %s enters",
     (active, dividerOffset, settledOffset) => {
@@ -619,7 +622,7 @@ describe("sidebar drag projection", () => {
     expect(strategy({ ...smaller, index: 2 })?.y).toBe(-62.5);
   });
 
-  it("uses measured placeholder sizing when card height differs from its default", () => {
+  it("uses shelf height for empty target sizing when card height differs from its default", () => {
     const items = [
       pinnedHeader,
       thread("p", "pinned"),

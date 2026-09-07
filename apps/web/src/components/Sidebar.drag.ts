@@ -126,9 +126,13 @@ export function createSidebarSortingStrategy(input: {
     };
     let cardHeight = input.cardHeight;
     let slimHeight = input.slimHeight;
+    let headerScale: number | undefined;
     for (const [index, item] of items.entries()) {
       if (item.kind === "marker") {
-        if (item.marker.endsWith("placeholder")) slimHeight ??= rects[index]?.height;
+        if (item.marker === "settled-header" || item.marker === "snoozed-header") {
+          const height = rects[index]?.height;
+          if (height) headerScale ??= height / 32;
+        }
         continue;
       }
       if (item.section === "pinned" || item.section === "active")
@@ -137,7 +141,8 @@ export function createSidebarSortingStrategy(input: {
       if (item.key !== active.key) groups[item.section].push(item);
     }
     // Cards are 4.875rem + 0.25rem padding; slim rows/placeholders are h-9.
-    const scale = slimHeight !== undefined ? slimHeight / 36 : (cardHeight ?? 82) / 82;
+    const scale =
+      slimHeight !== undefined ? slimHeight / 36 : (headerScale ?? (cardHeight ?? 82) / 82);
     cardHeight ??= 82 * scale;
     slimHeight ??= 36 * scale;
     const labelHeight = (input.boundaryLabelHeight ?? 0) * scale;
@@ -200,9 +205,11 @@ export function createSidebarSortingStrategy(input: {
         item.kind === "marker" &&
         (item.marker === "pinned-header" || item.marker === "pinned-divider")
           ? labelHeight
-          : moved
-            ? fallback
-            : (rect?.height ?? fallback);
+          : item.kind === "marker" && item.marker.endsWith("placeholder")
+            ? slimHeight
+            : moved
+              ? fallback
+              : (rect?.height ?? fallback);
       top += height + 1;
     }
     result[activeIndex] = stationary;

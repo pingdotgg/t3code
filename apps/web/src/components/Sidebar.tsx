@@ -554,8 +554,8 @@ function SortableSidebarMarker(props: {
   );
 }
 
-// Empty targets stay mounted before pickup so starting a drag never changes
-// the list's measured positions.
+// Empty targets stay measurable without reserving space at rest. The sorting
+// strategy opens their hint space during a drag.
 function SidebarSectionPlaceholder(props: {
   marker: "active-placeholder" | "settled-placeholder";
   label: string;
@@ -566,13 +566,18 @@ function SidebarSectionPlaceholder(props: {
     <SortableSidebarMarker
       marker={props.marker}
       data-testid={`sidebar-${props.marker}`}
-      className={cn(
-        "mx-0.5 flex h-9 items-center justify-center rounded-md border border-dashed border-transparent text-xs text-sidebar-muted-foreground/60",
-        props.showHint && "border-sidebar-foreground/25 text-sidebar-foreground/80",
-        props.isDropTarget && "border-primary/40 bg-primary/5 text-primary",
-      )}
+      className="relative mx-0.5 h-0"
     >
-      {props.showHint ? props.label : null}
+      {props.showHint ? (
+        <div
+          className={cn(
+            "absolute inset-x-0 top-0 flex h-9 items-center justify-center rounded-md border border-dashed border-sidebar-foreground/25 text-xs text-sidebar-foreground/80",
+            props.isDropTarget && "border-primary/40 bg-primary/5 text-primary",
+          )}
+        >
+          {props.label}
+        </div>
+      ) : null}
     </SortableSidebarMarker>
   );
 }
