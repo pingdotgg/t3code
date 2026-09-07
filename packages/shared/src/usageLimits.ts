@@ -645,14 +645,20 @@ export function collectProviderUsageLimits(
         (a, b) =>
           Date.parse(b.account.usageLimits.checkedAt) - Date.parse(a.account.usageLimits.checkedAt),
       )[0];
-    const useHubCredits =
+    // Two independent decisions. Which balance to *display* follows whichever
+    // snapshot is fresher. Which path to *redeem through* always prefers the
+    // hub, because only the hub path clears the routing cooldown it holds for
+    // that account; redeeming natively against the same account resets the
+    // subscription upstream but leaves the hub refusing to route to it until
+    // its own cooldown expires. A hub credit id that a fresher native redeem
+    // already spent comes back as `alreadyRedeemed`, which still clears the
+    // cooldown, so preferring it is safe even when the hub snapshot is stale.
+    const hubCreditId = hubCredits?.account.usageLimits.resetCredits?.nextCreditId;
+    const showHubCredits =
       hubCredits &&
       (!provider.usageLimits.resetCredits ||
         Date.parse(hubCredits.account.usageLimits.checkedAt) >
           Date.parse(provider.usageLimits.checkedAt));
-    const hubCreditId = useHubCredits
-      ? hubCredits.account.usageLimits.resetCredits?.nextCreditId
-      : undefined;
     accounts.push({
       id: provider.instanceId,
       driver: provider.driver,
@@ -670,7 +676,7 @@ export function collectProviderUsageLimits(
       ...(provider.displayName ? { displayName: provider.displayName } : {}),
       ...(provider.accentColor ? { accentColor: provider.accentColor } : {}),
       ...(provider.auth.email ? { email: provider.auth.email } : {}),
-      limits: useHubCredits
+      limits: showHubCredits
         ? { ...provider.usageLimits, resetCredits: hubCredits.account.usageLimits.resetCredits }
         : provider.usageLimits,
     });

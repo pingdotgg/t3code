@@ -839,6 +839,46 @@ describe("/usage-limits", () => {
     });
   });
 
+  it("redeems a native duplicate through the hub even when the native snapshot is fresher", () => {
+    const fresher = provider({
+      usageLimits: {
+        checkedAt: "2026-09-03T11:30:00.000Z",
+        windows: [window],
+        resetCredits: { availableCount: 3, nextCreditId: "native-credit" },
+      },
+      auth: { status: "authenticated", email: "same@example.com" },
+    });
+    const stale = [
+      {
+        id: UsageLimitSourceId.make("hub"),
+        kind: "cliproxy" as const,
+        label: "Accounts",
+        checkedAt: limits.checkedAt,
+        accounts: [
+          {
+            id: "duplicate",
+            driver: fresher.driver,
+            email: "SAME@example.com",
+            usageLimits: {
+              ...limits,
+              resetCredits: { availableCount: 2, nextCreditId: "hub-credit" },
+            },
+          },
+        ],
+      },
+    ];
+    const report = collectProviderUsageLimits(fresher.instanceId, [fresher], stale, now);
+    // Only redeeming through the hub clears the routing cooldown it holds for
+    // this account, so the hub wins the path even with a staler balance.
+    expect(report?.accounts[0]?.resetCreditInput).toEqual({
+      sourceId: "hub",
+      accountId: "duplicate",
+      creditId: "hub-credit",
+    });
+    // The fresher native balance is still the one shown.
+    expect(report?.accounts[0]?.limits.resetCredits?.availableCount).toBe(3);
+  });
+
   it("keeps accounts and custom instances separate, filtering by driver", () => {
     const report = collectProviderUsageLimits(
       selected.instanceId,
