@@ -1727,7 +1727,10 @@ const make = Effect.gen(function* () {
                 : (thread.session?.lastError ?? null);
         // Set by the runtime.error that precedes a failed turn.completed, so
         // it rides along with lastError instead of being re-derived here.
-        const lastErrorClass = status === "ready" ? null : (thread.session?.lastErrorClass ?? null);
+        const lastErrorClass =
+          status === "ready" || status === "interrupted"
+            ? null
+            : (thread.session?.lastErrorClass ?? null);
 
         if (shouldApplyThreadLifecycle) {
           if (event.type === "turn.started" && acceptedTurnStartedSourcePlan !== null) {
