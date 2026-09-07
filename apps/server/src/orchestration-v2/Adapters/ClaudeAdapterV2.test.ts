@@ -45,6 +45,7 @@ import { formatClaudeResumeCompactionQuestion } from "@t3tools/shared/claudeComp
 
 import { attachmentRelativePath } from "../../attachmentStore.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import { PreviewControlsToolkit } from "../../mcp/toolkits/previewControls/tools.ts";
 import { ThreadToolkit } from "../../mcp/toolkits/thread/tools.ts";
 import { OrchestratorToolkit } from "../../mcp/toolkits/orchestrator/tools.ts";
 import type { EventNdjsonLogger } from "../../provider/Layers/EventNdjsonLogger.ts";
@@ -584,6 +585,7 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
     const readOnlyToolNames = [
       ...Object.values(OrchestratorToolkit.tools),
       ...Object.values(ThreadToolkit.tools),
+      ...Object.values(PreviewControlsToolkit.tools),
     ]
       .filter((tool) => Context.get(tool.annotations, Tool.Readonly))
       .map((tool) => `mcp__t3-code__${tool.name}`)
