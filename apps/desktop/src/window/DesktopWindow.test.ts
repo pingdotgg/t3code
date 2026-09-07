@@ -105,6 +105,8 @@ function makeFakeBrowserWindow() {
     restore: vi.fn(),
     setBackgroundColor: vi.fn(),
     setAutoHideCursor: vi.fn(),
+    setFullScreen: vi.fn(),
+    setOpacity: vi.fn(),
     setTitle: vi.fn(),
     setTitleBarOverlay: vi.fn(),
     show: vi.fn(),
@@ -127,6 +129,8 @@ function makeFakeBrowserWindow() {
     setZoomLevel: webContents.setZoomLevel,
     setBackgroundThrottling: webContents.setBackgroundThrottling,
     setAutoHideCursor: window.setAutoHideCursor,
+    setFullScreen: window.setFullScreen,
+    setOpacity: window.setOpacity,
     webContentsListeners,
     windowListeners,
   };
@@ -276,6 +280,7 @@ function makeTestLayer(input: {
               input.openedExternalUrls?.push(url);
               return true;
             }),
+          openSystemSettings: () => Effect.succeed(true),
           copyText: () => Effect.void,
         } satisfies ElectronShell.ElectronShell["Service"]),
         electronThemeLayer,
@@ -376,6 +381,7 @@ const makeSplashScenario = (createOutcomes: readonly (Electron.BrowserWindow | n
           electronMenuLayer,
           Layer.succeed(ElectronShell.ElectronShell, {
             openExternal: () => Effect.succeed(true),
+            openSystemSettings: () => Effect.succeed(true),
             copyText: () => Effect.void,
           } satisfies ElectronShell.ElectronShell["Service"]),
           electronThemeLayer,
@@ -394,6 +400,25 @@ const makeSplashScenario = (createOutcomes: readonly (Electron.BrowserWindow | n
   });
 
 describe("DesktopWindow", () => {
+  it("leaves fullscreen before concealing a pending quit", () => {
+    const fakeWindow = makeFakeBrowserWindow();
+
+    DesktopWindow.concealPendingQuitWindow(fakeWindow.window);
+    assert.deepEqual(fakeWindow.setOpacity.mock.calls, [[0]]);
+
+    fakeWindow.setOpacity.mockClear();
+    fakeWindow.isFullScreen.mockReturnValue(true);
+    DesktopWindow.concealPendingQuitWindow(fakeWindow.window);
+    assert.deepEqual(fakeWindow.setFullScreen.mock.calls, [[false]]);
+    assert.deepEqual(fakeWindow.setOpacity.mock.calls, [[0]]);
+
+    fakeWindow.setOpacity.mockClear();
+    fakeWindow.isFullScreen.mockReturnValue(false);
+    fakeWindow.isDestroyed.mockReturnValue(true);
+    DesktopWindow.concealPendingQuitWindow(fakeWindow.window);
+    assert.equal(fakeWindow.setOpacity.mock.calls.length, 0);
+  });
+
   it("restores bounds only when the window fits within a connected display", () => {
     const persistedBounds = { x: 2040, y: 80, width: 1320, height: 880 };
     const displays = [

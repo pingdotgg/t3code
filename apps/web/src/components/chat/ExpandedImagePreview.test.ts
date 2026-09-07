@@ -1,11 +1,45 @@
-import { describe, expect, it, vi } from "vite-plus/test";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import type { ComposerFileAttachment } from "../../composerDraftStore";
 import {
   attachVideoThumbnail,
   buildExpandedImagePreview,
-  downloadVideoPreview,
+  resolveMarkdownMediaPreview,
 } from "./ExpandedImagePreview";
+
+describe("resolveMarkdownMediaPreview", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it.each([
+    ["t3code:", "https:"],
+    ["t3code-dev:", "https:"],
+    ["http:", "http:"],
+    ["https:", "https:"],
+  ])(
+    "resolves protocol-relative media on %s without changing its source",
+    async (pageProtocol, mediaProtocol) => {
+      vi.stubGlobal("window", { location: { protocol: pageProtocol } });
+      const source = "//cdn.example.com/recording.mp4?token=a%2FB&v=1#t=2";
+      const preview = await resolveMarkdownMediaPreview({
+        source,
+        createAssetUrl: async () => {
+          throw new Error("Remote media must not request a local asset URL.");
+        },
+      });
+
+      expect(preview?.images[0]).toMatchObject({
+        src: `${mediaProtocol}${source}`,
+        originalUrl: source,
+        actionsSource: {
+          src: `${mediaProtocol}${source}`,
+          reference: { kind: "url", url: source },
+        },
+      });
+    },
+  );
+});
 
 describe("buildExpandedImagePreview", () => {
   it("builds a video preview for a local video attachment", () => {
@@ -39,30 +73,5 @@ describe("buildExpandedImagePreview", () => {
     expect((await fetch(url)).ok).toBe(true);
     detach();
     await expect(fetch(url)).rejects.toThrow();
-  });
-
-  it("downloads a video through a local blob URL", async () => {
-    vi.useFakeTimers();
-    const source = URL.createObjectURL(new Blob([new Uint8Array([1, 2, 3])]));
-    const click = vi.fn();
-    const anchor = { href: "", download: "", click };
-    vi.stubGlobal("document", { createElement: () => anchor });
-
-    try {
-      await downloadVideoPreview(source, "demo.mp4");
-
-      expect(anchor.download).toBe("demo.mp4");
-      expect(anchor.href).toMatch(/^blob:/);
-      expect(anchor.href).not.toBe(source);
-      expect(click).toHaveBeenCalledOnce();
-      expect((await fetch(anchor.href)).ok).toBe(true);
-
-      await vi.runAllTimersAsync();
-      await expect(fetch(anchor.href)).rejects.toThrow();
-    } finally {
-      URL.revokeObjectURL(source);
-      vi.useRealTimers();
-      vi.unstubAllGlobals();
-    }
   });
 });

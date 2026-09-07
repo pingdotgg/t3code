@@ -17,7 +17,7 @@ export interface DesktopPreReadyCommandLineReader {
   readonly getSwitchValue: (switchName: string) => string;
 }
 
-export function readCommandLineSwitchValue(
+function readCommandLineSwitchValue(
   commandLine: DesktopPreReadyCommandLineReader,
   switchName: string,
 ): string | null {

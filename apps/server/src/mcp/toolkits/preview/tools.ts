@@ -33,12 +33,15 @@ const PreviewActionResult = Schema.Record(Schema.String, Schema.Never).annotate(
   description: "The preview action completed successfully.",
 });
 
+/** Drives the real browser and can destroy page state. */
 const browserTool = <T extends Tool.Any>(tool: T): T =>
   tool.annotate(Tool.OpenWorld, true).annotate(Tool.Destructive, true) as T;
 
+/** Same open-world browser access, but the action does not destroy page state. */
 const safeBrowserTool = <T extends Tool.Any>(tool: T): T =>
-  browserTool(tool).annotate(Tool.Destructive, false) as T;
+  tool.annotate(Tool.OpenWorld, true).annotate(Tool.Destructive, false) as T;
 
+/** A safe browser action that only observes, so it is also repeatable. */
 const readonlyBrowserTool = <T extends Tool.Any>(tool: T): T =>
   safeBrowserTool(tool).annotate(Tool.Readonly, true).annotate(Tool.Idempotent, true) as T;
 
@@ -108,8 +111,16 @@ export const PreviewSetAppearanceTool = safeBrowserTool(
 export const PreviewSnapshotTool = readonlyBrowserTool(
   Tool.make("preview_snapshot", {
     description:
-      "Inspect a page before interacting. Pass tabId to inspect a specific tab; omit it to use this agent session's current tab. Returns page state, semantic elements, diagnostics, action history, and a PNG screenshot.",
-    parameters: PreviewAutomationTabTargetInput,
+      "Inspect a page before interacting. Pass tabId to inspect a specific tab; omit it to use this agent session's current tab. Returns page state, semantic elements, diagnostics, action history, and a PNG screenshot. Set includeImage=false for text-only output with the same page metadata.",
+    parameters: Schema.Struct({
+      ...PreviewAutomationTabTargetInput.fields,
+      includeImage: Schema.optional(
+        Schema.Boolean.annotate({
+          description:
+            "Include the PNG image in the tool response. Defaults to true. Set false for text-only output.",
+        }),
+      ),
+    }),
     success: PreviewAutomationSnapshot,
     failure: PreviewAutomationError,
     dependencies,

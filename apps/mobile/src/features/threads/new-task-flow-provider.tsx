@@ -43,11 +43,14 @@ import { useEnvironmentQuery } from "../../state/query";
 import {
   appendComposerDraftAttachments,
   clearComposerDraft,
-  copyComposerDraftContentIfEmpty,
+  composerDraftsAtom,
+  createNewTaskDraft,
   getComposerDraftSnapshot,
   isComposerDraftEmpty,
+  isNewTaskDraftKey,
   removeComposerDraftAttachment,
   replaceComposerDraftAttachments,
+  retargetNewTaskDraft,
   scheduleUnusedComposerAttachmentCleanup,
   setComposerDraftText,
   setStickyComposerModelSelection,
@@ -83,12 +86,16 @@ import {
   type HomeProjectScope,
 } from "../home/homeThreadList";
 import { useMobileProjectGroupingSettings } from "../../state/project-grouping";
-import { resolvePendingTaskInteractionMode } from "./legacy-plan-mode";
+import {
+  resolvePendingTaskInteractionMode,
+  resolveProviderInteractionMode,
+} from "./legacy-plan-mode";
 import { useLegacyPlanModeState } from "./use-legacy-plan-mode-enabled";
 import {
   resolveNewTaskBranchWorktreePath,
   resolveNewTaskLocalWorkspaceSelection,
 } from "./new-task-context-presentation";
+import { resolveEnvironmentProjectMatch } from "./new-task-project-selection";
 
 type WorkspaceMode = "local" | "worktree";
 
@@ -165,6 +172,12 @@ type NewTaskFlowContextValue = {
   readonly filteredBranches: ReadonlyArray<VcsRef>;
   readonly reset: () => void;
   readonly setProject: (project: EnvironmentProject) => void;
+  /**
+   * Binds the composer to an existing new-task draft (a row in the thread
+   * list). Returns false when the draft is gone, so the caller can fall back
+   * to a fresh one.
+   */
+  readonly openDraft: (draftKey: string) => boolean;
   readonly selectEnvironment: (environmentId: EnvironmentId) => void;
   readonly setSelectedModelKey: (
     key: string | null,
@@ -202,7 +215,8 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   const threads = useThreadShells();
   const { savedConnectionsById } = useSavedRemoteConnections();
   const groupingSettings = useMobileProjectGroupingSettings();
-  const { enabled: planModeEnabled, loaded: planModePreferenceLoaded } = useLegacyPlanModeState();
+  const { enabled: legacyPlanModeEnabled, loaded: planModePreferenceLoaded } =
+    useLegacyPlanModeState();
   const projectScopes = useMemo(
     () =>
       sortHomeProjectScopes({
@@ -227,6 +241,9 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       ? selectedEnvironmentIdOverride
       : (projects[0]?.environmentId ?? null);
   const [selectedProjectKey, setSelectedProjectKey] = useState<string | null>(null);
+  // The new-task draft the composer is bound to. Null until a project is
+  // chosen; each New Task entry mints its own, so a project can hold several.
+  const [activeDraftKey, setActiveDraftKey] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [branchQuery, setBranchQuery] = useState("");
   const [expandedProvider, setExpandedProvider] = useState<string | null>(null);
@@ -242,6 +259,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   const reset = useCallback(() => {
     setSelectedEnvironmentId(null);
     setSelectedProjectKey(null);
+    setActiveDraftKey(null);
     setSubmitting(false);
     setBranchQuery("");
     setExpandedProvider(null);
@@ -362,12 +380,28 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     selectedProject?.environmentId ?? null,
   );
   // While a queued pending task is being edited its draft lives under a key
-  // scoped to the queued message, so per-project new-task drafts stay intact.
+  // scoped to the queued message, so new-task drafts stay intact.
   const selectedProjectDraftKey = editingPendingTask
     ? pendingTaskDraftKey(editingPendingTask.messageId)
     : selectedProject
-      ? `new-task:${scopedProjectKey(selectedProject.environmentId, selectedProject.id)}`
+      ? activeDraftKey
       : null;
+  // selectedProject can resolve without setProject ever running (the
+  // environment's first project is the fallback, and the draft screen skips
+  // setProject when the route's project already matches it). The composer
+  // still needs a draft to write into, so bind one the moment a project is
+  // in view and nothing else owns the key.
+  useEffect(() => {
+    if (activeDraftKey !== null || editingPendingTask !== null || selectedProject === null) {
+      return;
+    }
+    setActiveDraftKey(
+      createNewTaskDraft({
+        environmentId: selectedProject.environmentId,
+        projectId: selectedProject.id,
+      }),
+    );
+  }, [activeDraftKey, editingPendingTask, selectedProject]);
   const selectedProjectDraft = useComposerDraft(selectedProjectDraftKey);
   const prompt = selectedProjectDraft.text;
   const attachments = selectedProjectDraft.attachments;
@@ -412,22 +446,19 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     selectedEnvironmentServerConfig?.settings.newWorktreesStartFromOrigin ??
     true;
   const runtimeMode = selectedProjectDraft.runtimeMode ?? DEFAULT_RUNTIME_MODE;
-  const interactionMode = planModeEnabled
-    ? (selectedProjectDraft.interactionMode ?? DEFAULT_PROVIDER_INTERACTION_MODE)
-    : DEFAULT_PROVIDER_INTERACTION_MODE;
 
-  // Stored selections only count while their provider is usable on the
-  // server; otherwise the server's default model wins instead of silently
-  // targeting a disabled provider. The draft selection is an explicit pick
-  // and passes through as-is; the project default (last used, possibly from
-  // desktop) is implicit and additionally never resolves to a legacy model.
+  // Antigravity keeps unavailable selections so sign-out or a catalog change
+  // cannot switch the user's model. Other providers retain their fallback
+  // rules. Implicit defaults also exclude legacy models for those providers.
   const draftModelSelection = resolveSelectableModelSelection(
     selectedEnvironmentServerConfig,
     selectedProjectDraft.modelSelection ?? null,
   );
   const projectDefaultModelSelection = resolveDefaultableModelSelection(
     selectedEnvironmentServerConfig,
-    selectedProject?.defaultModelSelection ?? null,
+    selectedProject?.defaultModelSelection ??
+      selectedEnvironmentServerConfig?.settings.defaultModelSelection ??
+      null,
   );
   const storedStickyModelSelection = useStickyComposerModelSelection();
   const stickyModelSelection = resolveDefaultableModelSelection(
@@ -474,6 +505,11 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       ) ?? null,
     [selectedEnvironmentServerConfig, selectedModel?.instanceId],
   );
+  const planModeEnabled =
+    legacyPlanModeEnabled && selectedProviderStatus?.showInteractionModeToggle !== false;
+  const interactionMode = planModeEnabled
+    ? (selectedProjectDraft.interactionMode ?? DEFAULT_PROVIDER_INTERACTION_MODE)
+    : DEFAULT_PROVIDER_INTERACTION_MODE;
   const setSelectedModelKey = useCallback(
     // Options ride along in the same write: a follow-up setSelectedModelOptions
     // call would rebuild the selection from the stale pre-switch model.
@@ -486,10 +522,18 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
         return;
       }
       const selection = options ? { ...option.selection, options } : option.selection;
-      updateComposerDraftSettings(selectedProjectDraftKey, { modelSelection: selection });
+      const provider = selectedEnvironmentServerConfig?.providers.find(
+        (candidate) => candidate.instanceId === selection.instanceId,
+      );
+      updateComposerDraftSettings(selectedProjectDraftKey, {
+        modelSelection: selection,
+        ...(provider?.showInteractionModeToggle === false
+          ? { interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE }
+          : {}),
+      });
       setStickyComposerModelSelection(selection);
     },
-    [modelOptions, selectedProjectDraftKey],
+    [modelOptions, selectedEnvironmentServerConfig, selectedProjectDraftKey],
   );
   const setSelectedModelOptions = useCallback(
     (options: ReadonlyArray<ProviderOptionSelection> | undefined) => {
@@ -610,51 +654,68 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     );
   }, [availableBranches, branchQuery]);
 
+  // The composer's draft follows the project it will be sent to: switching
+  // mid-compose keeps the same draft and moves it, so typed text follows the
+  // user. A pending-task edit owns its own key and is untouched here.
+  const carryDraftContentTo = useCallback(
+    (project: EnvironmentProject) => {
+      const target = { environmentId: project.environmentId, projectId: project.id };
+      if (activeDraftKey !== null && isNewTaskDraftKey(activeDraftKey)) {
+        retargetNewTaskDraft(activeDraftKey, target);
+      } else if (!editingPendingTaskRef.current) {
+        setActiveDraftKey(createNewTaskDraft(target));
+      }
+    },
+    [activeDraftKey],
+  );
+
   const setProject = useCallback(
     (project: EnvironmentProject) => {
-      const nextProjectKey = scopedProjectKey(project.environmentId, project.id);
-      const nextDraftKey = `new-task:${nextProjectKey}`;
-      if (
-        selectedProjectDraftKey?.startsWith("new-task:") &&
-        selectedProjectDraftKey !== nextDraftKey
-      ) {
-        void copyComposerDraftContentIfEmpty(selectedProjectDraftKey, nextDraftKey);
-      }
+      carryDraftContentTo(project);
       setSelectedEnvironmentId(project.environmentId);
-      setSelectedProjectKey(nextProjectKey);
+      setSelectedProjectKey(scopedProjectKey(project.environmentId, project.id));
     },
-    [selectedProjectDraftKey],
+    [carryDraftContentTo],
+  );
+
+  const openDraft = useCallback(
+    (draftKey: string): boolean => {
+      const draft = appAtomRegistry.get(composerDraftsAtom)[draftKey];
+      const stamp = draft?.project;
+      if (!isNewTaskDraftKey(draftKey) || !stamp) {
+        return false;
+      }
+      // The stamped project must be loaded: selectedProject falls back to
+      // the environment's first project otherwise, and the draft would be
+      // sent somewhere the user never chose.
+      const projectLoaded = projects.some(
+        (project) =>
+          project.environmentId === stamp.environmentId && project.id === stamp.projectId,
+      );
+      if (!projectLoaded) {
+        return false;
+      }
+      setActiveDraftKey(draftKey);
+      setSelectedEnvironmentId(stamp.environmentId);
+      setSelectedProjectKey(scopedProjectKey(stamp.environmentId, stamp.projectId));
+      return true;
+    },
+    [projects],
   );
 
   const selectEnvironment = useCallback(
     (environmentId: EnvironmentId) => {
-      const projectsOnTarget = projects.filter(
-        (project) => project.environmentId === environmentId,
+      const match = resolveEnvironmentProjectMatch(
+        projects.filter((project) => project.environmentId === environmentId),
+        selectedProject,
       );
-      const repositoryKey = selectedProject?.repositoryIdentity?.canonicalKey ?? null;
-      // Prefer the repository identity; projects without one (e.g. not yet
-      // indexed) fall back to workspace basename, then title, so switching
-      // computers still follows the same repo instead of resetting to
-      // whatever project is first on the target machine.
-      const workspaceBasename = selectedProject?.workspaceRoot.split("/").at(-1) || null;
-      const match =
-        (repositoryKey !== null
-          ? projectsOnTarget.find(
-              (project) => (project.repositoryIdentity?.canonicalKey ?? null) === repositoryKey,
-            )
-          : undefined) ??
-        (workspaceBasename !== null
-          ? projectsOnTarget.find(
-              (project) => project.workspaceRoot.split("/").at(-1) === workspaceBasename,
-            )
-          : undefined) ??
-        (selectedProject !== null
-          ? projectsOnTarget.find((project) => project.title === selectedProject.title)
-          : undefined);
+      if (match) {
+        carryDraftContentTo(match);
+      }
       setSelectedEnvironmentId(environmentId);
       setSelectedProjectKey(match ? scopedProjectKey(match.environmentId, match.id) : null);
     },
-    [projects, selectedProject],
+    [projects, selectedProject, carryDraftContentTo],
   );
 
   const setWorkspaceMode = useCallback(
@@ -813,10 +874,12 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   const setInteractionMode = useCallback(
     (value: ProviderInteractionMode) => {
       if (selectedProjectDraftKey) {
-        updateComposerDraftSettings(selectedProjectDraftKey, { interactionMode: value });
+        updateComposerDraftSettings(selectedProjectDraftKey, {
+          interactionMode: resolveProviderInteractionMode(selectedProviderStatus, value),
+        });
       }
     },
-    [selectedProjectDraftKey],
+    [selectedProjectDraftKey, selectedProviderStatus],
   );
 
   const beginEditingPendingTask = useCallback((messageId: string): boolean => {
@@ -859,8 +922,8 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       }
       const draft = getComposerDraftSnapshot(selectedProjectDraftKey);
       const text = draft.text.trim();
-      // Same availability gate the composer display applies: a stored
-      // selection targeting a disabled provider must not ride into the queue.
+      // Use the displayed selection rules without substituting an unavailable
+      // Antigravity model while the task is queued.
       const draftModelSelection =
         resolveSelectableModelSelection(
           selectedEnvironmentServerConfig,
@@ -895,9 +958,12 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
         runtimeMode: draft.runtimeMode ?? DEFAULT_RUNTIME_MODE,
         interactionMode: resolvePendingTaskInteractionMode({
           preferenceLoaded: planModePreferenceLoaded,
-          planModeEnabled,
+          planModeEnabled: legacyPlanModeEnabled,
           draftInteractionMode: draft.interactionMode,
           queuedInteractionMode: editingPendingTask?.interactionMode,
+          provider: selectedEnvironmentServerConfig?.providers.find(
+            (candidate) => candidate.instanceId === draftModelSelection.instanceId,
+          ),
         }),
         creation: {
           projectId: selectedProject.id,
@@ -927,7 +993,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       selectedModel,
       selectedProject,
       selectedProjectDraftKey,
-      planModeEnabled,
+      legacyPlanModeEnabled,
       planModePreferenceLoaded,
       startFromOrigin,
       workspaceMode,
@@ -1072,6 +1138,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       filteredBranches,
       reset,
       setProject,
+      openDraft,
       selectEnvironment,
       setSelectedModelKey,
       setWorkspaceMode,
@@ -1135,6 +1202,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       selectedProjectKey,
       selectedWorktreePath,
       setProject,
+      openDraft,
       selectBranch,
       selectEnvironment,
       setInteractionMode,

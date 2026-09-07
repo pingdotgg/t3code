@@ -5,12 +5,13 @@ import { useEffect, useState } from "react";
 import { StyleSheet } from "react-native";
 
 import type { DraftComposerFileAttachment } from "../lib/composerImages";
-import { loadLocalVideoPreview } from "../lib/localVideoPreview";
+import { loadLocalAttachmentPreview } from "../lib/localAttachmentPreview";
 import { cachedVideoThumbnail, loadVideoThumbnail } from "../lib/videoThumbnails";
 
 export function VideoThumbnailImage(props: {
   readonly cacheKey: string;
   readonly source: string | DraftComposerFileAttachment | null;
+  readonly contentFit?: "cover" | "contain";
 }) {
   const { cacheKey, source } = props;
   const isFocused = useIsFocused();
@@ -25,7 +26,7 @@ export function VideoThumbnailImage(props: {
       async (signal) =>
         typeof source === "string"
           ? { uri: source, dispose: () => undefined }
-          : loadLocalVideoPreview(source, signal),
+          : loadLocalAttachmentPreview(source, signal),
       controller.signal,
     ).then((thumbnail) => {
       if (thumbnail && !controller.signal.aborted) setLoaded({ key: cacheKey, thumbnail });
@@ -37,7 +38,7 @@ export function VideoThumbnailImage(props: {
     <Image
       source={thumbnail}
       style={StyleSheet.absoluteFill}
-      contentFit="cover"
+      contentFit={props.contentFit ?? "cover"}
       recyclingKey={cacheKey}
       accessible={false}
     />

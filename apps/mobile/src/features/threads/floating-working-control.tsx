@@ -1,6 +1,7 @@
+import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 import { GlassContainer, GlassView } from "expo-glass-effect";
 import { useEffect, useState } from "react";
-import { Text as SystemText, View } from "react-native";
+import { ActivityIndicator, Text as SystemText, View } from "react-native";
 import Animated, {
   Easing,
   FadeIn,
@@ -13,11 +14,16 @@ import Animated, {
 import { withUniwind } from "uniwind";
 
 import { AppText as Text } from "../../components/AppText";
+import { SymbolView } from "../../components/AppSymbol";
 import { ControlPill } from "../../components/ControlPill";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 
-const CONTROL_HEIGHT = 44;
-const CONTROL_COMPOSER_GAP = 8;
+const CONTROL_HEIGHT = 38.5; // h-11 with the mobile 14px rem
+// The collapsed composer capsule starts 6 below its overlay's top edge, so
+// the pill sits at (gap - 6) above the overlay to leave the same gap to the
+// capsule as the feed's end inset leaves between it and the last row.
+const CONTROL_GAP = 8;
+const COMPOSER_CAPSULE_INSET = 6;
 const GLASS_MERGE_SPACING = 12;
 const CONTROL_ENTERING = FadeIn.duration(180).reduceMotion(ReduceMotion.System);
 const CONTROL_EXITING = FadeOut.duration(120).reduceMotion(ReduceMotion.System);
@@ -38,11 +44,21 @@ const UniwindGlassContainer = withUniwind(GlassContainer, {
 });
 const AnimatedGlassView = Animated.createAnimatedComponent(UniwindGlassView);
 
-export const FLOATING_WORKING_CONTROL_COVERAGE = CONTROL_HEIGHT + CONTROL_COMPOSER_GAP;
+const CONTROL_OVERLAY_OFFSET = CONTROL_HEIGHT + CONTROL_GAP - COMPOSER_CAPSULE_INSET;
+export const FLOATING_WORKING_CONTROL_COVERAGE = CONTROL_OVERLAY_OFFSET + CONTROL_GAP;
+
+/**
+ * What the floating pill says. Syncing and working share one element so the
+ * label swaps in place instead of one pill fading out for another.
+ */
+export type FloatingWorkingStatus =
+  | { readonly kind: "working"; readonly startedAt: string }
+  | { readonly kind: "syncing"; readonly label: string }
+  | { readonly kind: "compacting" };
 
 export function FloatingWorkingControl(props: {
   readonly colorScheme: "light" | "dark";
-  readonly startedAt: string | null;
+  readonly status: FloatingWorkingStatus | null;
   readonly showScrollToEnd: boolean;
   readonly onScrollToEnd: () => void;
 }) {
@@ -62,7 +78,7 @@ export function FloatingWorkingControl(props: {
     opacity: separationProgress.value,
   }));
 
-  if (props.startedAt === null && !props.showScrollToEnd) {
+  if (props.status === null && !props.showScrollToEnd) {
     return null;
   }
 
@@ -70,11 +86,11 @@ export function FloatingWorkingControl(props: {
     <Animated.View
       pointerEvents="box-none"
       className="absolute left-0 right-0 z-20 items-center"
-      style={{ top: -FLOATING_WORKING_CONTROL_COVERAGE }}
+      style={{ top: -CONTROL_OVERLAY_OFFSET }}
       entering={NATIVE_LIQUID_GLASS_SUPPORTED ? undefined : CONTROL_ENTERING}
       exiting={NATIVE_LIQUID_GLASS_SUPPORTED ? undefined : CONTROL_EXITING}
     >
-      {props.startedAt !== null && NATIVE_LIQUID_GLASS_SUPPORTED ? (
+      {props.status !== null && NATIVE_LIQUID_GLASS_SUPPORTED ? (
         <UniwindGlassContainer
           spacing={GLASS_MERGE_SPACING}
           pointerEvents="box-none"
@@ -87,7 +103,7 @@ export function FloatingWorkingControl(props: {
             className="h-11 justify-center overflow-hidden rounded-full"
             style={timerStyle}
           >
-            <WorkingDuration startedAt={props.startedAt} />
+            <FloatingStatusLabel status={props.status} />
           </AnimatedGlassView>
 
           <AnimatedGlassView
@@ -105,14 +121,14 @@ export function FloatingWorkingControl(props: {
             </Animated.View>
           </AnimatedGlassView>
         </UniwindGlassContainer>
-      ) : props.startedAt !== null ? (
+      ) : props.status !== null ? (
         <View pointerEvents="box-none" className="flex-row items-center gap-4">
           <Animated.View
             pointerEvents="none"
             className="h-11 justify-center rounded-full border border-border bg-card shadow-md shadow-black/10"
             style={timerStyle}
           >
-            <WorkingDuration startedAt={props.startedAt} />
+            <FloatingStatusLabel status={props.status} />
           </Animated.View>
 
           <Animated.View
@@ -153,6 +169,43 @@ export function FloatingWorkingControl(props: {
   );
 }
 
+function CompactingLabel() {
+  return (
+    <View
+      accessible
+      accessibilityLabel="Compacting"
+      className="h-11 flex-row items-center gap-1.5 px-4"
+    >
+      <SymbolView
+        name="arrow.down.right.and.arrow.up.left"
+        size={13}
+        tintColorClassName="foreground"
+        type="monochrome"
+      />
+      <Text className="font-t3-medium text-xs text-foreground">Compacting…</Text>
+    </View>
+  );
+}
+
+function FloatingStatusLabel(props: { readonly status: FloatingWorkingStatus }) {
+  if (props.status.kind === "syncing") {
+    return (
+      <View
+        accessible
+        accessibilityLabel={props.status.label}
+        className="h-11 flex-row items-center gap-2 px-4"
+      >
+        <ActivityIndicator size="small" colorClassName="accent-icon-muted" />
+        <Text className="font-t3-medium text-xs text-foreground">{props.status.label}</Text>
+      </View>
+    );
+  }
+  if (props.status.kind === "compacting") {
+    return <CompactingLabel />;
+  }
+  return <WorkingDuration startedAt={props.status.startedAt} />;
+}
+
 function WorkingDuration(props: { readonly startedAt: string }) {
   const [nowMs, setNowMs] = useState(() => Date.now());
 
@@ -187,6 +240,9 @@ function formatWorkingDuration(startedAt: string, nowMs: number): string {
   const totalSeconds = Math.floor((nowMs - startedAtMs) / 1_000);
   if (totalSeconds < 60) {
     return `${totalSeconds}s`;
+  }
+  if (totalSeconds >= 3_600) {
+    return formatDuration(totalSeconds * 1_000);
   }
 
   const minutes = Math.floor(totalSeconds / 60);

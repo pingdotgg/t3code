@@ -1,20 +1,24 @@
 /**
- * ModelManifest — decides which provider models are current and which belong
- * in the model picker's legacy section.
+ * ModelManifest — remote provider-model metadata with a bundled offline
+ * fallback.
  *
- * The classification data (current slugs per driver kind) lives in
- * `model-manifest.json` next to this file. The bundled copy ships with every
- * release. At runtime the service refreshes it from the same file on `main`
- * via raw.githubusercontent.com, so a new model can leave the legacy section
- * with a commit to `main` instead of a release. Preference order is remote,
- * then the on-disk copy of the last successful fetch, then the bundle. A
- * failed fetch never fails a provider check.
+ * Provider catalogs and legacy classification live in `model-manifest.json`.
+ * The bundled copy ships with every release; at runtime the service refreshes
+ * it from the same file on `main`. Preference order is remote, then the last
+ * successful on-disk copy, then the bundle. A failed fetch never fails a
+ * provider check.
  *
- * Drivers apply the manifest to snapshot drafts with `applyModelManifest`
- * before publishing, so every path that produces models (pending, probe,
- * error fallbacks) is classified the same way.
+ * Providers with authoritative discovery can use only the classification
+ * overlay. Providers with static catalogs can resolve presentation and
+ * capabilities from `providers`, then decode their own allowlisted adapter
+ * payload separately.
  */
-import type { ProviderDriverKind, ServerProviderModel } from "@t3tools/contracts";
+import {
+  ModelCapabilities,
+  TrimmedNonEmptyString,
+  type ProviderDriverKind,
+  type ServerProviderModel,
+} from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -27,6 +31,7 @@ import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 
 import { ServerConfig } from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { hasValidClaudeManifestAdapters } from "./ClaudeModelManifest.ts";
 import bundledManifestJson from "./model-manifest.json" with { type: "json" };
 import type { ServerProviderDraft } from "./providerSnapshot.ts";
 
@@ -42,22 +47,147 @@ const MANIFEST_RETRY_MS = 5 * 60 * 1000;
 
 const FETCH_TIMEOUT_MS = 10_000;
 
-/**
- * `version` gates breaking schema changes: a build only accepts remote
- * manifests whose version it understands, and keeps its bundled copy
- * otherwise. `currentModels` is keyed by driver kind; kinds absent from the
- * map have no legacy concept and their models are left unflagged.
- */
-const ModelManifestSchema = Schema.Struct({
-  version: Schema.Literal(1),
-  currentModels: Schema.Record(Schema.String, Schema.Array(Schema.String)),
+const ManifestModelStatus = Schema.Literals(["current", "legacy"]);
+
+const ManifestModelProfile = Schema.Struct({
+  capabilities: Schema.optional(ModelCapabilities),
+  adapter: Schema.optional(Schema.Unknown),
 });
+
+const ManifestProviderModel = Schema.Struct({
+  slug: TrimmedNonEmptyString,
+  name: TrimmedNonEmptyString,
+  shortName: Schema.optional(TrimmedNonEmptyString),
+  subProvider: Schema.optional(TrimmedNonEmptyString),
+  aliases: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
+  status: ManifestModelStatus,
+  badge: Schema.optional(Schema.Literal("new")),
+  profile: Schema.optional(TrimmedNonEmptyString),
+  adapter: Schema.optional(Schema.Unknown),
+});
+
+const ManifestProviderCatalog = Schema.Struct({
+  defaults: Schema.optional(
+    Schema.Struct({
+      chat: Schema.optional(TrimmedNonEmptyString),
+    }),
+  ),
+  profiles: Schema.Record(Schema.String, ManifestModelProfile),
+  models: Schema.Array(ManifestProviderModel),
+});
+
+/**
+ * `version` gates breaking schema changes. Provider catalogs are additive so
+ * clients that only understand `currentModels` keep accepting this v1 file.
+ */
+const ModelManifestEnvelopeSchema = Schema.Struct({
+  version: Schema.Literal(1),
+  /**
+   * ISO date of the last edit. A release bundles its manifest, and a disk
+   * cache of an older edit must not outrank it. Optional so older remote
+   * files still decode; they count as older than any dated bundle.
+   */
+  updatedAt: Schema.optional(Schema.String),
+  currentModels: Schema.Record(Schema.String, Schema.Array(Schema.String)),
+  providers: Schema.optional(Schema.Record(Schema.String, ManifestProviderCatalog)),
+});
+
+const hasValidProviderCatalogReferences = (
+  manifest: typeof ModelManifestEnvelopeSchema.Type,
+): boolean =>
+  Object.values(manifest.providers ?? {}).every((catalog) => {
+    const slugs = new Set<string>();
+    const modelsAreValid = catalog.models.every((model) => {
+      if (slugs.has(model.slug)) return false;
+      slugs.add(model.slug);
+      return model.profile === undefined || catalog.profiles[model.profile] !== undefined;
+    });
+    return (
+      modelsAreValid && (catalog.defaults?.chat === undefined || slugs.has(catalog.defaults.chat))
+    );
+  });
+
+const ModelManifestSchema = ModelManifestEnvelopeSchema.pipe(
+  Schema.check(
+    Schema.makeFilter(hasValidProviderCatalogReferences, {
+      expected: "unique model slugs and existing model and profile references",
+    }),
+    Schema.makeFilter(hasValidClaudeManifestAdapters, {
+      expected: "valid Claude adapter metadata",
+    }),
+  ),
+);
 export type ModelManifestData = typeof ModelManifestSchema.Type;
+
+export interface ResolvedManifestModel {
+  readonly model: ServerProviderModel;
+  readonly adapter: unknown;
+  readonly profileAdapter: unknown;
+}
+
+export interface ResolvedProviderCatalog {
+  readonly models: ReadonlyArray<ResolvedManifestModel>;
+  readonly defaults: {
+    readonly chat: string | undefined;
+  };
+}
 
 const decodeManifest = Schema.decodeUnknownEffect(ModelManifestSchema);
 
 export const BUNDLED_MODEL_MANIFEST: ModelManifestData =
   Schema.decodeUnknownSync(ModelManifestSchema)(bundledManifestJson);
+
+/** Epoch millis of the manifest's `updatedAt`, or 0 when absent or unparsable. */
+function manifestUpdatedAtMs(manifest: ModelManifestData): number {
+  if (manifest.updatedAt === undefined) return 0;
+  const parsed = Date.parse(manifest.updatedAt);
+  return Number.isNaN(parsed) ? 0 : parsed;
+}
+
+/** Resolve provider-neutral model presentation and capability data. */
+export function resolveProviderCatalog(
+  manifest: ModelManifestData,
+  driverKind: ProviderDriverKind,
+): ResolvedProviderCatalog | null {
+  const catalog = manifest.providers?.[driverKind];
+  if (!catalog) return null;
+
+  const seen = new Set<string>();
+  const models: Array<ResolvedManifestModel> = [];
+  for (const entry of catalog.models) {
+    if (seen.has(entry.slug)) return null;
+    seen.add(entry.slug);
+
+    const profile = entry.profile ? catalog.profiles[entry.profile] : undefined;
+    if (entry.profile && !profile) return null;
+
+    models.push({
+      model: {
+        slug: entry.slug,
+        name: entry.name,
+        ...(entry.shortName ? { shortName: entry.shortName } : {}),
+        ...(entry.subProvider ? { subProvider: entry.subProvider } : {}),
+        ...(entry.aliases ? { aliases: entry.aliases } : {}),
+        ...(entry.badge ? { badge: entry.badge } : {}),
+        isCustom: false,
+        ...(catalog.defaults?.chat === entry.slug ? { isDefault: true } : {}),
+        ...(entry.status === "legacy" ? { isLegacy: true } : {}),
+        capabilities: profile?.capabilities ?? null,
+      },
+      adapter: entry.adapter,
+      profileAdapter: profile?.adapter,
+    });
+  }
+
+  if (catalog.defaults?.chat !== undefined && !seen.has(catalog.defaults.chat)) return null;
+
+  return {
+    models,
+    defaults: {
+      chat: catalog.defaults?.chat,
+    },
+  };
+}
 
 /** On-disk shape of the last successfully fetched manifest. */
 const ManifestCacheFile = Schema.Struct({
@@ -69,7 +199,8 @@ const decodeManifestCache = Schema.decodeUnknownEffect(
     ManifestCacheFile as unknown as Schema.Codec<typeof ManifestCacheFile.Type>,
   ),
 );
-const encodeManifestCache = Schema.encodeEffect(
+/** Exported for tests that seed the disk cache. */
+export const encodeManifestCache = Schema.encodeEffect(
   Schema.fromJsonString(
     ManifestCacheFile as unknown as Schema.Codec<typeof ManifestCacheFile.Type>,
   ),
@@ -81,6 +212,10 @@ export function isLegacyModel(
   driverKind: ProviderDriverKind,
   slug: string,
 ): boolean {
+  const catalogModel = manifest.providers?.[driverKind]?.models.find(
+    (model) => model.slug === slug,
+  );
+  if (catalogModel) return catalogModel.status === "legacy";
   const currentModels = manifest.currentModels[driverKind];
   if (!currentModels) return false;
   return !currentModels.includes(slug);
@@ -95,7 +230,52 @@ export function applyModelManifest(
   manifest: ModelManifestData,
   driverKind: ProviderDriverKind,
 ): ServerProviderDraft {
-  return { ...draft, models: classifyModels(draft.models, manifest, driverKind) };
+  return {
+    ...draft,
+    models: applyManifestDefault(
+      classifyModels(draft.models, manifest, driverKind),
+      manifest,
+      driverKind,
+    ),
+  };
+}
+
+/** The manifest's chat default for `driverKind`, when it names one. */
+export function manifestDefaultModel(
+  manifest: ModelManifestData,
+  driverKind: ProviderDriverKind,
+): string | undefined {
+  return manifest.providers?.[driverKind]?.defaults?.chat;
+}
+
+/**
+ * Moves `isDefault` to the manifest's chat default when the catalog carries
+ * it. Providers that learn their default from the runtime (Antigravity takes
+ * Google's current model) can be overridden here without a release. Aliases
+ * that pointed at the old default move with the flag so the shared
+ * "provider default" alias keeps resolving.
+ */
+export function applyManifestDefault(
+  models: ReadonlyArray<ServerProviderModel>,
+  manifest: ModelManifestData,
+  driverKind: ProviderDriverKind,
+): ReadonlyArray<ServerProviderModel> {
+  const slug = manifestDefaultModel(manifest, driverKind);
+  if (slug === undefined || !models.some((model) => model.slug === slug)) return models;
+  const previous = models.find((model) => model.isDefault && model.slug !== slug);
+  if (!previous) return models;
+  const movedAliases = previous.aliases ?? [];
+  return models.map((model) => {
+    if (model.slug === previous.slug) {
+      const { isDefault: _isDefault, aliases: _aliases, ...rest } = model;
+      return rest;
+    }
+    if (model.slug === slug) {
+      const aliases = [...new Set([...(model.aliases ?? []), ...movedAliases])];
+      return { ...model, isDefault: true, ...(aliases.length > 0 ? { aliases } : {}) };
+    }
+    return model;
+  });
 }
 
 /** Model-level half of `applyModelManifest`, exported for focused tests. */
@@ -164,7 +344,14 @@ export const make = Effect.gen(function* () {
       );
       if (fromDisk === null) return;
       // The disk copy is the last-seen remote manifest, so it outranks the
-      // bundle even when stale: it is refreshed on the next successful fetch.
+      // bundle even when stale, unless the bundle's own edit date is newer
+      // than the cached manifest's. Then the release carries data the cache
+      // has not seen and the cache is dropped so the next refresh replaces
+      // it. Comparing edit dates, not fetch time, keeps this independent of
+      // when the cache was written relative to the release.
+      if (manifestUpdatedAtMs(BUNDLED_MODEL_MANIFEST) > manifestUpdatedAtMs(fromDisk.manifest)) {
+        return;
+      }
       manifest = fromDisk.manifest;
       fetchedAtMs = fromDisk.fetchedAtMs;
     }),

@@ -1,106 +1,56 @@
 # Mobile navigation
 
-The iOS Home and thread routes share the root native stack in
-[`Stack.tsx`](../../apps/mobile/src/Stack.tsx). Keeping them in one navigation
-controller lets UIKit animate the header between routes. The iPad sidebar owns
-a separate, single-screen stack; Android uses its own in-flow headers.
+Home and thread routes share the [root native stack](../../apps/mobile/src/Stack.tsx)
+so UIKit can animate the header within one navigation controller. The iPad sidebar
+has its own stack. Splitting Home and threads between controllers loses that
+continuous transition.
 
-Home and the iPad sidebar render their brand and connection status through
-`headerTitle`, with `Threads` retained as the route title. The editor-style native
-bar aligns that title on the leading side. Do not model the brand as a toolbar
-button: on iOS 26.5 UIKit morphs a background-free custom leading item's rectangle
-into the next screen's glass back button, even with distinct item identifiers.
-Using the title slot lets the brand and native back button animate separately.
+## UIKit constraints
 
-The connection-status title has a maximum width based on its header's width and
-trailing actions. A long environment name or larger text must not push Settings
-into UIKit's overflow menu. Keep the full status as the accessibility label
-while visually truncating it. The iPad sidebar uses its pane width, not the full
-window width.
+The [react-native-screens patch](../../patches/react-native-screens@4.26.2.patch)
+preserves behavior that is easy to break when changing native headers:
 
-On iOS 26, UIKit does not recognize Fabric's custom text views when shaping the
-native scroll-edge fade. The screens patch gives custom title subviews an empty,
-non-interactive native label matching their bounds. This supplies the fade's
-geometry without drawing anything or turning the title back into a toolbar item.
-Check the top scroll fade as well as push/pop when changing these title views.
+- The brand belongs in `headerTitle`. On iOS 26.5, UIKit morphs a background-free
+  leading toolbar item's rectangle into the next screen's glass back button,
+  even when the items have different identifiers.
+- UIKit's scroll-edge fade does not recognize Fabric text views. An empty native
+  label supplies the custom title's geometry. Removing that apparently unused
+  view changes the fade.
+- Leading, trailing, and center item groups need independent caches. A button can
+  belong to only one group; rebuilding an unchanged group can pull its buttons
+  out of a group UIKit is still animating. Cache ownership also includes the
+  header config, whose event emitter changes on remount.
+- A horizontal ScrollView at its leading edge must yield to the full-screen back
+  gesture. Upstream gives every horizontal ScrollView priority, so swiping back
+  on a code block or table can only bounce its content.
 
-The react-native-screens patch caches leading, trailing, and center item groups
-independently. A button can belong to only one group: constructing another group
-with the same button removes it from the previous one. Unrelated menu updates
-must therefore preserve the other groups while UIKit may be animating them.
-
-Each cache includes the owning header config, its item values, and custom native
-item identities, so changed content or remounted event emitters still rebuild.
-
-Custom header identifiers require native code generation and a new mobile build;
-an over-the-air JavaScript update alone is insufficient. The Android view manager
-implements the generated identifier setter as a no-op because this behavior is
-specific to iOS 26 and later.
-
-After changing a dependency patch, refresh CocoaPods before rebuilding an
-existing iOS project. pnpm installs each patch hash in a different directory;
-an old Pods project can keep compiling the previous directory even though Metro
-and `apps/mobile/node_modules` resolve to the new patch.
-
-`ControlPillMenu` resolves semantic icon colors through `withUniwind` and supplies them to every
-iOS `MenuView` action, including nested actions. The menu library's Fabric bridge converts a missing
-`imageColor` to transparent, so callers should use this wrapper instead of
-rendering `MenuView` directly. Explicit colors are preserved, and destructive
-actions default to the theme's danger foreground color. Native stack header menus
-use a separate implementation and do not need this workaround.
+The patch adds native header props that require code generation and a new binary.
+Patch rebuild guidance lives in the
+[mobile development README](../../apps/mobile/README.md#development).
 
 ## Native media presentations
 
-`PresentationSource` in `NativePresentation` registers a thumbnail for AVKit's
-full-screen entry and UIKit's share sheet. Wrap the thumbnail as its single child
-and pass the stable identifier to the presentation. The registry keeps weak
-references to source views; recycled or compact composer thumbnails can register
-the same identifier. Identifiers must distinguish simultaneously visible attachments.
-This source registration does not own playback and can be reused by a future image
-viewer. Android uses a regular view.
+iOS delegates full-screen video to [AVKit](../../apps/mobile/modules/t3-native-controls/ios/T3NativeVideoPresentation.swift)
+and images and documents to [Quick Look](../../apps/mobile/modules/t3-native-controls/ios/T3NativeFilePresentation.swift).
+Each framework owns its controls and transition. A separate UIKit zoom transition
+prevents AVKit's native Close action from exiting full screen and interferes with
+Quick Look's interactive return to its thumbnail. The AVKit entry selector is
+guarded, with standard modal presentation as the fallback.
 
-On iOS, video previews mount `AVPlayerViewController` temporarily inside the
-registered source and enter full screen through AVKit. AVKit
-owns that zoom, its playback controls, Close button, and interactive dismissal.
-Do not replace AVKit's transition with `preferredTransition`: in the iOS 27
-simulator, that leaves native Close unable to exit full screen. When the source is unavailable,
-the player uses a standard modal presentation. Programmatic entry uses the same
-guarded `enterFullScreenAnimated:completionHandler:` selector as Expo Video;
-if that selector is unavailable, the player also falls back to a standard modal.
-Images retain their existing viewer.
+[Thumbnail registration](../../apps/mobile/modules/t3-native-controls/ios/T3NativePresentation.swift)
+holds weak view references for transition and share-sheet anchors. It does not own
+the preview; a source row can disappear while a native presentation is open.
+Identifiers must distinguish attachments that are visible at the same time.
+Native promises complete after dismissal so callers keep local file leases until
+the preview or share flow has finished.
 
-Received videos open directly from their signed asset URL. AVKit handles buffering;
-the client does not download the entire file or show a separate opening overlay before
-presentation. The URL is captured once per preview so credential refresh does not
-restart playback. Saving or sharing still downloads the original file.
+Treat a dismissal request as pending until UIKit finishes its current transition.
+Starting another dismissal while presentation or an interactive dismissal is
+settling can strand the controller. Video cleanup restores the previous audio
+configuration only if it still matches the preview's configuration. It must not
+deactivate the shared audio session, which may belong to another player or recorder.
 
-The native presentation promise completes after dismissal. Local draft previews
-hold their file lease until that promise settles. The iOS preview component requests
-native dismissal when its source screen unmounts. Playback pauses in the background.
-AVPlayer activates audio as playback starts. The presenter pauses and releases
-its own player on close, then restores the previous audio-session configuration
-if no other component changed it during playback. It does not deactivate the
-shared session, which may still serve another player or recorder. Android retains
-its React Native modal and Expo Video player.
-
-`shareFileFromSource` uses the same source registration to anchor UIKit's activity
-controller. Its promise completes when the native share flow finishes, keeping
-the existing attachment lease and foreground handoff active for that duration.
-Android uses Expo Sharing. On iOS, received and draft video attachments expose
-Save or share through `VideoAttachmentMenu`. The attachment supplies the source
-identifier, and the native share presentation inherits its appearance. AVKit's
-iOS playback controls do not expose a public custom-share-action API.
-
-Video attachment thumbnails use Expo Video's native frame extraction and Expo Image.
-Received attachments use their signed asset URL; drafts retain and resolve their local file
-until extraction ends. Extraction is serial; temporary players never play or change audio settings. Leaving the screen cancels
-pending work; a 15-second limit prevents an unreachable source from holding up the queue.
-The client keeps at most 32 native images, each bounded to 480 pixels per side, keyed by
-environment and attachment identity rather than expiring URLs. Images still displayed keep
-their own references when evicted from that cache.
-
-The asset HTTP route supports single byte ranges for videos so iOS can read metadata and
-frames without first downloading the whole file. Normal downloads keep their full response;
-unsupported ranges and conditional `If-Range` requests also fall back to the full file.
-An older environment without range support may still show the play-card fallback. Thumbnail
-failure never disables playback or sharing.
+Video playback holds the first signed asset URL for the lifetime of the preview.
+Following credential refreshes reactively would restart playback. Quick Look copies
+original bytes into its own temporary directory so preview and sharing cannot
+mutate a draft or workspace file.
