@@ -176,12 +176,16 @@ export function parseOriginUrlFromGitConfig(configText: string): string | null {
   let section: string | null = null;
   let originUrl: string | null = null;
   let firstRemoteUrl: string | null = null;
-  for (const rawLine of configText.split(/\r?\n/)) {
+  // A trailing backslash continues the value on the next line.
+  const joined = configText.replace(/\\\r?\n[ \t]*/g, "");
+  for (const rawLine of joined.split(/\r?\n/)) {
     const line = rawLine.trim();
     if (line.length === 0 || line.startsWith("#") || line.startsWith(";")) continue;
-    const header = /^\[\s*remote\s+"([^"]+)"\s*\]$/i.exec(line);
+    // Both `[remote "origin"]` and the legacy `[remote.origin]` form, with an
+    // optional trailing comment.
+    const header = /^\[\s*remote(?:\s+"([^"]+)"|\.([^\]\s]+))\s*\](?:\s*[#;].*)?$/i.exec(line);
     if (header) {
-      section = header[1] ?? null;
+      section = header[1] ?? header[2] ?? null;
       continue;
     }
     if (line.startsWith("[")) {

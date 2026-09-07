@@ -79,6 +79,20 @@ describe("parseOriginUrlFromGitConfig", () => {
     ).toBe("git@github.com:acme/repo.git");
   });
 
+  it("accepts legacy dotted headers, header comments, and line continuations", () => {
+    expect(parseOriginUrlFromGitConfig("[remote.origin]\n\turl = git@github.com:a/b.git\n")).toBe(
+      "git@github.com:a/b.git",
+    );
+    expect(
+      parseOriginUrlFromGitConfig('[remote "origin"] # primary\n\turl = git@github.com:a/b.git\n'),
+    ).toBe("git@github.com:a/b.git");
+    expect(
+      parseOriginUrlFromGitConfig(
+        '[remote "origin"]\n\turl = https://github.com/acme/\\\n\t\trepo.git\n',
+      ),
+    ).toBe("https://github.com/acme/repo.git");
+  });
+
   it("falls back to the first remote when there is no origin", () => {
     const config = [
       '[remote "upstream"]',
