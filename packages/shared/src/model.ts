@@ -14,6 +14,16 @@ import { copySorted } from "./Array.ts";
 
 const DEFAULT_PROVIDER_DRIVER_KIND = ProviderDriverKind.make("codex");
 
+/** Choose the command for a model change against the thread's current provider instance. */
+export function modelSelectionCommandType(
+  currentInstanceId: ProviderInstanceId,
+  selection: ModelSelection,
+) {
+  return currentInstanceId === selection.instanceId
+    ? ("thread.model-selection.set" as const)
+    : ("provider.switch" as const);
+}
+
 export interface SelectableModelOption {
   slug: string;
   name: string;
