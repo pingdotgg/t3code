@@ -41,6 +41,15 @@ export function resolveSnoozePresets(
 }
 
 /**
+ * Menus resolve their presets when they open, so a `limits-reset` row left on
+ * screen past the reset would snooze into the past. Only that row can expire;
+ * the others are relative to the open time.
+ */
+export function snoozePresetExpired(preset: SnoozePreset, now = Date.now()): boolean {
+  return Date.parse(preset.snoozedUntil) <= now;
+}
+
+/**
  * Human wake time for menus and toasts: "tomorrow 9:00", "Mon 9:00",
  * "17:30" (today).
  */
