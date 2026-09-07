@@ -1,5 +1,7 @@
 type LatestTurnTiming = {
   readonly turnId: string | null;
+  /** Set when the turn is created; `startedAt` waits for the provider. */
+  readonly requestedAt?: string | null;
   readonly startedAt: string | null;
   readonly completedAt: string | null;
 };
@@ -42,28 +44,20 @@ function isLatestTurnSettled(
 /**
  * When the working indicator should be counting, and from when.
  *
- * A running session whose turn has no `startedAt` yet is still work: the turn
- * is requested and the provider is spinning up. Without the running-session
- * branch the indicator blinks out for that window — visible on mobile as a gap
- * between a queued prompt landing and the agent starting. `latestUserMessageAt`
- * is deliberately only a fallback inside that branch: using it once the turn
- * has settled would leave the indicator running forever.
+ * `requestedAt` is the floor for an unsettled turn. The projector only stamps
+ * `startedAt` in the same update that moves the session to "running", so while
+ * the provider spins up (session "starting") a requested turn has no
+ * `startedAt` at all — and returning null there blinks the indicator out for
+ * the whole spin-up. A settled turn still falls through to `sendStartedAt`, so
+ * this cannot leave the indicator counting after the work is done.
  */
 export function deriveActiveWorkStartedAt(
   latestTurn: LatestTurnTiming | null,
   session: SessionActivityState | null,
   sendStartedAt: string | null,
-  latestUserMessageAt: string | null = null,
 ): string | null {
-  const runningTurnId = session?.orchestrationStatus === "running" ? session.activeTurnId : null;
-  if (runningTurnId !== null && runningTurnId !== undefined) {
-    if (latestTurn?.turnId === runningTurnId) {
-      return latestTurn.startedAt ?? sendStartedAt ?? latestUserMessageAt;
-    }
-    return sendStartedAt ?? latestUserMessageAt;
-  }
   if (!isLatestTurnSettled(latestTurn, session)) {
-    return latestTurn?.startedAt ?? sendStartedAt;
+    return latestTurn?.startedAt ?? latestTurn?.requestedAt ?? sendStartedAt;
   }
   return sendStartedAt;
 }

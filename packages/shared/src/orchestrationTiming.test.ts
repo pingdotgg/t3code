@@ -31,55 +31,76 @@ describe("formatDuration", () => {
 });
 
 describe("deriveActiveWorkStartedAt", () => {
-  const running = { orchestrationStatus: "running", activeTurnId: "turn-1" } as const;
-  const requestedTurn = {
-    turnId: "turn-1",
-    startedAt: null,
-    completedAt: null,
-  };
-
-  // The gap this closes: a queued prompt lands and the session goes running,
-  // but the provider has not stamped startedAt yet. Returning null there blinks
-  // the working indicator out between "Setting up worktree…" and "Working for".
-  it("counts from the last user message while a running turn has no startedAt", () => {
+  // The gap this closes. The projector stamps startedAt in the same update
+  // that moves the session to "running", so during provider spin-up the turn
+  // is requested with no startedAt and the session is "starting". Returning
+  // null there blinks the working indicator out between "Setting up
+  // worktree..." and "Working for 0s".
+  it("counts from requestedAt while the provider is still starting", () => {
     expect(
-      deriveActiveWorkStartedAt(requestedTurn, running, null, "2026-09-06T23:21:00.000Z"),
-    ).toBe("2026-09-06T23:21:00.000Z");
+      deriveActiveWorkStartedAt(
+        {
+          turnId: "turn-1",
+          requestedAt: "2026-09-06T23:33:00.000Z",
+          startedAt: null,
+          completedAt: null,
+        },
+        { orchestrationStatus: "starting", activeTurnId: null },
+        null,
+      ),
+    ).toBe("2026-09-06T23:33:00.000Z");
   });
 
   it("prefers the turn's own startedAt once the provider reports it", () => {
     expect(
       deriveActiveWorkStartedAt(
-        { ...requestedTurn, startedAt: "2026-09-06T23:21:05.000Z" },
-        running,
+        {
+          turnId: "turn-1",
+          requestedAt: "2026-09-06T23:33:00.000Z",
+          startedAt: "2026-09-06T23:33:05.000Z",
+          completedAt: null,
+        },
+        { orchestrationStatus: "running", activeTurnId: "turn-1" },
         null,
-        "2026-09-06T23:21:00.000Z",
       ),
-    ).toBe("2026-09-06T23:21:05.000Z");
+    ).toBe("2026-09-06T23:33:05.000Z");
   });
 
-  it("stops counting once the turn settles, despite a user message being present", () => {
+  // requestedAt must not leak past the end of the work.
+  it("stops counting once the turn has settled", () => {
     expect(
       deriveActiveWorkStartedAt(
         {
           turnId: "turn-1",
-          startedAt: "2026-09-06T23:21:05.000Z",
-          completedAt: "2026-09-06T23:21:09.000Z",
+          requestedAt: "2026-09-06T23:33:00.000Z",
+          startedAt: "2026-09-06T23:33:05.000Z",
+          completedAt: "2026-09-06T23:33:09.000Z",
         },
         { orchestrationStatus: "idle", activeTurnId: null },
         null,
-        "2026-09-06T23:21:00.000Z",
       ),
     ).toBeNull();
   });
 
-  it("keeps counting an unsettled turn when no session is running", () => {
+  // A session restarting with no new turn must not resurrect the old one.
+  it("does not count a settled turn while a session is starting again", () => {
     expect(
       deriveActiveWorkStartedAt(
-        { turnId: "turn-1", startedAt: "2026-09-06T23:21:05.000Z", completedAt: null },
-        null,
+        {
+          turnId: "turn-1",
+          requestedAt: "2026-09-06T23:33:00.000Z",
+          startedAt: "2026-09-06T23:33:05.000Z",
+          completedAt: "2026-09-06T23:33:09.000Z",
+        },
+        { orchestrationStatus: "starting", activeTurnId: null },
         null,
       ),
-    ).toBe("2026-09-06T23:21:05.000Z");
+    ).toBeNull();
+  });
+
+  it("falls back to the caller's send timestamp when there is no turn yet", () => {
+    expect(deriveActiveWorkStartedAt(null, null, "2026-09-06T23:33:00.000Z")).toBe(
+      "2026-09-06T23:33:00.000Z",
+    );
   });
 });
