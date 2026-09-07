@@ -72,7 +72,8 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
 
       expect(first?.canonicalKey).toBe("github.com/t3tools/t3code");
       expect(second).toEqual(first);
-      expect(calls).toEqual([
+      const gitCalls = calls.filter((args) => !args.includes("-G"));
+      expect(gitCalls).toEqual([
         ["-C", "/repo/packages/web", "rev-parse", "--show-toplevel"],
         ["-C", "/repo", "remote", "-v"],
       ]);
@@ -80,7 +81,7 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
       const refreshed = yield* resolver.resolve("/repo/packages/web", { refresh: true });
       expect(refreshed?.rootPath).toBe("/repo/packages/web");
       expect(yield* resolver.resolve("/repo/packages/web")).toEqual(refreshed);
-      expect(calls.slice(2)).toEqual([
+      expect(calls.filter((args) => !args.includes("-G")).slice(2)).toEqual([
         ["-C", "/repo/packages/web", "rev-parse", "--show-toplevel"],
         ["-C", "/repo/packages/web", "remote", "-v"],
       ]);
@@ -127,6 +128,7 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
         ["-C", "/repo/packages/web", "rev-parse", "--show-toplevel"],
         ["-C", "/repo/packages/web", "rev-parse", "--show-toplevel"],
         ["-C", "/repo", "remote", "-v"],
+        ["-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-G", "--", "github.com"],
       ]);
     }).pipe(Effect.provide(resolverLayer));
   });
@@ -158,6 +160,75 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
       expect(identity?.name).toBe("t3code");
     }).pipe(Effect.provide(RepositoryIdentityResolver.layer)),
   );
+
+  it.effect.each([
+    {
+      remoteUrl: "git@github.com-t3-test:example/project.git",
+      stdout: "hostname github.com\n",
+      code: 0,
+      host: "github.com",
+    },
+    {
+      remoteUrl: "ssh://git@github.com-t3-test:2222/example/project.git",
+      stdout: "hostname github.com\n",
+      code: 0,
+      host: "github.com",
+    },
+    {
+      remoteUrl: "git@github.com-t3-test:example/project.git",
+      stdout: "",
+      code: 1,
+      host: "github.com-t3-test",
+    },
+    {
+      remoteUrl: "git@github.com-t3-test:example/project.git",
+      stdout: "user git\n",
+      code: 0,
+      host: "github.com-t3-test",
+    },
+  ])("resolves repository identity without changing transport: %j", (fixture) => {
+    const calls: Array<{ readonly command: string; readonly args: ReadonlyArray<string> }> = [];
+    const processRunner = Layer.succeed(ProcessRunner.ProcessRunner, {
+      run: (input) =>
+        Effect.sync(() => {
+          calls.push({ command: input.command, args: input.args });
+          const isRootLookup = input.command === "git" && input.args.includes("rev-parse");
+          const isRemoteLookup = input.command === "git" && input.args.includes("remote");
+          const isSshLookup = input.command === "ssh" && input.args.includes("-G");
+          return {
+            stdout: isRootLookup
+              ? "/repo\n"
+              : isRemoteLookup
+                ? `origin\t${fixture.remoteUrl} (fetch)\n`
+                : isSshLookup
+                  ? fixture.stdout
+                  : "",
+            stderr: "",
+            code: ChildProcessSpawner.ExitCode(isSshLookup ? fixture.code : 0),
+            timedOut: false,
+            stdoutTruncated: false,
+            stderrTruncated: false,
+            stdoutInvalidUtf8: false,
+            stderrInvalidUtf8: false,
+          };
+        }),
+    });
+    const resolverLayer = Layer.effect(
+      RepositoryIdentityResolver.RepositoryIdentityResolver,
+      RepositoryIdentityResolver.make(),
+    ).pipe(Layer.provide(processRunner));
+
+    return Effect.gen(function* () {
+      const resolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
+      const identity = yield* resolver.resolve("/repo");
+
+      expect(identity?.canonicalKey).toBe(`${fixture.host}/example/project`);
+      expect(identity?.provider).toBe("github");
+      expect(identity?.displayName).toBe("example/project");
+      expect(identity?.locator.remoteUrl).toBe(fixture.remoteUrl);
+      expect(calls.some(({ command }) => command === "ssh")).toBe(true);
+    }).pipe(Effect.provide(resolverLayer));
+  });
 
   it.effect("returns the git top-level root path when resolving from a nested workspace", () =>
     Effect.gen(function* () {
