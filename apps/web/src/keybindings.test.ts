@@ -738,6 +738,42 @@ describe("cross-command precedence", () => {
 });
 
 describe("resolveShortcutCommand", () => {
+  it("resolves a custom stop-thread shortcut", () => {
+    const keybindings = compile([{ shortcut: modShortcut("escape"), command: "thread.stop" }]);
+
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "Escape", metaKey: true }), keybindings, {
+        platform: "MacIntel",
+      }),
+      "thread.stop",
+    );
+  });
+
+  it("honors preview conditions for a stop-thread shortcut", () => {
+    const keybindings = compile([
+      {
+        shortcut: modShortcut("escape"),
+        command: "thread.stop",
+        whenAst: whenIdentifier("previewFocus"),
+      },
+    ]);
+    const input = event({ key: "Escape", metaKey: true });
+
+    assert.isNull(
+      resolveShortcutCommand(input, keybindings, {
+        platform: "MacIntel",
+        context: { previewFocus: false },
+      }),
+    );
+    assert.strictEqual(
+      resolveShortcutCommand(input, keybindings, {
+        platform: "MacIntel",
+        context: { previewFocus: true },
+      }),
+      "thread.stop",
+    );
+  });
+
   it("returns dynamic script commands", () => {
     const keybindings = compile([{ shortcut: modShortcut("r"), command: "script.setup.run" }]);
 
