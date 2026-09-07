@@ -686,8 +686,11 @@ export const make = Effect.gen(function* () {
   /**
    * Git identity of a directory, or the reason it has none. Reads `.git`
    * directly instead of spawning git so a scan over hundreds of candidates
-   * stays cheap. A `.git` file means a linked worktree, which onboarding
-   * skips: its history belongs to the main checkout.
+   * stays cheap. A `.git` file is a `gitdir:` pointer. When it points into a
+   * `worktrees/` directory the checkout is a linked worktree, which
+   * onboarding skips because its history belongs to the main checkout.
+   * Submodules use the same pointer shape but live under `modules/`, and
+   * are offered like any other repository.
    */
   const readGitIdentity = Effect.fn("AgentSessionScanner.readGitIdentity")(function* (
     directory: string,
@@ -699,9 +702,18 @@ export const make = Effect.gen(function* () {
     const gitPath = path.join(directory, ".git");
     const gitStats = yield* statOption(gitPath);
     if (Option.isNone(gitStats)) return { _tag: "NotGit" } as const;
-    if (gitStats.value.type !== "Directory") return { _tag: "Worktree" } as const;
+    let gitDir = gitPath;
+    if (gitStats.value.type !== "Directory") {
+      const pointer = yield* fileSystem
+        .readFileString(gitPath)
+        .pipe(Effect.orElseSucceed(() => ""));
+      const target = /^gitdir:\s*(.+)$/m.exec(pointer)?.[1]?.trim();
+      if (target === undefined || target.length === 0) return { _tag: "NotGit" } as const;
+      gitDir = path.resolve(directory, target);
+      if (/[\\/]worktrees[\\/][^\\/]+[\\/]?$/.test(gitDir)) return { _tag: "Worktree" } as const;
+    }
     const configText = yield* fileSystem
-      .readFileString(path.join(gitPath, "config"))
+      .readFileString(path.join(gitDir, "config"))
       .pipe(Effect.orElseSucceed(() => ""));
     const originUrl = parseOriginUrlFromGitConfig(configText);
     return {

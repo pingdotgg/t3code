@@ -869,15 +869,20 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
         const fileSystem = yield* FileSystem.FileSystem;
         const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
         const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+        // The exclusions key off the real home directory, so these fixtures
+        // must live there. Each run owns a uniquely named subtree and removes
+        // only that subtree, never the shared Codex or Downloads parents.
         const home = NodeOS.homedir();
-        const scratch = path.join(home, "Documents", "Codex", "2026-09-01", "t3code-scanner-test");
-        const downloads = path.join(home, "Downloads", "t3code-scanner-test");
+        const runId = `t3code-scanner-test-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        const scratchRoot = path.join(home, "Documents", "Codex", runId);
+        const scratch = path.join(scratchRoot, "2026-09-01", "some-conversation");
+        const downloads = path.join(home, "Downloads", runId);
         const keep = yield* makeTempDir("t3code-workspace-keep-");
         yield* fileSystem.makeDirectory(scratch, { recursive: true });
         yield* fileSystem.makeDirectory(downloads, { recursive: true });
         yield* Effect.addFinalizer(() =>
           Effect.all([
-            fileSystem.remove(scratch, { recursive: true }).pipe(Effect.ignore),
+            fileSystem.remove(scratchRoot, { recursive: true }).pipe(Effect.ignore),
             fileSystem.remove(downloads, { recursive: true }).pipe(Effect.ignore),
           ]),
         );
@@ -913,6 +918,7 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
         const worktree = yield* makeTempDir("t3code-workspace-worktree-");
         const plain = yield* makeTempDir("t3code-workspace-plain-");
         const noRemote = yield* makeTempDir("t3code-workspace-noremote-");
+        const submodule = yield* makeTempDir("t3code-workspace-submodule-");
 
         yield* fileSystem.makeDirectory(path.join(repo, ".git"));
         yield* fileSystem.writeFileString(
@@ -925,8 +931,19 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
         );
         yield* fileSystem.makeDirectory(path.join(noRemote, ".git"));
         yield* fileSystem.writeFileString(path.join(noRemote, ".git", "config"), "[core]\n");
+        // Submodules also use a gitdir pointer, but into `modules/`, not `worktrees/`.
+        const submoduleGitDir = path.join(repo, ".git", "modules", "vendor");
+        yield* fileSystem.makeDirectory(submoduleGitDir, { recursive: true });
+        yield* fileSystem.writeFileString(
+          path.join(submoduleGitDir, "config"),
+          '[remote "origin"]\n\turl = ssh://github.com/pingdotgg/vendor.git\n',
+        );
+        yield* fileSystem.writeFileString(
+          path.join(submodule, ".git"),
+          `gitdir: ${submoduleGitDir}\n`,
+        );
 
-        for (const [index, cwd] of [repo, worktree, plain, noRemote].entries()) {
+        for (const [index, cwd] of [repo, worktree, plain, noRemote, submodule].entries()) {
           yield* writeTranscript({
             filePath: path.join(claudeHomePath, "projects", `-slug-${index}`, "a.jsonl"),
             contents: claudeSessionLine(cwd),
@@ -939,6 +956,10 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
         expect(
           result.candidates.map((candidate) => ({ path: candidate.path, git: candidate.git })),
         ).toEqual([
+          {
+            path: submodule,
+            git: { remoteKey: "github.com/pingdotgg/vendor", repository: "pingdotgg/vendor" },
+          },
           { path: noRemote, git: { remoteKey: null, repository: null } },
           { path: plain, git: null },
           {

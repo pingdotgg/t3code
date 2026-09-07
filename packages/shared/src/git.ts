@@ -144,26 +144,62 @@ export function normalizeGitRemoteUrl(value: string): string {
 }
 
 /**
- * Read `remote.origin.url` from raw `.git/config` text. Avoids spawning git
- * for callers that only need the origin, such as project discovery scans.
+ * Unquote a git config value: strip an inline `#` or `;` comment outside
+ * quotes, then drop surrounding quotes and backslash escapes.
+ */
+function parseGitConfigValue(raw: string): string {
+  let out = "";
+  let quoted = false;
+  for (let index = 0; index < raw.length; index += 1) {
+    const char = raw[index]!;
+    if (char === "\\" && index + 1 < raw.length) {
+      out += raw[index + 1];
+      index += 1;
+      continue;
+    }
+    if (char === '"') {
+      quoted = !quoted;
+      continue;
+    }
+    if (!quoted && (char === "#" || char === ";")) break;
+    out += char;
+  }
+  return out.trim();
+}
+
+/**
+ * Read the primary remote URL from raw `.git/config` text without spawning
+ * git. Prefers `remote.origin.url` and falls back to the first remote so
+ * clones made with `git clone --origin <name>` still resolve.
  */
 export function parseOriginUrlFromGitConfig(configText: string): string | null {
-  let inOrigin = false;
+  let section: string | null = null;
+  let originUrl: string | null = null;
+  let firstRemoteUrl: string | null = null;
   for (const rawLine of configText.split(/\r?\n/)) {
     const line = rawLine.trim();
     if (line.length === 0 || line.startsWith("#") || line.startsWith(";")) continue;
-    if (line.startsWith("[")) {
-      inOrigin = /^\[\s*remote\s+"origin"\s*\]$/i.test(line);
+    const header = /^\[\s*remote\s+"([^"]+)"\s*\]$/i.exec(line);
+    if (header) {
+      section = header[1] ?? null;
       continue;
     }
-    if (!inOrigin) continue;
-    const match = /^url\s*=\s*(.+)$/i.exec(line);
-    if (match?.[1]) {
-      const url = match[1].trim();
-      return url.length > 0 ? url : null;
+    if (line.startsWith("[")) {
+      section = null;
+      continue;
+    }
+    if (section === null) continue;
+    const match = /^url\s*=\s*(.*)$/i.exec(line);
+    if (!match) continue;
+    const url = parseGitConfigValue(match[1] ?? "");
+    if (url.length === 0) continue;
+    if (section === "origin") {
+      originUrl ??= url;
+    } else {
+      firstRemoteUrl ??= url;
     }
   }
-  return null;
+  return originUrl ?? firstRemoteUrl;
 }
 
 /**
@@ -176,7 +212,7 @@ export function parseGitHubRepositoryNameWithOwnerFromRemoteUrl(url: string | nu
   }
 
   const match =
-    /^(?:git@github\.com:|ssh:\/\/git@github\.com\/|https:\/\/github\.com\/|git:\/\/github\.com\/)([^/\s]+\/[^/\s]+?)(?:\.git)?\/?$/i.exec(
+    /^(?:git@github\.com:|ssh:\/\/(?:git@)?github\.com\/|https:\/\/github\.com\/|git:\/\/github\.com\/)([^/\s]+\/[^/\s]+?)(?:\.git)?\/?$/i.exec(
       trimmed,
     );
   const repositoryNameWithOwner = match?.[1]?.trim() ?? "";

@@ -1294,6 +1294,7 @@ type ImportCandidate = AgentSessionProjectCandidate & {
  * Repositories first, newest activity on top. Clones of one repository share
  * a group with a tri-state checkbox. Folders that are not git repositories
  * sit collapsed at the bottom so they stay reachable without adding noise.
+ * Source icons appear only on repository rows so the columns stay still.
  */
 function ImportCandidateList({
   candidates,
@@ -1352,6 +1353,7 @@ function ImportCandidateList({
                 key={candidate.key}
                 candidate={candidate}
                 label={candidate.path}
+                nested
                 checked={selectedKeys.has(candidate.key)}
                 onCheckedChange={(checked) => setKeys([candidate.key], checked)}
               />
@@ -1460,7 +1462,7 @@ function ImportCandidateRow({
         <TooltipPopup className="max-w-96 break-all font-mono">{candidate.path}</TooltipPopup>
       </Tooltip>
       <span className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
-        <SourceIcons sources={candidate.sources} />
+        {nested ? <span className="w-8" /> : <SourceIcons sources={candidate.sources} />}
         <span className="w-8 text-right tabular-nums">{candidate.threadCount}</span>
         <ActiveAgo lastActiveAt={candidate.lastActiveAt} />
       </span>
@@ -1481,7 +1483,9 @@ function SourceIcons({ sources }: { readonly sources: ReadonlyArray<"claudeAgent
 
 function ActiveAgo({ lastActiveAt }: { readonly lastActiveAt: string | null }) {
   const relative = lastActiveAt === null ? null : formatRelativeTime(lastActiveAt);
-  return <span className="w-8 text-right tabular-nums">{relative?.value ?? ""}</span>;
+  // "just now" does not fit the fixed column, so collapse it.
+  const value = relative === null ? "" : relative.suffix === null ? "now" : relative.value;
+  return <span className="w-8 shrink-0 text-right tabular-nums whitespace-nowrap">{value}</span>;
 }
 
 // ── Shared bits ──────────────────────────────────────────────

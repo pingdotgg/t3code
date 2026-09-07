@@ -68,7 +68,28 @@ describe("parseOriginUrlFromGitConfig", () => {
     expect(parseOriginUrlFromGitConfig(config)).toBe("git@github.com:pingdotgg/t3code.git");
   });
 
-  it("returns null when there is no origin section", () => {
+  it("strips inline comments and quotes from the url value", () => {
+    expect(
+      parseOriginUrlFromGitConfig(
+        '[remote "origin"]\n\turl = https://github.com/acme/repo.git # mirror\n',
+      ),
+    ).toBe("https://github.com/acme/repo.git");
+    expect(
+      parseOriginUrlFromGitConfig('[remote "origin"]\n\turl = "git@github.com:acme/repo.git"\n'),
+    ).toBe("git@github.com:acme/repo.git");
+  });
+
+  it("falls back to the first remote when there is no origin", () => {
+    const config = [
+      '[remote "upstream"]',
+      "\turl = https://github.com/acme/repo.git",
+      '[remote "fork"]',
+      "\turl = https://github.com/me/repo.git",
+    ].join("\n");
+    expect(parseOriginUrlFromGitConfig(config)).toBe("https://github.com/acme/repo.git");
+  });
+
+  it("returns null when there is no remote section", () => {
     expect(parseOriginUrlFromGitConfig("[core]\n\tbare = false\n")).toBeNull();
     expect(parseOriginUrlFromGitConfig("")).toBeNull();
   });
@@ -81,6 +102,9 @@ describe("parseGitHubRepositoryNameWithOwnerFromRemoteUrl", () => {
     ).toBe("T3Tools/T3Code");
     expect(
       parseGitHubRepositoryNameWithOwnerFromRemoteUrl("https://github.com/T3Tools/T3Code.git"),
+    ).toBe("T3Tools/T3Code");
+    expect(
+      parseGitHubRepositoryNameWithOwnerFromRemoteUrl("ssh://github.com/T3Tools/T3Code.git"),
     ).toBe("T3Tools/T3Code");
   });
 });
