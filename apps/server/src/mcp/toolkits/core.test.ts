@@ -1,6 +1,11 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { expect, it } from "@effect/vitest";
-import { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import {
+  DEFAULT_SERVER_SETTINGS,
+  EnvironmentId,
+  ProviderInstanceId,
+  ThreadId,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { McpSchema, McpServer, Tool } from "effect/unstable/ai";
@@ -12,6 +17,8 @@ import { McpInvocationContext, type McpInvocationScope } from "../McpInvocationC
 import { OrchestratorToolkit } from "./orchestrator/tools.ts";
 import { PreviewToolkit } from "./preview/tools.ts";
 import { PreviewControlsToolkit } from "./previewControls/tools.ts";
+import { EnvironmentToolkit } from "./environment/tools.ts";
+import * as EnvironmentHandlers from "./environment/handlers.ts";
 import { ThreadToolkit } from "./thread/tools.ts";
 import { WorktreeToolkit } from "./worktree/tools.ts";
 
@@ -22,6 +29,7 @@ it("publishes unique tool names with object-root inputs", () => {
     PreviewToolkit,
     WorktreeToolkit,
     ThreadToolkit,
+    EnvironmentToolkit,
     PreviewControlsToolkit,
   ]) {
     for (const tool of Object.values(toolkit.tools)) {
@@ -108,3 +116,21 @@ it.effect("returns a bounded public failure without serializing storage causes",
     ),
   ),
 );
+
+it("keeps MCP preference output allowlisted and Unicode-bounded", () => {
+  const settings = {
+    ...DEFAULT_SERVER_SETTINGS,
+    privateCredential: "must-not-escape",
+    sourceControlWritingStyle: {
+      ...DEFAULT_SERVER_SETTINGS.sourceControlWritingStyle,
+      customInstructions: "🙂".repeat(4001),
+    },
+  };
+  const result = EnvironmentHandlers.preferences(settings);
+  expect(result).not.toHaveProperty("privateCredential");
+  expect(result).not.toHaveProperty("providers");
+  expect(result.sourceControlWritingStyle).toMatchObject({
+    customInstructions: "🙂".repeat(4000),
+    truncated: true,
+  });
+});
