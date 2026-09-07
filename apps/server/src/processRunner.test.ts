@@ -11,6 +11,7 @@ import { TestClock } from "effect/testing";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { SpawnExecutableResolution } from "@t3tools/shared/shell";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 
 import * as ProcessRunner from "./processRunner.ts";
 
@@ -80,6 +81,28 @@ const runWith =
     );
 
 describe("runProcess", () => {
+  for (const stdin of [undefined, "", "hello\n世界\n"]) {
+    it.effect(
+      `delivers EOF to a real child with ${stdin === undefined ? "omitted" : stdin === "" ? "empty" : "provided"} stdin`,
+      () =>
+        Effect.gen(function* () {
+          const runner = yield* ProcessRunner.ProcessRunner;
+          const result = yield* runner.run({
+            command: process.execPath,
+            args: [
+              "-e",
+              "process.stdin.setEncoding('utf8'); let input = ''; process.stdin.on('data', chunk => { input += chunk }); process.stdin.on('end', () => { process.stdout.write('EOF:' + input) });",
+            ],
+            ...(stdin !== undefined ? { stdin } : {}),
+          });
+          expect(result.code).toBe(0);
+          expect(result.stdout).toBe(`EOF:${stdin ?? ""}`);
+          expect(result.timedOut).toBe(false);
+        }).pipe(Effect.provide(ProcessRunner.layer.pipe(Layer.provide(NodeServices.layer)))),
+      10_000,
+    );
+  }
+
   it.effect("collects stdout through an injected ChildProcessSpawner", () =>
     Effect.gen(function* () {
       const spawner = makeSpawner((command) =>
