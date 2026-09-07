@@ -4,8 +4,8 @@ import type { AgentSessionProjectCandidate, EnvironmentId, ProjectId } from "@t3
 const RECENT_PROJECT_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 
 /** Existing projects still need their agent history imported, so every scan candidate is offered. */
-export function partitionOnboardingProjects(
-  candidates: ReadonlyArray<AgentSessionProjectCandidate>,
+export function partitionOnboardingProjects<T extends AgentSessionProjectCandidate>(
+  candidates: ReadonlyArray<T>,
   now = Date.now(),
 ) {
   const cutoff = now - RECENT_PROJECT_WINDOW_MS;
@@ -52,4 +52,9 @@ export function resolveOnboardingLandingProject<T>(
     if (project !== undefined) return project;
   }
   return undefined;
+}
+
+/** Paths identify projects only within the computer that owns them. */
+export function onboardingProjectKey(environmentId: EnvironmentId, path: string): string {
+  return JSON.stringify([environmentId, path]);
 }

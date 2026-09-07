@@ -124,15 +124,23 @@ function RootRouteView() {
     );
   }
 
-  // The welcome wizard is full-screen like /pair, but keeps toasts so its
-  // connect/import actions can report failures.
+  // Show onboarding over the workspace, keeping automatic thread navigation
+  // and other startup dialogs suspended until setup finishes.
   if (pathname === "/welcome") {
     return (
       <ToastProvider>
-        <DocumentTitleSync />
-        <ContrastAppearanceSync />
-        <FontAppearanceSync />
-        <Outlet />
+        <AnchoredToastProvider>
+          <DocumentTitleSync />
+          <ContrastAppearanceSync />
+          <EnvironmentThemeSync />
+          <GlassAppearanceSync />
+          <FontAppearanceSync />
+          <CommandPalette>
+            <AppSidebarLayout>
+              <Outlet />
+            </AppSidebarLayout>
+          </CommandPalette>
+        </AnchoredToastProvider>
       </ToastProvider>
     );
   }

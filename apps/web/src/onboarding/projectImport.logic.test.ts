@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   partitionOnboardingProjects,
+  onboardingProjectKey,
   resolveOnboardingLandingProject,
   resolveOnboardingProjectId,
 } from "./projectImport.logic";
@@ -241,5 +242,25 @@ describe("resolveOnboardingLandingProject", () => {
         ]),
       ),
     ).toBe("current");
+  });
+});
+
+describe("projects on multiple computers", () => {
+  it("keeps identical paths independent when selecting a landing project after partial imports", () => {
+    const first = onboardingProjectKey(EnvironmentId.make("first"), "/code/app");
+    const second = onboardingProjectKey(EnvironmentId.make("second"), "/code/app");
+    const completed = new Map([[first, "first-project"]]);
+    expect(completed.has(second)).toBe(false);
+    expect(resolveOnboardingLandingProject([second], completed, completed)).toBeUndefined();
+    completed.set(second, "second-project");
+    expect(resolveOnboardingLandingProject([second, first], completed, completed)).toBe(
+      "second-project",
+    );
+  });
+
+  it("preserves computer identity when choosing recent projects", () => {
+    const first = { ...candidate("/code/app"), environmentId: "first" };
+    const second = { ...candidate("/code/app"), environmentId: "second" };
+    expect(partitionOnboardingProjects([first, second], now).recent).toEqual([first, second]);
   });
 });

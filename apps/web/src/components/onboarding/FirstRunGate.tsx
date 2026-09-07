@@ -2,14 +2,13 @@ import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { useAtomValue } from "@effect/atom-react";
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import { Atom } from "effect/unstable/reactivity";
-import { useEffect, useLayoutEffect, useState } from "react";
+import { useEffect, useState } from "react";
 
 import {
   ensureClientSettingsHydrated,
   useClientSettings,
   useClientSettingsHydrationStatus,
 } from "../../hooks/useSettings";
-import { mountOnboardingTheme } from "../../hooks/useTheme";
 import { useCompleteOnboarding } from "../../onboarding/firstRun";
 import {
   isFirstRunWorkspaceProvenanceAuthoritative,
@@ -104,13 +103,6 @@ export function FirstRunGate({
   }));
   const { decision, stalled } = gateState;
   const settingsReadFailed = hydrationStatus === "failed" || hydrationStatus === "retrying";
-  const ownsOnboardingTheme = settingsReadFailed || stalled || decision === "wizard";
-
-  useLayoutEffect(() => {
-    if (!ownsOnboardingTheme) return;
-    return mountOnboardingTheme();
-  }, [ownsOnboardingTheme]);
-
   // A workspace still counts as fresh when its only content is the server's
   // own cwd auto-bootstrap: web mode creates a project + thread from cwd at
   // startup (`autoBootstrapProjectFromCwd` defaults on there), so "no

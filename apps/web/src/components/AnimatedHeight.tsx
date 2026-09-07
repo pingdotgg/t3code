@@ -4,7 +4,14 @@ import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "re
 
 const HEIGHT_TRANSITION_FALLBACK_MS = 250;
 
-export function AnimatedHeight({ children }: { readonly children: ReactNode }) {
+export function AnimatedHeight({
+  children,
+  holdHeight = false,
+}: {
+  readonly children: ReactNode;
+  /** Retain the previous content height while a replacement is loading. */
+  readonly holdHeight?: boolean;
+}) {
   const contentRef = useRef<HTMLDivElement>(null);
   const [heightState, setHeightState] = useState<{
     readonly height: number | null;
@@ -22,6 +29,7 @@ export function AnimatedHeight({ children }: { readonly children: ReactNode }) {
   }, [heightState.height, heightState.isClipping]);
 
   useLayoutEffect(() => {
+    if (holdHeight) return;
     const element = contentRef.current;
     if (!element) return;
     let firstFrameId: number | null = null;
@@ -67,7 +75,7 @@ export function AnimatedHeight({ children }: { readonly children: ReactNode }) {
       resizeObserver.disconnect();
       cancelPendingFrames();
     };
-  }, []);
+  }, [holdHeight]);
 
   return (
     <div
@@ -85,7 +93,9 @@ export function AnimatedHeight({ children }: { readonly children: ReactNode }) {
         );
       }}
     >
-      <div ref={contentRef}>{children}</div>
+      <div ref={contentRef} style={holdHeight ? { height: "100%" } : undefined}>
+        {children}
+      </div>
     </div>
   );
 }
