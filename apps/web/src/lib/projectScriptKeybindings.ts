@@ -19,10 +19,14 @@ function normalizeProjectScriptKeybindingInput(
 
 export function decodeProjectScriptKeybindingRule(input: {
   keybinding: string | null | undefined;
-  command: KeybindingCommand;
+  command: KeybindingCommand | null;
 }): KeybindingRule | null {
   const normalizedKey = normalizeProjectScriptKeybindingInput(input.keybinding);
   if (!normalizedKey) return null;
+
+  if (input.command === null) {
+    throw new Error(PROJECT_SCRIPT_KEYBINDING_INVALID_MESSAGE);
+  }
 
   const decoded = decodeKeybindingRule({
     key: normalizedKey,
@@ -36,8 +40,9 @@ export function decodeProjectScriptKeybindingRule(input: {
 
 export function keybindingValueForCommand(
   keybindings: ResolvedKeybindingsConfig,
-  command: KeybindingCommand,
+  command: KeybindingCommand | null,
 ): string | null {
+  if (command === null) return null;
   for (let index = keybindings.length - 1; index >= 0; index -= 1) {
     const binding = keybindings[index];
     if (!binding || binding.command !== command) continue;
