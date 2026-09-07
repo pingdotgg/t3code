@@ -213,7 +213,9 @@ export function UsageLimitsSection({
           {notices.map((notice) => (
             <View
               key={notice}
+              accessible
               accessibilityRole="alert"
+              accessibilityLiveRegion="polite"
               className="flex-row items-start gap-2 rounded-xl border border-warning-border bg-warning px-3.5 py-3"
             >
               <SymbolView
@@ -233,7 +235,7 @@ export function UsageLimitsSection({
           {failedLabels.join(", ")} could not refresh limits. Showing the last known values.
         </Text>
       ) : null}
-      {pools.length === 0 && notices.length === 0 ? (
+      {pools.length === 0 && notices.length === 0 && failedLabels.length === 0 ? (
         <Text className="py-12 text-center text-base text-foreground-muted">
           {selected.size === 0
             ? "Select an environment to see limits."
