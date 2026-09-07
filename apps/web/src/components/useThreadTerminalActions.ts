@@ -158,6 +158,16 @@ export function useThreadTerminalActions({
   const openTerminal = useAtomCommand(terminalEnvironment.open, "terminal open");
   const writeTerminal = useAtomCommand(terminalEnvironment.write, "terminal write");
   const closeTerminalMutation = useAtomCommand(terminalEnvironment.close, "terminal close");
+  const openAllocatedTerminal = useCallback(
+    async (threadRef: ScopedThreadRef, input: TerminalOpenInput, newlyAllocated = true) => {
+      const result = await openTerminal({ environmentId: threadRef.environmentId, input });
+      if (result._tag === "Failure" && newlyAllocated) {
+        storeCloseTerminal(threadRef, input.terminalId);
+      }
+      return result;
+    },
+    [openTerminal, storeCloseTerminal],
+  );
   const activeTerminalGroup =
     terminalUiState.terminalGroups.find(
       (group) => group.id === terminalUiState.activeTerminalGroupId,
@@ -196,18 +206,15 @@ export function useThreadTerminalActions({
       }
       const terminalId = nextTerminalId(allocatableActiveTerminalIds);
       storeEnsureTerminal(activeThreadRef, terminalId, { open: true });
-      void openTerminal({
-        environmentId,
-        input: {
-          threadId: activeThreadId,
-          terminalId,
-          cwd: cwdForOpen,
-          ...(activeThreadWorktreePath != null ? { worktreePath: activeThreadWorktreePath } : {}),
-          env: projectScriptRuntimeEnv({
-            project: { cwd: activeProject.workspaceRoot },
-            worktreePath: activeThreadWorktreePath,
-          }),
-        },
+      void openAllocatedTerminal(activeThreadRef, {
+        threadId: activeThreadId,
+        terminalId,
+        cwd: cwdForOpen,
+        ...(activeThreadWorktreePath != null ? { worktreePath: activeThreadWorktreePath } : {}),
+        env: projectScriptRuntimeEnv({
+          project: { cwd: activeProject.workspaceRoot },
+          worktreePath: activeThreadWorktreePath,
+        }),
       });
       return;
     }
@@ -218,9 +225,8 @@ export function useThreadTerminalActions({
     activeThreadRef,
     activeThreadWorktreePath,
     allocatableActiveTerminalIds,
-    environmentId,
     gitCwd,
-    openTerminal,
+    openAllocatedTerminal,
     setTerminalOpen,
     storeEnsureTerminal,
     terminalUiState.terminalIds.length,
@@ -242,18 +248,15 @@ export function useThreadTerminalActions({
         storeSplitTerminal(activeThreadRef, terminalId);
       }
       setTerminalFocusRequestId((value) => value + 1);
-      void openTerminal({
-        environmentId,
-        input: {
-          threadId: activeThreadId,
-          terminalId,
-          cwd: cwdForOpen,
-          ...(activeThreadWorktreePath != null ? { worktreePath: activeThreadWorktreePath } : {}),
-          env: projectScriptRuntimeEnv({
-            project: { cwd: activeProject.workspaceRoot },
-            worktreePath: activeThreadWorktreePath,
-          }),
-        },
+      void openAllocatedTerminal(activeThreadRef, {
+        threadId: activeThreadId,
+        terminalId,
+        cwd: cwdForOpen,
+        ...(activeThreadWorktreePath != null ? { worktreePath: activeThreadWorktreePath } : {}),
+        env: projectScriptRuntimeEnv({
+          project: { cwd: activeProject.workspaceRoot },
+          worktreePath: activeThreadWorktreePath,
+        }),
       });
     },
     [
@@ -261,9 +264,8 @@ export function useThreadTerminalActions({
       activeThreadId,
       allocatableActiveTerminalIds,
       activeThreadRef,
-      openTerminal,
+      openAllocatedTerminal,
       activeThreadWorktreePath,
-      environmentId,
       gitCwd,
       hasReachedSplitLimit,
       storeSplitTerminal,
@@ -281,27 +283,23 @@ export function useThreadTerminalActions({
     const terminalId = nextTerminalId(allocatableActiveTerminalIds);
     storeNewTerminal(activeThreadRef, terminalId);
     setTerminalFocusRequestId((value) => value + 1);
-    void openTerminal({
-      environmentId,
-      input: {
-        threadId: activeThreadId,
-        terminalId,
-        cwd: cwdForOpen,
-        ...(activeThreadWorktreePath != null ? { worktreePath: activeThreadWorktreePath } : {}),
-        env: projectScriptRuntimeEnv({
-          project: { cwd: activeProject.workspaceRoot },
-          worktreePath: activeThreadWorktreePath,
-        }),
-      },
+    void openAllocatedTerminal(activeThreadRef, {
+      threadId: activeThreadId,
+      terminalId,
+      cwd: cwdForOpen,
+      ...(activeThreadWorktreePath != null ? { worktreePath: activeThreadWorktreePath } : {}),
+      env: projectScriptRuntimeEnv({
+        project: { cwd: activeProject.workspaceRoot },
+        worktreePath: activeThreadWorktreePath,
+      }),
     });
   }, [
     activeProject,
     activeThreadId,
     allocatableActiveTerminalIds,
     activeThreadRef,
-    openTerminal,
+    openAllocatedTerminal,
     activeThreadWorktreePath,
-    environmentId,
     gitCwd,
     storeNewTerminal,
   ]);
@@ -409,7 +407,11 @@ export function useThreadTerminalActions({
         storeSetActiveTerminal(activeThreadRef, targetTerminalId);
       }
 
-      const openResult = await openTerminal({ environmentId, input: openTerminalInput });
+      const openResult = await openAllocatedTerminal(
+        activeThreadRef,
+        openTerminalInput,
+        !activeKnownTerminalIds.includes(targetTerminalId),
+      );
       if (openResult._tag === "Failure") {
         if (!isAtomCommandInterrupted(openResult)) {
           const error = squashAtomCommandFailure(openResult);
@@ -449,7 +451,7 @@ export function useThreadTerminalActions({
       storeSetActiveTerminal,
       setLastInvokedScriptByProjectId,
       environmentId,
-      openTerminal,
+      openAllocatedTerminal,
       activeKnownTerminalIds,
       allocatableActiveTerminalIds,
       runningTerminalIds,
