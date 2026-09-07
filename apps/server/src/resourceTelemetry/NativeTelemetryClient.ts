@@ -44,6 +44,7 @@ const UNKNOWN_BACKGROUND_SAMPLE_INTERVAL_MS = 5_000;
 const BATTERY_SAMPLE_INTERVAL_MS = 5_000;
 const CONSTRAINED_SAMPLE_INTERVAL_MS = 15_000;
 const HANDSHAKE_TIMEOUT = Duration.seconds(5);
+const COMMAND_WRITE_TIMEOUT = Duration.seconds(5);
 const SAMPLE_REQUEST_TIMEOUT = Duration.seconds(5);
 const PROCESS_TABLE_REQUEST_TIMEOUT = Duration.seconds(5);
 const HISTORY_REQUEST_TIMEOUT = Duration.seconds(15);
@@ -122,6 +123,18 @@ export class NativeTelemetryCommandFailed extends Schema.TaggedErrorClass<Native
   }
 }
 
+export class NativeTelemetryCommandTimedOut extends Schema.TaggedErrorClass<NativeTelemetryCommandTimedOut>()(
+  "NativeTelemetryCommandTimedOut",
+  {
+    operation: Schema.String,
+    timeoutMs: Schema.Number,
+  },
+) {
+  override get message(): string {
+    return `Resource monitor command '${this.operation}' timed out after ${this.timeoutMs}ms.`;
+  }
+}
+
 export class NativeTelemetryExited extends Schema.TaggedErrorClass<NativeTelemetryExited>()(
   "NativeTelemetryExited",
   {
@@ -161,6 +174,7 @@ export type NativeTelemetryClientError =
   | NativeTelemetryProtocolMismatch
   | NativeTelemetryDecodeFailed
   | NativeTelemetryCommandFailed
+  | NativeTelemetryCommandTimedOut
   | NativeTelemetryExited
   | NativeTelemetryStreamClosed
   | NativeTelemetryUnavailable;
@@ -384,6 +398,7 @@ export const make = Effect.fn("resourceTelemetry.nativeTelemetryClient.make")(fu
     sampleIntervalMs: UNKNOWN_BACKGROUND_SAMPLE_INTERVAL_MS,
   });
   const appliedCollectionControl = yield* Ref.make(yield* Ref.get(collectionControl));
+  const collectionControlNeedsSync = yield* Ref.make(false);
   const externalProcesses = yield* Ref.make<ReadonlyArray<ResourceMonitorExternalProcess>>([]);
   const pendingSamples = yield* Ref.make(
     new Map<string, Deferred.Deferred<NativeTelemetrySnapshot, NativeTelemetryClientError>>(),
@@ -430,28 +445,41 @@ export const make = Effect.fn("resourceTelemetry.nativeTelemetryClient.make")(fu
     handle: ChildProcessSpawner.ChildProcessHandle,
     command: ResourceMonitorCommand,
   ): Effect.Effect<void, NativeTelemetryClientError> =>
-    commandMutex.withPermits(1)(
-      encodeMonitorCommand(command).pipe(
-        Effect.map((encoded) => `${encoded}\n`),
-        Effect.mapError(
-          (cause) =>
-            new NativeTelemetryCommandFailed({
-              operation: command.type,
-              cause,
-            }),
+    commandMutex
+      .withPermits(1)(
+        encodeMonitorCommand(command).pipe(
+          Effect.map((encoded) => `${encoded}\n`),
+          Effect.mapError(
+            (cause) =>
+              new NativeTelemetryCommandFailed({
+                operation: command.type,
+                cause,
+              }),
+          ),
+          Effect.flatMap((encoded) =>
+            Stream.run(Stream.encodeText(Stream.make(encoded)), handle.stdin),
+          ),
+          Effect.mapError(
+            (cause) =>
+              new NativeTelemetryCommandFailed({
+                operation: command.type,
+                cause,
+              }),
+          ),
         ),
-        Effect.flatMap((encoded) =>
-          Stream.run(Stream.encodeText(Stream.make(encoded)), handle.stdin),
-        ),
-        Effect.mapError(
-          (cause) =>
-            new NativeTelemetryCommandFailed({
-              operation: command.type,
-              cause,
-            }),
-        ),
-      ),
-    );
+      )
+      .pipe(
+        Effect.timeoutOrElse({
+          duration: COMMAND_WRITE_TIMEOUT,
+          orElse: () =>
+            Effect.fail(
+              new NativeTelemetryCommandTimedOut({
+                operation: command.type,
+                timeoutMs: Duration.toMillis(COMMAND_WRITE_TIMEOUT),
+              }),
+            ),
+        }),
+      );
 
   const processEvent = (
     event: ResourceMonitorEvent,
@@ -670,7 +698,10 @@ export const make = Effect.fn("resourceTelemetry.nativeTelemetryClient.make")(fu
           ...current,
           status: "healthy" as const,
           hello: Option.some(hello),
-        })).pipe(Effect.andThen(publishHealth)),
+        })).pipe(
+          Effect.andThen(Ref.set(collectionControlNeedsSync, false)),
+          Effect.andThen(publishHealth),
+        ),
       );
 
       yield* writeCommand(handle, {
@@ -780,7 +811,11 @@ export const make = Effect.fn("resourceTelemetry.nativeTelemetryClient.make")(fu
     const current = yield* Ref.get(state);
     if (canCommandNativeTelemetrySidecar(current.status, Option.isSome(current.handle))) {
       const handle = Option.getOrThrow(current.handle);
-      if (previous.sampleIntervalMs !== next.sampleIntervalMs) {
+      const needsSync = yield* Ref.get(collectionControlNeedsSync);
+      // A failed write may already have reached the sidecar, so the next update
+      // must resend both settings even when the last confirmed values match.
+      yield* Ref.set(collectionControlNeedsSync, true);
+      if (needsSync || previous.sampleIntervalMs !== next.sampleIntervalMs) {
         yield* writeCommand(handle, {
           version: RESOURCE_MONITOR_PROTOCOL_VERSION,
           type: "setSampleInterval",
@@ -789,13 +824,14 @@ export const make = Effect.fn("resourceTelemetry.nativeTelemetryClient.make")(fu
       }
       const wasStreaming = previous.liveSubscriberCount > 0;
       const isStreaming = next.liveSubscriberCount > 0;
-      if (wasStreaming !== isStreaming) {
+      if (needsSync || wasStreaming !== isStreaming) {
         yield* writeCommand(handle, {
           version: RESOURCE_MONITOR_PROTOCOL_VERSION,
           type: "setStreaming",
           enabled: isStreaming,
         });
       }
+      yield* Ref.set(collectionControlNeedsSync, false);
     }
   });
 
@@ -832,8 +868,11 @@ export const make = Effect.fn("resourceTelemetry.nativeTelemetryClient.make")(fu
   const liveSnapshots = Stream.unwrap(
     Effect.gen(function* () {
       const subscription = yield* PubSub.subscribe(snapshots);
-      yield* Effect.acquireRelease(changeLiveSubscriberCount(1), () =>
-        changeLiveSubscriberCount(-1).pipe(Effect.ignore),
+      yield* Effect.acquireRelease(
+        changeLiveSubscriberCount(1).pipe(
+          Effect.onError(() => changeLiveSubscriberCount(-1).pipe(Effect.ignore)),
+        ),
+        () => changeLiveSubscriberCount(-1).pipe(Effect.ignore),
       );
       return Stream.fromSubscription(subscription);
     }),
@@ -885,22 +924,19 @@ export const make = Effect.fn("resourceTelemetry.nativeTelemetryClient.make")(fu
         requestId,
         windowMs: Math.max(0, Math.round(windowMs)),
       }).pipe(
-        Effect.andThen(
-          Deferred.await(deferred).pipe(
-            Effect.timeoutOption(HISTORY_REQUEST_TIMEOUT),
-            Effect.flatMap(
-              Option.match({
-                onNone: () =>
-                  Effect.fail(
-                    new NativeTelemetryRequestTimedOut({
-                      operation: "readHistory",
-                      timeoutMs: Duration.toMillis(HISTORY_REQUEST_TIMEOUT),
-                    }),
-                  ),
-                onSome: Effect.succeed,
-              }),
-            ),
-          ),
+        Effect.andThen(Deferred.await(deferred)),
+        Effect.timeoutOption(HISTORY_REQUEST_TIMEOUT),
+        Effect.flatMap(
+          Option.match({
+            onNone: () =>
+              Effect.fail(
+                new NativeTelemetryRequestTimedOut({
+                  operation: "readHistory",
+                  timeoutMs: Duration.toMillis(HISTORY_REQUEST_TIMEOUT),
+                }),
+              ),
+            onSome: Effect.succeed,
+          }),
         ),
         Effect.ensuring(
           Ref.update(pendingHistories, (pending) => {
@@ -940,22 +976,19 @@ export const make = Effect.fn("resourceTelemetry.nativeTelemetryClient.make")(fu
       type: "sampleNow",
       requestId,
     }).pipe(
-      Effect.andThen(
-        Deferred.await(deferred).pipe(
-          Effect.timeoutOption(SAMPLE_REQUEST_TIMEOUT),
-          Effect.flatMap(
-            Option.match({
-              onNone: () =>
-                Effect.fail(
-                  new NativeTelemetryRequestTimedOut({
-                    operation: "sampleNow",
-                    timeoutMs: Duration.toMillis(SAMPLE_REQUEST_TIMEOUT),
-                  }),
-                ),
-              onSome: Effect.succeed,
-            }),
-          ),
-        ),
+      Effect.andThen(Deferred.await(deferred)),
+      Effect.timeoutOption(SAMPLE_REQUEST_TIMEOUT),
+      Effect.flatMap(
+        Option.match({
+          onNone: () =>
+            Effect.fail(
+              new NativeTelemetryRequestTimedOut({
+                operation: "sampleNow",
+                timeoutMs: Duration.toMillis(SAMPLE_REQUEST_TIMEOUT),
+              }),
+            ),
+          onSome: Effect.succeed,
+        }),
       ),
       Effect.ensuring(
         Ref.update(pendingSamples, (pending) => {
@@ -994,22 +1027,19 @@ export const make = Effect.fn("resourceTelemetry.nativeTelemetryClient.make")(fu
       type: "processTable",
       requestId,
     }).pipe(
-      Effect.andThen(
-        Deferred.await(deferred).pipe(
-          Effect.timeoutOption(PROCESS_TABLE_REQUEST_TIMEOUT),
-          Effect.flatMap(
-            Option.match({
-              onNone: () =>
-                Effect.fail(
-                  new NativeTelemetryRequestTimedOut({
-                    operation: "processTable",
-                    timeoutMs: Duration.toMillis(PROCESS_TABLE_REQUEST_TIMEOUT),
-                  }),
-                ),
-              onSome: Effect.succeed,
-            }),
-          ),
-        ),
+      Effect.andThen(Deferred.await(deferred)),
+      Effect.timeoutOption(PROCESS_TABLE_REQUEST_TIMEOUT),
+      Effect.flatMap(
+        Option.match({
+          onNone: () =>
+            Effect.fail(
+              new NativeTelemetryRequestTimedOut({
+                operation: "processTable",
+                timeoutMs: Duration.toMillis(PROCESS_TABLE_REQUEST_TIMEOUT),
+              }),
+            ),
+          onSome: Effect.succeed,
+        }),
       ),
       Effect.ensuring(
         Ref.update(pendingProcessTables, (pending) => {
