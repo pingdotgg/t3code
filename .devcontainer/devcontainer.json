@@ -1,29 +1,73 @@
+// Dev container for T3 Code. Mirrors CI (ubuntu-24.04, Node 24, Rust stable)
+// and the canonical setup in docs/operations/development.md: global `vp`, `vp i`.
+// Contributor doc: docs/internals/devcontainer.md
 {
-  "name": "T3 Code Dev",
-  "image": "debian:bookworm",
+  "name": "T3 Code",
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu-24.04",
   "features": {
-    "ghcr.io/devcontainers/features/git:1": {},
-    "ghcr.io/devcontainers-extra/features/bun:1": {
-      "version": "1.3.11"
+    // nodeGypDependencies (default true) brings python3/make/g++, which Linux
+    // needs for node-pty's node-gyp fallback (its prebuilds are mac/win only).
+    "ghcr.io/devcontainers/features/node:2": {
+      "version": "24"
     },
-    "ghcr.io/devcontainers/features/node:1": {
-      "version": "24.13.1"
-    },
-    "ghcr.io/devcontainers/features/python:1": {
-      "version": "3.10",
-      "installTools": false
-    }
+    // native/resource-monitor (edition 2024, needs stable >= 1.85). The server
+    // degrades gracefully without the binary, but CI checks cargo fmt + test.
+    "ghcr.io/devcontainers/features/rust:1": {},
+    "ghcr.io/devcontainers/features/github-cli:1": {}
   },
-  "overrideFeatureInstallOrder": [
-    "ghcr.io/devcontainers/features/git",
-    "ghcr.io/devcontainers-extra/features/bun"
+  "hostRequirements": {
+    "cpus": 4,
+    "memory": "8gb",
+    "storage": "32gb"
+  },
+  "containerEnv": {
+    // Keep all runtime state inside the (gitignored) workspace .t3, matching
+    // the worktree default. An explicit --home-dir still wins.
+    "T3CODE_HOME": "${containerWorkspaceFolder}/.t3"
+  },
+  "mounts": [
+    // vp keeps the pnpm content-addressable store and metadata cache under
+    // ~/.cache/pnpm (verified: the v11 store dir lives there); mounting a
+    // volume there lets installs survive container rebuilds.
+    "source=t3code-pnpm-store,target=/home/vscode/.cache/pnpm,type=volume",
+    // Root node_modules holds the whole pnpm virtual store (.pnpm), so one
+    // volume keeps the heavy tree off the slow macOS/Windows bind mount.
+    // Scoped by devcontainerId so parallel checkouts do not share it.
+    // Codespaces note: prebuild snapshots exclude volumes; drop these mounts
+    // if prebuilt codespaces become the primary workflow.
+    "source=t3code-node-modules-${devcontainerId},target=${containerWorkspaceFolder}/node_modules,type=volume"
   ],
-  "postCreateCommand": {
-    "bun-install": "bun install --backend=copyfile --frozen-lockfile"
+  "onCreateCommand": "bash .devcontainer/on-create.sh",
+  "updateContentCommand": "bash .devcontainer/update-content.sh",
+  "forwardPorts": [5733, 13773],
+  "portsAttributes": {
+    "5733": {
+      "label": "t3 web (open via the pairing URL, not the bare origin)",
+      "onAutoForward": "notify"
+    },
+    "13773": {
+      "label": "t3 server",
+      "onAutoForward": "silent"
+    }
   },
   "customizations": {
+    "codespaces": {
+      "openFiles": ["docs/internals/devcontainer.md"]
+    },
     "vscode": {
-      "extensions": ["oxc.oxc-vscode"]
+      "extensions": ["oxc.oxc-vscode", "rust-lang.rust-analyzer"],
+      "settings": {
+        // .repos is a large vendored read-only reference tree; watching it
+        // burns CPU and file handles.
+        "files.watcherExclude": {
+          "**/.repos/**": true,
+          "**/.t3/**": true
+        },
+        "search.exclude": {
+          "**/.repos": true
+        }
+      }
     }
-  }
+  },
+  "remoteUser": "vscode"
 }
