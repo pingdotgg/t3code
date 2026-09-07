@@ -13,11 +13,13 @@ import { modelSelectionCommandType } from "@t3tools/shared/model";
 import {
   newCommandId,
   readCaller,
+  readMutationCaller,
   readThread,
   readWritableThread,
   unavailable,
 } from "../../threadAccess.ts";
 import * as ProjectionSnapshotQuery from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
+import * as ScheduledTasks from "../../../scheduledTasks/ScheduledTaskService.ts";
 import { queuedRunsInDeliveryOrder } from "../../../orchestration-v2/QueuedRunOrder.ts";
 import { ThreadToolkit } from "./tools.ts";
 
@@ -68,6 +70,36 @@ const readQuestion = Effect.fn("mcp.readQuestion")(function* (
   return { ...context, request, item };
 });
 export const ThreadToolkitHandlersLive = ThreadToolkit.toLayer({
+  run_scheduled_task_now: (input) =>
+    Effect.gen(function* () {
+      const { caller } = yield* readMutationCaller();
+      if (
+        caller.archivedAt !== null ||
+        caller.runtimeMode !== "full-access" ||
+        caller.interactionMode !== "default"
+      )
+        return yield* new OrchestratorMcpFailure({
+          code: "capability_denied",
+          message: "Running a scheduled task requires a live full-access/default thread.",
+        });
+      const scheduler = yield* ScheduledTasks.ScheduledTaskService;
+      const { tasks } = yield* scheduler.list().pipe(Effect.mapError(unavailable));
+      if (!tasks.some((task) => task.id === input.taskId && task.projectId === caller.projectId))
+        return yield* new OrchestratorMcpFailure({
+          code: "invalid_request",
+          message: "The task was not found in the calling project.",
+        });
+      const { task } = yield* scheduler
+        .runNow({ id: input.taskId })
+        .pipe(Effect.mapError(unavailable));
+      return {
+        taskId: task.id,
+        threadId: task.threadId,
+        lastRunStatus: task.lastRunStatus,
+        runCount: task.runCount,
+        nextRunAt: task.nextRunAt,
+      };
+    }),
   t3_thread_search: (input) =>
     Effect.gen(function* () {
       const { caller } = yield* readCaller();
