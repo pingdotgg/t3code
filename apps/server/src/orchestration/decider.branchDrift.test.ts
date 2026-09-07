@@ -1,5 +1,6 @@
 import {
   CommandId,
+  MessageId,
   ProjectId,
   ProviderInstanceId,
   ThreadId,
@@ -98,6 +99,50 @@ it.layer(NodeServices.layer)("worktree branch drift guard", (it) => {
           expect(idleEvents[0]).toMatchObject({
             type: "thread.meta-updated",
             payload: { branch: "drifted" },
+          });
+        }),
+    );
+  }
+
+  for (const queued of [true, false]) {
+    it.effect(
+      `${queued ? "rejects" : "allows"} drift for a sibling with a ${queued ? "queued" : "stale"} message and no session`,
+      () =>
+        Effect.gen(function* () {
+          const base = makeReadModel();
+          const thread = { ...base.threads[0]!, branch: "original", worktreePath: "/shared" };
+          // Effect's test clock starts at the epoch. Stale messages exceed the queue grace period.
+          const createdAt = queued ? "1970-01-01T00:00:00.000Z" : "1969-12-31T23:50:00.000Z";
+          const sibling = {
+            ...thread,
+            id: ThreadId.make("sibling"),
+            messages: [
+              {
+                id: MessageId.make("queued-message"),
+                role: "user" as const,
+                text: "Continue",
+                turnId: null,
+                streaming: false,
+                createdAt,
+                updatedAt: createdAt,
+              },
+            ],
+          };
+          const event = yield* decideOrchestrationCommand({
+            command: {
+              type: "thread.meta.update",
+              commandId: CommandId.make("queued-drift"),
+              threadId: thread.id,
+              branch: "drifted",
+              expectedBranch: "original",
+              requireIdleWorktreePath: "/shared",
+            },
+            readModel: { ...base, threads: [thread, sibling] },
+          });
+          const events = Array.isArray(event) ? event : [event];
+          expect(events[0]).toMatchObject({
+            type: "thread.meta-updated",
+            payload: { branch: queued ? "original" : "drifted" },
           });
         }),
     );
