@@ -111,6 +111,17 @@ Developers deploy personal stages locally rather than through pull-request autom
 vp run --filter t3code-relay deploy -- --stage "$USER" --env-file .env.local
 ```
 
+## Marketing site deployment
+
+After a nightly release is published, the release workflow deploys the same commit
+to the marketing site's Vercel production project. Stable releases do not deploy
+the marketing site because they can promote an older nightly commit.
+
+The job looks up the `t3code-marketing` project using the existing `VERCEL_TOKEN`
+and `VERCEL_ORG_ID` secrets. It also respects the optional `VERCEL_TEAM_SLUG`
+variable. The Vercel project's root directory must be `apps/marketing`.
+Git deployments remain disabled in `apps/marketing/vercel.ts`.
+
 ## Hosted web app release deployment
 
 The hosted app is intentionally not deployed by Vercel's Git integration. The
@@ -297,7 +308,7 @@ to validate the workflow.
 The workflow has no non-publishing `workflow_dispatch` mode. Use normal CI or local quality gates to
 validate checks and builds without shipping. To exercise the complete release graph at lower stable
 risk, manually dispatch `channel=nightly`; this still publishes a real nightly npm package, GitHub
-prerelease, desktop updater release, and hosted nightly alias, but it does not update stable aliases or
+prerelease, desktop updater release, hosted nightly alias, and marketing site, but it does not update stable app aliases or
 commit a version bump to `main`. Only run it when a real nightly release is acceptable.
 
 Manual `channel=stable` is also a real stable-channel release. Omitting signing secrets only makes
