@@ -47,7 +47,7 @@ winget install T3Tools.T3Code
 #### Windows (`scoop`)
 
 ```bash
-scoop install t3code
+scoop install extras/t3code
 ```
 
 #### macOS (Homebrew)
