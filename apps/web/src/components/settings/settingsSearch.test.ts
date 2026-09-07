@@ -236,3 +236,15 @@ describe("searchSettings", () => {
     });
   });
 });
+
+describe("dictation settings search", () => {
+  it("routes microphone and transcription queries to the dictation section", () => {
+    expect(searchSettings("dictation").map((item) => item.id)).toContain("dictation");
+    expect(searchSettings("microphone").map((item) => item.id)).toContain("dictation");
+    expect(searchSettings("whisper").map((item) => item.id)).toContain("dictation");
+  });
+
+  it("serves dictation anchor props to the panel", () => {
+    expect(searchableSetting("dictation")).toEqual({ id: "dictation", title: "Dictation" });
+  });
+});

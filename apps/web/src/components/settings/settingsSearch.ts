@@ -10,6 +10,7 @@ export type SettingsPath =
   | "/settings/integrations"
   | "/settings/source-control"
   | "/settings/connections"
+  | "/settings/dictation"
   | "/settings/archived";
 
 export interface SettingsSearchItem {
@@ -56,6 +57,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/integrations": "Integrations",
   "/settings/source-control": "Source Control",
   "/settings/connections": "Connections",
+  "/settings/dictation": "Dictation (Beta)",
   "/settings/archived": "Archive",
 };
 
@@ -525,6 +527,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Archived threads",
     to: "/settings/archived",
     searchTerms: ["restore reopen deleted history projects"],
+  },
+  {
+    id: "dictation",
+    title: "Dictation",
+    to: "/settings/dictation",
+    searchTerms: ["microphone voice transcribe whisper speech cleanup beta"],
   },
 ] as const satisfies ReadonlyArray<SettingsSearchItem>;
 

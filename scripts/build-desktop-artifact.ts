@@ -1308,6 +1308,8 @@ ${associatedDomains}
     <true/>
     <key>com.apple.security.cs.disable-library-validation</key>
     <true/>
+    <key>com.apple.security.device.audio-input</key>
+    <true/>
   </dict>
 </plist>
 `;
@@ -2626,6 +2628,12 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       target: target === "dmg" ? [target, "zip"] : [target],
       icon: "icon.icns",
       category: "public.app-category.developer-tools",
+      // Dictation (beta) captures the microphone via getUserMedia in the
+      // renderer: without a usage description macOS denies access silently.
+      extendInfo: {
+        NSMicrophoneUsageDescription:
+          "T3 Code uses the microphone for voice dictation into the composer.",
+      },
       protocols: [
         {
           name: "T3 Code",

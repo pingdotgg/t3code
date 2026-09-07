@@ -12,6 +12,7 @@ import {
 } from "react";
 import {
   ArchiveIcon,
+  AudioLinesIcon,
   BlocksIcon,
   BotIcon,
   GitBranchIcon,
@@ -79,6 +80,7 @@ const SETTINGS_SECTION_ICONS: Readonly<
   "/settings/integrations": BlocksIcon,
   "/settings/source-control": GitBranchIcon,
   "/settings/connections": Link2Icon,
+  "/settings/dictation": AudioLinesIcon,
   "/settings/archived": ArchiveIcon,
 };
 
