@@ -1467,6 +1467,157 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  for (const ending of ["results", "turn-completed", "stream-failed"] as const) {
+    it.effect(`isolates parent and sibling tool streams through ${ending}`, () => {
+      const harness = makeHarness();
+      return Effect.gen(function* () {
+        const adapter = yield* ClaudeAdapter;
+        const eventsFiber = yield* adapter.streamEvents.pipe(
+          Stream.takeUntil((event) => event.type === "turn.completed"),
+          Stream.runCollect,
+          Effect.forkChild,
+        );
+        yield* adapter.startSession({
+          threadId: THREAD_ID,
+          provider: ProviderDriverKind.make("claudeAgent"),
+          runtimeMode: "full-access",
+        });
+        yield* adapter.sendTurn({ threadId: THREAD_ID, input: "Delegate work", attachments: [] });
+        const stream = (owner: string | null, event: unknown) =>
+          harness.query.emit({
+            type: "stream_event",
+            session_id: "sdk-isolated",
+            uuid: "stream-isolated",
+            parent_tool_use_id: owner,
+            event,
+          } as unknown as SDKMessage);
+        const owners = [null, "task-a", "task-b"] as const;
+        stream(null, {
+          type: "content_block_start",
+          index: 1,
+          content_block: { type: "text", text: "" },
+        });
+        stream(null, {
+          type: "content_block_delta",
+          index: 1,
+          delta: { type: "text_delta", text: "Parent " },
+        });
+        for (const owner of owners) {
+          stream(owner, {
+            type: "content_block_start",
+            index: 0,
+            content_block: {
+              type: "tool_use",
+              id: `tool-${owner ?? "parent"}`,
+              name: "Read",
+              input: {},
+            },
+          });
+        }
+        for (const owner of owners) {
+          stream(owner, {
+            type: "content_block_delta",
+            index: 0,
+            delta: { type: "input_json_delta", partial_json: '{"file_path":"' },
+          });
+        }
+        for (const owner of owners.toReversed()) {
+          stream(owner, {
+            type: "content_block_delta",
+            index: 0,
+            delta: { type: "input_json_delta", partial_json: `${owner ?? "parent"}.ts"}` },
+          });
+          stream(owner, { type: "content_block_stop", index: 0 });
+        }
+        // A suppressed child text block must not close the parent's block at the same index.
+        stream("task-a", {
+          type: "content_block_start",
+          index: 1,
+          content_block: { type: "text", text: "" },
+        });
+        stream("task-a", { type: "content_block_stop", index: 1 });
+        stream(null, {
+          type: "content_block_delta",
+          index: 1,
+          delta: { type: "text_delta", text: "answer" },
+        });
+        stream(null, { type: "content_block_stop", index: 1 });
+        if (ending === "results") {
+          for (const owner of owners.toReversed()) {
+            harness.query.emit({
+              type: "user",
+              session_id: "sdk-isolated",
+              uuid: "result-isolated",
+              parent_tool_use_id: owner,
+              message: {
+                role: "user",
+                content: [
+                  {
+                    type: "tool_result",
+                    tool_use_id: `tool-${owner ?? "parent"}`,
+                    content: `result-${owner ?? "parent"}`,
+                    is_error: owner === "task-b",
+                  },
+                ],
+              },
+            } as unknown as SDKMessage);
+          }
+        }
+        if (ending === "stream-failed") harness.query.fail(new Error("SDK stream failed"));
+        else
+          harness.query.emit({
+            type: "result",
+            subtype: "success",
+            is_error: false,
+            errors: [],
+            session_id: "sdk-isolated",
+            uuid: "result-isolated",
+          } as unknown as SDKMessage);
+        const events = Array.from(yield* Fiber.join(eventsFiber));
+        const textDeltas = events.filter(
+          (event) =>
+            event.type === "content.delta" && event.payload.streamKind === "assistant_text",
+        );
+        assert.equal(textDeltas.length, 2);
+        assert.equal(textDeltas[0]?.itemId, textDeltas[1]?.itemId);
+        for (const owner of owners) {
+          const completed = events.filter(
+            (event) =>
+              event.type === "item.completed" && event.itemId === `tool-${owner ?? "parent"}`,
+          );
+          assert.equal(completed.length, 1);
+          const event = completed[0];
+          assert.equal(event?.type, "item.completed");
+          if (event?.type !== "item.completed") return;
+          assert.equal(event.payload.parentToolUseId, owner ?? undefined);
+          assert.equal(
+            event.payload.status,
+            ending === "stream-failed" || (ending === "results" && owner === "task-b")
+              ? "failed"
+              : "completed",
+          );
+          assert.deepEqual(event.payload.data, {
+            toolName: "Read",
+            input: { file_path: `${owner ?? "parent"}.ts` },
+            ...(ending === "results"
+              ? {
+                  result: {
+                    type: "tool_result",
+                    tool_use_id: `tool-${owner ?? "parent"}`,
+                    content: `result-${owner ?? "parent"}`,
+                    is_error: owner === "task-b",
+                  },
+                }
+              : {}),
+          });
+        }
+      }).pipe(
+        Effect.provideService(Random.Random, makeDeterministicRandomService()),
+        Effect.provide(harness.layer),
+      );
+    });
+  }
+
   it.effect("maps Claude reasoning deltas, streamed tool inputs, and tool results", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
