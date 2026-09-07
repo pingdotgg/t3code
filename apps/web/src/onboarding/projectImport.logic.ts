@@ -9,6 +9,8 @@ const DEFAULT_SELECTION_MIN_THREADS = 3;
  * Existing projects still need their agent history imported, so every scan
  * candidate is offered. The default selection is narrower: git repositories
  * active in the last 30 days with enough threads to look like real work.
+ * Servers that predate the git scan omit `git`; their candidates are treated
+ * as repositories so old computers still get a useful default selection.
  */
 export function partitionOnboardingProjects<T extends AgentSessionProjectCandidate>(
   candidates: ReadonlyArray<T>,
@@ -48,9 +50,10 @@ function latestActivity(left: string | null, right: string | null): string | nul
 /**
  * Group scan candidates for the onboarding picker. Clones of one repository
  * share a group keyed by their normalized origin URL. Repositories without an
- * origin get a group each. Directories that are not git repositories are
- * returned separately so the UI can fold them away by default. Groups sort by
- * most recent activity, newest first.
+ * origin get a group each, as do candidates from servers that do not report
+ * git identity. Directories that are not git repositories are returned
+ * separately so the UI can fold them away by default. Groups sort by most
+ * recent activity, newest first.
  */
 export function groupOnboardingProjects<
   T extends Pick<
@@ -66,16 +69,14 @@ export function groupOnboardingProjects<
       other.push(candidate);
       continue;
     }
-    const key =
-      candidate.git.remoteKey === null
-        ? `path:${candidate.path}`
-        : `remote:${candidate.git.remoteKey}`;
+    const git = candidate.git ?? { remoteKey: null, repository: null };
+    const key = git.remoteKey === null ? `path:${candidate.path}` : `remote:${git.remoteKey}`;
     const existing = groups.get(key);
     if (existing === undefined) {
       groups.set(key, {
         key,
-        label: candidate.git.repository ?? candidate.title,
-        repository: candidate.git.repository,
+        label: git.repository ?? candidate.title,
+        repository: git.repository,
         candidates: [candidate],
         threadCount: candidate.threadCount,
         lastActiveAt: candidate.lastActiveAt,

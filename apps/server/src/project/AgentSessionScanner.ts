@@ -24,6 +24,7 @@ import {
   resolveProviderInstanceEnabled,
   type AgentSessionImportSource,
   type AgentSessionProjectCandidate,
+  type AgentSessionProjectGit,
   type AgentSessionScanResult,
   type ProviderInstanceConfig,
 } from "@t3tools/contracts";
@@ -695,7 +696,7 @@ export const make = Effect.gen(function* () {
   const readGitIdentity = Effect.fn("AgentSessionScanner.readGitIdentity")(function* (
     directory: string,
   ): Effect.fn.Return<
-    | { readonly _tag: "Repository"; readonly git: AgentSessionProjectCandidate["git"] }
+    | { readonly _tag: "Repository"; readonly git: AgentSessionProjectGit | null }
     | { readonly _tag: "Worktree" }
     | { readonly _tag: "NotGit" }
   > {
@@ -1209,11 +1210,11 @@ export const make = Effect.gen(function* () {
         sources: Array<AgentSessionSource>;
         threadCount: number;
         lastActiveAtMs: number | null;
-        git: AgentSessionProjectCandidate["git"];
+        git: AgentSessionProjectGit | null;
       }
     >();
     const directoryKeys = new Map<string, string>();
-    const gitIdentities = new Map<string, AgentSessionProjectCandidate["git"]>();
+    const gitIdentities = new Map<string, AgentSessionProjectGit | null>();
 
     for (const candidate of raw) {
       const expanded = expandHomePath(candidate.cwd.trim());

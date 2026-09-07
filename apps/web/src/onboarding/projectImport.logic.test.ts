@@ -74,6 +74,12 @@ describe("partitionOnboardingProjects", () => {
 
     expect(partitionOnboardingProjects([repo, folder, thin], now).recent).toEqual([repo]);
   });
+
+  it("selects candidates from servers that do not report git identity", () => {
+    const { git: _git, ...legacy } = candidate("/projects/legacy");
+
+    expect(partitionOnboardingProjects([legacy], now).recent).toEqual([legacy]);
+  });
 });
 
 describe("groupOnboardingProjects", () => {
@@ -125,6 +131,17 @@ describe("groupOnboardingProjects", () => {
         threadCount: 3,
         lastActiveAt: "2026-08-20T12:00:00.000Z",
       },
+    ]);
+  });
+
+  it("lists candidates without git identity as standalone repositories", () => {
+    const { git: _git, ...legacy } = candidate("/code/legacy", { title: "legacy" });
+
+    const grouped = groupOnboardingProjects([legacy]);
+
+    expect(grouped.other).toEqual([]);
+    expect(grouped.repositories.map((group) => [group.label, group.repository])).toEqual([
+      ["legacy", null],
     ]);
   });
 });
