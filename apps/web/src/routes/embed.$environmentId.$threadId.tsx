@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 
 import ChatView from "../components/ChatView";
+import { ThreadTerminalDocument } from "../components/ThreadTerminalDocument";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { ShellEmbedRouteBridge } from "../shell/lazy";
 import { useThreadDetail, useThreadShell, useThreadStatus } from "../state/entities";
@@ -52,12 +53,16 @@ function EmbedThreadPanelRouteView() {
       {/* Follows the primary view's thread instead of the shell reloading this document. */}
       <ShellEmbedRouteBridge threadRef={threadRef} surface={surface} />
       {renderState === "ready" || (renderState === "loading" && serverThreadShell !== null) ? (
-        <ChatView
-          environmentId={threadRef.environmentId}
-          threadId={threadRef.threadId}
-          routeKind="server"
-          presentation={surface === "terminal" ? "terminal" : "rightPanel"}
-        />
+        surface === "terminal" ? (
+          <ThreadTerminalDocument threadRef={threadRef} />
+        ) : (
+          <ChatView
+            environmentId={threadRef.environmentId}
+            threadId={threadRef.threadId}
+            routeKind="server"
+            presentation="rightPanel"
+          />
+        )
       ) : null}
     </div>
   );

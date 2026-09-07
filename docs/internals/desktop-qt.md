@@ -197,8 +197,9 @@ the Settings → Theme editor exports it) plus a shell-only `window` section:
 - The native document-creation script applies the first-paint colors, then
   hands its override to the web theme module through `window.__t3ShellTheme`.
   The web module applies the override after stored palettes and editor previews,
-  without changing saved preferences. Native reinjections deliver data only;
-  older pages retain the DOM-observer fallback. Supply the full role set
+  without changing saved preferences. Native reinjections deliver data only.
+  Embedded documents claim their own override without publishing native colors.
+  Older pages retain the DOM-observer fallback. Supply the full role set
   (the files under `examples/*/` do) for consistent colors during startup.
 - QML reads the same roles: `Theme.colors`, `Theme.color("chrome", fallback)`,
   `Theme.appearance`, `Theme.id`.
@@ -406,8 +407,10 @@ panel: `TerminalDrawer` loads the embed route with `?surface=terminal` in a
 third `WebSurface` (kept once created, frozen while closed) and sizes it from
 `terminalHeight`, so the page's order, timeline over composer over drawer,
 survives the composer moving out of the page. The embed route renders
-`ChatView` with `presentation="terminal"`, which returns only the thread's
-terminal drawers filling the document (`ThreadTerminalDrawer` in `fill` mode:
+`ThreadTerminalDocument`, without mounting conversation hooks. It shares
+`ThreadTerminals` and `useThreadTerminalActions` with the inline chat drawer.
+The module owns retained sessions, allocation, attachment locations, script
+launches, and focus. It fills the document (`ThreadTerminalDrawer` in `fill` mode:
 no border, no handle, no height of its own); the primary renders no drawer
 when hosted. The drawer's open flag and height are the page's
 (`terminalUiStateStore`, synced across documents through localStorage), so
