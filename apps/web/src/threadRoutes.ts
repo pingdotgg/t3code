@@ -20,6 +20,12 @@ type DraftThreadRouteState = {
 
 export type ThreadRouteRenderState = "loading" | "ready" | "missing";
 
+export function isThreadRouteSnapshotAuthoritative(
+  status: "empty" | "cached" | "synchronizing" | "live" | undefined,
+): boolean {
+  return status === "live";
+}
+
 export function resolveThreadRouteRenderState(input: {
   bootstrapComplete: boolean;
   serverThreadShellExists: boolean;
