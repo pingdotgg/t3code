@@ -320,6 +320,10 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
       );
       assert.isDefined(failure);
       assert.isFalse(yield* adapter.hasSession(threadId));
+      const retryDuringTeardown = yield* Effect.flip(
+        adapter.sendTurn({ threadId, input: "retry during teardown", attachments: [] }),
+      );
+      assert.equal(retryDuringTeardown._tag, "ProviderAdapterSessionNotFoundError");
       assert.equal((yield* Deferred.await(exited)).payload.exitKind, "error");
       assert.deepStrictEqual(yield* adapter.listSessions(), []);
       yield* Fiber.interrupt(events);

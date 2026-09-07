@@ -917,7 +917,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
       threadId: ThreadId,
     ): Effect.Effect<GrokSessionContext, ProviderAdapterSessionNotFoundError> => {
       const ctx = sessions.get(threadId);
-      if (!ctx || ctx.stopped) {
+      if (!ctx || ctx.stopped || ctx.terminated) {
         return Effect.fail(
           new ProviderAdapterSessionNotFoundError({ provider: PROVIDER, threadId }),
         );
