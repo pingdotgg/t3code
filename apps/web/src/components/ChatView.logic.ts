@@ -1027,3 +1027,23 @@ export function hasServerAcknowledgedLocalDispatch(input: {
     input.localDispatch.sessionUpdatedAt !== (session?.updatedAt ?? null)
   );
 }
+
+// Returning to the window should land the caret in the composer, so the reader can type right
+// away. The exceptions are places where focus is deliberate: another text field, the terminal,
+// or an open dialog or popup. A focused button is not one of those, so it yields to the composer.
+export function shouldRefocusComposerOnWindowFocus(
+  activeElement: (Pick<Element, "tagName" | "closest"> & { isContentEditable?: boolean }) | null,
+): boolean {
+  if (activeElement === null || activeElement.tagName === "BODY") return true;
+  if (
+    activeElement.tagName === "INPUT" ||
+    activeElement.tagName === "TEXTAREA" ||
+    activeElement.tagName === "SELECT" ||
+    activeElement.isContentEditable === true
+  ) {
+    return false;
+  }
+  return (
+    activeElement.closest('[role="dialog"], [role="alertdialog"], [data-slot$="-popup"]') === null
+  );
+}
