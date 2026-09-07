@@ -1,6 +1,10 @@
+import * as NodeSqlite from "node:sqlite";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import * as SqliteClient from "./nodeSqliteClient.ts";
@@ -8,6 +12,21 @@ import * as SqliteClient from "./nodeSqliteClient.ts";
 const layer = it.layer(SqliteClient.layerMemory());
 
 layer("NodeSqliteClient", (it) => {
+  it.effect("retries preparing a query after the missing schema becomes available", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const select = sql<{ name: string }>`SELECT name FROM created_after_prepare_failure`;
+      const error = yield* select.pipe(Effect.flip);
+      assert.equal(error._tag, "SqlError");
+      assert.equal(error.reason.operation, "prepare");
+
+      yield* sql`CREATE TABLE created_after_prepare_failure(name TEXT NOT NULL)`;
+      yield* sql`INSERT INTO created_after_prepare_failure VALUES ('recovered')`;
+      assert.deepEqual(yield* select, [{ name: "recovered" }]);
+      assert.deepEqual(yield* select.values, [["recovered"]]);
+    }),
+  );
+
   it.effect("runs prepared queries and returns positional values", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
@@ -53,4 +72,33 @@ it.effect("returns a typed failure when the database cannot be opened", () =>
     assert.equal(error._tag, "SqlError");
     assert.equal(error.reason.operation, "open");
   }),
+);
+
+it.effect(
+  "recovers a prepared query immediately after an exclusive database lock is released",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-sqlite-prepare-" });
+      const filename = path.join(directory, "state.sqlite");
+      const blocker = yield* Effect.acquireRelease(
+        Effect.sync(() => new NodeSqlite.DatabaseSync(filename)),
+        (database) => Effect.sync(() => database.close()),
+      );
+      yield* Effect.sync(() => {
+        blocker.exec("CREATE TABLE entries(value TEXT); INSERT INTO entries VALUES ('retained')");
+      });
+      yield* Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        yield* Effect.sync(() => blocker.exec("BEGIN EXCLUSIVE"));
+        const select = sql`SELECT value FROM entries`;
+        const error = yield* select.values.pipe(Effect.flip);
+        assert.equal(error._tag, "SqlError");
+        assert.equal(error.reason.operation, "prepare");
+        yield* Effect.sync(() => blocker.exec("ROLLBACK"));
+        assert.deepEqual(yield* select.values, [["retained"]]);
+        assert.deepEqual(yield* select, [{ value: "retained" }]);
+      }).pipe(Effect.provide(SqliteClient.layer({ filename })));
+    }).pipe(Effect.provide(NodeServices.layer)),
 );
