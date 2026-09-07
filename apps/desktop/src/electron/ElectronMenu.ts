@@ -8,6 +8,25 @@ import * as Schema from "effect/Schema";
 
 import * as Electron from "electron";
 
+const CONTEXT_MENU_SYMBOLS: Readonly<Record<string, string>> = {
+  archive: "archivebox",
+  "circle-check": "checkmark.circle",
+  clock: "clock",
+  copy: "doc.on.doc",
+  folder: "folder",
+  "folder-tree": "folder",
+  "git-branch": "arrow.triangle.branch",
+  hash: "number",
+  "mail-open": "envelope.open",
+  "message-square-plus": "plus.bubble",
+  pencil: "pencil",
+  pin: "pin",
+  "pin-off": "pin.slash",
+  "refresh-cw": "arrow.clockwise",
+  settings: "gearshape",
+  trash: "trash",
+};
+
 export interface ElectronMenuPosition {
   readonly x: number;
   readonly y: number;
@@ -79,6 +98,7 @@ function normalizeContextMenuItems(source: readonly ContextMenuItem[]): ContextM
       label: sourceItem.label,
       destructive: sourceItem.destructive === true,
       disabled: sourceItem.disabled === true,
+      ...(typeof sourceItem.icon === "string" ? { icon: sourceItem.icon } : {}),
       ...(sourceItem.separatorBefore === true ? { separatorBefore: true } : {}),
     };
 
@@ -114,28 +134,30 @@ const normalizePosition = (
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const platform = yield* HostProcessPlatform;
-  let destructiveMenuIconCache: Option.Option<Electron.NativeImage> | undefined;
+  const contextMenuIconCache = new Map<string, Option.Option<Electron.NativeImage>>();
 
-  const getDestructiveMenuIcon = (): Option.Option<Electron.NativeImage> => {
-    if (platform !== "darwin") {
+  const getContextMenuIcon = (
+    iconName: string | undefined,
+  ): Option.Option<Electron.NativeImage> => {
+    const symbolName = iconName === undefined ? undefined : CONTEXT_MENU_SYMBOLS[iconName];
+    if (platform !== "darwin" || symbolName === undefined) {
       return Option.none();
     }
-    if (destructiveMenuIconCache !== undefined) {
-      return destructiveMenuIconCache;
+    const cachedIcon = contextMenuIconCache.get(symbolName);
+    if (cachedIcon !== undefined) {
+      return cachedIcon;
     }
 
+    let result: Option.Option<Electron.NativeImage>;
     try {
-      const icon = Electron.nativeImage.createFromNamedImage("trash").resize({
-        width: 12,
-        height: 12,
-      });
-      icon.setTemplateImage(true);
-      destructiveMenuIconCache = icon.isEmpty() ? Option.none() : Option.some(icon);
+      const icon = Electron.nativeImage.createMenuSymbol(symbolName);
+      result = icon.isEmpty() ? Option.none() : Option.some(icon);
     } catch {
-      destructiveMenuIconCache = Option.none();
+      result = Option.none();
     }
 
-    return destructiveMenuIconCache;
+    contextMenuIconCache.set(symbolName, result);
+    return result;
   };
 
   const buildTemplate = (
@@ -174,11 +196,12 @@ export const make = Effect.gen(function* () {
       } else {
         itemOption.click = () => complete(Option.some(item.id));
       }
-      if (item.destructive && (!item.children || item.children.length === 0)) {
-        const destructiveIcon = getDestructiveMenuIcon();
-        if (Option.isSome(destructiveIcon)) {
-          itemOption.icon = destructiveIcon.value;
-        }
+      let menuIcon = getContextMenuIcon(item.icon);
+      if (Option.isNone(menuIcon) && item.destructive) {
+        menuIcon = getContextMenuIcon("trash");
+      }
+      if (Option.isSome(menuIcon)) {
+        itemOption.icon = menuIcon.value;
       }
 
       template.push(itemOption);

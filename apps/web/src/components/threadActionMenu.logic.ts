@@ -92,8 +92,14 @@ export function buildThreadActionMenuItems(
                   ...state.snoozePresets.map((preset) => ({
                     id: `snooze:${preset.id}` as const,
                     label: `${preset.label} (${preset.whenLabel})`,
+                    icon: "clock" as const,
                   })),
-                  { id: "snooze:custom" as const, label: "Custom…", separatorBefore: true },
+                  {
+                    id: "snooze:custom" as const,
+                    label: "Custom…",
+                    icon: "pencil" as const,
+                    separatorBefore: true,
+                  },
                 ],
               },
         ]
