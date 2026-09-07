@@ -6,6 +6,17 @@ import * as Repositories from "../../../sourceControl/SourceControlRepositorySer
 import { newCommandId, readCaller, readMutationCaller, unavailable } from "../../threadAccess.ts";
 import { ProjectToolkit } from "./tools.ts";
 
+function projectFailure(error: Project.ProjectServiceError) {
+  if (error._tag === "ProjectOperationError") return unavailable();
+  const message =
+    error._tag === "ProjectNotFoundError"
+      ? "The project was not found."
+      : error._tag === "ProjectConflictError"
+        ? "The workspace is already registered to a project."
+        : "The project is not empty; force=true is required to delete it.";
+  return new OrchestratorMcpFailure({ code: "invalid_request", message });
+}
+
 const access = Effect.gen(function* () {
   yield* readCaller();
   return yield* Project.ProjectService;
@@ -50,26 +61,34 @@ export const ProjectHandlersLive = ProjectToolkit.toLayer({
       const commandId = yield* newCommandId();
       return yield* projects
         .create({ ...input, commandId, projectId: ProjectId.make(commandId) })
-        .pipe(Effect.mapError(unavailable));
+        .pipe(Effect.mapError(projectFailure));
     }),
   t3_project_update: (input) =>
     Effect.gen(function* () {
       const projects = yield* mutation;
       return yield* projects
         .update({ ...input, commandId: yield* newCommandId() })
-        .pipe(Effect.mapError(unavailable));
+        .pipe(Effect.mapError(projectFailure));
     }),
   t3_project_delete: (input) =>
     Effect.gen(function* () {
       const projects = yield* mutation;
       return yield* projects
         .delete({ ...input, commandId: yield* newCommandId() })
-        .pipe(Effect.mapError(unavailable));
+        .pipe(Effect.mapError(projectFailure));
     }),
   t3_project_clone: (input) =>
     Effect.gen(function* () {
       yield* mutation;
       const repositories = yield* Repositories.SourceControlRepositoryService;
-      return yield* repositories.cloneRepository(input).pipe(Effect.mapError(unavailable));
+      return yield* repositories.cloneRepository(input).pipe(
+        Effect.mapError(
+          (error) =>
+            new OrchestratorMcpFailure({
+              code: "orchestration_error",
+              message: error.detail,
+            }),
+        ),
+      );
     }),
 });
