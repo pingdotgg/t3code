@@ -27,6 +27,16 @@ export function LoadBalancingSettings({
   const settingsHydrated = useClientSettingsHydrated();
   const updateSettings = useUpdateClientSettings();
 
+  if (environments.length < 2) {
+    return (
+      <SettingsSection {...searchableSetting("load-balancing")} variant="plain">
+        <p className="px-3 text-sm text-muted-foreground sm:px-4">
+          Connect another machine to automatically balance load across environments.
+        </p>
+      </SettingsSection>
+    );
+  }
+
   return (
     <SettingsSection {...searchableSetting("load-balancing")}>
       <SettingsRow
