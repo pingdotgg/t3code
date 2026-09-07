@@ -566,7 +566,84 @@ describe("ssh tunnel scripts", () => {
     },
   );
 
-  it.effect("does not spawn SSH commands after the manager closes", () => {
+  it.effect.each(["successful stop", "failed stop"] as const)(
+    "preserves an in-flight disconnect through manager shutdown after a %s",
+    (mode) => {
+      let completed = false;
+      return Effect.gen(function* () {
+        const stopStarted = yield* Deferred.make<void>();
+        const finishStop = yield* Deferred.make<void>();
+        let stopCount = 0;
+        let killCount = 0;
+        let remoteRunning = true;
+        const spawner = ChildProcessSpawner.make((command) =>
+          Effect.sync(() => {
+            const args = commandArgs(command);
+            if (args.includes("-G")) return makeSuccessfulProcess("");
+            if (args.includes("-N"))
+              return makeRunningProcess(() => {
+                killCount += 1;
+              });
+            if (args.includes("--")) return makeSuccessfulProcess('{"remotePort":3773}\n');
+            stopCount += 1;
+            return {
+              ...makeSuccessfulProcess('{"stopped":true}\n'),
+              stderr:
+                mode === "failed stop"
+                  ? Stream.make(new TextEncoder().encode("Remote stop failed.\n"))
+                  : Stream.empty,
+              exitCode: Deferred.succeed(stopStarted, undefined).pipe(
+                Effect.andThen(Deferred.await(finishStop)),
+                Effect.andThen(
+                  Effect.sync(() => {
+                    remoteRunning = mode === "failed stop";
+                    return ChildProcessSpawner.ExitCode(mode === "failed stop" ? 1 : 0);
+                  }),
+                ),
+              ),
+            };
+          }),
+        );
+        const services = Layer.mergeAll(
+          NodeServices.layer,
+          Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Layer.succeed(HttpClient.HttpClient, testHttpClient),
+          Layer.succeed(NetService.NetService, testNetService),
+          SshPasswordPrompt.disabledLayer,
+        );
+        yield* Effect.gen(function* () {
+          const scope = yield* Effect.acquireRelease(Scope.make(), (scope) =>
+            Scope.close(scope, Exit.void),
+          );
+          const context = yield* Layer.buildWithScope(SshEnvironmentManager.layer(), scope);
+          const manager = yield* SshEnvironmentManager.pipe(Effect.provide(context));
+          const target = { alias: "devbox", hostname: "devbox", username: null, port: null };
+          yield* manager.ensureEnvironment(target);
+          const disconnect = yield* Effect.forkChild(
+            manager.disconnectEnvironment(target).pipe(Effect.result),
+          );
+          yield* Deferred.await(stopStarted);
+          yield* Scope.close(scope, Exit.void).pipe(Effect.uninterruptible);
+          yield* Deferred.succeed(finishStop, undefined);
+          const exit = yield* Fiber.await(disconnect);
+          assert.isTrue(Exit.isSuccess(exit));
+          if (Exit.isSuccess(exit)) {
+            assert.equal(Result.isFailure(exit.value), mode === "failed stop");
+            if (Result.isFailure(exit.value)) {
+              assert.instanceOf(exit.value.failure, SshCommandError);
+              assert.equal(exit.value.failure.message, "Remote stop failed.");
+            }
+          }
+          assert.equal(remoteRunning, mode === "failed stop");
+          assert.equal(stopCount, 1);
+          assert.equal(killCount, 1);
+          completed = true;
+        }).pipe(Effect.provide(services), Effect.scoped);
+      }).pipe(Effect.ensuring(Effect.sync(() => assert.isTrue(completed))));
+    },
+  );
+
+  it.effect("does not start environment setup after the manager closes", () => {
     let completed = false;
     return Effect.gen(function* () {
       let spawnCount = 0;
@@ -590,12 +667,10 @@ describe("ssh tunnel scripts", () => {
         Layer.succeed(NetService.NetService, testNetService),
         SshPasswordPrompt.disabledLayer,
       );
-      const results = yield* Effect.all([
-        manager.ensureEnvironment(target).pipe(Effect.exit),
-        manager.disconnectEnvironment(target).pipe(Effect.exit),
-      ]).pipe(Effect.provide(services));
-      assert.isTrue(Exit.hasInterrupts(results[0]));
-      assert.isTrue(Exit.hasInterrupts(results[1]));
+      const result = yield* manager
+        .ensureEnvironment(target)
+        .pipe(Effect.exit, Effect.provide(services));
+      assert.isTrue(Exit.hasInterrupts(result));
       assert.equal(spawnCount, 0);
       completed = true;
     }).pipe(Effect.scoped, Effect.ensuring(Effect.sync(() => assert.isTrue(completed))));

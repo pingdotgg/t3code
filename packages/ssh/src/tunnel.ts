@@ -1175,7 +1175,7 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
   const targetLocks = new Map<string, Semaphore.Semaphore>();
   const authSecrets = new Map<string, string>();
 
-  // Operations belong to both the caller and the manager: either can cancel setup.
+  // Setup belongs to both the caller and the manager: either can cancel it.
   // Propagate the exit after releasing the fiber to avoid reentrant interruption during shutdown.
   const runInManagerScope = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
     Effect.acquireUseRelease(
@@ -1620,7 +1620,8 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
   return SshEnvironmentManager.of({
     ensureEnvironment: (target, requestOptions) =>
       runInManagerScope(ensureEnvironment(target, requestOptions)),
-    disconnectEnvironment: (target) => runInManagerScope(disconnectEnvironment(target)),
+    // Disconnect owns remote cleanup after removing the tunnel from the manager.
+    disconnectEnvironment,
   });
 });
 
