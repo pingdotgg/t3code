@@ -1420,11 +1420,25 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.checkpoint.revert": {
-      yield* requireThread({
+      const thread = yield* requireThread({
         readModel,
         command,
         threadId: command.threadId,
       });
+      const observedAt = yield* nowIso;
+      if (
+        thread.session?.status === "starting" ||
+        thread.session?.status === "running" ||
+        thread.latestTurn?.state === "running" ||
+        hasQueuedTurnStartForThread(thread, observedAt)
+      ) {
+        return yield* Effect.fail(
+          new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: "Interrupt the current turn before reverting checkpoints.",
+          }),
+        );
+      }
       return {
         ...(yield* withEventBase({
           aggregateKind: "thread",

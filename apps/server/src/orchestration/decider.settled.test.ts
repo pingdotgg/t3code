@@ -5,6 +5,7 @@ import {
   ProjectId,
   ProviderInstanceId,
   ThreadId,
+  TurnId,
   type OrchestrationEvent,
   type OrchestrationReadModel,
   type OrchestrationSession,
@@ -33,6 +34,7 @@ function makeReadModel(
     readonly snoozedUntil?: string | null;
     readonly snoozedAt?: string | null;
   } = {},
+  latestTurn: OrchestrationThread["latestTurn"] = null,
 ): OrchestrationReadModel {
   return {
     snapshotSequence: 0,
@@ -47,7 +49,7 @@ function makeReadModel(
         interactionMode: "default",
         branch: null,
         worktreePath: null,
-        latestTurn: null,
+        latestTurn,
         createdAt: NOW,
         updatedAt: NOW,
         archivedAt,
@@ -847,6 +849,83 @@ it.layer(NodeServices.layer)("settled thread decider", (it) => {
       expect(unconditionalEvents.map((event) => event.type)).toEqual([
         "thread.session-stop-requested",
       ]);
+    }),
+  );
+
+  it.effect("rejects checkpoint reverts while a turn is active or queued", () =>
+    Effect.gen(function* () {
+      for (const status of ["starting", "running"] as const) {
+        const error = yield* decideOrchestrationCommand({
+          command: {
+            type: "thread.checkpoint.revert",
+            commandId: CommandId.make(`cmd-revert-${status}`),
+            threadId: ThreadId.make("thread-1"),
+            turnCount: 0,
+            createdAt: NOW,
+          },
+          readModel: makeReadModel(null, null, makeSession(status)),
+        }).pipe(Effect.flip);
+        expect(error).toMatchObject({
+          _tag: "OrchestrationCommandInvariantError",
+          detail: "Interrupt the current turn before reverting checkpoints.",
+        });
+      }
+
+      const latestTurnError = yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.checkpoint.revert",
+          commandId: CommandId.make("cmd-revert-active-turn"),
+          threadId: ThreadId.make("thread-1"),
+          turnCount: 0,
+          createdAt: NOW,
+        },
+        readModel: makeReadModel(
+          null,
+          null,
+          makeSession("ready"),
+          [],
+          [],
+          {},
+          {
+            turnId: TurnId.make("turn-1"),
+            state: "running",
+            requestedAt: NOW,
+            startedAt: NOW,
+            completedAt: null,
+            assistantMessageId: null,
+          },
+        ),
+      }).pipe(Effect.flip);
+      expect(latestTurnError._tag).toBe("OrchestrationCommandInvariantError");
+
+      const queuedAt = "1969-12-31T23:59:30.000Z";
+      const queuedError = yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.checkpoint.revert",
+          commandId: CommandId.make("cmd-revert-queued-turn"),
+          threadId: ThreadId.make("thread-1"),
+          turnCount: 0,
+          createdAt: NOW,
+        },
+        readModel: makeReadModel(
+          null,
+          null,
+          null,
+          [],
+          [
+            {
+              id: MessageId.make("message-revert-queued"),
+              role: "user",
+              text: "Continue",
+              turnId: null,
+              streaming: false,
+              createdAt: queuedAt,
+              updatedAt: queuedAt,
+            },
+          ],
+        ),
+      }).pipe(Effect.flip);
+      expect(queuedError._tag).toBe("OrchestrationCommandInvariantError");
     }),
   );
 });
