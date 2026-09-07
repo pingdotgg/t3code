@@ -67,6 +67,52 @@ describe("isPreviewRefreshShortcut", () => {
   });
 });
 
+describe("previewEditingCommand", () => {
+  const input = (overrides: Partial<Electron.Input> = {}) =>
+    ({
+      type: "keyDown",
+      key: "c",
+      code: "KeyC",
+      isAutoRepeat: false,
+      isComposing: false,
+      shift: false,
+      control: false,
+      alt: false,
+      meta: true,
+      location: 0,
+      modifiers: [],
+      ...overrides,
+    }) as Electron.Input;
+
+  it.each([
+    ["c", "copy"],
+    ["x", "cut"],
+    ["v", "paste"],
+    ["a", "selectAll"],
+  ] as const)("maps Meta+%s to %s", (key, command) => {
+    expect(PreviewManager.previewEditingCommand(input({ key }))).toBe(command);
+  });
+
+  it("maps Shift+Meta+V to paste-and-match-style", () => {
+    expect(PreviewManager.previewEditingCommand(input({ key: "v", shift: true }))).toBe(
+      "pasteAndMatchStyle",
+    );
+  });
+
+  it("supports Control shortcuts and rejects non-editing variants", () => {
+    expect(
+      PreviewManager.previewEditingCommand(input({ key: "v", meta: false, control: true })),
+    ).toBe("paste");
+    expect(PreviewManager.previewEditingCommand(input({ key: "c", alt: true }))).toBeUndefined();
+    expect(
+      PreviewManager.previewEditingCommand(input({ key: "c", type: "keyUp" })),
+    ).toBeUndefined();
+    expect(
+      PreviewManager.previewEditingCommand(input({ key: "c", isComposing: true })),
+    ).toBeUndefined();
+  });
+});
+
 describe("previewWindowOpenAction", () => {
   const details = (overrides: {
     readonly url?: string;
@@ -355,6 +401,11 @@ const makeFaviconWebContents = (options?: {
       options?.rasterize ? options.rasterize(scripts[0]?.code ?? "") : TEST_FAVICON,
   );
   const reload = vi.fn();
+  const copy = vi.fn();
+  const cut = vi.fn();
+  const paste = vi.fn();
+  const pasteAndMatchStyle = vi.fn();
+  const selectAll = vi.fn();
   const loadURL = vi.fn(async (url: string) => {
     currentUrl = url;
   });
@@ -373,6 +424,11 @@ const makeFaviconWebContents = (options?: {
     setAudioMuted: vi.fn(),
     isCurrentlyAudible: () => false,
     reload,
+    copy,
+    cut,
+    paste,
+    pasteAndMatchStyle,
+    selectAll,
     reloadIgnoringCache: vi.fn(),
     loadURL,
     on: vi.fn((event: string, listener: (...args: never[]) => void) => {
@@ -497,7 +553,7 @@ describe("PreviewManager", () => {
         ).toHaveBeenCalledWith(true);
         const beforeInput = preview.listeners.get("before-input-event")!;
         for (const control of [false, true]) {
-          for (const key of ["k", ",", "w", "j", "q", "+", "a", "c", "v", "x"]) {
+          for (const key of ["k", ",", "w", "j", "q", "+"]) {
             for (const type of ["keyDown", "keyUp"]) {
               const preventDefault = vi.fn();
               beforeInput(
@@ -510,6 +566,41 @@ describe("PreviewManager", () => {
           }
         }
         expect(sendInputEvent).not.toHaveBeenCalled();
+
+        const editShortcuts = [
+          ["c", "copy"],
+          ["x", "cut"],
+          ["v", "paste"],
+          ["a", "selectAll"],
+        ] as const;
+        for (const [key, method] of editShortcuts) {
+          const preventDefault = vi.fn();
+          beforeInput(
+            { preventDefault } as never,
+            { type: "keyDown", key, meta: true, control: false, shift: false, alt: false } as never,
+          );
+          yield* Effect.yieldNow;
+          expect(preventDefault).toHaveBeenCalledOnce();
+          expect((preview.webContents as Electron.WebContents)[method]).toHaveBeenCalledOnce();
+        }
+
+        const pasteAndMatchStylePreventDefault = vi.fn();
+        beforeInput(
+          { preventDefault: pasteAndMatchStylePreventDefault } as never,
+          {
+            type: "keyDown",
+            key: "v",
+            meta: true,
+            control: false,
+            shift: true,
+            alt: false,
+          } as never,
+        );
+        yield* Effect.yieldNow;
+        expect(pasteAndMatchStylePreventDefault).toHaveBeenCalledOnce();
+        expect(
+          (preview.webContents as Electron.WebContents).pasteAndMatchStyle,
+        ).toHaveBeenCalledOnce();
 
         const preventDefault = vi.fn();
         beforeInput(

@@ -535,6 +535,36 @@ export const isPreviewRefreshShortcut = (input: Electron.Input): boolean =>
   !input.shift &&
   !input.alt;
 
+type PreviewEditingCommand = "copy" | "cut" | "paste" | "pasteAndMatchStyle" | "selectAll";
+
+/**
+ * Resolve native editing shortcuts before Chromium or the host menu can route
+ * them away from the embedded preview guest.
+ */
+export const previewEditingCommand = (input: Electron.Input): PreviewEditingCommand | undefined => {
+  if (
+    input.type !== "keyDown" ||
+    input.alt ||
+    (!input.meta && !input.control) ||
+    input.isComposing
+  ) {
+    return undefined;
+  }
+
+  switch (input.key.toLowerCase()) {
+    case "a":
+      return input.shift ? undefined : "selectAll";
+    case "c":
+      return input.shift ? undefined : "copy";
+    case "x":
+      return input.shift ? undefined : "cut";
+    case "v":
+      return input.shift ? "pasteAndMatchStyle" : "paste";
+    default:
+      return undefined;
+  }
+};
+
 const isPreviewInputSignal = (value: unknown): value is PreviewInputSignal => {
   if (typeof value !== "object" || value === null || !("kind" in value)) return false;
   if (value.kind === "pointer") {
@@ -1854,6 +1884,38 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         );
         return;
       }
+
+      const editingCommand = previewEditingCommand(input);
+      if (editingCommand === undefined) return;
+      event.preventDefault();
+      runFork(
+        attempt(
+          {
+            operation: `shortcut.${editingCommand}`,
+            tabId,
+            webContentsId: wc.id,
+          },
+          () => {
+            switch (editingCommand) {
+              case "copy":
+                wc.copy();
+                return;
+              case "cut":
+                wc.cut();
+                return;
+              case "paste":
+                wc.paste();
+                return;
+              case "pasteAndMatchStyle":
+                wc.pasteAndMatchStyle();
+                return;
+              case "selectAll":
+                wc.selectAll();
+                return;
+            }
+          },
+        ).pipe(Effect.ignore),
+      );
     };
     yield* Scope.addFinalizer(
       scope,
