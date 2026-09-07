@@ -814,29 +814,85 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       if (input.fromCheckpointRef) {
         const current = yield* resolveCheckpointCommit(input.cwd, input.fromCheckpointRef);
         if (!current) return false;
-        // Seed only the project's recorded checkpoint files into the index. Git restore
-        // can then remove agent-created files without cleaning unrelated files or replacing
-        // staged changes elsewhere in a repository that contains this project.
+        const changedPaths = yield* execute({
+          operation,
+          cwd: input.cwd,
+          args: [
+            "diff",
+            "--name-only",
+            "--no-renames",
+            "--relative",
+            "-z",
+            `${commitOid}^{commit}`,
+            `${current}^{commit}`,
+            "--",
+            ".",
+          ],
+          maxOutputBytes: CHECKPOINT_DIFF_MAX_OUTPUT_BYTES,
+          outputMode: "error",
+        });
+        if (changedPaths.stdout.length === 0) {
+          return true;
+        }
+
+        // Limit the restore to paths changed by the discarded turns. Files edited after
+        // the current checkpoint but absent from that diff belong to concurrent user work.
         yield* execute({
           operation,
           cwd: input.cwd,
-          args: ["restore", "--source", current, "--staged", "--", "."],
+          args: [
+            "--literal-pathspecs",
+            "restore",
+            "--source",
+            current,
+            "--staged",
+            "--pathspec-from-file=-",
+            "--pathspec-file-nul",
+          ],
+          stdin: changedPaths.stdout,
         });
-      }
-
-      yield* execute({
-        operation,
-        cwd: input.cwd,
-        args: ["restore", "--source", commitOid, "--worktree", "--staged", "--", "."],
-      });
-
-      const headExists = yield* hasHeadCommit(input.cwd);
-      if (headExists) {
         yield* execute({
           operation,
           cwd: input.cwd,
-          args: ["reset", "--quiet", "--", "."],
+          args: [
+            "--literal-pathspecs",
+            "restore",
+            "--source",
+            commitOid,
+            "--worktree",
+            "--staged",
+            "--pathspec-from-file=-",
+            "--pathspec-file-nul",
+          ],
+          stdin: changedPaths.stdout,
         });
+        if (yield* hasHeadCommit(input.cwd)) {
+          yield* execute({
+            operation,
+            cwd: input.cwd,
+            args: [
+              "--literal-pathspecs",
+              "reset",
+              "--quiet",
+              "--pathspec-from-file=-",
+              "--pathspec-file-nul",
+            ],
+            stdin: changedPaths.stdout,
+          });
+        }
+      } else {
+        yield* execute({
+          operation,
+          cwd: input.cwd,
+          args: ["restore", "--source", commitOid, "--worktree", "--staged", "--", "."],
+        });
+        if (yield* hasHeadCommit(input.cwd)) {
+          yield* execute({
+            operation,
+            cwd: input.cwd,
+            args: ["reset", "--quiet", "--", "."],
+          });
+        }
       }
 
       return true;

@@ -156,6 +156,38 @@ it.layer(TestLayer)("CheckpointStore.layer", (it) => {
     }),
   );
 
+  it.effect("preserves post-checkpoint tracked edits outside the reverted turn diff", () =>
+    Effect.gen(function* () {
+      const tmp = yield* makeTmpDir();
+      yield* initRepoWithCommit(tmp);
+      const store = yield* CheckpointStore.CheckpointStore;
+      const fs = yield* FileSystem.FileSystem;
+      const thread = ThreadId.make("post-checkpoint-tracked-edits");
+      const checkpointRef = checkpointRefForThreadTurn(thread, 0);
+      const fromCheckpointRef = checkpointRefForThreadTurn(thread, 1);
+      const humanFile = NodePath.join(tmp, "human.txt");
+
+      yield* writeTextFile(humanFile, "Human baseline\n");
+      yield* git(tmp, ["add", "human.txt"]);
+      yield* git(tmp, ["commit", "-m", "add human file"]);
+      yield* store.captureCheckpoint({ cwd: tmp, checkpointRef });
+
+      yield* writeTextFile(NodePath.join(tmp, "README.md"), "Agent edit\n");
+      yield* store.captureCheckpoint({ cwd: tmp, checkpointRef: fromCheckpointRef });
+
+      yield* writeTextFile(humanFile, "Human staged\n");
+      yield* git(tmp, ["add", "human.txt"]);
+      yield* writeTextFile(humanFile, "Human unstaged\n");
+
+      expect(yield* store.restoreCheckpoint({ cwd: tmp, checkpointRef, fromCheckpointRef })).toBe(
+        true,
+      );
+      expect(yield* fs.readFileString(NodePath.join(tmp, "README.md"))).toBe("# test\n");
+      expect(yield* git(tmp, ["show", ":human.txt"])).toBe("Human staged");
+      expect(yield* fs.readFileString(humanFile)).toBe("Human unstaged\n");
+    }),
+  );
+
   it.effect("preserves staged changes outside a nested project during restore", () =>
     Effect.gen(function* () {
       const tmp = yield* makeTmpDir();
