@@ -7,7 +7,7 @@ import { McpInvocationContext } from "../../McpInvocationContext.ts";
 import { readCaller, readMutationCaller, unavailable } from "../../threadAccess.ts";
 import { EnvironmentToolkit } from "./tools.ts";
 
-function preferences(settings: ServerSettings) {
+export function preferences(settings: ServerSettings) {
   const {
     defaultThreadEnvMode,
     newWorktreesStartFromOrigin,
