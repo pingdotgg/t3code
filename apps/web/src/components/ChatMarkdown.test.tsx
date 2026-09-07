@@ -343,6 +343,39 @@ describe("hasMarkdownFilePrimaryAction", () => {
   });
 });
 
+describe("ChatMarkdown code block copying", () => {
+  async function copyCodeBlock(text: string): Promise<string | undefined> {
+    const writeText = vi.fn(async (_text: string) => {});
+    vi.stubGlobal("navigator", { clipboard: { writeText } });
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    let renderer: ReactTestRenderer | undefined;
+    try {
+      await act(async () => {
+        renderer = create(<ChatMarkdown cwd="/tmp/project" text={text} />);
+      });
+      const copy = codeButton(renderer!, "Copy code");
+      await act(async () => {
+        copy.onClick?.({} as Parameters<NonNullable<typeof copy.onClick>>[0]);
+      });
+      return writeText.mock.calls[0]?.[0];
+    } finally {
+      await act(async () => renderer?.unmount());
+      vi.unstubAllGlobals();
+    }
+  }
+
+  // Pasting should leave the cursor on the command, so the last newline is
+  // dropped whether it came from fence serialization or raw HTML.
+  it("copies a command without a trailing newline to paste", async () => {
+    expect(await copyCodeBlock("```sh\nnpm install\n```")).toBe("npm install");
+    expect(await copyCodeBlock("<pre><code>npm install\n</code></pre>")).toBe("npm install");
+  });
+
+  it("keeps trailing blank lines the author wrote", async () => {
+    expect(await copyCodeBlock("```sh\nnpm install\n\n```")).toBe("npm install\n");
+  });
+});
+
 describe("ChatMarkdown skill chips", () => {
   it("updates digit-leading skill labels when discovered skills change", async () => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);

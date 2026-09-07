@@ -650,8 +650,8 @@ function extractCodeBlock(
 
   return {
     className: onlyChild.props.className,
-    // Fenced code always serializes with a closing newline; drop it so copying
-    // a command does not paste a stray line break into a terminal.
+    // Drop the closing newline so pasting leaves the cursor on the command
+    // instead of below it. Only the last one, so authored blank lines survive.
     code: nodeToPlainText(onlyChild.props.children).replace(/\n$/, ""),
   };
 }
