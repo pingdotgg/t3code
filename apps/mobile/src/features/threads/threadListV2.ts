@@ -33,7 +33,7 @@ export { snoozeWakeLabel };
  * (approval), "in motion" (working), and "broken" (failed). Ready is the
  * unlabeled resting state.
  */
-export type ThreadListV2Status = "approval" | "input" | "working" | "failed" | "ready";
+export type ThreadListV2Status = "approval" | "input" | "working" | "failed" | "limited" | "ready";
 export type ThreadListV2SwipeAction = "archive" | "settle" | "unsettle" | "snooze" | "unsnooze";
 
 export function resolveThreadListV2SnoozeMenuSelection(input: {
@@ -144,7 +144,7 @@ export function resolveThreadListV2Status(
     return "working";
   }
   if (thread.session?.status === "error") {
-    return "failed";
+    return thread.session.lastErrorClass === "usage_limit" ? "limited" : "failed";
   }
   return "ready";
 }

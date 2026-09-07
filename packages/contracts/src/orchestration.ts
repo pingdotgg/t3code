@@ -520,6 +520,12 @@ export const OrchestrationSessionStatus = Schema.Literals([
 ]);
 export type OrchestrationSessionStatus = typeof OrchestrationSessionStatus.Type;
 
+/** The session only needs "limit or not", so it carries this narrow literal
+    instead of the runtime's error class (providerRuntime.ts already imports
+    from this module, so importing back would be a cycle). */
+export const OrchestrationSessionErrorClass = Schema.Literals(["usage_limit"]);
+export type OrchestrationSessionErrorClass = typeof OrchestrationSessionErrorClass.Type;
+
 export const OrchestrationSession = Schema.Struct({
   threadId: ThreadId,
   status: OrchestrationSessionStatus,
@@ -528,6 +534,8 @@ export const OrchestrationSession = Schema.Struct({
   runtimeMode: RuntimeMode.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_RUNTIME_MODE))),
   activeTurnId: Schema.NullOr(TurnId),
   lastError: Schema.NullOr(TrimmedNonEmptyString),
+  // Optional so payloads from servers predating the field still decode.
+  lastErrorClass: Schema.optional(Schema.NullOr(OrchestrationSessionErrorClass)),
   updatedAt: IsoDateTime,
 });
 export type OrchestrationSession = typeof OrchestrationSession.Type;

@@ -395,6 +395,18 @@ describe("shouldRecedeSidebarThread", () => {
     expect(shouldRecedeSidebarThread({ ...input, isActive: true })).toBe(false);
     expect(shouldRecedeSidebarThread({ ...input, isSelected: true })).toBe(false);
   });
+
+  it.each(["failed", "limited"] as const)("keeps a %s thread prominent", (status) => {
+    expect(
+      shouldRecedeSidebarThread({
+        status,
+        isUnread: false,
+        isWoke: false,
+        isActive: false,
+        isSelected: false,
+      }),
+    ).toBe(false);
+  });
 });
 
 describe("createThreadJumpHintVisibilityController", () => {
@@ -795,6 +807,31 @@ describe("resolveSidebarThreadStatus", () => {
         session: { ...session, status: "ready" as const, lastError: "persisted" },
       }),
     ).toBe("ready");
+  });
+
+  it("reports limited when a usage limit stopped the session", () => {
+    expect(
+      resolveSidebarThreadStatus({
+        ...idle,
+        session: {
+          ...session,
+          status: "error" as const,
+          lastError: "Claude usage limit reached.",
+          lastErrorClass: "usage_limit" as const,
+        },
+      }),
+    ).toBe("limited");
+    expect(
+      resolveSidebarThreadStatus({
+        ...idle,
+        session: {
+          ...session,
+          status: "error" as const,
+          lastError: "boom",
+          lastErrorClass: null,
+        },
+      }),
+    ).toBe("failed");
   });
 
   it("defaults to ready with no session", () => {

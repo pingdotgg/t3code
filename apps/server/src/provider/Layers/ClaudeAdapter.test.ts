@@ -2302,12 +2302,20 @@ describe("ClaudeAdapterLive", () => {
           uuid: "result-auth",
         } as unknown as SDKMessage);
 
-        const payload = completedTurn(Array.from(yield* Fiber.join(runtimeEventsFiber)));
+        const events = Array.from(yield* Fiber.join(runtimeEventsFiber));
+        const payload = completedTurn(events);
         assert.equal(payload.state, state);
         if (errorMessage === undefined) {
           assert.equal(payload.errorMessage, undefined);
         } else {
           assert.match(payload.errorMessage ?? "", errorMessage);
+        }
+        // Only a usage limit is classed as one; every other failure stays a
+        // provider error so clients keep reading it as Failed.
+        for (const event of events) {
+          if (event.type === "runtime.error") {
+            assert.equal(event.payload.class, "provider_error");
+          }
         }
       }).pipe(
         Effect.provideService(Random.Random, makeDeterministicRandomService()),
@@ -2355,12 +2363,16 @@ describe("ClaudeAdapterLive", () => {
         uuid: "result-limit",
       } as unknown as SDKMessage);
 
-      const payload = completedTurn(Array.from(yield* Fiber.join(runtimeEventsFiber)));
+      const events = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      const payload = completedTurn(events);
       assert.equal(payload.state, "failed");
       assert.equal(
         payload.errorMessage,
         "Claude usage limit reached. Send the message again once the limit resets.",
       );
+      const runtimeError = events.find((event) => event.type === "runtime.error");
+      assert(runtimeError?.type === "runtime.error");
+      assert.equal(runtimeError.payload.class, "usage_limit");
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
