@@ -9,7 +9,8 @@ import type {
   ScopedThreadRef,
   ServerProviderModel,
 } from "@t3tools/contracts";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
+import type { ShellComposerState } from "@t3tools/contracts/shell";
 
 import { useShellActions } from "./useShellActions";
 import { useShellPublish } from "./useShellPublish";
@@ -99,6 +100,11 @@ export interface ShellComposerBridgeProps {
  */
 export function ShellComposerBridge(props: ShellComposerBridgeProps) {
   const setProviderModelOptions = useComposerDraftStore((store) => store.setProviderModelOptions);
+  const target = typeof props.target === "string" ? props.target : scopedThreadKey(props.target);
+  const [appliedEdit, setAppliedEdit] = useState<{
+    target: string;
+    edit: ShellComposerState["edit"];
+  } | null>(null);
 
   const optionDescriptors = useMemo(
     () =>
@@ -170,12 +176,16 @@ export function ShellComposerBridge(props: ShellComposerBridgeProps) {
     [optionDescriptors, props],
   );
 
-  useShellPublish("composer", state);
+  useShellPublish("composer", {
+    ...state,
+    edit: appliedEdit?.target === target ? (appliedEdit.edit ?? null) : null,
+  });
 
   useShellActions((action) => {
     switch (action.type) {
       case "composer.text.set":
         if (action.target !== state.target) return;
+        setAppliedEdit({ target, edit: action.edit });
         props.setPrompt(action.text);
         props.promptRef.current = action.text;
         if (action.cursor !== undefined) {
@@ -224,6 +234,7 @@ export function ShellComposerBridge(props: ShellComposerBridgeProps) {
       }
       case "composer.submit":
         if (action.text !== undefined) {
+          setAppliedEdit({ target, edit: action.edit });
           props.setPrompt(action.text);
           props.promptRef.current = action.text;
         }

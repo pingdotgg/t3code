@@ -318,8 +318,8 @@ plan/build toggle. `ChatComposer` hides its editor and footer when hosted;
 the editor comes back for approval and user-input flows, which type answers
 through it.
 
-Actions: `composer.text.set {text, cursor?}` (debounced from the QML
-editor), `composer.submit {text?, intent?}` (text rides along so the send is
+Actions: `composer.text.set {target, text, cursor?, edit?}` (debounced from the QML
+editor), `composer.submit {text?, intent?, edit?}` (text rides along so the send is
 atomic with the last edit), `composer.interrupt`, `composer.model.select
 {instanceId, model}`, `composer.option.set {id, value}`,
 `composer.runtimeMode.set {mode}`, `composer.interactionMode.set {mode}`,
@@ -327,6 +327,14 @@ atomic with the last edit), `composer.interrupt`, `composer.model.select
 `modelPicker.toggle` command dispatches `composer.modelPicker.toggle` the
 other way, page → shell, since the HTML picker is hidden when hosted; the
 `Composer` brick listens on `Shell.actionRequested` and opens its own.
+
+Text edits and submissions carry an `edit: {clientId, revision}` stamp. The
+page publishes the latest applied stamp with the draft and retains it when
+page actions change or clear the text. The brick ignores publications that
+have not applied its latest edit, preserving newer text and the caret even
+when publications are delayed, coalesced, or repeat an earlier value. Switching
+targets resets the brick's pending revision. The stamp is optional for older
+shells/pages; pages without it retain the legacy text-based synchronization.
 
 `@file`, `$skill` and `/command` suggestions reuse `ChatComposer`'s own
 trigger detection and menu: the QML editor edits the raw prompt (mentions

@@ -84,5 +84,143 @@ Item {
             compare(Shell.dispatchCount, 0);
             compare(input.text, "");
         }
+
+        function test_echoPreservesEditStillWaitingForDebounce() {
+            Shell.echoTextEdits = false;
+            let composer = createTemporaryObject(composerComponent, root);
+            verify(!!composer, "Component exists");
+            let input = findChild(composer, "input");
+            verify(!!input, "Object exists");
+            input.focus = true;
+            input.text = qsTr("Sent");
+            composer.flushText();
+            input.text = qsTr("Sent + local");
+            input.cursorPosition = input.text.length;
+
+            Shell.publishComposerText(qsTr("Sent"), 4, Shell.dispatchedActions[0].payload.edit);
+            compare(input.text, qsTr("Sent + local"));
+            compare(input.cursorPosition, 12);
+            composer.flushText();
+            compare(Shell.dispatchedActions[1].payload.text, qsTr("Sent + local"));
+        }
+
+        function test_coalescedEchoThenPageEdit() {
+            Shell.echoTextEdits = false;
+            let composer = createTemporaryObject(composerComponent, root);
+            verify(!!composer, "Component exists");
+            let input = findChild(composer, "input");
+            verify(!!input, "Object exists");
+            input.text = qsTr("First");
+            composer.flushText();
+            input.text = qsTr("Second");
+            composer.flushText();
+            input.cursorPosition = 2;
+
+            Shell.publishComposerText(qsTr("Second"), 6, Shell.dispatchedActions[1].payload.edit);
+            compare(input.text, qsTr("Second"));
+            compare(input.cursorPosition, 2);
+            // A later page edit may legitimately restore an earlier value.
+            Shell.publishComposerText(qsTr("First"), 3);
+            compare(input.text, qsTr("First"));
+            compare(input.cursorPosition, 3);
+        }
+
+        function test_targetSwitchDiscardsOutstandingEchoes() {
+            Shell.echoTextEdits = false;
+            let composer = createTemporaryObject(composerComponent, root);
+            verify(!!composer, "Component exists");
+            let input = findChild(composer, "input");
+            verify(!!input, "Object exists");
+            input.text = qsTr("Thread A edit");
+            composer.flushText();
+            Shell.publishComposerTarget("thread-b", qsTr("Thread B draft"), 4);
+            compare(input.text, qsTr("Thread B draft"));
+            compare(input.cursorPosition, 4);
+            Shell.publishComposerText(qsTr("Thread A edit"), 2);
+            compare(input.text, qsTr("Thread A edit"));
+            compare(input.cursorPosition, 2);
+        }
+
+        function test_repeatedTextDoesNotAcknowledgeAnOlderEdit() {
+            Shell.echoTextEdits = false;
+            let composer = createTemporaryObject(composerComponent, root);
+            verify(!!composer, "Component exists");
+            let input = findChild(composer, "input");
+            verify(!!input, "Object exists");
+            for (const text of ["First", "Second", "First"]) {
+                input.text = text;
+                composer.flushText();
+            }
+            input.cursorPosition = 2;
+
+            Shell.publishComposerText("First", 5, Shell.dispatchedActions[0].payload.edit);
+            Shell.publishComposerText("Second", 6, Shell.dispatchedActions[1].payload.edit);
+            compare(input.text, "First");
+            compare(input.cursorPosition, 2);
+            Shell.publishComposerText("First", 5, Shell.dispatchedActions[2].payload.edit);
+            Shell.publishComposerText("", 0);
+            compare(input.text, "");
+        }
+
+        function test_coalescedEchoReturningToInitialText() {
+            Shell.echoTextEdits = false;
+            let composer = createTemporaryObject(composerComponent, root);
+            verify(!!composer, "Component exists");
+            let input = findChild(composer, "input");
+            verify(!!input, "Object exists");
+            input.text = "Temporary";
+            composer.flushText();
+            input.text = "";
+            composer.flushText();
+
+            Shell.publishComposerText("", 0, Shell.dispatchedActions[1].payload.edit);
+            Shell.publishComposerText("Page replacement", 4);
+            compare(input.text, "Page replacement");
+            compare(input.cursorPosition, 4);
+        }
+
+        function test_legacyPageCanStillClearAfterSubmit() {
+            let composer = createTemporaryObject(composerComponent, root);
+            verify(!!composer, "Component exists");
+            let input = findChild(composer, "input");
+            verify(!!input, "Object exists");
+            input.text = "Legacy draft";
+            composer.submit("foreground");
+
+            // Remove the field entirely, as pages predating revisions do.
+            const state = JSON.parse(JSON.stringify(Shell.state));
+            delete state.composer.edit;
+            state.composer.text = "";
+            state.composer.cursor = 0;
+            Shell.state = state;
+            compare(input.text, "");
+        }
+
+        function test_delayedEchoPreservesNewerTextAndSubmit() {
+            Shell.echoTextEdits = false;
+            let composer = createTemporaryObject(composerComponent, root);
+            verify(!!composer, "Component exists");
+            let input = findChild(composer, "input");
+            verify(!!input, "Object exists");
+            input.focus = true;
+            input.text = qsTr("First edit");
+            input.cursorPosition = input.text.length;
+            composer.flushText();
+            input.text = qsTr("First edit + 123");
+            input.cursorPosition = input.text.length;
+            composer.flushText();
+            compare(Shell.dispatchCount, 2);
+
+            Shell.publishComposerText(qsTr("First edit"), 10, Shell.dispatchedActions[0].payload.edit);
+            compare(input.text, qsTr("First edit + 123"));
+            compare(input.cursorPosition, 16);
+
+            composer.submit("foreground");
+            compare(Shell.dispatchedActions[2].payload.text, qsTr("First edit + 123"));
+            Shell.publishComposerText(qsTr("First edit + 123"), 16, Shell.dispatchedActions[1].payload.edit);
+            compare(input.text, qsTr("First edit + 123"));
+            Shell.publishComposerText("", 0, Shell.dispatchedActions[2].payload.edit);
+            compare(input.text, "");
+        }
     }
 }

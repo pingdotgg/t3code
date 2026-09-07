@@ -35,6 +35,10 @@ Rectangle {
     // The last text this brick sent; an echo of it from the page is not an edit.
     property string lastSentText: ""
     property int lastSentCursor: -1
+    property string editingTarget: ""
+    readonly property string editClientId: Date.now().toString(36) + Math.random().toString(36).slice(2)
+    property int nextEditRevision: 0
+    property int lastSentRevision: 0
 
     implicitHeight: stack.implicitHeight + gutter
     color: canvas
@@ -84,6 +88,14 @@ Rectangle {
         }
     }
 
+    function nextEdit() {
+        lastSentRevision = ++nextEditRevision;
+        return {
+            clientId: editClientId,
+            revision: lastSentRevision
+        };
+    }
+
     function flushText() {
         textDebounce.stop();
         if (input.text !== composer.lastSentText || input.cursorPosition !== composer.lastSentCursor) {
@@ -91,6 +103,7 @@ Rectangle {
             composer.lastSentCursor = input.cursorPosition;
             Shell.dispatch("composer.text.set", {
                 target: composer.publishedTarget,
+                edit: composer.nextEdit(),
                 text: input.text,
                 cursor: input.cursorPosition
             });
@@ -134,32 +147,40 @@ Rectangle {
         composer.lastSentText = text;
         composer.lastSentCursor = input.cursorPosition;
         Shell.dispatch("composer.submit", {
+            edit: composer.nextEdit(),
             text: text,
             intent: intent
         });
     }
 
-    onPublishedTextChanged: {
-        if (publishedText !== input.text && publishedText !== lastSentText) {
-            input.text = publishedText;
-            lastSentText = publishedText;
-            // The page moved the caret (a suggestion was inserted, a send cleared
-            // the prompt); follow it.
-            input.cursorPosition = Math.min(publishedCursor, input.text.length);
-            lastSentCursor = input.cursorPosition;
-        }
-    }
-
-    onPublishedTargetChanged: {
-        textDebounce.stop();
-        const text = ready ? model.text : "";
-        const cursor = Math.min(ready ? model.cursor : 0, text.length);
-        lastSentText = text;
-        lastSentCursor = cursor;
-        if (input.text !== text) {
+    onModelChanged: {
+        const target = model?.target ?? "";
+        const text = target ? model.text : "";
+        const cursor = Math.min(target ? model.cursor : 0, text.length);
+        if (target !== editingTarget) {
+            textDebounce.stop();
+            editingTarget = target;
+            lastSentRevision = 0;
+            lastSentText = text;
+            lastSentCursor = cursor;
             input.text = text;
+            input.cursorPosition = cursor;
+            return;
         }
-        input.cursorPosition = cursor;
+        // Compare the publication's edit revision, not its text: returning to
+        // an earlier value and coalesced publications must still acknowledge
+        // the right edit. Older echoes cannot move the local text or caret.
+        const edit = model?.edit;
+        // An absent field means an older page without revision support.
+        if (edit !== undefined && lastSentRevision > 0 && (!edit || edit.clientId !== editClientId || edit.revision < lastSentRevision)) {
+            return;
+        }
+        if (text !== input.text && text !== lastSentText) {
+            lastSentText = text;
+            input.text = text;
+            input.cursorPosition = cursor;
+            lastSentCursor = cursor;
+        }
     }
 
     onSuggestionsChanged: suggestionList.currentIndex = suggestions.length > 0 ? 0 : -1

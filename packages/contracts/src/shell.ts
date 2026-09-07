@@ -130,11 +130,18 @@ export const ShellComposerSuggestion = Schema.Struct({
 });
 export type ShellComposerSuggestion = typeof ShellComposerSuggestion.Type;
 
+const ShellComposerEdit = Schema.Struct({
+  clientId: Schema.String,
+  revision: Schema.Number,
+});
+
 /** Published under the `composer` key while a thread or draft route is open. */
 export const ShellComposerState = Schema.Struct({
   /** `<environmentId>:<threadId>` or a draft id; null between routes. */
   target: Schema.NullOr(Schema.String),
   routeKind: Schema.Literals(["server", "draft"]),
+  /** Latest shell edit applied to this target, retained across page-originated changes. */
+  edit: Schema.optional(Schema.NullOr(ShellComposerEdit)),
   text: Schema.String,
   /** Caret position in `text` (raw prompt, mentions written out) after the page changed it. */
   cursor: Schema.Number,
@@ -477,6 +484,7 @@ export const ShellAction = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("composer.text.set"),
     target: Schema.String,
+    edit: Schema.optional(ShellComposerEdit),
     text: Schema.String,
     /** Caret in `text`; drives @/$// suggestions. */
     cursor: Schema.optional(Schema.Number),
@@ -504,6 +512,7 @@ export const ShellAction = Schema.Union([
   // `text` rides along so the send is atomic with the latest edit.
   Schema.Struct({
     type: Schema.Literal("composer.submit"),
+    edit: Schema.optional(ShellComposerEdit),
     text: Schema.optional(Schema.String),
     intent: Schema.optional(Schema.Literals(["foreground", "background"])),
   }),
