@@ -2,7 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
 import type {
   EnvironmentId,
   ProviderConsumeResetCreditOutcome,
-  ProviderInstanceId,
+  ProviderConsumeResetCreditInput,
   ServerProvider,
   ServerProviderResetCredits,
   ServerProviderUsageWindow,
@@ -97,6 +97,29 @@ function WindowRow(props: {
   );
 }
 
+function AccountInstanceLabel({ value }: { readonly value: string }) {
+  const [revealed, setRevealed] = useState(false);
+  if (!value.includes("@")) {
+    return (
+      <Text className="shrink text-xs text-foreground-tertiary" numberOfLines={1}>
+        · {value}
+      </Text>
+    );
+  }
+  return (
+    <Pressable
+      className="shrink active:opacity-60"
+      accessibilityRole="button"
+      accessibilityLabel={revealed ? "Hide account label" : "Reveal account label"}
+      onPress={() => setRevealed((current) => !current)}
+    >
+      <Text className="text-xs text-foreground-tertiary" numberOfLines={1}>
+        · {revealed ? value : "••••••@••••••"}
+      </Text>
+    </Pressable>
+  );
+}
+
 /** One account: icon, name and plan on a single line, then its windows. */
 export function AccountLimits(props: {
   readonly driver: Driver;
@@ -128,9 +151,7 @@ export function AccountLimits(props: {
         <View className="min-w-0 flex-1 flex-row items-baseline gap-2">
           <Text className="text-base font-t3-medium text-foreground">{props.label}</Text>
           {props.instanceLabel !== props.label ? (
-            <Text className="shrink text-xs text-foreground-tertiary" numberOfLines={1}>
-              · {props.instanceLabel}
-            </Text>
+            <AccountInstanceLabel key={props.instanceLabel} value={props.instanceLabel} />
           ) : null}
           {props.detail ? (
             <Text className="shrink text-sm text-foreground-muted" numberOfLines={1}>
@@ -168,13 +189,13 @@ const OUTCOME_TEXT: Record<ProviderConsumeResetCreditOutcome, string> = {
  */
 export function ResetCredits(props: {
   readonly environmentId: EnvironmentId;
-  readonly instanceId: ProviderInstanceId;
+  readonly input: ProviderConsumeResetCreditInput;
   readonly credits: ServerProviderResetCredits;
   readonly now: number;
   /** A smaller pill for the composer card. */
   readonly dense?: boolean;
 }) {
-  const { environmentId, instanceId, credits, now, dense = false } = props;
+  const { environmentId, input, credits, now, dense = false } = props;
   const consume = useAtomCommand(serverEnvironment.consumeResetCredit, {
     reportFailure: false,
   });
@@ -195,10 +216,10 @@ export function ResetCredits(props: {
   const redeem = async () => {
     setBusy(true);
     setStatus(null);
-    const result = await consume({ environmentId, input: { instanceId } });
+    const result = await consume({ environmentId, input });
     setBusy(false);
     if (result._tag === "Success") {
-      setStatus(OUTCOME_TEXT[result.value.outcome]);
+      setStatus(result.value.warning ?? OUTCOME_TEXT[result.value.outcome]);
       return;
     }
     setStatus(

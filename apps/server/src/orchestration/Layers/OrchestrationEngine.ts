@@ -215,7 +215,8 @@ const makeOrchestrationEngine = Effect.gen(function* () {
         // Command snapshots omit activities at startup and cap them while running.
         // Read this request's durable state before deciding how to send the answer.
         const userInputActivity =
-          envelope.command.type === "thread.user-input.respond"
+          envelope.command.type === "thread.user-input.respond" ||
+          envelope.command.type === "thread.user-input.dismiss"
             ? yield* projectionSnapshotQuery.getUserInputActivity(envelope.command)
             : Option.none();
         const eventBase = yield* decideOrchestrationCommand({

@@ -21,7 +21,7 @@ import { executeAuthenticatedEnvironmentHttpRequest } from "./environmentHttpAut
 
 const DEFAULT_PULL_REQUEST_DIFF_TIMEOUT_MS = 60_000;
 
-export class PullRequestDiffCredentialRejectedError extends Schema.TaggedErrorClass<PullRequestDiffCredentialRejectedError>()(
+export class PullRequestDiffCredentialRejectedError extends Schema.TaggedError<PullRequestDiffCredentialRejectedError>()(
   "PullRequestDiffCredentialRejectedError",
   {
     repository: Schema.String,

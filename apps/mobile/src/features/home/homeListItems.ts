@@ -173,7 +173,7 @@ export function buildHomeListLayout(input: {
     for (const [pendingIndex, pendingTask] of group.pendingTasks.entries()) {
       items.push({
         type: "pending-task",
-        key: `pending-task:${pendingTask.message.messageId}`,
+        key: pendingTask.key,
         pendingTask,
         isLast:
           pendingIndex === group.pendingTasks.length - 1 &&

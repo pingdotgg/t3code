@@ -105,11 +105,8 @@ export type Settings = Resource<
  *
  * Only one `Settings` resource per zone makes sense — two
  * instances managing the same zone would fight over the singleton.
- * @resource
- * @product Page Shield
- * @category Application Security
- * @section Managing Page Shield
- * @example Enable Page Shield on a zone
+ * ### Managing Page Shield
+ * **Example:** Enable Page Shield on a zone
  * ```typescript
  * const zone = yield* Cloudflare.Zone.Zone("Site", { name: "example.com" });
  *
@@ -118,7 +115,7 @@ export type Settings = Resource<
  * });
  * ```
  *
- * @example Analyze connection URL paths too
+ * **Example:** Analyze connection URL paths too
  * ```typescript
  * yield* Cloudflare.PageShield.Settings("PageShield", {
  *   zoneId: zone.zoneId,
@@ -126,7 +123,7 @@ export type Settings = Resource<
  * });
  * ```
  *
- * @example Report CSP violations to the zone instead of Cloudflare
+ * **Example:** Report CSP violations to the zone instead of Cloudflare
  * ```typescript
  * yield* Cloudflare.PageShield.Settings("PageShield", {
  *   zoneId: zone.zoneId,
@@ -135,6 +132,10 @@ export type Settings = Resource<
  * ```
  *
  * @see https://developers.cloudflare.com/page-shield/
+ *
+ * @resource
+ * @product Page Shield
+ * @category Application Security
  */
 export const Settings = Resource<Settings>(TypeId);
 

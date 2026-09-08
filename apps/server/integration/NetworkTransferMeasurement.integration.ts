@@ -12,7 +12,7 @@ import * as Scope from "effect/Scope";
 import { RpcClient, RpcSerialization } from "effect/unstable/rpc";
 import * as Socket from "effect/unstable/socket/Socket";
 
-export class TransferHttpRequestError extends Schema.TaggedErrorClass<TransferHttpRequestError>()(
+export class TransferHttpRequestError extends Schema.TaggedError<TransferHttpRequestError>()(
   "TransferHttpRequestError",
   {
     url: Schema.String,

@@ -70,11 +70,20 @@ export const make = (options: {
  * Creates an OTLP resource from explicit options and OpenTelemetry
  * configuration.
  *
+ * **When to use**
+ *
+ * Use when resource metadata may be configured in code or by the deployment
+ * environment. To let operators set the service identity, omit `serviceName`,
+ * `serviceVersion`, and their matching attributes, then use
+ * `OTEL_SERVICE_NAME` and `OTEL_RESOURCE_ATTRIBUTES`.
+ *
  * **Details**
  *
- * `OTEL_RESOURCE_ATTRIBUTES`, `OTEL_SERVICE_NAME`, and
- * `OTEL_SERVICE_VERSION` override explicit options; missing required
- * configuration is converted to a defect.
+ * Explicit `serviceName` and `serviceVersion` options take precedence over
+ * matching explicit attributes. Explicit attributes take precedence over
+ * environment variables. `OTEL_SERVICE_NAME` and `OTEL_SERVICE_VERSION` take
+ * precedence over matching attributes in `OTEL_RESOURCE_ATTRIBUTES`. Missing
+ * required configuration is converted to a defect.
  *
  * @category constructors
  * @since 4.0.0
@@ -91,24 +100,24 @@ export const fromConfig: (
   readonly attributes?: Record<string, unknown> | undefined
 }) {
   const env = yield* Config.schema(
-    Schema.UndefinedOr(Config.Record(Schema.String, Schema.String)),
+    Schema.UndefinedOr(Config.Record(Schema.StringFromUriComponent, Schema.StringFromUriComponent)),
     "OTEL_RESOURCE_ATTRIBUTES"
   )
 
-  const serviceName = (yield* Config.schema(Schema.UndefinedOr(Schema.String), "OTEL_SERVICE_NAME"))
-    ?? env?.["service.name"] as string | undefined
+  const serviceName = options?.serviceName
     ?? options?.attributes?.["service.name"] as string | undefined
-    ?? options?.serviceName
+    ?? (yield* Config.schema(Schema.UndefinedOr(Schema.String), "OTEL_SERVICE_NAME"))
+    ?? env?.["service.name"] as string | undefined
     ?? (yield* Config.string("OTEL_SERVICE_NAME"))
 
-  const serviceVersion = (yield* Config.schema(Schema.UndefinedOr(Schema.String), "OTEL_SERVICE_VERSION"))
-    ?? env?.["service.version"] as string | undefined
+  const serviceVersion = options?.serviceVersion
     ?? options?.attributes?.["service.version"] as string | undefined
-    ?? options?.serviceVersion
+    ?? (yield* Config.schema(Schema.UndefinedOr(Schema.String), "OTEL_SERVICE_VERSION"))
+    ?? env?.["service.version"] as string | undefined
 
   const attributes = {
-    ...options?.attributes,
-    ...env
+    ...env,
+    ...options?.attributes
   }
 
   delete attributes["service.name"]
@@ -133,7 +142,7 @@ export const fromConfig: (
  *
  * Throws if the resource does not contain a string `service.name` attribute.
  *
- * @category Attributes
+ * @category attributes
  * @since 4.0.0
  */
 export const serviceNameUnsafe = (resource: Resource): string => {
@@ -149,7 +158,7 @@ export const serviceNameUnsafe = (resource: Resource): string => {
 /**
  * Converts key/value entries into OTLP `KeyValue` attributes.
  *
- * @category Attributes
+ * @category attributes
  * @since 4.0.0
  */
 export const entriesToAttributes = (entries: Iterable<[string, unknown]>): Array<KeyValue> => {
@@ -171,7 +180,7 @@ export const entriesToAttributes = (entries: Iterable<[string, unknown]>): Array
  * Arrays are converted recursively, primitive values use their matching OTLP
  * fields, and unsupported values are formatted as strings.
  *
- * @category Attributes
+ * @category attributes
  * @since 4.0.0
  */
 export const unknownToAttributeValue = (value: unknown): AnyValue => {
@@ -189,7 +198,7 @@ export const unknownToAttributeValue = (value: unknown): AnyValue => {
       }
     case "bigint":
       return {
-        intValue: Number(value)
+        intValue: String(value)
       }
     case "number":
       return Number.isInteger(value)
@@ -235,7 +244,7 @@ export interface AnyValue {
   /** AnyValue boolValue */
   boolValue?: boolean | null
   /** AnyValue intValue */
-  intValue?: number | null
+  intValue?: string | number | null
   /** AnyValue doubleValue */
   doubleValue?: number | null
   /** AnyValue arrayValue */

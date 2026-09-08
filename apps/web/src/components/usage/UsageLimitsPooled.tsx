@@ -235,7 +235,7 @@ function PoolSegment({
   const [open, setOpen] = useState(false);
   const remaining = remainingPercent(window);
   const resetsIn = formatResetsIn(window, now);
-  const credits = account.redeem ? (account.limits.resetCredits?.availableCount ?? 0) : 0;
+  const credits = account.limits.resetCredits?.availableCount ?? 0;
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger
@@ -340,7 +340,7 @@ function LegendRow({
 }) {
   const remaining = remainingPercent(window);
   const resetsIn = formatResetsIn(window, now);
-  const credits = account.redeem ? (account.limits.resetCredits?.availableCount ?? 0) : 0;
+  const credits = account.limits.resetCredits?.availableCount ?? 0;
   return (
     <PopoverTrigger
       style={{ gridColumn: "1 / -1", gridRow: index + 1 }}
@@ -395,7 +395,7 @@ function RedeemableSegmentPopup({
   readonly redeemAt: NonNullable<LimitAccount["redeem"]>;
   readonly closePopover: () => void;
 }) {
-  const redeem = useResetCredit(redeemAt.environmentId, redeemAt.instanceId);
+  const redeem = useResetCredit(redeemAt.environmentId, redeemAt.input);
   return (
     <>
       <PopoverPopup side="top" sideOffset={6}>
@@ -449,28 +449,29 @@ function PoolBar({
     <div className="@container/pool min-w-0">
       <div
         className="grid gap-x-1 gap-y-1"
-        style={{ gridTemplateColumns: `repeat(${pool.members.length}, minmax(0, 1fr))` }}
+        style={{ gridTemplateColumns: `repeat(${pool.columns.length}, minmax(0, 1fr))` }}
       >
-        {pool.members.map(({ account, window }, position) => (
-          <PoolSegment
-            key={account.key}
-            account={account}
-            window={window}
-            reset={restores.get(account.key)}
-            color={color}
-            now={now}
-            index={position + 1}
-          />
-        ))}
+        {pool.columns.map((member, position) =>
+          member.window ? (
+            <PoolSegment
+              key={member.account.key}
+              account={member.account}
+              window={member.window}
+              reset={restores.get(member.account.key)}
+              color={color}
+              now={now}
+              index={position + 1}
+            />
+          ) : null,
+        )}
       </div>
     </div>
   );
 }
 
 /**
- * Big pooled number and the segment bar. The bar is sorted by reset, so who
- * refills next is its left edge; the exact time and share restored live in
- * each segment's popover rather than a list restating the bar.
+ * Big pooled number and the segment bar. Accounts keep the same column across
+ * windows; each segment's popover shows its own reset time and share restored.
  */
 function PoolWindowCard({
   pool,

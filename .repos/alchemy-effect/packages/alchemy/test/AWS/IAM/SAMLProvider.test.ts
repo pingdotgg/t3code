@@ -6,11 +6,7 @@ import * as IAM from "@distilled.cloud/aws/iam";
 import { describe, expect } from "alchemy-test";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
-import {
-  testPrivateKey,
-  testSamlMetadataDocument,
-  testSamlProviderName,
-} from "./fixtures.ts";
+import { testPrivateKey, testSamlMetadataDocument } from "./fixtures.ts";
 
 const { test } = Test.make({ providers: AWS.providers() });
 
@@ -22,7 +18,6 @@ describe("AWS.IAM.SAMLProvider", () => {
       const deployed = yield* stack.deploy(
         Effect.gen(function* () {
           return yield* SAMLProvider("ListResource", {
-            name: testSamlProviderName,
             samlMetadataDocument: testSamlMetadataDocument,
             // Redacted prop — unwrapped to the wire private key at create.
             assertionEncryptionMode: "Allowed",

@@ -12,9 +12,8 @@ export interface ListLFTagsRequest extends lf.ListLFTagsRequest {}
  *
  * Lists the LF-tag definitions visible to the caller. Provide the
  * implementation with `Effect.provide(AWS.LakeFormation.ListLFTagsHttp)`.
- * @binding
- * @section Reading LF-Tags
- * @example List Visible Tag Definitions
+ * ### Reading LF-Tags
+ * **Example:** List Visible Tag Definitions
  * ```typescript
  * // init — account-level binding takes no resource
  * const listLFTags = yield* AWS.LakeFormation.ListLFTags();
@@ -22,6 +21,8 @@ export interface ListLFTagsRequest extends lf.ListLFTagsRequest {}
  * // runtime
  * const { LFTags } = yield* listLFTags();
  * ```
+ *
+ * @binding
  */
 export interface ListLFTags extends Binding.Service<
   ListLFTags,

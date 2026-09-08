@@ -163,13 +163,13 @@ export const createPlugins = (pathService: Path.Path, options: PluginOptions = {
       if (output.title !== undefined) {
         visualizerOptions.title = output.title
       }
-      plugins.push(visualizer(visualizerOptions))
+      plugins.push(visualizer(visualizerOptions) as unknown as Plugin)
     }
   } else if (resolved.visualize) {
     plugins.push(visualizer({
       open: true,
       gzipSize: true
-    }))
+    }) as unknown as Plugin)
   }
 
   return plugins

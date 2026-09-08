@@ -38,7 +38,7 @@ export interface ProjectSetupScriptRunnerInput {
   readonly preferredTerminalId?: string;
 }
 
-export class ProjectSetupScriptOperationError extends Schema.TaggedErrorClass<ProjectSetupScriptOperationError>()(
+export class ProjectSetupScriptOperationError extends Schema.TaggedError<ProjectSetupScriptOperationError>()(
   "ProjectSetupScriptOperationError",
   {
     threadId: Schema.String,
@@ -54,7 +54,7 @@ export class ProjectSetupScriptOperationError extends Schema.TaggedErrorClass<Pr
   }
 }
 
-export class ProjectSetupScriptProjectNotFoundError extends Schema.TaggedErrorClass<ProjectSetupScriptProjectNotFoundError>()(
+export class ProjectSetupScriptProjectNotFoundError extends Schema.TaggedError<ProjectSetupScriptProjectNotFoundError>()(
   "ProjectSetupScriptProjectNotFoundError",
   {
     threadId: Schema.String,

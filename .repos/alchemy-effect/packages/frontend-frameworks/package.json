@@ -1,0 +1,472 @@
+{
+  "name": "@alchemy.run/frontend-frameworks",
+  "version": "2.0.0-beta.76",
+  "description": "Framework build and development integrations for Alchemy.",
+  "homepage": "https://alchemy.run",
+  "license": "Apache-2.0",
+  "author": "Sam Goodwin <sam@alchemy.run>",
+  "keywords": [
+    "alchemy",
+    "cloudflare",
+    "effect",
+    "infrastructure-as-code"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alchemy-run/alchemy.git",
+    "directory": "packages/frontend-frameworks"
+  },
+  "bugs": {
+    "url": "https://github.com/alchemy-run/alchemy/issues"
+  },
+  "type": "module",
+  "sideEffects": false,
+  "files": [
+    "src",
+    "dist",
+    "NOTICE",
+    "THIRD_PARTY_LICENSES.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsdown && tsc -b --force tsconfig.json && cp src/nextjs/runner.mjs dist/nextjs/runner.mjs && bun ../../scripts/copy-package-files.ts frontend-frameworks",
+    "clean": "rm -rf dist",
+    "test": "vitest run",
+    "test:core": "vitest run src/core/test",
+    "test:astro": "vitest run src/astro/test",
+    "test:nextjs": "vitest run src/nextjs/test",
+    "test:nuxt": "vitest run src/nuxt/test",
+    "test:octane": "vitest run src/octane/test",
+    "test:react-router": "vitest run src/react-router/test",
+    "test:solidstart": "vitest run src/solidstart/test",
+    "test:sveltekit": "vitest run src/sveltekit/test",
+    "test:tanstack-start": "vitest run src/tanstack-start/test",
+    "test:vite": "vitest run src/vite/test",
+    "test:waku": "vitest run src/waku/test",
+    "test:vocs": "vitest run src/vocs/test",
+    "typecheck": "tsc -b tsconfig.json && tsc --noEmit -p tsconfig.test.json"
+  },
+  "dependencies": {
+    "@alchemy.run/cloudflare-runtime": "workspace:*",
+    "@distilled.cloud/cloudflare": "workspace:*",
+    "@effect/platform-node": "catalog:effect",
+    "esbuild": "catalog:cloudflare-runtime",
+    "fast-glob": "catalog:cloudflare-runtime",
+    "rolldown": "catalog:build"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "catalog:cloudflare-runtime",
+    "@effect/platform-bun": "catalog:effect",
+    "@astrojs/internal-helpers": "catalog:frontend",
+    "@astrojs/underscore-redirects": "catalog:frontend",
+    "@octanejs/vite-plugin": "catalog:frontend",
+    "@opennextjs/cloudflare": "catalog:frontend",
+    "@sveltejs/kit": "catalog:frontend",
+    "@vitejs/plugin-react": "catalog:frontend",
+    "astro": "catalog:frontend",
+    "effect": "catalog:effect",
+    "hono": "catalog:frontend",
+    "nitropack": "catalog:frontend",
+    "nuxt": "catalog:frontend",
+    "tsdown": "catalog:build",
+    "vite": "catalog:build",
+    "vitest": "catalog:testing",
+    "waku": "catalog:frontend",
+    "vocs": "catalog:frontend"
+  },
+  "peerDependencies": {
+    "@effect/platform-bun": "catalog:effect",
+    "@effect/platform-node": "catalog:effect",
+    "@octanejs/vite-plugin": "catalog:cloudflare-runtime",
+    "@opennextjs/cloudflare": "catalog:frontend",
+    "@sveltejs/kit": "catalog:cloudflare-runtime",
+    "@vitejs/plugin-react": "catalog:frontend",
+    "astro": "catalog:cloudflare-runtime",
+    "effect": "catalog:effect",
+    "hono": "catalog:frontend",
+    "nuxt": "catalog:cloudflare-runtime",
+    "vite": "catalog:cloudflare-runtime",
+    "waku": "catalog:frontend",
+    "vocs": "catalog:frontend"
+  },
+  "peerDependenciesMeta": {
+    "@effect/platform-bun": {
+      "optional": true
+    },
+    "@effect/platform-node": {
+      "optional": true
+    },
+    "@octanejs/vite-plugin": {
+      "optional": true
+    },
+    "@opennextjs/cloudflare": {
+      "optional": true
+    },
+    "@sveltejs/kit": {
+      "optional": true
+    },
+    "@vitejs/plugin-react": {
+      "optional": true
+    },
+    "astro": {
+      "optional": true
+    },
+    "hono": {
+      "optional": true
+    },
+    "nuxt": {
+      "optional": true
+    },
+    "vite": {
+      "optional": true
+    },
+    "waku": {
+      "optional": true
+    },
+    "vocs": {
+      "optional": true
+    }
+  },
+  "exports": {
+    "./aws-lambda": {
+      "types": "./dist/aws-lambda/index.d.ts",
+      "bun": "./dist/aws-lambda/index.js",
+      "worker": "./dist/aws-lambda/index.js",
+      "import": "./dist/aws-lambda/index.js"
+    },
+    "./core": {
+      "types": "./dist/core/index.d.ts",
+      "bun": "./dist/core/index.js",
+      "worker": "./dist/core/index.js",
+      "import": "./dist/core/index.js"
+    },
+    "./astro": {
+      "types": "./dist/astro/index.d.ts",
+      "bun": "./dist/astro/index.js",
+      "worker": "./dist/astro/index.js",
+      "import": "./dist/astro/index.js"
+    },
+    "./astro/aws": {
+      "types": "./dist/astro/aws.d.ts",
+      "bun": "./dist/astro/aws.js",
+      "worker": "./dist/astro/aws.js",
+      "import": "./dist/astro/aws.js"
+    },
+    "./astro/node": {
+      "types": "./dist/astro/node.d.ts",
+      "bun": "./dist/astro/node.js",
+      "worker": "./dist/astro/node.js",
+      "import": "./dist/astro/node.js"
+    },
+    "./astro/cloudflare": {
+      "types": "./dist/astro/cloudflare.d.ts",
+      "bun": "./dist/astro/cloudflare.js",
+      "worker": "./dist/astro/cloudflare.js",
+      "import": "./dist/astro/cloudflare.js"
+    },
+    "./astro/source": {
+      "types": "./dist/astro/source.d.ts",
+      "bun": "./dist/astro/source.js",
+      "worker": "./dist/astro/source.js",
+      "import": "./dist/astro/source.js"
+    },
+    "./astro/entrypoints/aws-server": {
+      "types": "./dist/astro/entrypoints/aws-server.d.ts",
+      "bun": "./dist/astro/entrypoints/aws-server.js",
+      "worker": "./dist/astro/entrypoints/aws-server.js",
+      "import": "./dist/astro/entrypoints/aws-server.js"
+    },
+    "./astro/entrypoints/node-server": {
+      "types": "./dist/astro/entrypoints/node-server.d.ts",
+      "bun": "./dist/astro/entrypoints/node-server.js",
+      "worker": "./dist/astro/entrypoints/node-server.js",
+      "import": "./dist/astro/entrypoints/node-server.js"
+    },
+    "./astro/entrypoints/server": {
+      "types": "./dist/astro/runtime/entrypoints/server.d.ts",
+      "bun": "./dist/astro/runtime/entrypoints/server.js",
+      "worker": "./dist/astro/runtime/entrypoints/server.js",
+      "import": "./dist/astro/runtime/entrypoints/server.js"
+    },
+    "./astro/entrypoints/server.js": {
+      "types": "./dist/astro/runtime/entrypoints/server.d.ts",
+      "bun": "./dist/astro/runtime/entrypoints/server.js",
+      "worker": "./dist/astro/runtime/entrypoints/server.js",
+      "import": "./dist/astro/runtime/entrypoints/server.js"
+    },
+    "./astro/image-passthrough-endpoint": {
+      "types": "./dist/astro/runtime/entrypoints/image-passthrough-endpoint.d.ts",
+      "bun": "./dist/astro/runtime/entrypoints/image-passthrough-endpoint.js",
+      "worker": "./dist/astro/runtime/entrypoints/image-passthrough-endpoint.js",
+      "import": "./dist/astro/runtime/entrypoints/image-passthrough-endpoint.js"
+    },
+    "./astro/types.d.ts": "./src/astro/types.d.ts",
+    "./nextjs": {
+      "types": "./dist/nextjs/index.d.ts",
+      "bun": "./dist/nextjs/index.js",
+      "worker": "./dist/nextjs/index.js",
+      "import": "./dist/nextjs/index.js"
+    },
+    "./nextjs/aws": {
+      "types": "./dist/nextjs/aws.d.ts",
+      "bun": "./dist/nextjs/aws.js",
+      "worker": "./dist/nextjs/aws.js",
+      "import": "./dist/nextjs/aws.js"
+    },
+    "./nextjs/node": {
+      "types": "./dist/nextjs/node.d.ts",
+      "bun": "./dist/nextjs/node.js",
+      "worker": "./dist/nextjs/node.js",
+      "import": "./dist/nextjs/node.js"
+    },
+    "./nextjs/source": {
+      "types": "./dist/nextjs/source.d.ts",
+      "bun": "./dist/nextjs/source.js",
+      "worker": "./dist/nextjs/source.js",
+      "import": "./dist/nextjs/source.js"
+    },
+    "./nuxt": {
+      "types": "./dist/nuxt/index.d.ts",
+      "bun": "./dist/nuxt/index.js",
+      "worker": "./dist/nuxt/index.js",
+      "import": "./dist/nuxt/index.js"
+    },
+    "./nuxt/aws": {
+      "types": "./dist/nuxt/aws.d.ts",
+      "bun": "./dist/nuxt/aws.js",
+      "worker": "./dist/nuxt/aws.js",
+      "import": "./dist/nuxt/aws.js"
+    },
+    "./nuxt/node": {
+      "types": "./dist/nuxt/node.d.ts",
+      "bun": "./dist/nuxt/node.js",
+      "worker": "./dist/nuxt/node.js",
+      "import": "./dist/nuxt/node.js"
+    },
+    "./nuxt/cloudflare": {
+      "types": "./dist/nuxt/cloudflare.d.ts",
+      "bun": "./dist/nuxt/cloudflare.js",
+      "worker": "./dist/nuxt/cloudflare.js",
+      "import": "./dist/nuxt/cloudflare.js"
+    },
+    "./nuxt/source": {
+      "types": "./dist/nuxt/source.d.ts",
+      "bun": "./dist/nuxt/source.js",
+      "worker": "./dist/nuxt/source.js",
+      "import": "./dist/nuxt/source.js"
+    },
+    "./octane": {
+      "types": "./dist/octane/index.d.ts",
+      "bun": "./dist/octane/index.js",
+      "worker": "./dist/octane/index.js",
+      "import": "./dist/octane/index.js"
+    },
+    "./octane/aws": {
+      "types": "./dist/octane/aws.d.ts",
+      "bun": "./dist/octane/aws.js",
+      "worker": "./dist/octane/aws.js",
+      "import": "./dist/octane/aws.js"
+    },
+    "./octane/aws-adapter": {
+      "types": "./dist/octane/aws-adapter.d.ts",
+      "bun": "./dist/octane/aws-adapter.js",
+      "worker": "./dist/octane/aws-adapter.js",
+      "import": "./dist/octane/aws-adapter.js"
+    },
+    "./octane/node": {
+      "types": "./dist/octane/node.d.ts",
+      "bun": "./dist/octane/node.js",
+      "worker": "./dist/octane/node.js",
+      "import": "./dist/octane/node.js"
+    },
+    "./octane/node-adapter": {
+      "types": "./dist/octane/node-adapter.d.ts",
+      "bun": "./dist/octane/node-adapter.js",
+      "worker": "./dist/octane/node-adapter.js",
+      "import": "./dist/octane/node-adapter.js"
+    },
+    "./octane/cloudflare": {
+      "types": "./dist/octane/cloudflare.d.ts",
+      "bun": "./dist/octane/cloudflare.js",
+      "worker": "./dist/octane/cloudflare.js",
+      "import": "./dist/octane/cloudflare.js"
+    },
+    "./octane/source": {
+      "types": "./dist/octane/source.d.ts",
+      "bun": "./dist/octane/source.js",
+      "worker": "./dist/octane/source.js",
+      "import": "./dist/octane/source.js"
+    },
+    "./react-router": {
+      "types": "./dist/react-router/index.d.ts",
+      "bun": "./dist/react-router/index.js",
+      "worker": "./dist/react-router/index.js",
+      "import": "./dist/react-router/index.js"
+    },
+    "./react-router/aws": {
+      "types": "./dist/react-router/aws.d.ts",
+      "bun": "./dist/react-router/aws.js",
+      "worker": "./dist/react-router/aws.js",
+      "import": "./dist/react-router/aws.js"
+    },
+    "./react-router/node": {
+      "types": "./dist/react-router/node.d.ts",
+      "bun": "./dist/react-router/node.js",
+      "worker": "./dist/react-router/node.js",
+      "import": "./dist/react-router/node.js"
+    },
+    "./solidstart": {
+      "types": "./dist/solidstart/index.d.ts",
+      "bun": "./dist/solidstart/index.js",
+      "worker": "./dist/solidstart/index.js",
+      "import": "./dist/solidstart/index.js"
+    },
+    "./solidstart/aws": {
+      "types": "./dist/solidstart/aws.d.ts",
+      "bun": "./dist/solidstart/aws.js",
+      "worker": "./dist/solidstart/aws.js",
+      "import": "./dist/solidstart/aws.js"
+    },
+    "./solidstart/node": {
+      "types": "./dist/solidstart/node.d.ts",
+      "bun": "./dist/solidstart/node.js",
+      "worker": "./dist/solidstart/node.js",
+      "import": "./dist/solidstart/node.js"
+    },
+    "./sveltekit": {
+      "types": "./dist/sveltekit/index.d.ts",
+      "bun": "./dist/sveltekit/index.js",
+      "worker": "./dist/sveltekit/index.js",
+      "import": "./dist/sveltekit/index.js"
+    },
+    "./sveltekit/aws": {
+      "types": "./dist/sveltekit/aws.d.ts",
+      "bun": "./dist/sveltekit/aws.js",
+      "worker": "./dist/sveltekit/aws.js",
+      "import": "./dist/sveltekit/aws.js"
+    },
+    "./sveltekit/node": {
+      "types": "./dist/sveltekit/node.d.ts",
+      "bun": "./dist/sveltekit/node.js",
+      "worker": "./dist/sveltekit/node.js",
+      "import": "./dist/sveltekit/node.js"
+    },
+    "./sveltekit/cloudflare": {
+      "types": "./dist/sveltekit/cloudflare.d.ts",
+      "bun": "./dist/sveltekit/cloudflare.js",
+      "worker": "./dist/sveltekit/cloudflare.js",
+      "import": "./dist/sveltekit/cloudflare.js"
+    },
+    "./sveltekit/source": {
+      "types": "./dist/sveltekit/source.d.ts",
+      "bun": "./dist/sveltekit/source.js",
+      "worker": "./dist/sveltekit/source.js",
+      "import": "./dist/sveltekit/source.js"
+    },
+    "./tanstack-start": {
+      "types": "./dist/tanstack-start/index.d.ts",
+      "bun": "./dist/tanstack-start/index.js",
+      "worker": "./dist/tanstack-start/index.js",
+      "import": "./dist/tanstack-start/index.js"
+    },
+    "./tanstack-start/aws": {
+      "types": "./dist/tanstack-start/aws.d.ts",
+      "bun": "./dist/tanstack-start/aws.js",
+      "worker": "./dist/tanstack-start/aws.js",
+      "import": "./dist/tanstack-start/aws.js"
+    },
+    "./tanstack-start/node": {
+      "types": "./dist/tanstack-start/node.d.ts",
+      "bun": "./dist/tanstack-start/node.js",
+      "worker": "./dist/tanstack-start/node.js",
+      "import": "./dist/tanstack-start/node.js"
+    },
+    "./vite": {
+      "types": "./dist/vite/index.d.ts",
+      "bun": "./dist/vite/index.js",
+      "worker": "./dist/vite/index.js",
+      "import": "./dist/vite/index.js"
+    },
+    "./vite/aws": {
+      "types": "./dist/vite/aws.d.ts",
+      "bun": "./dist/vite/aws.js",
+      "worker": "./dist/vite/aws.js",
+      "import": "./dist/vite/aws.js"
+    },
+    "./vite/node": {
+      "types": "./dist/vite/node.d.ts",
+      "bun": "./dist/vite/node.js",
+      "worker": "./dist/vite/node.js",
+      "import": "./dist/vite/node.js"
+    },
+    "./waku": {
+      "types": "./dist/waku/index.d.ts",
+      "bun": "./dist/waku/index.js",
+      "worker": "./dist/waku/index.js",
+      "import": "./dist/waku/index.js"
+    },
+    "./waku/adapter": {
+      "types": "./dist/waku/adapter.d.ts",
+      "bun": "./dist/waku/adapter.js",
+      "worker": "./dist/waku/adapter.js",
+      "import": "./dist/waku/adapter.js"
+    },
+    "./waku/aws": {
+      "types": "./dist/waku/aws.d.ts",
+      "bun": "./dist/waku/aws.js",
+      "worker": "./dist/waku/aws.js",
+      "import": "./dist/waku/aws.js"
+    },
+    "./waku/node": {
+      "types": "./dist/waku/node.d.ts",
+      "bun": "./dist/waku/node.js",
+      "worker": "./dist/waku/node.js",
+      "import": "./dist/waku/node.js"
+    },
+    "./waku/aws-adapter": {
+      "types": "./dist/waku/aws-adapter.d.ts",
+      "bun": "./dist/waku/aws-adapter.js",
+      "worker": "./dist/waku/aws-adapter.js",
+      "import": "./dist/waku/aws-adapter.js"
+    },
+    "./waku/cloudflare": {
+      "types": "./dist/waku/cloudflare.d.ts",
+      "bun": "./dist/waku/cloudflare.js",
+      "worker": "./dist/waku/cloudflare.js",
+      "import": "./dist/waku/cloudflare.js"
+    },
+    "./waku/source": {
+      "types": "./dist/waku/source.d.ts",
+      "bun": "./dist/waku/source.js",
+      "worker": "./dist/waku/source.js",
+      "import": "./dist/waku/source.js"
+    },
+    "./vocs": {
+      "types": "./dist/vocs/index.d.ts",
+      "bun": "./dist/vocs/index.js",
+      "worker": "./dist/vocs/index.js",
+      "import": "./dist/vocs/index.js"
+    },
+    "./vocs/source": {
+      "types": "./dist/vocs/source.d.ts",
+      "bun": "./dist/vocs/source.js",
+      "worker": "./dist/vocs/source.js",
+      "import": "./dist/vocs/source.js"
+    },
+    "./vocs/cloudflare": {
+      "types": "./dist/vocs/cloudflare.d.ts",
+      "bun": "./dist/vocs/cloudflare.js",
+      "worker": "./dist/vocs/cloudflare.js",
+      "import": "./dist/vocs/cloudflare.js"
+    },
+    "./vocs/node": {
+      "types": "./dist/vocs/node.d.ts",
+      "bun": "./dist/vocs/node.js",
+      "worker": "./dist/vocs/node.js",
+      "import": "./dist/vocs/node.js"
+    },
+    "./package.json": "./package.json"
+  }
+}

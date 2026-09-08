@@ -11,7 +11,7 @@ export class TestFunction extends Lambda.Function<Lambda.Function>()(
 export const TestFunctionLive = TestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
   },
   Effect.gen(function* () {
     return {

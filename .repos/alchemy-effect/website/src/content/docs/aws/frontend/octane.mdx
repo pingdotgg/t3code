@@ -1,0 +1,161 @@
+---
+title: Octane
+description: Deploy an OctaneJS app to AWS with AWS.Website.Octane — SSR on a streaming Lambda Function URL, assets on S3 + CloudFront, and Octane's own Vite dev server under alchemy dev.
+sidebar:
+  order: 14
+---
+
+import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+
+export const devDeps = "@alchemy.run/frontend-frameworks";
+
+`AWS.Website.Octane` deploys an [OctaneJS](https://octanejs.dev)
+fullstack app to AWS. Octane wraps Vite, so the resource is
+deliberately thin: it runs your project's own `vite build` — Octane's
+plugin builds the client bundle and the self-contained SSR server
+bundle, and the AWS deploy target's finishing pass wraps its fetch
+handler as a streaming Lambda handler. The server deploys on a Lambda
+Function URL; `dist/client` is served from a private S3 bucket
+through CloudFront. No CloudFormation, no build command to run.
+
+## Install
+
+The build integration is not bundled with alchemy. Install
+`@alchemy.run/frontend-frameworks`; the resource loads the package's
+`/octane` and `/octane/aws` exports from your project at deploy time.
+It is only used at build time, so a dev dependency is enough:
+
+<Tabs syncKey="pkgManager">
+  <TabItem label="bun" icon="bun">
+    <Code code={`bun add -d ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="npm" icon="npm">
+    <Code code={`npm install -D ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="pnpm" icon="pnpm">
+    <Code code={`pnpm add -D ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="yarn" icon="seti:yarn">
+    <Code code={`yarn add -D ${devDeps}`} lang="sh" />
+  </TabItem>
+</Tabs>
+
+## Configure Octane
+
+Your `octane.config.ts` picks the deploy target, exactly as in
+Octane's own deployment story — select the AWS marker adapter:
+
+```typescript
+// octane.config.ts
+import { aws } from "@alchemy.run/frontend-frameworks/octane/aws-adapter";
+import { defineConfig, RenderRoute } from "@octanejs/vite-plugin";
+
+export default defineConfig({
+  adapter: aws(),
+  router: {
+    routes: [new RenderRoute({ path: "/", entry: ["App", "/src/App.tsx"] })],
+  },
+});
+```
+
+A missing or foreign adapter fails the deploy with an actionable
+error.
+
+## Declare the Website
+
+Declare the site as a module-level const (rather than inline in the
+Stack):
+
+```typescript
+// alchemy.run.ts
+import * as AWS from "alchemy/AWS";
+
+export const Website = AWS.Website.Octane("Website");
+```
+
+## Add it to the Stack
+
+Yield the site from your Stack and return its URL:
+
+```typescript
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as Effect from "effect/Effect";
+
+export default Alchemy.Stack(
+  "MyOctaneSite",
+  {
+    providers: AWS.providers(),
+    state: AWS.state(),
+  },
+  Effect.gen(function* () {
+    const site = yield* Website;
+    return { url: site.url };
+  }),
+);
+```
+
+## Add environment variables
+
+The server function's environment is configured under `env` — plain
+values, or outputs from other resources in the Stack:
+
+```diff lang="typescript"
+// alchemy.run.ts
+export const Website = AWS.Website.Octane("Website", {
++  env: {
++    GREETING: "Hello from alchemy",
++    API_BASE: api.url,
++  },
+});
+```
+
+The values are set on the Lambda at deploy time and injected into the
+dev server's process environment under `alchemy dev`, so server code
+reads the same values in both modes.
+
+## Read the environment in server code
+
+Octane's server runs in a plain Node Lambda, so middleware and
+`ServerRoute` handlers read the environment from `process.env`:
+
+```typescript
+// octane.config.ts
+new ServerRoute({
+  path: "/api/greeting",
+  methods: ["GET"],
+  handler: async () => {
+    return Response.json({ greeting: process.env.GREETING ?? "hello" });
+  },
+});
+```
+
+## Asset routing
+
+Octane's intended setup is asset-first with SSR on miss: exact files
+in `dist/client` serve from S3 via the CloudFront edge router without
+invoking the server, and every miss streams from Octane SSR on the
+Lambda. That is the default — there is nothing to configure.
+
+## Local dev
+
+```sh
+bun alchemy dev
+```
+
+`alchemy dev` runs Octane's own Vite dev server — the plugin's
+in-process SSR middleware serves rendering, server routes, and RPC
+with full HMR. `site.url` is the local address and no AWS resources
+are created. Wrap the site in `Alchemy.remote()` to deploy the real
+infrastructure even during dev.
+
+## Custom domain
+
+```typescript
+const site = yield* AWS.Website.Octane("Web", {
+  domain: { name: "app.example.com" },
+});
+```
+
+The hosted zone is inferred from the hostname. Pass `hostedZoneId` to
+pin it when several zones could match.

@@ -112,6 +112,10 @@ import {
   buildExpandedImagePreview,
   ExpandedImagePreview,
 } from "./ExpandedImagePreview";
+import {
+  SNAP_SHOT_ATTACHMENT_FRAME_CLASS,
+  SnapShotAttachmentDetails,
+} from "./SnapShotAttachmentDetails";
 import { ProposedPlanCard } from "./ProposedPlanCard";
 import { ChangedFilesCard } from "./ChangedFilesTree";
 import {
@@ -1428,7 +1432,12 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
             {regularImages.map((image) => (
               <div
                 key={image.id}
-                className="aspect-[4/3] overflow-hidden rounded-lg border border-border/80 bg-background/70"
+                className={cn(
+                  "bg-background/70",
+                  image.source?.kind === "snap-shot" && image.previewUrl
+                    ? SNAP_SHOT_ATTACHMENT_FRAME_CLASS
+                    : "aspect-[4/3] overflow-hidden rounded-lg border border-border/80",
+                )}
               >
                 {image.previewUrl ? (
                   <button
@@ -1452,6 +1461,9 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
                     {image.name}
                   </div>
                 )}
+                {image.previewUrl && image.source?.kind === "snap-shot" ? (
+                  <SnapShotAttachmentDetails source={image.source} />
+                ) : null}
               </div>
             ))}
             {userVideos.map((file) => (
@@ -3075,7 +3087,7 @@ function buildToolCallExpandedBody(
   viewedImagePath: string | null,
 ): string | null {
   const blocks: string[] = [];
-  const seen = new Set<string>();
+  const seen = new Set<string>([visibleLabel.trim()]);
   const addBlock = (value: string | null | undefined) => {
     const text = value?.trim();
     if (!text || seen.has(text)) return;
@@ -3286,7 +3298,9 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
     showWarningIndicator || showDestructiveRowStyle
       ? undefined
       : (workEntry.toolIcon ?? workEntry.toolSource?.icon);
-  const previewText = displayLabel ?? workEntryDisplayLabel(workEntry, workspaceRoot);
+  const previewText = workEntry.questionAnswer
+    ? "Question answer submitted"
+    : (displayLabel ?? workEntryDisplayLabel(workEntry, workspaceRoot));
   const viewedImagePath = workEntryViewedImagePath(workEntry);
   const viewedImage =
     viewedImagePath && threadRef
@@ -3297,6 +3311,7 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
       : null;
   const commandMatchesVisibleLabel = workEntry.command?.trim() === previewText.trim();
   const canExpand =
+    (showFailedIndicator && previewText.trim().length > 0) ||
     (workEntry.itemType === "mcp_tool_call" && workEntry.toolData !== undefined) ||
     Boolean(
       (!commandMatchesVisibleLabel &&
@@ -3431,6 +3446,9 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
           />
         </div>
       ) : null}
+      {workEntry.questionAnswer ? (
+        <QuestionAnswerHistory answer={workEntry.questionAnswer} />
+      ) : null}
       {expanded && canExpand && expandedBody ? (
         <div
           className="mt-1 ms-7 cursor-default rounded-md bg-muted/40 px-3 py-2"
@@ -3443,3 +3461,67 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
     </div>
   );
 });
+
+function QuestionAnswerHistory({
+  answer,
+}: {
+  answer: import("@t3tools/contracts").UserInputAttachmentAnswerPayload;
+}) {
+  const { activeThreadEnvironmentId } = use(TimelineRowCtx);
+  const attachments = useMemo(() => Object.values(answer.attachmentsByQuestionId).flat(), [answer]);
+  const resources = useMemo(
+    () =>
+      attachments.map((attachment) => ({
+        _tag: "attachment" as const,
+        attachmentId: attachment.id,
+      })),
+    [attachments],
+  );
+  const urls = useAssetUrls(activeThreadEnvironmentId, resources);
+  return (
+    <div className="ms-7 mt-2 space-y-2" onClick={stopRowToggle}>
+      {[
+        ...new Set([
+          ...Object.keys(answer.answers),
+          ...Object.keys(answer.attachmentsByQuestionId),
+        ]),
+      ].map((questionId) => (
+        <div key={questionId} className="space-y-1">
+          {answer.questionTextById?.[questionId] ? (
+            <p className="text-sm text-muted-foreground">{answer.questionTextById[questionId]}</p>
+          ) : null}
+          <p className="whitespace-pre-wrap text-sm">
+            {[answer.answers[questionId]]
+              .flat()
+              .filter((value): value is string => typeof value === "string")
+              .join(", ")}
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {(answer.attachmentsByQuestionId[questionId] ?? []).map((attachment) => {
+              const url = urls[attachments.indexOf(attachment)];
+              return (
+                <a
+                  key={attachment.id}
+                  href={url ?? undefined}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-sm underline"
+                >
+                  {attachment.type === "image" && url ? (
+                    <img
+                      src={url}
+                      alt={attachment.name}
+                      className="h-20 max-w-32 rounded object-contain"
+                    />
+                  ) : (
+                    attachment.name
+                  )}
+                </a>
+              );
+            })}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}

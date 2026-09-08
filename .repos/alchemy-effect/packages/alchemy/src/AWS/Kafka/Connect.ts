@@ -53,14 +53,15 @@ export const connectEnvPrefix = (logicalId: string): string =>
  * the cluster's VPC and allowed ingress on port 9098 by the cluster's
  * security groups. Provide the implementation with
  * `Effect.provide(AWS.Kafka.ConnectReadHttp)`.
- * @binding
- * @section Connecting to a Cluster
- * @example Resolve Consumer Connection Info inside a Function
+ * ### Connecting to a Cluster
+ * **Example:** Resolve Consumer Connection Info inside a Function
  * ```typescript
  * const connect = yield* Kafka.ConnectRead(cluster);
  * // inside a handler:
  * const { brokers, authentication } = yield* connect;
  * ```
+ *
+ * @binding
  */
 export interface ConnectRead extends Binding.Service<
   ConnectRead,
@@ -91,14 +92,15 @@ export const ConnectRead = Binding.Service<ConnectRead>(
  * the cluster's VPC and allowed ingress on port 9098 by the cluster's
  * security groups. Provide the implementation with
  * `Effect.provide(AWS.Kafka.ConnectWriteHttp)`.
- * @binding
- * @section Connecting to a Cluster
- * @example Resolve Producer Connection Info inside a Function
+ * ### Connecting to a Cluster
+ * **Example:** Resolve Producer Connection Info inside a Function
  * ```typescript
  * const connect = yield* Kafka.ConnectWrite(cluster);
  * // inside a handler:
  * const { bootstrapServers } = yield* connect;
  * ```
+ *
+ * @binding
  */
 export interface ConnectWrite extends Binding.Service<
   ConnectWrite,
@@ -127,14 +129,15 @@ export const ConnectWrite = Binding.Service<ConnectWrite>(
  * the cluster's VPC and allowed ingress on port 9098 by the cluster's
  * security groups. Provide the implementation with
  * `Effect.provide(AWS.Kafka.ConnectReadWriteHttp)`.
- * @binding
- * @section Connecting to a Cluster
- * @example Resolve Connection Info inside a Function
+ * ### Connecting to a Cluster
+ * **Example:** Resolve Connection Info inside a Function
  * ```typescript
  * const connect = yield* Kafka.ConnectReadWrite(cluster);
  * // inside a handler:
  * const { bootstrapServers, brokers, clusterArn } = yield* connect;
  * ```
+ *
+ * @binding
  */
 export interface ConnectReadWrite extends Binding.Service<
   ConnectReadWrite,

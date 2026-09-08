@@ -102,9 +102,8 @@ export interface Snapshot extends Resource<
  * it. Creation is asynchronous — the resource waits for the snapshot to reach
  * the `completed` state before returning.
  *
- * @resource
- * @section Creating a Snapshot
- * @example Snapshot a Volume
+ * ### Creating a Snapshot
+ * **Example:** Snapshot a Volume
  * ```typescript
  * const snapshot = yield* AWS.EC2.Snapshot("DailyBackup", {
  *   volumeId: volume.volumeId,
@@ -116,8 +115,8 @@ export interface Snapshot extends Resource<
  * are incremental, only blocks changed since the previous snapshot of the same
  * volume are stored.
  *
- * @section Restoring from a Snapshot
- * @example Create a Volume from a Snapshot
+ * ### Restoring from a Snapshot
+ * **Example:** Create a Volume from a Snapshot
  * ```typescript
  * const restored = yield* AWS.EC2.Volume("Restored", {
  *   availabilityZone: "us-east-1a",
@@ -128,6 +127,8 @@ export interface Snapshot extends Resource<
  * Pass a snapshot's `snapshotId` to {@link Volume} to provision a new volume
  * pre-populated with the snapshot's data — the standard backup/restore and
  * clone-across-AZ pattern.
+ *
+ * @resource
  */
 export const Snapshot = Resource<Snapshot>("AWS.EC2.Snapshot");
 

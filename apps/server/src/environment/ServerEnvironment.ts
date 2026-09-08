@@ -22,7 +22,7 @@ import * as ProcessRunner from "../processRunner.ts";
 import { resolveServerEnvironmentLabel } from "./ServerEnvironmentLabel.ts";
 import { detectServerEnvironmentMachineKind } from "./ServerEnvironmentMachine.ts";
 
-export class ServerEnvironmentIdPersistenceError extends Schema.TaggedErrorClass<ServerEnvironmentIdPersistenceError>()(
+export class ServerEnvironmentIdPersistenceError extends Schema.TaggedError<ServerEnvironmentIdPersistenceError>()(
   "ServerEnvironmentIdPersistenceError",
   {
     operation: Schema.Literals(["check", "read", "write", "initialize"]),
@@ -215,6 +215,7 @@ export const make = Effect.gen(function* () {
       repositoryIdentity: true,
       connectionProbe: true,
       attachmentUploads: true,
+      questionAttachments: true,
       fileAttachments: { maxUploadBytes: PROVIDER_SEND_TURN_MAX_FILE_BYTES },
       pullRequests: true,
       threadSettlement: true,
@@ -226,6 +227,7 @@ export const make = Effect.gen(function* () {
       usagePriceOverrides: true,
       threadPinning: true,
       threadPinReorder: true,
+      threadActiveReorder: true,
       threadTitleRegeneration: true,
       threadPullRequestLinking: true,
       environmentIcon: true,

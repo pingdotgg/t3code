@@ -69,9 +69,8 @@ export interface Archive extends Resource<
  * Deleting an archive puts it into `PENDING_DELETION` for 30 days before
  * its contents are permanently removed; the archive cannot be revived, so
  * the provider treats a pending-deletion archive as gone.
- * @resource
- * @section Creating Archives
- * @example Compliance Archive
+ * ### Creating Archives
+ * **Example:** Compliance Archive
  * ```typescript
  * import * as MailManager from "alchemy/AWS/MailManager";
  *
@@ -89,8 +88,8 @@ export interface Archive extends Resource<
  * });
  * ```
  *
- * @section Searching the Archive at Runtime
- * @example Search Archived Mail from a Lambda
+ * ### Searching the Archive at Runtime
+ * **Example:** Search Archived Mail from a Lambda
  * ```typescript
  * // init — bind the search capabilities to the archive
  * const startSearch = yield* MailManager.StartArchiveSearch(archive);
@@ -103,6 +102,8 @@ export interface Archive extends Resource<
  *   MaxResults: 100,
  * });
  * ```
+ *
+ * @resource
  */
 export const Archive = Resource<Archive>("AWS.MailManager.Archive");
 

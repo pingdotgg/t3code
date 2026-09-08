@@ -12,9 +12,8 @@ import * as Binding from "../../Binding.ts";
  * bare change id (strip a leading `/change/` from `ChangeInfo.Id`).
  * Provide the implementation with
  * `Effect.provide(AWS.Route53.GetChangeHttp)`.
- * @binding
- * @section Managing Records at Runtime
- * @example Wait for a change to propagate
+ * ### Managing Records at Runtime
+ * **Example:** Wait for a change to propagate
  * ```typescript
  * const getChange = yield* AWS.Route53.GetChange();
  *
@@ -29,6 +28,8 @@ import * as Binding from "../../Binding.ts";
  *   }),
  * );
  * ```
+ *
+ * @binding
  */
 export interface GetChange extends Binding.Service<
   GetChange,

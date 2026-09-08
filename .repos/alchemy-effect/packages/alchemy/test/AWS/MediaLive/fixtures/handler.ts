@@ -16,7 +16,7 @@ export class MediaLiveTestFunction extends Lambda.Function<Lambda.Function>()(
 export default MediaLiveTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
   },
   Effect.gen(function* () {
     // The input the input-scoped binding is bound to. A URL_PULL input is

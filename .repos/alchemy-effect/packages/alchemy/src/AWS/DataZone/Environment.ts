@@ -107,9 +107,8 @@ export interface Environment extends Resource<
  * environment's blueprint must be configured in the domain first (see
  * {@link EnvironmentBlueprintConfiguration}).
  *
- * @resource
- * @section Creating Environments
- * @example Environment from a Profile (V1 Domains)
+ * ### Creating Environments
+ * **Example:** Environment from a Profile (V1 Domains)
  * ```typescript
  * import * as DataZone from "alchemy/AWS/DataZone";
  *
@@ -120,7 +119,7 @@ export interface Environment extends Resource<
  * });
  * ```
  *
- * @example Environment with Provisioning Parameters
+ * **Example:** Environment with Provisioning Parameters
  * ```typescript
  * const env = yield* DataZone.Environment("datalake-env", {
  *   domainId: domain.domainId,
@@ -132,6 +131,8 @@ export interface Environment extends Resource<
  *   ],
  * });
  * ```
+ *
+ * @resource
  */
 export const Environment = Resource<Environment>("AWS.DataZone.Environment");
 

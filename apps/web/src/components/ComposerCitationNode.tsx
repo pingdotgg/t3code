@@ -42,6 +42,7 @@ export type ComposerCitationCommentRequest = {
 export type ComposerCitationCommentTarget = {
   nodeKey: NodeKey;
   sourceAnchor?: AssistantCitationSourceAnchor;
+  removeOnCancel?: boolean;
 };
 
 export const ComposerCitationCommentContext = createContext<{
@@ -68,7 +69,11 @@ export function $consumeComposerCitationCommentRequest(requestRef: {
   let offset = 0;
   for (const node of paragraph.getChildren()) {
     if (offset === request.citationStart && node instanceof ComposerCitationNode) {
-      return { nodeKey: node.getKey(), sourceAnchor: request.sourceAnchor };
+      return {
+        nodeKey: node.getKey(),
+        sourceAnchor: request.sourceAnchor,
+        removeOnCancel: true,
+      };
     }
     offset += node.getTextContentSize();
   }
@@ -78,6 +83,8 @@ export function $consumeComposerCitationCommentRequest(requestRef: {
 function ComposerCitationDecorator(props: { citation: AssistantCitation; nodeKey: NodeKey }) {
   const [editor] = useLexicalComposerContext();
   const commentContext = use(ComposerCitationCommentContext);
+  const commentTarget =
+    commentContext.openComment?.nodeKey === props.nodeKey ? commentContext.openComment : null;
   const onSaveComment = (comment: string): boolean => {
     if (!editor.isEditable()) return false;
     let accepted = false;
@@ -118,15 +125,13 @@ function ComposerCitationDecorator(props: { citation: AssistantCitation; nodeKey
       <AssistantCitationChip
         citation={props.citation}
         commentEditor={{
-          open: commentContext.openComment?.nodeKey === props.nodeKey,
-          sourceAnchor:
-            commentContext.openComment?.nodeKey === props.nodeKey
-              ? commentContext.openComment.sourceAnchor
-              : undefined,
+          open: commentTarget !== null,
+          sourceAnchor: commentTarget?.sourceAnchor,
           onOpenChange: (open) => {
             if (open && !editor.isEditable()) return;
             commentContext.onOpenChange(props.nodeKey, open);
           },
+          ...(commentTarget?.removeOnCancel ? { onCancel: onRemove } : {}),
           onSave: onSaveComment,
           onSaveAndSend: (comment) => {
             if (!onSaveComment(comment)) return false;

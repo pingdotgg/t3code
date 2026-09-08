@@ -12,7 +12,7 @@ import type { SendEmail } from "./SendEmail.ts";
  * `Send` is a single identifier that is simultaneously the binding's Context
  * tag, its type, and the callable — `yield* Cloudflare.Email.Send(EmailDescriptor)`.
  *
- * @example Send to any verified destination
+ * **Example:** Send to any verified destination
  * ```typescript
  * const Email = Cloudflare.Email.SendEmail("Email");
  *

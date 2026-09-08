@@ -184,7 +184,15 @@ describe("attachmentUploadQueue", () => {
   });
 
   it("uploads images immediately and sends attachment references", async () => {
-    const image = makeImage("image-1");
+    const image = {
+      ...makeImage("image-1"),
+      source: {
+        kind: "snap-shot" as const,
+        capturedAt: "2026-08-24T11:00:00.000Z",
+        appName: "Terminal",
+        windowTitle: "Tests",
+      },
+    };
     startAttachmentUpload({ environmentId: firstEnvironment, image });
     await Promise.resolve();
 
@@ -207,6 +215,12 @@ describe("attachmentUploadQueue", () => {
         name: "image-1.png",
         mimeType: "image/png",
         sizeBytes: 3,
+        source: {
+          kind: "snap-shot",
+          capturedAt: "2026-08-24T11:00:00.000Z",
+          appName: "Terminal",
+          windowTitle: "Tests",
+        },
       },
     ]);
 
@@ -322,6 +336,32 @@ describe("attachmentUploadQueue", () => {
       ]);
     } finally {
       useComposerDraftStore.getState().clearComposerContent(draftId);
+    }
+  });
+
+  it("persists a retried question upload without a mounted composer", async () => {
+    const draftId = DraftId.make("question-retry-upload");
+    const file = makeFile("question-retry");
+    const store = useComposerDraftStore.getState();
+    store.addFiles(draftId, [file]);
+    try {
+      startAttachmentUpload({ environmentId: firstEnvironment, image: file, draftTarget: draftId });
+      await Promise.resolve();
+      let settled = awaitAttachmentUploads([file.id]);
+      TestXmlHttpRequest.requests[0]!.complete(500);
+      await settled;
+      expect(store.getComposerDraft(draftId)?.files[0]?.uploadedAttachmentId).toBeUndefined();
+      retryAttachmentUpload({ environmentId: firstEnvironment, image: file, draftTarget: draftId });
+      await Promise.resolve();
+      settled = awaitAttachmentUploads([file.id]);
+      TestXmlHttpRequest.requests[1]!.complete();
+      await settled;
+      expect(store.getComposerDraft(draftId)?.files[0]).toMatchObject({
+        uploadedAttachmentId: "pending-environment-1-question-retry.pdf",
+        uploadEnvironmentId: firstEnvironment,
+      });
+    } finally {
+      store.clearComposerContent(draftId);
     }
   });
 

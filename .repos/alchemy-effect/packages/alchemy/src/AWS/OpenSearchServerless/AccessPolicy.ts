@@ -69,9 +69,8 @@ export interface AccessPolicy extends Resource<
  * requires a data access policy granting the Knowledge Base's service role
  * `aoss:APIAccessAll` on the collection and its indexes.
  *
- * @resource
- * @section Creating Access Policies
- * @example Grant a Role Full Data Access
+ * ### Creating Access Policies
+ * **Example:** Grant a Role Full Data Access
  * ```typescript
  * import * as AWS from "alchemy/AWS";
  *
@@ -96,6 +95,8 @@ export interface AccessPolicy extends Resource<
  *   ],
  * });
  * ```
+ *
+ * @resource
  */
 export const AccessPolicy = Resource<AccessPolicy>(
   "AWS.OpenSearchServerless.AccessPolicy",
