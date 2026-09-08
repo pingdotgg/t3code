@@ -387,7 +387,10 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   const sendBlockedReason = props.sendBlockedReason ?? attachmentBlockReason;
   const canSend =
     (props.canOperateThread || props.connectionState !== "connected") &&
-    hasContent && !voiceInput.blocksSubmission && sendBlockedReason === null && !modelUnavailable;
+    hasContent &&
+    !voiceInput.blocksSubmission &&
+    sendBlockedReason === null &&
+    !modelUnavailable;
 
   // Keep the feed inset aligned with the card or compact dictation strip.
   useEffect(() => {
