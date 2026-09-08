@@ -38,6 +38,8 @@ const FILTER_THRESHOLD = 8;
  * fast mode as a boolean `fastMode` option; Codex reports it as a
  * `serviceTier` select whose fast tier is labelled "Fast" (catalog id
  * `priority`, or `fast` from the speed-tier fallback), matching the composer.
+ * Cursor Auto's `optimizeFor` select is grouped with other reasoning-style
+ * selects under the shared "Reasoning" label.
  */
 function describeModelCapabilities(model: ServerProviderModel): string[] {
   const descriptors = model.capabilities?.optionDescriptors ?? [];

@@ -199,12 +199,14 @@ function findCursorEffortConfigOption(
   );
 }
 
+/** True when an ACP select is Cursor Auto's Optimize For (`optimize_for`) control. */
 function isCursorOptimizeForConfigOption(option: EffectAcpSchema.SessionConfigOption): boolean {
   const id = option.id.trim().toLowerCase();
   const name = option.name.trim().toLowerCase();
   return id === "optimize_for" || name.includes("optimize");
 }
 
+/** Locates the `model_config` Optimize For select among Cursor ACP session options. */
 function findCursorOptimizeForConfigOption(
   configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
 ): EffectAcpSchema.SessionConfigOption | undefined {
@@ -269,6 +271,11 @@ function getBooleanCurrentValue(
   return undefined;
 }
 
+/**
+ * Converts Cursor ACP session config options into generic model capability
+ * descriptors (Optimize For, reasoning, context, fast/thinking toggles),
+ * marking the ACP current value as the descriptor default when present.
+ */
 export function buildCursorCapabilitiesFromConfigOptions(
   configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption> | null | undefined,
 ): ModelCapabilities {
@@ -523,6 +530,10 @@ export function resolveCursorAcpBaseModelId(model: string | null | undefined): s
   return base.includes("[") ? base.slice(0, base.indexOf("[")) : base;
 }
 
+/**
+ * Maps UI provider option selections onto Cursor ACP `session/set_config_option`
+ * updates, preserving each option's original backend config id and value.
+ */
 export function resolveCursorAcpConfigUpdates(
   configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption> | null | undefined,
   selections: ReadonlyArray<ProviderOptionSelection> | null | undefined,
