@@ -1603,6 +1603,16 @@ code {
   -webkit-app-region: drag;
 }
 
+/* Electron 44 inherits app-region. Reset children to the initial value so they
+   do not add drag rectangles over fixed controls. Explicit `none` is treated
+   as `no-drag` and breaks titlebar dragging; `initial` emits no rectangle.
+   The base layer lets explicit drag/no-drag utilities take precedence. */
+@layer base {
+  .drag-region > * {
+    -webkit-app-region: initial;
+  }
+}
+
 .drag-region button,
 .drag-region input,
 .drag-region textarea,
