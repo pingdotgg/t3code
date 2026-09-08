@@ -2534,7 +2534,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   ) {
     const pathArgs = input.file
       ? [input.file.path, ...(input.file.previousPath ? [input.file.previousPath] : [])].map(
-          (path) => `:(literal)${path}`,
+          (path) => `:(top,literal)${path}`,
         )
       : [];
     const patchLimit = input.file
@@ -2554,13 +2554,12 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       };
     }
 
+    const cwd = repository.worktreeRoot;
     const branch = repository.currentBranch;
     const baseRef =
       input.baseRef ??
       (branch
-        ? yield* resolveBaseBranchForNoUpstream(input.cwd, branch).pipe(
-            Effect.orElseSucceed(() => null),
-          )
+        ? yield* resolveBaseBranchForNoUpstream(cwd, branch).pipe(Effect.orElseSucceed(() => null))
         : null);
 
     const diffArgs = [
@@ -2576,25 +2575,21 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       const args = [...diffArgs, "--numstat", "-z"];
       const result = yield* executeGit(
         "GitVcsDriver.getReviewDiffPreview.stat",
-        input.cwd,
+        cwd,
         [...args, ref, "--", ...pathArgs],
         { allowNonZeroExit: true, maxOutputBytes: Infinity },
       );
       if (result.exitCode === 0) return { ref, files: parseReviewNumstat(result.stdout) };
       if (ref === "HEAD" && isUnbornHeadStderr(result.stderr)) {
-        const emptyTree = (yield* runGitStdout(
-          "GitVcsDriver.getReviewDiffPreview.emptyTree",
-          input.cwd,
-          [
-            "hash-object",
-            "-t",
-            "tree",
-            (yield* HostProcessPlatform) === "win32" ? "NUL" : "/dev/null",
-          ],
-        )).trim();
+        const emptyTree = (yield* runGitStdout("GitVcsDriver.getReviewDiffPreview.emptyTree", cwd, [
+          "hash-object",
+          "-t",
+          "tree",
+          (yield* HostProcessPlatform) === "win32" ? "NUL" : "/dev/null",
+        ])).trim();
         const stdout = yield* runGitStdoutWithOptions(
           "GitVcsDriver.getReviewDiffPreview.unbornStat",
-          input.cwd,
+          cwd,
           [...args, emptyTree, "--", ...pathArgs],
           { maxOutputBytes: Infinity },
         );
@@ -2602,7 +2597,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       }
       return yield* new GitCommandError({
         operation: "GitVcsDriver.getReviewDiffPreview.stat",
-        cwd: input.cwd,
+        cwd,
         command: "git diff --numstat",
         detail: "Could not read complete diff statistics.",
         exitCode: result.exitCode,
@@ -2615,7 +2610,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       const stat = yield* readStats(ref);
       const patch = yield* executeGit(
         "GitVcsDriver.getReviewDiffPreview.patch",
-        input.cwd,
+        cwd,
         [...diffArgs, "--patch", stat.ref, "--", ...pathArgs],
         { maxOutputBytes: patchLimit, appendTruncationMarker: true },
       );
@@ -2631,7 +2626,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         ),
         input.file?.sourceKind === "branch-range"
           ? Effect.succeed({ diff: "", truncated: false, files: [] })
-          : readUntrackedReviewDiffs(input.cwd, input.file?.path),
+          : readUntrackedReviewDiffs(cwd, input.file?.path),
       ],
       { concurrency: 3 },
     );
@@ -2664,7 +2659,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
               new GitCommandError({
                 operation: "GitVcsDriver.getReviewDiffPreview.hash",
                 command: "crypto.digest SHA-256",
-                cwd: input.cwd,
+                cwd,
                 detail: "Failed to hash review diff.",
                 cause,
               }),
@@ -2701,7 +2696,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     ];
 
     return {
-      cwd: input.cwd,
+      cwd,
       generatedAt: yield* DateTime.now,
       sources,
     };
