@@ -1672,6 +1672,8 @@ const EMPTY_DEVICE_STATE: DeviceServiceState = {
   hostStatus: "idle",
   devices: [],
   sessions: [],
+  onboardingCompleted: false,
+  agentAccessEnabled: false,
   hubBasePath: DeviceService.DEVICE_HUB_ROUTE_PREFIX,
   revision: 0,
 };

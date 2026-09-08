@@ -106,6 +106,12 @@ const handlers = {
       const scope = yield* requireDeviceAccess;
       const devices = yield* DeviceService.DeviceService;
       const state = yield* devices.list;
+      if (state.hostStatus === "disabled") {
+        return yield* new DeviceToolUnavailableError({
+          reason:
+            "Device support is off. Ask the user to enable it in the Device panel before installing or starting device tools.",
+        });
+      }
       const hostId = input?.hostId;
       const open = state.sessions
         .filter((session) => session.threadId === scope.threadId)
@@ -123,6 +129,12 @@ const handlers = {
       const scope = yield* requireDeviceAccess;
       const devices = yield* DeviceService.DeviceService;
       const state = yield* devices.list;
+      if (state.hostStatus === "disabled") {
+        return yield* new DeviceToolUnavailableError({
+          reason:
+            "Device support is off. Ask the user to enable it in the Device panel before installing or starting device tools.",
+        });
+      }
       const target = yield* pickDevice(state.devices, input);
       const session = yield* devices.open({
         threadId: scope.threadId,

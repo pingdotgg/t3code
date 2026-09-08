@@ -184,6 +184,7 @@ import {
 import {
   DeviceActionInput,
   DeviceCloseInput,
+  DeviceConfigureInput,
   DeviceDetail,
   DeviceDetailInput,
   DeviceError,
@@ -325,6 +326,7 @@ export const WS_METHODS = {
   previewAutomationFocusHost: "previewAutomation.focusHost",
 
   // Device methods
+  deviceConfigure: "device.configure",
   deviceList: "device.list",
   deviceOpen: "device.open",
   deviceClose: "device.close",
@@ -1105,6 +1107,12 @@ const WsDeviceListRpc = Rpc.make(WS_METHODS.deviceList, {
   error: Schema.Union([DeviceError, EnvironmentAuthorizationError]),
 });
 
+const WsDeviceConfigureRpc = Rpc.make(WS_METHODS.deviceConfigure, {
+  payload: DeviceConfigureInput,
+  success: DeviceServiceState,
+  error: Schema.Union([DeviceError, EnvironmentAuthorizationError]),
+});
+
 const WsDeviceOpenRpc = Rpc.make(WS_METHODS.deviceOpen, {
   payload: DeviceOpenInput,
   success: DeviceSession,
@@ -1370,6 +1378,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsPreviewAutomationFocusHostRpc,
   WsSubscribePreviewEventsRpc,
   WsSubscribeDiscoveredLocalServersRpc,
+  WsDeviceConfigureRpc,
   WsDeviceListRpc,
   WsDeviceOpenRpc,
   WsDeviceCloseRpc,

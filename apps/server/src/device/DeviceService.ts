@@ -13,6 +13,7 @@
 import {
   type DeviceActionInput,
   type DeviceCloseInput,
+  type DeviceConfigureInput,
   type DeviceDetail,
   type DeviceDetailInput,
   type DeviceError,
@@ -40,12 +41,15 @@ import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
+import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
 
+import { ServerSettingsService } from "../serverSettings.ts";
+
 import { readDeviceDetail, runDeviceAction } from "./DeviceActions.ts";
-import type { DeviceHost, DeviceHostReady } from "./DeviceHost.ts";
+import type { AgentDeviceEndpoint, DeviceHost, DeviceHostReady } from "./DeviceHost.ts";
 import * as LocalDeviceHost from "./LocalDeviceHost.ts";
 
 /** Origin-relative prefix the hub is proxied under. See DeviceHubProxy. */
@@ -83,12 +87,19 @@ export interface DeviceReadiness extends DeviceHostReady {
   readonly hostId: DeviceHostId;
 }
 
+export interface DeviceAgentReadiness extends DeviceReadiness {
+  readonly agentDevice: AgentDeviceEndpoint;
+}
+
 export class DeviceService extends Context.Service<
   DeviceService,
   {
     readonly state: Effect.Effect<DeviceServiceState>;
     readonly subscribe: Effect.Effect<PubSub.Subscription<DeviceServiceState>, never, Scope.Scope>;
-    /** Refreshes device discovery; starts the host helpers on first call. */
+    readonly configure: (
+      input: DeviceConfigureInput,
+    ) => Effect.Effect<DeviceServiceState, DeviceError>;
+    /** Refreshes devices only after device support has been enabled. */
     readonly list: Effect.Effect<DeviceServiceState, DeviceError>;
     readonly open: (input: DeviceOpenInput) => Effect.Effect<DeviceSession, DeviceError>;
     readonly close: (input: DeviceCloseInput) => Effect.Effect<void, DeviceError>;
@@ -110,6 +121,9 @@ export class DeviceService extends Context.Service<
     readonly readinessIfSupported: (
       hostId?: DeviceHostId,
     ) => Effect.Effect<DeviceReadiness | null, DeviceError>;
+    readonly agentReadinessIfSupported: (
+      hostId?: DeviceHostId,
+    ) => Effect.Effect<DeviceAgentReadiness | null, DeviceError>;
     readonly currentReadiness: (hostId?: DeviceHostId) => Effect.Effect<DeviceReadiness | null>;
     readonly sessionsForThread: (threadId: ThreadId) => Effect.Effect<ReadonlyArray<DeviceSession>>;
   }
@@ -122,8 +136,22 @@ interface ServiceState {
 const vendorPrefix = (platform: DevicePlatform) =>
   platform === "ios" ? "/vendor/serve-sim" : "/vendor/serve-emu";
 
-const make = Effect.gen(function* () {
-  const localHost = yield* LocalDeviceHost.make();
+export const makeWithHost = Effect.fn("DeviceService.makeWithHost")(function* (
+  localHost: DeviceHost,
+) {
+  const settings = yield* ServerSettingsService;
+  const lifecycleLock = yield* Semaphore.make(1);
+  const readDeviceSettings = settings.getSettings.pipe(
+    Effect.map((value) => ({
+      enabled: value.enableDeviceSupport,
+      agentAccessEnabled: value.enableAgentDeviceAccess,
+      onboardingCompleted: value.deviceOnboardingCompleted,
+    })),
+    Effect.mapError(
+      (cause) => new DeviceOperationError({ operation: "settings", detail: cause.message }),
+    ),
+  );
+  const initialSettings = yield* readDeviceSettings;
   const hosts: ReadonlyMap<DeviceHostId, DeviceHost> = new Map([[localHost.id, localHost]]);
   const httpClient = (yield* HttpClient.HttpClient).pipe(HttpClient.withScope);
   const statePubSub = yield* PubSub.unbounded<DeviceServiceState>();
@@ -131,9 +159,11 @@ const make = Effect.gen(function* () {
   const stateRef = yield* SynchronizedRef.make<ServiceState>({
     state: {
       hosts: initialHosts,
-      hostStatus: "idle",
+      hostStatus: initialSettings.enabled ? "idle" : "disabled",
       devices: [],
       sessions: [],
+      onboardingCompleted: initialSettings.onboardingCompleted,
+      agentAccessEnabled: initialSettings.agentAccessEnabled,
       hubBasePath: DEVICE_HUB_ROUTE_PREFIX,
       revision: 0,
     },
@@ -158,6 +188,13 @@ const make = Effect.gen(function* () {
   const readiness: DeviceService["Service"]["readiness"] = Effect.fn("DeviceService.readiness")(
     function* (hostId) {
       const host = yield* resolveHost(hostId);
+      if (!(yield* readDeviceSettings).enabled) {
+        return yield* new DeviceHostUnavailableError({
+          hostId: host.id,
+          reason:
+            "Device support is off. Enable it in the Device panel before installing or starting device tools.",
+        });
+      }
       const ready = yield* host
         .ensureReady((phase) =>
           publish((state) => ({ ...state, hostStatus: phase, hostStatusDetail: undefined })).pipe(
@@ -189,16 +226,48 @@ const make = Effect.gen(function* () {
       );
       return { hostId: host.id, ...ready };
     },
+    lifecycleLock.withPermit,
   );
 
   const readinessIfSupported: DeviceService["Service"]["readinessIfSupported"] = Effect.fn(
     "DeviceService.readinessIfSupported",
   )(function* (hostId) {
+    if (!(yield* readDeviceSettings).enabled) return null;
     const host = yield* resolveHost(hostId);
     const summary = yield* host.summary;
     if (!summary.platforms.some((platform) => platform.available)) return null;
     return yield* readiness(host.id);
   });
+
+  const agentReadinessIfSupported: DeviceService["Service"]["agentReadinessIfSupported"] =
+    Effect.fn("DeviceService.agentReadinessIfSupported")(function* (hostId) {
+      const deviceSettings = yield* readDeviceSettings;
+      if (!deviceSettings.enabled || !deviceSettings.agentAccessEnabled) return null;
+      const host = yield* resolveHost(hostId);
+      const summary = yield* host.summary;
+      if (!summary.platforms.some((platform) => platform.available)) return null;
+      const ready = yield* host
+        .ensureAgentReady((phase) =>
+          publish((state) => ({ ...state, hostStatus: phase, hostStatusDetail: undefined })).pipe(
+            Effect.asVoid,
+          ),
+        )
+        .pipe(
+          Effect.tapError((error) =>
+            publish((state) => ({
+              ...state,
+              hostStatus: "failed",
+              hostStatusDetail: error.message,
+            })),
+          ),
+          Effect.mapError(
+            (error) => new DeviceHostUnavailableError({ hostId: host.id, reason: error.message }),
+          ),
+        );
+      const hostSummaries = yield* Effect.forEach(hosts.values(), (candidate) => candidate.summary);
+      yield* publish((state) => ({ ...state, hosts: hostSummaries, hostStatus: "ready" }));
+      return { hostId: host.id, ...ready };
+    }, lifecycleLock.withPermit);
 
   const currentReadiness: DeviceService["Service"]["currentReadiness"] = (hostId) =>
     resolveHost(hostId).pipe(
@@ -245,19 +314,114 @@ const make = Effect.gen(function* () {
       booted: device.booted,
       physical: device.physical,
     });
-    return [...list.simulators, ...list.emulators].map(toSummary);
+    const devices = [...list.simulators, ...list.emulators].map(toSummary);
+    const host = yield* resolveHost(ready.hostId);
+    if ((yield* host.platformAvailability("android")).available) {
+      const avds = yield* ready.run("emulator", ["-list-avds"]);
+      if (avds.code !== 0) {
+        return yield* new DeviceOperationError({
+          operation: "list",
+          detail: `Could not list Android virtual devices: ${avds.stderr || avds.stdout}`,
+        });
+      }
+      for (const name of avds.stdout
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean)) {
+        if (!devices.some((device) => device.platform === "android" && device.name === name)) {
+          devices.push({
+            hostId: ready.hostId,
+            id: name,
+            name,
+            platform: "android",
+            version: "Android",
+            booted: false,
+            physical: false,
+          });
+        }
+      }
+    }
+    return { devices, detail: list.errors?.map((error) => error.message).join("\n") || undefined };
   });
 
   const refresh = Effect.fn("DeviceService.refresh")(function* (ready: DeviceReadiness) {
-    const devices = yield* fetchDevices(ready);
+    const { devices, detail } = yield* fetchDevices(ready);
     const hostSummaries = yield* Effect.forEach(hosts.values(), (host) => host.summary);
-    return yield* publish((state) => ({ ...state, hosts: hostSummaries, devices }));
+    return yield* lifecycleLock.withPermit(
+      Effect.gen(function* () {
+        if (!(yield* readDeviceSettings).enabled)
+          return (yield* SynchronizedRef.get(stateRef)).state;
+        return yield* publish((state) => ({
+          ...state,
+          hosts: hostSummaries,
+          devices,
+          hostStatusDetail: detail,
+        }));
+      }),
+    );
   });
 
   const list: DeviceService["Service"]["list"] = Effect.gen(function* () {
+    if (!(yield* readDeviceSettings).enabled) return (yield* SynchronizedRef.get(stateRef)).state;
     const ready = yield* readiness();
     return yield* refresh(ready);
-  }).pipe(Effect.withSpan("DeviceService.list"));
+  }).pipe(
+    Effect.tapError((error) =>
+      publish((state) =>
+        state.hostStatus === "disabled"
+          ? state
+          : { ...state, hostStatus: "failed", hostStatusDetail: error.message },
+      ),
+    ),
+    Effect.withSpan("DeviceService.list"),
+  );
+
+  const configure: DeviceService["Service"]["configure"] = Effect.fn("DeviceService.configure")(
+    function* (input) {
+      const currentSettings = yield* readDeviceSettings;
+      const nextEnabled = input.enabled ?? currentSettings.enabled;
+      const nextAgentAccess = input.agentAccessEnabled ?? currentSettings.agentAccessEnabled;
+      yield* lifecycleLock.withPermit(
+        Effect.gen(function* () {
+          yield* settings
+            .updateSettings({
+              ...(input.enabled === undefined ? {} : { enableDeviceSupport: input.enabled }),
+              ...(input.agentAccessEnabled === undefined
+                ? {}
+                : { enableAgentDeviceAccess: input.agentAccessEnabled }),
+              ...(input.onboardingCompleted === undefined
+                ? {}
+                : { deviceOnboardingCompleted: input.onboardingCompleted }),
+            })
+            .pipe(
+              Effect.mapError(
+                (cause) =>
+                  new DeviceOperationError({ operation: "configure", detail: cause.message }),
+              ),
+            );
+          if (!nextEnabled) {
+            yield* Effect.forEach(hosts.values(), (host) => host.stop, { discard: true });
+          } else if (input.agentAccessEnabled === false) {
+            yield* Effect.forEach(hosts.values(), (host) => host.stopAgent, { discard: true });
+          }
+          yield* publish((state) => ({
+            ...state,
+            hostStatus: nextEnabled ? "idle" : "disabled",
+            hostStatusDetail: undefined,
+            devices: nextEnabled ? state.devices : [],
+            sessions: nextEnabled ? state.sessions : [],
+            bootingDevices: nextEnabled ? state.bootingDevices : [],
+            agentAccessEnabled: nextAgentAccess,
+            onboardingCompleted: input.onboardingCompleted ?? state.onboardingCompleted,
+          }));
+        }),
+      );
+      if (nextEnabled && nextAgentAccess && input.agentAccessEnabled === true) {
+        yield* agentReadinessIfSupported();
+      }
+      return yield* list;
+    },
+  );
 
   const findDevice = (
     state: DeviceServiceState,
@@ -331,7 +495,26 @@ const make = Effect.gen(function* () {
       return yield* new DeviceNotFoundError({ hostId: host.id, deviceId: input.deviceId });
     }
     if (!device.booted && input.boot !== false) {
-      const bootedId = yield* boot(ready, device);
+      const booting = { ...device, threadId: input.threadId };
+      yield* publish((current) => ({
+        ...current,
+        bootingDevices: [
+          ...(current.bootingDevices ?? []).filter(
+            (entry) => entry.hostId !== booting.hostId || entry.id !== booting.id,
+          ),
+          booting,
+        ],
+      }));
+      const bootedId = yield* boot(ready, device).pipe(
+        Effect.ensuring(
+          publish((current) => ({
+            ...current,
+            bootingDevices: (current.bootingDevices ?? []).filter(
+              (entry) => entry.hostId !== booting.hostId || entry.id !== booting.id,
+            ),
+          })),
+        ),
+      );
       state = yield* refresh(ready);
       device = findDevice(state, host.id, bootedId) ?? findDevice(state, host.id, device.id);
       if (!device) {
@@ -359,20 +542,29 @@ const make = Effect.gen(function* () {
       platform: device.platform,
       openedAt,
     };
-    yield* publish((current) => ({
-      ...current,
-      sessions: [
-        ...current.sessions.filter(
-          (existing) =>
-            !(
-              existing.threadId === session.threadId &&
-              existing.hostId === session.hostId &&
-              existing.deviceId === session.deviceId
+    yield* lifecycleLock.withPermit(
+      Effect.gen(function* () {
+        if (!(yield* readDeviceSettings).enabled)
+          return yield* new DeviceHostUnavailableError({
+            hostId: host.id,
+            reason: "Device support was turned off while the device was opening.",
+          });
+        yield* publish((current) => ({
+          ...current,
+          sessions: [
+            ...current.sessions.filter(
+              (existing) =>
+                !(
+                  existing.threadId === session.threadId &&
+                  existing.hostId === session.hostId &&
+                  existing.deviceId === session.deviceId
+                ),
             ),
-        ),
-        session,
-      ],
-    }));
+            session,
+          ],
+        }));
+      }),
+    );
     return session;
   });
 
@@ -509,6 +701,7 @@ const make = Effect.gen(function* () {
   return DeviceService.of({
     state: SynchronizedRef.get(stateRef).pipe(Effect.map(({ state }) => state)),
     subscribe: PubSub.subscribe(statePubSub),
+    configure,
     list,
     open,
     close,
@@ -518,9 +711,14 @@ const make = Effect.gen(function* () {
     screenshot,
     readiness,
     readinessIfSupported,
+    agentReadinessIfSupported,
     currentReadiness,
     sessionsForThread,
   });
+});
+
+export const make = Effect.gen(function* () {
+  return yield* makeWithHost(yield* LocalDeviceHost.make());
 }).pipe(Effect.withSpan("DeviceService.make"));
 
 export const layer = Layer.effect(DeviceService, make);

@@ -58,6 +58,8 @@ export const DeviceHostSummary = Schema.Struct({
   kind: Schema.Literals(["local"]),
   label: TrimmedNonEmptyString,
   platforms: Schema.Array(DevicePlatformAvailability),
+  hubInstalled: Schema.Boolean,
+  agentDeviceInstalled: Schema.Boolean,
 });
 export type DeviceHostSummary = typeof DeviceHostSummary.Type;
 
@@ -67,6 +69,7 @@ export type DeviceHostSummary = typeof DeviceHostSummary.Type;
  * stream; the UI shows that instead of an empty picker.
  */
 export const DeviceHostStatus = Schema.Literals([
+  "disabled",
   "idle",
   "installing",
   "starting",
@@ -94,6 +97,11 @@ export const DeviceServiceState = Schema.Struct({
   hostStatusDetail: Schema.optional(Schema.String),
   devices: Schema.Array(DeviceSummary),
   sessions: Schema.Array(DeviceSession),
+  bootingDevices: Schema.optional(
+    Schema.Array(Schema.Struct({ ...DeviceSummary.fields, threadId: ThreadId })),
+  ),
+  onboardingCompleted: Schema.Boolean,
+  agentAccessEnabled: Schema.Boolean,
   /** Origin-relative path the client prefixes to hub routes. */
   hubBasePath: Schema.String,
   revision: Schema.Int,
@@ -102,6 +110,13 @@ export type DeviceServiceState = typeof DeviceServiceState.Type;
 
 export const DeviceListInput = Schema.Struct({});
 export type DeviceListInput = typeof DeviceListInput.Type;
+
+export const DeviceConfigureInput = Schema.Struct({
+  enabled: Schema.optional(Schema.Boolean),
+  agentAccessEnabled: Schema.optional(Schema.Boolean),
+  onboardingCompleted: Schema.optional(Schema.Boolean),
+});
+export type DeviceConfigureInput = typeof DeviceConfigureInput.Type;
 
 export const DeviceOpenInput = Schema.Struct({
   threadId: ThreadId,

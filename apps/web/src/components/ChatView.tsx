@@ -206,6 +206,8 @@ import { AgentsPanel } from "./AgentsPanel";
 import { LinkPullRequestDialogHost } from "./pullRequest/LinkPullRequestDialog";
 import { ThreadPullRequestsPanel } from "./pullRequest/ThreadPullRequestsPanel";
 import { useDeviceState } from "~/state/device";
+import { DeviceSetup } from "./device/DeviceSetup";
+import { Dialog, DialogPopup } from "./ui/dialog";
 import {
   deriveAgentPanelModel,
   foldSubagentActivities,
@@ -4140,17 +4142,25 @@ export default function ChatView(props: ChatViewProps) {
     if (!activeThreadRef || !supportsThreadPullRequests) return;
     useRightPanelStore.getState().open(activeThreadRef, "pull-requests");
   }, [activeThreadRef, supportsThreadPullRequests]);
+  const { state: deviceState } = useDeviceState(activeThreadRef?.environmentId ?? null);
+  const [deviceSetupThread, setDeviceSetupThread] = useState<ScopedThreadRef | null>(null);
   const addDeviceSurface = useCallback(() => {
     if (!activeThreadRef) return;
+    if (!deviceState.onboardingCompleted || deviceState.hostStatus === "disabled") {
+      setDeviceSetupThread(activeThreadRef);
+      return;
+    }
     useRightPanelStore.getState().open(activeThreadRef, "device");
-  }, [activeThreadRef]);
+  }, [activeThreadRef, deviceState.onboardingCompleted, deviceState.hostStatus]);
   // An agent's `device_open` surfaces in every client the same way a
-  // `preview_open` does: the thread gains a device session and the panel
+  // `preview_open` does: the thread starts a device or gains a session and the panel
   // opens on it. Closing the last session leaves the tab in place so the
   // user keeps their picker; only new sessions raise the panel.
-  const { state: deviceState } = useDeviceState(activeThreadRef?.environmentId ?? null);
   const threadDeviceSessionCount = activeThreadRef
-    ? deviceState.sessions.filter((session) => session.threadId === activeThreadRef.threadId).length
+    ? deviceState.sessions.filter((session) => session.threadId === activeThreadRef.threadId)
+        .length +
+      (deviceState.bootingDevices?.filter((device) => device.threadId === activeThreadRef.threadId)
+        .length ?? 0)
     : 0;
   const previousDeviceSessionCount = useRef(threadDeviceSessionCount);
   useEffect(() => {
@@ -8144,6 +8154,10 @@ export default function ChatView(props: ChatViewProps) {
           threadRef={activeThreadRef}
           deviceId={null}
           visible={rightPanelOpen}
+          onDismissSetup={() => {
+            closeRightPanelSurface(renderedRightPanelSurface);
+            useRightPanelStore.getState().show(activeThreadRef);
+          }}
         />
       </Suspense>
     ) : (renderedRightPanelSurface?.kind === "files" ||
@@ -8201,6 +8215,29 @@ export default function ChatView(props: ChatViewProps) {
 
   return (
     <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background">
+      <Dialog
+        open={
+          deviceSetupThread !== null &&
+          deviceSetupThread.environmentId === activeThreadRef?.environmentId &&
+          deviceSetupThread.threadId === activeThreadRef?.threadId
+        }
+        onOpenChange={(open) => {
+          if (!open) setDeviceSetupThread(null);
+        }}
+      >
+        <DialogPopup className="max-w-xl overflow-hidden">
+          {activeThreadRef ? (
+            <DeviceSetup
+              environmentId={activeThreadRef.environmentId}
+              state={deviceState}
+              onComplete={() => {
+                useRightPanelStore.getState().open(activeThreadRef, "device");
+                setDeviceSetupThread(null);
+              }}
+            />
+          ) : null}
+        </DialogPopup>
+      </Dialog>
       {rightPanelControlsAtRoot ? panelLayoutControls : null}
       <div
         className={cn(

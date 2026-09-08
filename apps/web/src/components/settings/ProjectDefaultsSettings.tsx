@@ -96,11 +96,6 @@ export function ProjectDefaultsSettings({
       target.serverConfig?.settings.enableAgentBrowserAccess !==
       serverSettings.enableAgentBrowserAccess,
   );
-  const mixedDevice = targets.some(
-    (target) =>
-      target.serverConfig?.settings.enableAgentDeviceAccess !==
-      serverSettings.enableAgentDeviceAccess,
-  );
   const disabled = (key: keyof ServerSettingsPatch) => targets.length === 0 || saving.has(key);
   const mixedAutoPull = targets.some(
     (target) => target.serverConfig?.settings.defaultAutoPull !== serverSettings.defaultAutoPull,
@@ -382,58 +377,6 @@ export function ProjectDefaultsSettings({
                     : mixedBrowser
                       ? "Differs by machine"
                       : serverSettings.enableAgentBrowserAccess
-                        ? "Enabled"
-                        : "Disabled"}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectPopup align="end" alignItemWithTrigger={false}>
-                <SelectItem value="enabled">Enabled</SelectItem>
-                <SelectItem value="disabled">Disabled</SelectItem>
-              </SelectPopup>
-            </Select>
-          }
-        />
-        <SettingsRow
-          id={searchableSetting("agent-device-access").id}
-          title="Agent device access"
-          description="Allow agents to drive iOS Simulators and Android Emulators. Off hides the device tools from agents, not from you."
-          resetAction={
-            mixedDevice ||
-            serverSettings.enableAgentDeviceAccess !==
-              DEFAULT_SERVER_SETTINGS.enableAgentDeviceAccess ? (
-              <SettingResetButton
-                label="default device access"
-                disabled={disabled("enableAgentDeviceAccess")}
-                onClick={() =>
-                  void save({
-                    enableAgentDeviceAccess: DEFAULT_SERVER_SETTINGS.enableAgentDeviceAccess,
-                  })
-                }
-              />
-            ) : null
-          }
-          control={
-            <Select
-              disabled={disabled("enableAgentDeviceAccess")}
-              value={
-                mixedDevice
-                  ? "mixed"
-                  : serverSettings.enableAgentDeviceAccess
-                    ? "enabled"
-                    : "disabled"
-              }
-              onValueChange={(value) => {
-                if (value === "enabled" || value === "disabled")
-                  void save({ enableAgentDeviceAccess: value === "enabled" });
-              }}
-            >
-              <SelectTrigger size="sm" aria-label="Default agent device access">
-                <SelectValue>
-                  {targets.length === 0
-                    ? "Unavailable"
-                    : mixedDevice
-                      ? "Differs by machine"
-                      : serverSettings.enableAgentDeviceAccess
                         ? "Enabled"
                         : "Disabled"}
                 </SelectValue>

@@ -4,9 +4,10 @@
  * in beside `LocalDeviceHost` without touching discovery, the proxy, or the
  * MCP tools.
  *
- * Every host presents the same two things once it is ready: a loopback origin
- * where expo-device-hub answers, and an agent-device daemon endpoint. For the
- * local host both run on this machine; a remote host would forward them here.
+ * Every ready host presents a loopback origin where expo-device-hub answers.
+ * Hosts add an agent-device daemon endpoint only after agent access is granted.
+ * For the local host both run on this machine; a remote host would forward
+ * them here.
  */
 import type {
   DeviceHostId,
@@ -42,7 +43,6 @@ export interface AgentDeviceEndpoint {
 
 export interface DeviceHostReady {
   readonly hub: DeviceHubEndpoint;
-  readonly agentDevice: AgentDeviceEndpoint;
   /**
    * Runs a host command (`xcrun`, `adb`, or a helper bundled with the hub)
    * where the devices live. On the local host this is a plain spawn; a
@@ -60,6 +60,10 @@ export interface DeviceHostReady {
   };
 }
 
+export interface DeviceHostAgentReady extends DeviceHostReady {
+  readonly agentDevice: AgentDeviceEndpoint;
+}
+
 export interface DeviceHost {
   readonly id: DeviceHostId;
   readonly summary: Effect.Effect<DeviceHostSummary>;
@@ -73,8 +77,14 @@ export interface DeviceHost {
   readonly ensureReady: (
     onPhase: (phase: "installing" | "starting") => Effect.Effect<void>,
   ) => Effect.Effect<DeviceHostReady, DeviceHostError>;
+  /** Installs and starts agent-device after the user grants agent access. */
+  readonly ensureAgentReady: (
+    onPhase: (phase: "installing" | "starting") => Effect.Effect<void>,
+  ) => Effect.Effect<DeviceHostAgentReady, DeviceHostError>;
   /** Current endpoints when already running, without starting anything. */
   readonly current: Effect.Effect<DeviceHostReady | null>;
+  /** Stops only agent-device. Manual viewing through the hub stays available. */
+  readonly stopAgent: Effect.Effect<void>;
   /** Stops helpers. Devices themselves keep running; the user owns those. */
   readonly stop: Effect.Effect<void>;
 }

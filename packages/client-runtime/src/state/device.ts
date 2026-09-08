@@ -22,6 +22,12 @@ export function createDeviceEnvironmentAtoms<R, E>(
       label: "environment-data:device:state",
       tag: WS_METHODS.subscribeDeviceState,
     }),
+    configure: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:device:configure",
+      tag: WS_METHODS.deviceConfigure,
+      scheduler,
+      concurrency,
+    }),
     list: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:device:list",
       tag: WS_METHODS.deviceList,

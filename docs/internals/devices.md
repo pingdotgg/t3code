@@ -9,9 +9,11 @@ host on another machine slot in later.
 ## Two external tools, one seam
 
 [expo-device-hub](../../apps/server/src/device/LocalDeviceHost.ts) streams and
-[agent-device](../../apps/server/src/device/AgentDeviceShim.ts) drives. Both
-are npm-installed at pinned versions into the T3 home on first use and run with
-the server's Node; `npx` would make the first `device_open` after a reboot
+[agent-device](../../apps/server/src/device/AgentDeviceShim.ts) drives. Each is
+npm-installed at a pinned version into the T3 home after its matching Device
+panel consent step. Manual setup installs and starts only expo-device-hub;
+agent-device remains absent and stopped until agent access is granted. Both run
+with the server's Node; `npx` would make the first `device_open` after a reboot
 depend on the registry. The hub is a supervised child rather than an imported
 middleware because serve-sim loads private CoreSimulator frameworks through a
 native addon, and a crash there must not take the server down.
@@ -61,9 +63,10 @@ agent never handles the endpoint or token.
 
 That environment is fixed when the provider subprocess spawns, so
 [`prepareMcpSession`](../../apps/server/src/provider/Layers/ProviderService.ts)
-starts the device host whenever the session has the `device` capability and
-the machine can run at least one platform. Starting it later from
-`device_open` would leave the already-running agent without the CLI.
+starts agent-device only when device support and agent access have both been
+enabled, the session has the `device` capability, and the machine can run at
+least one platform. Starting it later from `device_open` would leave the
+already-running agent without the CLI.
 
 How to drive a device is returned from `device_open`, not kept in an
 always-loaded prompt or skill: it costs nothing in threads that never open a

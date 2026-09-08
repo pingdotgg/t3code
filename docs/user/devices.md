@@ -7,15 +7,24 @@ yourself. Agents get the same device through `device_*` tools and the
 
 ## Open a device
 
-Open the right panel in a project thread and choose **Device**, then pick a
-simulator or emulator. A device that is not running boots when you pick it.
-The first time, T3 Code installs its device tools on the server; that takes a
-minute and happens once.
+Open the right panel in a project thread and choose **Device**. On first use,
+the panel walks through three steps: starting the device hub, checking iOS and
+Android support, and choosing whether agents may control devices. Opening the
+panel alone does not download or start anything. If the hub is already
+installed, the setup screen says so and reuses it.
+
+Choose a running device to watch it, or choose **Start** next to a stopped
+device to boot it. The panel shows when you or an agent starts a device.
+Turn off the device hub in **Settings → Integrations → Devices** to stop the
+helper processes; simulators and emulators keep running until you power them
+off.
 
 Simulators run on the machine that hosts the environment server. iOS needs
-macOS with Xcode. Android needs the Android SDK with `ANDROID_HOME` set or
-`adb` on the path. The panel says which platforms the server can run and why one
-cannot.
+macOS with Xcode. Android needs the SDK Platform-Tools, Android Emulator,
+and Command-line Tools (latest), plus a virtual device created in Android
+Studio's Device Manager. T3 Code detects standard SDK locations; set
+`ANDROID_HOME` for a custom location. The panel explains missing dependencies.
+After installing them, restart the environment server and refresh devices.
 
 The screen is interactive: click and drag to touch, type while the screen is
 focused, and use the toolbar for Home, Back, and Recents on Android, rotate on
@@ -36,13 +45,14 @@ back from the device after a change.
 ## Agents and devices
 
 When an agent opens a device, the panel opens in every client connected to the
-thread. Agents drive the device through the `agent-device` command line, which
-T3 Code preinstalls and connects for them. iOS taps through `agent-device` build
-a small test runner on first use, which takes a couple of minutes once per
-server.
+thread. Agents drive the device through the `agent-device` command line. T3
+Code installs and starts it only after **Agent device access** is enabled. iOS
+taps build a small test runner on first use, which takes a couple of minutes
+once per server. Restart an existing agent session after granting access so it
+receives the device CLI environment.
 
 To keep agents away from simulators, turn off **Agent device access** in
-Settings → Projects → Project defaults. This hides the device tools from agents
+**Settings → Integrations → Devices**. This hides the device tools from agents
 started from then on; your own Device panel is unaffected.
 
 ## Remote connections

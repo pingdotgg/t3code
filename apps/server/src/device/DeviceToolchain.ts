@@ -2,8 +2,9 @@
  * Pinned installs of the two external tools device support is built on.
  *
  * `expo-device-hub` streams simulator and emulator screens and `agent-device`
- * drives them. Both are npm-installed once into `<baseDir>/device/tools/<key>`
- * and executed from there with the server's own Node, never `npx`: an ephemeral
+ * drives them. Each is npm-installed separately after its matching consent
+ * step into `<baseDir>/tools/<name>/<version>` and executed from there with the
+ * server's own Node, never `npx`: an ephemeral
  * npx cache would make every first `device_open` after a reboot depend on the
  * registry, and the pinned versions are part of the contract the injected
  * agent instructions describe.
@@ -28,7 +29,6 @@ const DEVICE_HUB_VERSION = "0.9.0";
 const AGENT_DEVICE_PACKAGE = "agent-device";
 const AGENT_DEVICE_VERSION = "0.20.10";
 
-const DEVICE_TOOLS_DIR = "device";
 const INSTALL_TIMEOUT = Duration.minutes(10);
 const installLock = Semaphore.makeUnsafe(1);
 
@@ -79,7 +79,7 @@ const AGENT_DEVICE_SPEC: ToolSpec = {
 };
 
 const toolPaths = (path: Path.Path, baseDir: string, spec: ToolSpec): DeviceToolPaths => {
-  const installDir = path.join(baseDir, DEVICE_TOOLS_DIR, "tools", `${spec.name}@${spec.version}`);
+  const installDir = path.join(baseDir, "tools", spec.name, spec.version);
   return {
     installDir,
     entryPath: path.join(installDir, "node_modules", spec.name, ...spec.entry),
@@ -92,9 +92,9 @@ const deviceToolchainPaths = (path: Path.Path, baseDir: string): DeviceToolchain
   agentDevice: toolPaths(path, baseDir, AGENT_DEVICE_SPEC),
 });
 
-/** The agent-device daemon state (daemon.json, sessions) lives beside the tools. */
+/** Keep daemon state (daemon.json, sessions) in userdata, separate from tool installs. */
 export const agentDeviceStateDir = (path: Path.Path, stateDir: string): string =>
-  path.join(stateDir, DEVICE_TOOLS_DIR, "agent-device");
+  path.join(stateDir, "device", "agent-device");
 
 const isInstalled = Effect.fn("DeviceToolchain.isInstalled")(function* (
   fs: FileSystem.FileSystem,
@@ -190,33 +190,35 @@ const installTool = Effect.fn("DeviceToolchain.installTool")(function* (
   );
 });
 
-/**
- * Installs whichever of the two tools is missing and returns their paths.
- * Serialized process-wide so two threads opening devices at once do not race
- * npm against the same directory.
- */
-export const ensureDeviceToolchain = Effect.fn("DeviceToolchain.ensure")(function* (
+const ensureTool = Effect.fn("DeviceToolchain.ensureTool")(function* (
   baseDir: string,
+  spec: ToolSpec,
+  select: (paths: DeviceToolchainPaths) => DeviceToolPaths,
 ) {
   const path = yield* Path.Path;
   const paths = deviceToolchainPaths(path, baseDir);
-  return yield* installLock.withPermit(
-    Effect.all(
-      [installTool(HUB_SPEC, paths.hub), installTool(AGENT_DEVICE_SPEC, paths.agentDevice)],
-      { concurrency: 1 },
-    ).pipe(Effect.as(paths)),
-  );
+  return yield* installLock.withPermit(installTool(spec, select(paths)));
 });
 
-export const isDeviceToolchainInstalled = Effect.fn("DeviceToolchain.isInstalled")(function* (
+export const ensureDeviceHub = (baseDir: string) =>
+  ensureTool(baseDir, HUB_SPEC, (paths) => paths.hub);
+
+export const ensureAgentDevice = (baseDir: string) =>
+  ensureTool(baseDir, AGENT_DEVICE_SPEC, (paths) => paths.agentDevice);
+
+const isToolInstalled = Effect.fn("DeviceToolchain.isToolInstalled")(function* (
   baseDir: string,
+  spec: ToolSpec,
+  select: (paths: DeviceToolchainPaths) => DeviceToolPaths,
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const paths = deviceToolchainPaths(path, baseDir);
-  const [hub, agentDevice] = yield* Effect.all([
-    isInstalled(fs, paths.hub, DEVICE_HUB_VERSION),
-    isInstalled(fs, paths.agentDevice, AGENT_DEVICE_VERSION),
-  ]);
-  return hub && agentDevice;
+  return yield* isInstalled(fs, select(paths), spec.version);
 });
+
+export const isDeviceHubInstalled = (baseDir: string) =>
+  isToolInstalled(baseDir, HUB_SPEC, (paths) => paths.hub);
+
+export const isAgentDeviceInstalled = (baseDir: string) =>
+  isToolInstalled(baseDir, AGENT_DEVICE_SPEC, (paths) => paths.agentDevice);

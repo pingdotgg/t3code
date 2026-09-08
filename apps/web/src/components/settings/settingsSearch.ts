@@ -405,8 +405,23 @@ export const SETTINGS_SEARCH_ITEMS = [
   {
     id: "agent-device-access",
     title: "Agent device access",
-    to: "/settings/projects",
+    to: "/settings/integrations",
+    targetId: "devices",
     searchTerms: ["allow simulator emulator ios android drive tools sessions"],
+  },
+  {
+    id: "device-hub",
+    title: "Device hub",
+    to: "/settings/integrations",
+    targetId: "devices",
+    searchTerms: ["simulator emulator ios android install start"],
+  },
+  {
+    id: "device-platform-support",
+    title: "Simulator support",
+    to: "/settings/integrations",
+    targetId: "devices",
+    searchTerms: ["xcode android studio sdk avd runtime"],
   },
   {
     id: "browser-profiles",

@@ -2766,6 +2766,10 @@ const makeWsRpcLayer = (
           observeRpcStream(WS_METHODS.subscribePreviewEvents, previewManager.events, {
             "rpc.aggregate": "preview",
           }),
+        [WS_METHODS.deviceConfigure]: (input) =>
+          observeRpcEffect(WS_METHODS.deviceConfigure, deviceService.configure(input), {
+            "rpc.aggregate": "device",
+          }),
         [WS_METHODS.deviceList]: (_input) =>
           observeRpcEffect(WS_METHODS.deviceList, deviceService.list, {
             "rpc.aggregate": "device",

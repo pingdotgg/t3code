@@ -1,4 +1,8 @@
-import { DEFAULT_CLIENT_SETTINGS, DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts";
+import {
+  DEFAULT_CLIENT_SETTINGS,
+  DEFAULT_UNIFIED_SETTINGS,
+  type DeviceServiceState,
+} from "@t3tools/contracts";
 import {
   createMemoryHistory,
   createRootRoute,
@@ -36,6 +40,7 @@ vi.mock("./settingsLayout", async (importOriginal) => ({
 }));
 
 import { IntegrationsSettingsPanel } from "./IntegrationsSettings";
+import { platformSetupStatus } from "../device/DeviceSetup";
 
 let renderer: ReactTestRenderer | undefined;
 
@@ -73,5 +78,60 @@ describe("Integrations browser discovery", () => {
     await act(() => renderer?.unmount());
     await openSettings();
     expect(listBrowserImportSources).not.toHaveBeenCalled();
+  });
+
+  it("places device settings directly after browser settings", async () => {
+    await openSettings();
+    const sections = renderer!.root
+      .findAll((node) => node.type === "section")
+      .map((node) => node.props.id)
+      .filter(Boolean);
+    expect(sections.indexOf("devices")).toBeGreaterThan(sections.indexOf("browser"));
+  });
+});
+
+const deviceState = (overrides: Partial<DeviceServiceState> = {}): DeviceServiceState => ({
+  hosts: [
+    {
+      id: "local",
+      kind: "local",
+      label: "This machine",
+      hubInstalled: false,
+      agentDeviceInstalled: false,
+      platforms: [
+        { platform: "ios", available: true },
+        { platform: "android", available: true },
+      ],
+    },
+  ],
+  hostStatus: "ready",
+  devices: [],
+  sessions: [],
+  onboardingCompleted: false,
+  agentAccessEnabled: false,
+  hubBasePath: "/api/device-hub",
+  revision: 0,
+  ...overrides,
+});
+
+describe("device setup guidance", () => {
+  it("directs users to install an iOS runtime and create an Android virtual device", () => {
+    expect(platformSetupStatus(deviceState(), "ios").message).toContain("Xcode Settings");
+    expect(platformSetupStatus(deviceState(), "android").message).toContain("Device Manager");
+  });
+
+  it("preserves a specific missing-tool explanation from the server", () => {
+    const state = deviceState({
+      hosts: [
+        {
+          ...deviceState().hosts[0]!,
+          platforms: [
+            { platform: "ios", available: true },
+            { platform: "android", available: false, reason: "Android Emulator is missing." },
+          ],
+        },
+      ],
+    });
+    expect(platformSetupStatus(state, "android").message).toBe("Android Emulator is missing.");
   });
 });

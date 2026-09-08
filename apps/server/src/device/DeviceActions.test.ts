@@ -17,7 +17,6 @@ const makeReady = (
   const calls: Call[] = [];
   const ready: DeviceHostReady = {
     hub: { origin: "http://127.0.0.1:1" },
-    agentDevice: { baseUrl: "http://127.0.0.1:2", token: "t", entryPath: "/x" },
     helpers,
     run: (command, args, options) => {
       const call = { command, args, ...(options?.stdin ? { stdin: options.stdin } : {}) };
