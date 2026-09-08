@@ -1010,6 +1010,9 @@ importers:
       '@types/pngjs':
         specifier: 6.0.5
         version: 6.0.5
+      typescript:
+        specifier: 'catalog:'
+        version: 7.0.2
       typescript-legacy:
         specifier: npm:typescript@~6.0.3
         version: typescript@6.0.3
