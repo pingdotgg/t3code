@@ -3740,6 +3740,7 @@ private final class FeatureClientStub: FeatureClient, T3ConnectCapable {
     var startedWorktreePath: String?
     var startedFromOrigin = false
     var createThreadCallCount = 0
+    var sentIdentities: [FeatureSubmissionIdentity] = []
     var sendMessageCallCount = 0
     var sentRuntimeModes: [FeatureRuntimeMode] = []
     var setRuntimeModeCalls: [FeatureRuntimeMode] = []
@@ -3943,9 +3944,10 @@ private final class FeatureClientStub: FeatureClient, T3ConnectCapable {
         selection: FeatureSelection?,
         runtimeMode: FeatureRuntimeMode,
         attachments _: [FeatureUploadAttachment],
-        identity _: FeatureSubmissionIdentity
+        identity: FeatureSubmissionIdentity
     ) async throws {
         sentRuntimeModes.append(runtimeMode)
+        sentIdentities.append(identity)
         try await sendMessage(threadID: threadID, text: text, selection: selection)
     }
 
