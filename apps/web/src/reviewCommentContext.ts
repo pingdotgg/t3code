@@ -20,6 +20,7 @@ export const ReviewCommentContextSchema = Schema.Struct({
   rangeLabel: Schema.String,
   text: Schema.String,
   diff: Schema.String,
+  pullRequestUrl: Schema.optionalKey(Schema.String),
   fenceLanguage: Schema.optional(Schema.String),
   selection: Schema.optional(ReviewCommentSelectionSchema),
 });
@@ -34,8 +35,29 @@ export interface ReviewCommentContext {
   readonly rangeLabel: string;
   readonly text: string;
   readonly diff: string;
+  /** Present on the whole-pull-request context chip, not line-level review comments. */
+  readonly pullRequestUrl?: string;
   readonly fenceLanguage?: string | undefined;
   readonly selection?: ReviewCommentSelection | undefined;
+}
+
+const WHOLE_PULL_REQUEST_CONTEXT_ID_PATTERN = /^pull-request-context:\d+$/u;
+const PULL_REQUEST_URL_IN_CONTEXT_TEXT_PATTERN = /^Pull request URL: `(https?:\/\/[^`\s]+)`$/mu;
+const LEGACY_PULL_REQUEST_URL_IN_CONTEXT_TEXT_PATTERN =
+  /^The pull request is #\d+, titled `.*`, at `(https?:\/\/[^`\s]+)`\.$/mu;
+
+/** Returns the pull request URL carried by a whole-PR context chip, including older drafts. */
+export function pullRequestContextUrl(
+  comment: Pick<ReviewCommentContext, "id" | "pullRequestUrl" | "text">,
+): string | null {
+  if (!WHOLE_PULL_REQUEST_CONTEXT_ID_PATTERN.test(comment.id)) return null;
+  const explicitUrl = comment.pullRequestUrl?.trim();
+  return (
+    explicitUrl ||
+    PULL_REQUEST_URL_IN_CONTEXT_TEXT_PATTERN.exec(comment.text)?.[1] ||
+    LEGACY_PULL_REQUEST_URL_IN_CONTEXT_TEXT_PATTERN.exec(comment.text)?.[1] ||
+    null
+  );
 }
 
 interface DiffReviewLine {
@@ -120,9 +142,11 @@ function parseReviewCommentContext(
     return null;
   }
   const body = extractReviewCommentBody(rawBody);
+  const fallbackId = `review-comment:${index}:${sectionId}:${filePath}:${startIndex}:${endIndex}`;
+  const pullRequestUrl = attributes.pullRequestUrl?.trim();
 
   return {
-    id: `review-comment:${index}:${sectionId}:${filePath}:${startIndex}:${endIndex}`,
+    id: attributes.id?.trim() || fallbackId,
     sectionId,
     sectionTitle: attributes.sectionTitle?.trim() || "Review",
     filePath,
@@ -131,6 +155,7 @@ function parseReviewCommentContext(
     rangeLabel: attributes.rangeLabel?.trim() || "line",
     text: body.text,
     diff: body.contents,
+    ...(pullRequestUrl ? { pullRequestUrl } : {}),
     fenceLanguage: body.language,
   };
 }
@@ -204,12 +229,16 @@ export function formatReviewCommentContext(comment: ReviewCommentContext): strin
   return [
     [
       "<review_comment",
+      ` id="${escapeReviewCommentAttribute(comment.id)}"`,
       ` sectionId="${escapeReviewCommentAttribute(comment.sectionId)}"`,
       ` sectionTitle="${escapeReviewCommentAttribute(comment.sectionTitle)}"`,
       ` filePath="${escapeReviewCommentAttribute(comment.filePath)}"`,
       ` startIndex="${comment.startIndex}"`,
       ` endIndex="${comment.endIndex}"`,
       ` rangeLabel="${escapeReviewCommentAttribute(comment.rangeLabel)}"`,
+      ...(comment.pullRequestUrl
+        ? [` pullRequestUrl="${escapeReviewCommentAttribute(comment.pullRequestUrl)}"`]
+        : []),
       ">",
     ].join(""),
     neutralizeReviewCommentTags(comment.text.trim()),

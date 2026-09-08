@@ -16,6 +16,7 @@ const buttonVariants = cva(
     },
     variants: {
       size: {
+        chip: "h-full min-w-0 shrink gap-[0.33em] rounded-sm p-0 text-[inherit] leading-none [&_svg]:mx-0 [&_svg:not([class*='size-'])]:size-[1.17em]",
         compact:
           "h-7 gap-1 rounded-md px-[calc(--spacing(2)-1px)] text-xs before:rounded-[calc(var(--radius-md)-1px)] [&_svg:not([class*='size-'])]:size-3.5",
         default: "h-9 px-[calc(--spacing(3)-1px)] sm:h-8",
@@ -56,6 +57,7 @@ const buttonVariants = cva(
           "border-transparent bg-secondary text-secondary-foreground [:active,[data-pressed]]:bg-secondary/80 [:hover,[data-pressed]]:bg-secondary/90",
         "warning-outline":
           "border-warning/32 bg-warning-surface text-warning-foreground shadow-xs/5 [:disabled,:active,[data-pressed]]:shadow-none [:hover,[data-pressed]]:border-warning/40 [:hover,[data-pressed]]:bg-warning/16 dark:[:hover,[data-pressed]]:bg-warning/24",
+        chip: "border-transparent bg-transparent text-inherit shadow-none [:hover,[data-pressed]]:bg-primary/10",
       },
     },
   },

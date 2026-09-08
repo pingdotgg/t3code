@@ -9,10 +9,33 @@ import {
   formatReviewCommentContext,
   inferReviewCommentFenceLanguage,
   parseReviewCommentMessageSegments,
+  pullRequestContextUrl,
   restoreDiffReviewCommentRange,
 } from "./reviewCommentContext";
 
 describe("review comment context parsing", () => {
+  it("does not read a URL-shaped fragment from an older pull request title", () => {
+    const trustedUrl = "https://github.com/pingdotgg/t3code/pull/42";
+    const comment = {
+      id: "pull-request-context:42",
+      text: [
+        "The pull request is #42, titled `Needs review, at `https://attacker.example``, at",
+        `\`${trustedUrl}\`.`,
+      ].join(" "),
+    } as const;
+
+    expect(pullRequestContextUrl(comment)).toBe(trustedUrl);
+  });
+
+  it("does not infer a pull request from an ordinary file comment", () => {
+    expect(
+      pullRequestContextUrl({
+        id: "review-comment:0:file:PR #42:0:0",
+        text: "Pull request URL: `https://github.com/pingdotgg/t3code/pull/42`",
+      }),
+    ).toBeNull();
+  });
+
   it("extracts comment metadata, user text, and fenced diff without raw wrapper text", () => {
     const segments = parseReviewCommentMessageSegments(
       [
@@ -186,6 +209,31 @@ describe("review comment context parsing", () => {
         }),
       }),
     );
+  });
+
+  it("round-trips whole-pull-request identity and URL", () => {
+    const comment = {
+      id: "pull-request-context:42",
+      sectionId: "pull-request:42",
+      sectionTitle: "PR #42",
+      filePath: "PR #42",
+      startIndex: 0,
+      endIndex: 0,
+      rangeLabel: "Review this PR",
+      text: "Review the pull request.",
+      diff: "",
+      pullRequestUrl: "https://github.com/pingdotgg/t3code/pull/42",
+    } as const;
+    const [segment] = parseReviewCommentMessageSegments(formatReviewCommentContext(comment));
+
+    expect(segment).toEqual(
+      expect.objectContaining({
+        kind: "review-comment",
+        comment: expect.objectContaining(comment),
+      }),
+    );
+    if (segment?.kind !== "review-comment") return;
+    expect(pullRequestContextUrl(segment.comment)).toBe(comment.pullRequestUrl);
   });
 
   it("round-trips greater-than signs in attributes", () => {

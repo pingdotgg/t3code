@@ -867,6 +867,7 @@ import {
 import { type AppModelOption, getAppModelOptionsForInstance } from "../../modelSelection";
 import type { UnifiedSettings } from "@t3tools/contracts/settings";
 import { type ChatMessage, type SessionPhase, type Thread, videoMimeType } from "../../types";
+import { useOpenPrLink } from "../../lib/openPullRequestLink";
 import {
   buildComposerPromptHistoryEntries,
   stepComposerPromptHistory,
@@ -1376,6 +1377,7 @@ export interface ChatComposerProps {
 // Component
 // --------------------------------------------------------------------------
 
+/** Renders the composer surface and its attached context controls. */
 export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps) {
   const {
     composerDraftTarget,
@@ -1465,6 +1467,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     onExpandImage,
     onFileOpen,
   } = props;
+  const openPrLink = useOpenPrLink(routeThreadRef);
   const activeTasksProgress = props.threadSyncPhase === null ? props.activeTasksProgress : null;
   const activeTaskSteps = props.threadSyncPhase === null ? props.activeTaskSteps : null;
   // ------------------------------------------------------------------
@@ -5283,6 +5286,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     onRemove={(commentId) =>
                       removeComposerDraftReviewComment(composerDraftTarget, commentId)
                     }
+                    onOpenPullRequest={openPrLink}
                     className="mb-3"
                   />
                 )}
