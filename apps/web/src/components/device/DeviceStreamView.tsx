@@ -185,8 +185,6 @@ export function DeviceStreamView(props: {
     : {
         width: frame.width,
         height: frame.height,
-        left: 0,
-        top: 0,
         ...(rotation ? { transform: `rotate(${rotation}deg)` } : {}),
       };
 
@@ -272,7 +270,7 @@ export function DeviceStreamView(props: {
       >
         <canvas
           ref={canvasRef}
-          className={cn("absolute", mjpegUrl && "hidden")}
+          className={cn("absolute top-0 left-0", mjpegUrl && "hidden")}
           style={mediaStyle}
         />
         {props.visible && access && mjpegUrl ? (
@@ -281,7 +279,7 @@ export function DeviceStreamView(props: {
             src={mjpegUrl}
             alt=""
             draggable={false}
-            className="absolute object-contain"
+            className="absolute top-0 left-0 object-contain"
             style={mediaStyle}
           />
         ) : null}

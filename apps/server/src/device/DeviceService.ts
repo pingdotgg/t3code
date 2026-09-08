@@ -46,7 +46,7 @@ import * as Stream from "effect/Stream";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
 
-import { ServerSettingsService } from "../serverSettings.ts";
+import * as ServerSettings from "../serverSettings.ts";
 
 import { readDeviceDetail, runDeviceAction } from "./DeviceActions.ts";
 import * as DeviceHost from "./DeviceHost.ts";
@@ -138,7 +138,7 @@ const vendorPrefix = (platform: DevicePlatform) =>
 
 export const make = Effect.gen(function* () {
   const localHost = yield* DeviceHost.DeviceHost;
-  const settings = yield* ServerSettingsService;
+  const settings = yield* ServerSettings.ServerSettingsService;
   const lifecycleLock = yield* Semaphore.make(1);
   const readDeviceSettings = settings.getSettings.pipe(
     Effect.map((value) => ({
@@ -610,7 +610,24 @@ export const make = Effect.gen(function* () {
             ),
       ),
     );
-    yield* refresh(ready);
+    yield* publish((state) => ({
+      ...state,
+      devices: state.devices.map((device) =>
+        device.hostId === ready.hostId && device.id === deviceId
+          ? { ...device, booted: false }
+          : device,
+      ),
+      sessions: state.sessions.filter(
+        (session) => !(session.hostId === ready.hostId && session.deviceId === deviceId),
+      ),
+    }));
+    // Discovery can stall while an emulator saves its snapshot. A failed
+    // refresh must not turn an accepted shutdown into an action failure.
+    yield* refresh(ready).pipe(
+      Effect.catch((cause) =>
+        Effect.logWarning("Device discovery unavailable after shutdown", { cause }),
+      ),
+    );
   });
 
   const close: DeviceService["Service"]["close"] = Effect.fn("DeviceService.close")(

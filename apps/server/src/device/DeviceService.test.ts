@@ -59,6 +59,7 @@ describe("DeviceService.stateStream", () => {
 const fixture = Effect.fn("fixture")(function* (
   onBoot: Effect.Effect<void> = Effect.void,
   bootError?: string,
+  failListAfterShutdown = false,
 ) {
   const settings = yield* Ref.make(DEFAULT_SERVER_SETTINGS);
   const starts: string[] = [];
@@ -66,6 +67,7 @@ const fixture = Effect.fn("fixture")(function* (
   const agentStops: string[] = [];
   const requests: string[] = [];
   let booted = false;
+  let shutDown = false;
   const ready: DeviceHost.DeviceHostReady = {
     hub: { origin: "http://device.test" },
     helpers: { serveSimAxSettings: null, serveSimCli: null },
@@ -135,6 +137,17 @@ const fixture = Effect.fn("fixture")(function* (
             return HttpClientResponse.fromWeb(
               request,
               new Response(new Uint8Array([137, 80, 78, 71])),
+            );
+          }
+          if (request.url.endsWith("/shutdown")) {
+            shutDown = true;
+            booted = false;
+            return HttpClientResponse.fromWeb(request, Response.json({ ok: true }));
+          }
+          if (shutDown && failListAfterShutdown) {
+            return HttpClientResponse.fromWeb(
+              request,
+              new Response("Discovery busy", { status: 503 }),
             );
           }
           if (request.url.endsWith("/boot")) {
@@ -305,3 +318,20 @@ for (const [diagnostic, reason, message] of [
     }).pipe(Effect.scoped),
   );
 }
+
+it.effect("keeps shutdown successful when subsequent discovery fails", () =>
+  Effect.gen(function* () {
+    const { service } = yield* fixture(Effect.void, undefined, true);
+    yield* service.configure({ enabled: true });
+    const threadId = ThreadId.make("shutdown-refresh");
+    const session = yield* service.open({
+      threadId,
+      deviceId: "Pixel_API_35",
+      platform: "android",
+    });
+    yield* service.close({ threadId, deviceId: session.deviceId, shutdown: true });
+    const state = yield* service.state;
+    expect(state.sessions).toEqual([]);
+    expect(state.devices.find((device) => device.id === session.deviceId)?.booted).toBe(false);
+  }).pipe(Effect.scoped),
+);
