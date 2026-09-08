@@ -1,5 +1,8 @@
+// @effect-diagnostics nodeBuiltinImport:off - Effect FileSystem has no free-space query.
+import * as NodeFSP from "node:fs/promises";
+import type * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
-import type { HostResourcesSnapshot } from "@t3tools/contracts";
+import { HostStorageSnapshot, type HostResourcesSnapshot } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Cache from "effect/Cache";
 import * as Context from "effect/Context";
@@ -7,7 +10,28 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+
+import { ServerConfig } from "../config.ts";
+
+export class HostStorageError extends Schema.TaggedError<HostStorageError>()("HostStorageError", {
+  cause: Schema.Defect(),
+}) {}
+
+export const HostStorageStatFs = Context.Reference<
+  (
+    path: string,
+  ) => Effect.Effect<Pick<NodeFS.BigIntStatsFs, "blocks" | "bavail" | "bsize">, HostStorageError>
+>("t3/resourceTelemetry/HostStorageStatFs", {
+  defaultValue: () => (path) =>
+    Effect.tryPromise({
+      try: () => NodeFSP.statfs(path, { bigint: true }),
+      catch: (cause) => new HostStorageError({ cause }),
+    }),
+});
+
+const decodeStorage = Schema.decodeUnknownEffect(HostStorageSnapshot);
 
 export class HostResources extends Context.Service<
   HostResources,
@@ -42,6 +66,21 @@ export const make = Effect.fn("makeHostResources")(function* () {
   const fs = yield* FileSystem.FileSystem;
   const platform = yield* HostProcessPlatform;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const { stateDir } = yield* ServerConfig;
+  const statfs = yield* HostStorageStatFs;
+
+  const sampleStorage = Effect.fn("HostResources.sampleStorage")(
+    function* () {
+      const stats = yield* statfs(stateDir);
+      if (stats.bsize <= 0n) return null;
+      return yield* decodeStorage({
+        totalBytes: Number(stats.blocks * stats.bsize),
+        availableBytes: Number(stats.bavail * stats.bsize),
+      });
+    },
+    Effect.timeout("1 second"),
+    Effect.catch(() => Effect.succeed(null)),
+  );
 
   const sample = Effect.fn("HostResources.sample")(function* () {
     const previousCpu = readCpu();
@@ -72,12 +111,14 @@ export const make = Effect.fn("makeHostResources")(function* () {
         );
       availableMemoryBytes = darwinAvailableMemory(output) ?? availableMemoryBytes;
     }
+    const storage = yield* sampleStorage();
     return {
       sampledAt: DateTime.toEpochMillis(yield* DateTime.now),
       cpuUtilization,
       cpuCount: cpu.count,
       availableMemoryBytes: Math.min(totalMemoryBytes, Math.max(0, availableMemoryBytes)),
       totalMemoryBytes,
+      storage,
     };
   });
 

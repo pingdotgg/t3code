@@ -6225,6 +6225,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     Effect.gen(function* () {
       const commandCalls = yield* Ref.make(0);
       const hostResources = yield* HostResources.make().pipe(
+        Effect.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-host-resources-" })),
         Effect.provideService(HostProcessPlatform, "darwin"),
         Effect.provide(
           Layer.mock(ChildProcessSpawner.ChildProcessSpawner)({
@@ -6254,6 +6255,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       const started = yield* Deferred.make<void>();
       const commandCalls = yield* Ref.make(0);
       const hostResources = yield* HostResources.make().pipe(
+        Effect.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-host-resources-" })),
         Effect.provideService(HostProcessPlatform, "darwin"),
         Effect.provide(
           Layer.mock(ChildProcessSpawner.ChildProcessSpawner)({

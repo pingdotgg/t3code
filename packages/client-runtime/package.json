@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./host-storage": {
+      "types": "./src/hostStorage.ts",
+      "default": "./src/hostStorage.ts"
+    },
     "./load-balancing": {
       "types": "./src/load-balancing.ts",
       "default": "./src/load-balancing.ts"

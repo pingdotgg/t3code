@@ -6,6 +6,13 @@ import { DesktopUpdateStateSchema } from "./ipc.ts";
 
 export const RESOURCE_MONITOR_PROTOCOL_VERSION = 3 as const;
 
+/** Capacity of the filesystem containing this environment's T3 data directory. */
+export const HostStorageSnapshot = Schema.Struct({
+  totalBytes: PositiveInt,
+  availableBytes: NonNegativeInt,
+}).check(Schema.makeFilter((storage) => storage.availableBytes <= storage.totalBytes));
+export type HostStorageSnapshot = typeof HostStorageSnapshot.Type;
+
 /** Whole-host capacity, independent of T3's process diagnostics. */
 export const HostResourcesSnapshot = Schema.Struct({
   sampledAt: NonNegativeInt,
@@ -13,6 +20,8 @@ export const HostResourcesSnapshot = Schema.Struct({
   cpuCount: NonNegativeInt,
   availableMemoryBytes: NonNegativeInt,
   totalMemoryBytes: NonNegativeInt,
+  // Absent on older servers; null when the filesystem could not be sampled.
+  storage: Schema.optionalKey(Schema.NullOr(HostStorageSnapshot)),
 });
 export type HostResourcesSnapshot = typeof HostResourcesSnapshot.Type;
 

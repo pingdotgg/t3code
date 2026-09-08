@@ -548,6 +548,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "disk-storage",
+    title: "Disk storage",
+    to: "/settings/connections",
+    searchTerms: ["disk space capacity free available storage machine environment server"],
+  },
+  {
     id: "remote-environments",
     title: "Remote environments",
     to: "/settings/connections",
