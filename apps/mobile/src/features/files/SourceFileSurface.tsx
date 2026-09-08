@@ -281,8 +281,9 @@ function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
 }
 
 export function SourceFileSurface(props: SourceFileSurfaceProps) {
+  const { appearance } = useAppearancePreferences();
   const NativeView = resolveNativeReviewDiffView();
-  return NativeView ? (
+  return NativeView && !appearance.codeWordBreak ? (
     <NativeSourceFileSurface {...props} NativeView={NativeView} />
   ) : (
     <JavaScriptSourceFileSurface {...props} />
