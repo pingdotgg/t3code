@@ -23,6 +23,13 @@ export function SidebarPullSurface({
     const correction = correctionRef.current;
     if (!root || !surface || !scroller || !correction) return;
 
+    scroller.scrollTop = 720;
+    if (!Reflect.has(scroller, "onscrollend")) {
+      // Leave ordinary list scrolling intact when native pull completion is unavailable.
+      scroller.style.overflowY = "hidden";
+      return;
+    }
+
     let distance = 0;
     let touch: { x: number; y: number } | undefined;
     const viewport = () => surface.querySelector<HTMLElement>('[data-slot="scroll-area-viewport"]');
@@ -93,8 +100,8 @@ export function SidebarPullSurface({
         return;
       }
       const dy = first.clientY - touch.y;
-      if (distance === 0 && (dy <= 0 || Math.abs(first.clientX - touch.x) > dy)) {
-        touch = undefined;
+      if (dy <= 0 || Math.abs(first.clientX - touch.x) > dy) {
+        release();
         return;
       }
       if (!event.cancelable) {
@@ -132,7 +139,10 @@ export function SidebarPullSurface({
 
   return (
     <>
-      <div ref={rootRef} className="sidebar-pull-root flex min-h-0 flex-1 flex-col overflow-hidden">
+      <div
+        ref={rootRef}
+        className="sidebar-pull-root group/sidebar-pull flex min-h-0 flex-1 flex-col overflow-hidden"
+      >
         {header}
         <div
           ref={scrollRef}
@@ -140,7 +150,10 @@ export function SidebarPullSurface({
         >
           <div aria-hidden className="h-[720px]" />
           <div ref={correctionRef} className="h-full">
-            <div ref={surfaceRef} className="sidebar-pull-surface flex h-full min-h-0 flex-col">
+            <div
+              ref={surfaceRef}
+              className="sidebar-pull-surface flex h-full min-h-0 translate-y-[var(--sidebar-pull-offset,0px)] flex-col transition-transform duration-[280ms] ease-[cubic-bezier(0.22,1,0.36,1)] group-data-[pulling=true]/sidebar-pull:transition-none motion-reduce:transition-none"
+            >
               {children}
             </div>
           </div>

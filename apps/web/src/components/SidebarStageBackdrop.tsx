@@ -59,7 +59,7 @@ export function SidebarStageBackdrop({ variant }: { variant: SidebarStageBackdro
   return (
     <div
       aria-hidden
-      className="sidebar-stage-backdrop pointer-events-none absolute inset-x-0 top-0 z-0 h-20 select-none overflow-hidden"
+      className="sidebar-stage-backdrop pointer-events-none absolute inset-x-0 top-0 z-0 h-[calc(5rem+var(--sidebar-pull-offset,0px))] select-none overflow-hidden transition-[height] duration-[280ms] ease-[cubic-bezier(0.22,1,0.36,1)] group-data-[pulling=true]/sidebar-pull:transition-none motion-reduce:transition-none"
     >
       {/* A taller canvas keeps the original scale while the outer mask reveals more. */}
       <div className="h-80">
