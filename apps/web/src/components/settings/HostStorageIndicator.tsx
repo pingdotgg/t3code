@@ -105,7 +105,7 @@ function StorageRing({
 }
 
 function ConnectedStorageIndicator({ environment }: { environment: EnvironmentPresentation }) {
-  const query = serverEnvironment.hostResources({
+  const query = serverEnvironment.hostStorage({
     environmentId: environment.environmentId,
     input: {},
   });

@@ -1,4 +1,4 @@
-import type { HostResourcesSnapshot } from "@t3tools/contracts";
+import type { HostStorageResult } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/unstable/reactivity";
@@ -6,12 +6,8 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { getHostStoragePresentation } from "./hostStorage.ts";
 
-const snapshot: HostResourcesSnapshot = {
+const snapshot: HostStorageResult = {
   sampledAt: 1_789_000_000_000,
-  cpuUtilization: 0.1,
-  cpuCount: 8,
-  availableMemoryBytes: 8 * 1024 ** 3,
-  totalMemoryBytes: 16 * 1024 ** 3,
   storage: { totalBytes: 457 * 1024 ** 3, availableBytes: 254 * 1024 ** 3 },
 };
 
@@ -40,13 +36,10 @@ describe("host storage presentation", () => {
     });
   });
 
-  it.each([null, undefined])("treats %s storage as unavailable", (storage) => {
-    const { storage: _storage, ...legacySnapshot } = snapshot;
-    expect(
-      getHostStoragePresentation(
-        AsyncResult.success(storage === undefined ? legacySnapshot : { ...snapshot, storage }),
-      ),
-    ).toEqual({ status: "unavailable" });
+  it("treats unavailable storage as unknown", () => {
+    expect(getHostStoragePresentation(AsyncResult.success({ ...snapshot, storage: null }))).toEqual(
+      { status: "unavailable" },
+    );
   });
 
   it("does not show the previous capacity while refreshing", () => {
@@ -56,7 +49,7 @@ describe("host storage presentation", () => {
     });
   });
 
-  it("does not show a cached reading after a failed request", () => {
+  it("shows unavailable after disconnection or an older server rejects the storage RPC", () => {
     expect(
       getHostStoragePresentation(
         AsyncResult.failure(Cause.fail(new Error("Disconnected")), {

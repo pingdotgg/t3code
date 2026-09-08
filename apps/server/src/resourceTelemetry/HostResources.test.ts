@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -21,7 +22,7 @@ const makeTest = Effect.fn(function* (statfs: typeof HostResources.HostStorageSt
 });
 
 describe("HostResources storage", () => {
-  it.effect("samples the configured data filesystem and shares the cache across clients", () =>
+  it.effect("samples the configured data filesystem again on every explicit read", () =>
     Effect.gen(function* () {
       const { stateDir } = yield* ServerConfig;
       const paths: string[] = [];
@@ -31,22 +32,17 @@ describe("HostResources storage", () => {
           return { blocks: 1000n, bsize: 4096n, bavail: BigInt(paths.length) };
         }),
       );
-      const clients = yield* Effect.all([service.read, service.read], {
-        concurrency: "unbounded",
-      }).pipe(Effect.forkChild);
-      yield* TestClock.adjust("200 millis");
-      const [first, second] = yield* Fiber.join(clients);
-      expect(first.storage).toEqual({ totalBytes: 4096000, availableBytes: 4096 });
-      expect(second).toEqual(first);
-      expect(yield* service.read).toEqual(first);
-      expect(paths).toEqual([stateDir]);
-
-      yield* TestClock.adjust("5 seconds");
-      const refreshed = yield* service.read.pipe(Effect.forkChild);
-      yield* TestClock.adjust("200 millis");
-      const next = yield* Fiber.join(refreshed);
-      expect(next.storage).toEqual({ totalBytes: 4096000, availableBytes: 8192 });
-      expect(next.sampledAt).toBeGreaterThan(first.sampledAt);
+      const first = yield* service.readStorage;
+      expect(first).toEqual({
+        sampledAt: 0,
+        storage: { totalBytes: 4096000, availableBytes: 4096 },
+      });
+      yield* TestClock.adjust("1 milli");
+      const refreshed = yield* service.readStorage;
+      expect(refreshed).toEqual({
+        sampledAt: 1,
+        storage: { totalBytes: 4096000, availableBytes: 8192 },
+      });
       expect(paths).toEqual([stateDir, stateDir]);
     }).pipe(Effect.provide(TestLayer)),
   );
@@ -86,14 +82,12 @@ describe("HostResources storage", () => {
     it.effect(name, () =>
       Effect.gen(function* () {
         const service = yield* makeTest(() => Effect.succeed(stats));
-        const reading = yield* service.read.pipe(Effect.forkChild);
-        yield* TestClock.adjust("200 millis");
-        expect((yield* Fiber.join(reading)).storage).toEqual(storage);
+        expect((yield* service.readStorage).storage).toEqual(storage);
       }).pipe(Effect.provide(TestLayer)),
     );
   }
 
-  it.effect("keeps CPU and memory usable after a storage failure and retries after expiry", () =>
+  it.effect("recovers from a filesystem failure on the next read", () =>
     Effect.gen(function* () {
       let reads = 0;
       const service = yield* makeTest(() =>
@@ -104,35 +98,37 @@ describe("HostResources storage", () => {
             : Effect.succeed({ blocks: 1000n, bsize: 4096n, bavail: 100n });
         }),
       );
-      const reading = yield* service.read.pipe(Effect.forkChild);
-      yield* TestClock.adjust("200 millis");
-      const failed = yield* Fiber.join(reading);
-      expect(failed.storage).toBeNull();
-      expect(failed.cpuCount).toBeGreaterThan(0);
-      expect(failed.totalMemoryBytes).toBeGreaterThan(0);
-      expect(failed.availableMemoryBytes).toBeGreaterThanOrEqual(0);
-      expect(yield* service.read).toEqual(failed);
-      expect(reads).toBe(1);
-
-      yield* TestClock.adjust("5 seconds");
-      const retry = yield* service.read.pipe(Effect.forkChild);
-      yield* TestClock.adjust("200 millis");
-      expect((yield* Fiber.join(retry)).storage).toEqual({
+      expect((yield* service.readStorage).storage).toBeNull();
+      expect((yield* service.readStorage).storage).toEqual({
         totalBytes: 4096000,
         availableBytes: 409600,
       });
+      expect(reads).toBe(2);
     }).pipe(Effect.provide(TestLayer)),
   );
 
-  it.effect("bounds a stuck filesystem reading without failing host resources", () =>
+  it.effect("keeps cached load-balancing reads independent of a stuck storage request", () =>
     Effect.gen(function* () {
-      const service = yield* makeTest(() => Effect.never);
-      const reading = yield* service.read.pipe(Effect.forkChild);
-      yield* TestClock.adjust("1200 millis");
-      const result = yield* Fiber.join(reading);
-      expect(result.storage).toBeNull();
-      expect(result.sampledAt).toBe(1200);
-      expect(result.totalMemoryBytes).toBeGreaterThan(0);
+      const started = yield* Deferred.make<void>();
+      let storageReads = 0;
+      const service = yield* makeTest(() =>
+        Effect.gen(function* () {
+          storageReads++;
+          yield* Deferred.succeed(started, undefined);
+          return yield* Effect.never;
+        }),
+      );
+      const storage = yield* service.readStorage.pipe(Effect.forkChild);
+      yield* Deferred.await(started);
+      const resources = yield* service.read.pipe(Effect.forkChild);
+      yield* TestClock.adjust("200 millis");
+      const first = yield* Fiber.join(resources);
+      expect(first.sampledAt).toBe(200);
+      expect(first.totalMemoryBytes).toBeGreaterThan(0);
+      expect(yield* service.read).toEqual(first);
+      expect(storageReads).toBe(1);
+      yield* TestClock.adjust("800 millis");
+      expect(yield* Fiber.join(storage)).toEqual({ sampledAt: 1000, storage: null });
     }).pipe(Effect.provide(TestLayer)),
   );
 });

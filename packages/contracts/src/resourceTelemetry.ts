@@ -13,6 +13,12 @@ export const HostStorageSnapshot = Schema.Struct({
 }).check(Schema.makeFilter((storage) => storage.availableBytes <= storage.totalBytes));
 export type HostStorageSnapshot = typeof HostStorageSnapshot.Type;
 
+export const HostStorageResult = Schema.Struct({
+  sampledAt: NonNegativeInt,
+  storage: Schema.NullOr(HostStorageSnapshot),
+});
+export type HostStorageResult = typeof HostStorageResult.Type;
+
 /** Whole-host capacity, independent of T3's process diagnostics. */
 export const HostResourcesSnapshot = Schema.Struct({
   sampledAt: NonNegativeInt,
@@ -20,8 +26,6 @@ export const HostResourcesSnapshot = Schema.Struct({
   cpuCount: NonNegativeInt,
   availableMemoryBytes: NonNegativeInt,
   totalMemoryBytes: NonNegativeInt,
-  // Absent on older servers; null when the filesystem could not be sampled.
-  storage: Schema.optionalKey(Schema.NullOr(HostStorageSnapshot)),
 });
 export type HostResourcesSnapshot = typeof HostResourcesSnapshot.Type;
 

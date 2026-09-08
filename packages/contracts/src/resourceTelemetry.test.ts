@@ -1,20 +1,13 @@
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
-import { HostResourcesSnapshot } from "./resourceTelemetry.ts";
+import { HostStorageResult } from "./resourceTelemetry.ts";
 
-const decode = Schema.decodeUnknownSync(HostResourcesSnapshot);
-const resources = {
-  sampledAt: 0,
-  cpuUtilization: null,
-  cpuCount: 4,
-  availableMemoryBytes: 1024,
-  totalMemoryBytes: 2048,
-};
+const decode = Schema.decodeUnknownSync(HostStorageResult);
+const resources = { sampledAt: 0 };
 
-describe("HostResourcesSnapshot storage", () => {
-  it("accepts older servers without storage and unavailable readings", () => {
-    expect(decode(resources)).toEqual(resources);
+describe("HostStorageResult storage", () => {
+  it("accepts unavailable readings", () => {
     expect(decode({ ...resources, storage: null }).storage).toBeNull();
   });
 

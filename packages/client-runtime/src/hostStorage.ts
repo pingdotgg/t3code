@@ -1,4 +1,4 @@
-import type { HostResourcesSnapshot } from "@t3tools/contracts";
+import type { HostStorageResult } from "@t3tools/contracts";
 import { AsyncResult } from "effect/unstable/reactivity";
 
 const BYTE_UNITS = ["B", "KiB", "MiB", "GiB", "TiB", "PiB"] as const;
@@ -11,7 +11,7 @@ function formatStorageBytes(bytes: number): string {
 
 /** A refreshing or failed reading must not present cached capacity as current. */
 export function getHostStoragePresentation(
-  result: AsyncResult.AsyncResult<HostResourcesSnapshot, unknown>,
+  result: AsyncResult.AsyncResult<HostStorageResult, unknown>,
 ) {
   if (AsyncResult.isInitial(result) || result.waiting) {
     return { status: "loading" } as const;

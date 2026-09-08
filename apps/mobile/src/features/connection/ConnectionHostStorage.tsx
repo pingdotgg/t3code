@@ -133,7 +133,7 @@ function ConnectedHostStorage(props: {
   readonly environmentId: EnvironmentId;
   readonly environmentLabel: string;
 }) {
-  const query = serverEnvironment.hostResources({ environmentId: props.environmentId, input: {} });
+  const query = serverEnvironment.hostStorage({ environmentId: props.environmentId, input: {} });
   const result = useAtomValue(query);
   const refresh = useAtomRefresh(query);
 

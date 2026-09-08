@@ -2,7 +2,11 @@
 import * as NodeFSP from "node:fs/promises";
 import type * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
-import { HostStorageSnapshot, type HostResourcesSnapshot } from "@t3tools/contracts";
+import {
+  HostStorageSnapshot,
+  type HostResourcesSnapshot,
+  type HostStorageResult,
+} from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Cache from "effect/Cache";
 import * as Context from "effect/Context";
@@ -35,7 +39,10 @@ const decodeStorage = Schema.decodeUnknownEffect(HostStorageSnapshot);
 
 export class HostResources extends Context.Service<
   HostResources,
-  { readonly read: Effect.Effect<HostResourcesSnapshot> }
+  {
+    readonly read: Effect.Effect<HostResourcesSnapshot>;
+    readonly readStorage: Effect.Effect<HostStorageResult>;
+  }
 >()("t3/resourceTelemetry/HostResources") {}
 
 function readCpu() {
@@ -111,14 +118,12 @@ export const make = Effect.fn("makeHostResources")(function* () {
         );
       availableMemoryBytes = darwinAvailableMemory(output) ?? availableMemoryBytes;
     }
-    const storage = yield* sampleStorage();
     return {
       sampledAt: DateTime.toEpochMillis(yield* DateTime.now),
       cpuUtilization,
       cpuCount: cpu.count,
       availableMemoryBytes: Math.min(totalMemoryBytes, Math.max(0, availableMemoryBytes)),
       totalMemoryBytes,
-      storage,
     };
   });
 
@@ -128,7 +133,15 @@ export const make = Effect.fn("makeHostResources")(function* () {
     lookup: (_key: "host") => sample(),
     timeToLive: "5 seconds",
   });
-  return HostResources.of({ read: Cache.get(cache, "host") });
+  return HostResources.of({
+    read: Cache.get(cache, "host"),
+    // Settings reads storage on demand. Keep it independent of load balancing and
+    // uncached so an explicit refresh always checks the filesystem again.
+    readStorage: Effect.gen(function* () {
+      const storage = yield* sampleStorage();
+      return { sampledAt: DateTime.toEpochMillis(yield* DateTime.now), storage };
+    }),
+  });
 });
 
 export const layer = Layer.effect(HostResources, make());
