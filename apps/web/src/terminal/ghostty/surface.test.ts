@@ -450,13 +450,7 @@ const rowFromCells = (
 ): GhosttyRow => ({
   cells,
   text: cells
-    .map(
-      (value) =>
-        value.text ||
-        (value.wide === GHOSTTY_CELL_WIDE.spacerTail || value.wide === GHOSTTY_CELL_WIDE.spacerHead
-          ? ""
-          : " "),
-    )
+    .map((cell) => cell.text || " ")
     .join("")
     .trimEnd(),
   isWrapContinuation,
