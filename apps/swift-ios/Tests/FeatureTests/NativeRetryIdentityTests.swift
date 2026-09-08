@@ -33,28 +33,21 @@ final class NativeRetryIdentityTests: XCTestCase {
         let settingsStore = UserDefaults(suiteName: settingsSuite)!
         defer { settingsStore.removePersistentDomain(forName: settingsSuite) }
         let client = NativeFeatureClient(runtime: runtime, settingsStore: settingsStore)
-        let initial = try await client.initialSnapshot()
+        let seed = try await client.initialSnapshot()
+        let recorder = BootstrapSnapshotRecorder(seed: seed, events: client.events())
+        defer { recorder.stop() }
+        let initial = try await recorder.wait { !$0.projects.isEmpty && !$0.threads.isEmpty }
         await connection.waitUntilConnected()
         var updated = initial.settings
         updated.textSize = FeatureTextSizeAdjustment(steps: 2)
         updated.codeSize = FeatureTextSizeAdjustment(steps: -1)
         try await client.saveSettings(updated)
-        var events = client.events().makeAsyncIterator()
-
         await connection.failReceive()
-
-        var receivedRepublish = false
-        while let event = await events.next() {
-            guard case let .snapshot(snapshot) = event,
-                  snapshot.connection.state == .reconnecting else {
-                continue
-            }
-            XCTAssertEqual(snapshot.settings.textSize.steps, 2)
-            XCTAssertEqual(snapshot.settings.codeSize.steps, -1)
-            receivedRepublish = true
-            break
+        let snapshot = try await recorder.wait {
+            $0.connection.state == .reconnecting && $0.settings.textSize.steps == 2
         }
-        XCTAssertTrue(receivedRepublish)
+        XCTAssertEqual(snapshot.settings.textSize.steps, 2)
+        XCTAssertEqual(snapshot.settings.codeSize.steps, -1)
         await client.disconnect()
     }
 
@@ -89,7 +82,10 @@ final class NativeRetryIdentityTests: XCTestCase {
                 suiteName: "t3-native-concurrent-retry-\(UUID().uuidString)"
             )!
         )
-        _ = try await client.initialSnapshot()
+        let seed = try await client.initialSnapshot()
+        let recorder = BootstrapSnapshotRecorder(seed: seed, events: client.events())
+        defer { recorder.stop() }
+        _ = try await recorder.wait { !$0.projects.isEmpty && !$0.threads.isEmpty }
         await connection.waitUntilConnected()
         await transport.rejectShellReads()
 
@@ -151,7 +147,10 @@ final class NativeRetryIdentityTests: XCTestCase {
             suiteName: "t3-native-retry-\(UUID().uuidString)"
         )!
         let client = NativeFeatureClient(runtime: runtime, settingsStore: settings)
-        let initial = try await client.initialSnapshot()
+        let seed = try await client.initialSnapshot()
+        let recorder = BootstrapSnapshotRecorder(seed: seed, events: client.events())
+        defer { recorder.stop() }
+        let initial = try await recorder.wait { !$0.projects.isEmpty && !$0.threads.isEmpty }
         XCTAssertEqual(initial.threads.first?.runtimeMode, .approvalRequired)
         XCTAssertEqual(initial.threads.first?.interactionMode, .standard)
         await connection.waitUntilConnected()
@@ -260,7 +259,10 @@ final class NativeRetryIdentityTests: XCTestCase {
             suiteName: "t3-native-partial-\(UUID().uuidString)"
         )!
         let client = NativeFeatureClient(runtime: runtime, settingsStore: settings)
-        _ = try await client.initialSnapshot()
+        let seed = try await client.initialSnapshot()
+        let recorder = BootstrapSnapshotRecorder(seed: seed, events: client.events())
+        defer { recorder.stop() }
+        _ = try await recorder.wait { !$0.projects.isEmpty && !$0.threads.isEmpty }
         await connection.waitUntilConnected()
 
         let identity = FeatureSubmissionIdentity(
