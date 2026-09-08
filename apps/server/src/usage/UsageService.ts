@@ -472,6 +472,16 @@ export const make = Effect.gen(function* () {
     }
     const windowStartMs =
       (hourlyWindow?.sinceTimeMs ?? DateTime.toEpochMillis(windowStart.value)) - MTIME_SLACK_MS;
+    const boundedRetentionMs = startedAtMs - CACHE_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+    // Only a scan reaching past the bounded retention moves the horizon. It
+    // moves before the walk, not after: scans for different windows run
+    // concurrently, and a bounded scan finishing mid-walk prunes with whatever
+    // horizon it sees, so the old entries this walk adds must already be
+    // protected. The marker must reach disk even when no file changed.
+    if (windowStartMs < boundedRetentionMs && windowStartMs < retentionHorizonMs) {
+      retentionHorizonMs = windowStartMs;
+      cacheDirty = true;
+    }
 
     // Pricing only matters once records are aggregated, so the rate table
     // loads while transcripts stream instead of gating them: a cold rates
@@ -543,13 +553,6 @@ export const make = Effect.gen(function* () {
       });
     }
 
-    const boundedRetentionMs = startedAtMs - CACHE_RETENTION_DAYS * 24 * 60 * 60 * 1000;
-    // Only a scan reaching past the bounded retention moves the horizon, and
-    // the marker must reach disk even when no file changed.
-    if (windowStartMs < boundedRetentionMs && windowStartMs < retentionHorizonMs) {
-      retentionHorizonMs = windowStartMs;
-      cacheDirty = true;
-    }
     const pruned = pruneScanCache(fileCache, {
       livePaths,
       walkedRoots,

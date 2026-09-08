@@ -313,8 +313,8 @@ export function UsageRouteScreen() {
                     days={chartDays}
                     daily={chartTotals}
                     metric={metric}
-                    sinceDay={days[0] ?? window.untilDay}
-                    untilDay={window.untilDay}
+                    sinceDay={chartDays[0] ?? window.untilDay}
+                    untilDay={chartDays[chartDays.length - 1] ?? window.untilDay}
                     isPast24Hours={isPast24Hours}
                     timeZone={window.timeZone}
                   />

@@ -243,6 +243,59 @@ describe("UsageService", () => {
     }).pipe(Effect.scoped),
   );
 
+  it.live("protects an all-time scan's old entries from a bounded scan finishing mid-walk", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
+      const nowMs = yield* Clock.currentTimeMillis;
+      const staleMtimeSeconds = (nowMs - 200 * 24 * 60 * 60 * 1000) / 1000;
+      yield* Effect.promise(() => NodeFSP.utimes(transcript, staleMtimeSeconds, staleMtimeSeconds));
+      const allTime: UsageSummaryInput = { ...WINDOW, sinceDay: UsageDay.make("2020-01-01") };
+      // Walked last, so by the time the all-time scan probes it the old
+      // transcript is already in the cache and the prune has not run yet.
+      const grokDir = NodePath.join(home, "grok", "sessions");
+
+      yield* Effect.gen(function* () {
+        const config = yield* ServerConfig.ServerConfig;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const allTimeReachedGrok = yield* Deferred.make<void>();
+        const releaseAllTime = yield* Deferred.make<void>();
+        let grokProbes = 0;
+        const service = yield* UsageService.make.pipe(
+          Effect.provideService(FileSystem.FileSystem, {
+            ...fileSystem,
+            exists: (path) => {
+              if (path !== grokDir) return fileSystem.exists(path);
+              grokProbes += 1;
+              if (grokProbes !== 1) return fileSystem.exists(path);
+              return Deferred.succeed(allTimeReachedGrok, undefined).pipe(
+                Effect.andThen(Deferred.await(releaseAllTime)),
+                Effect.andThen(fileSystem.exists(path)),
+              );
+            },
+          }),
+        );
+
+        const inFlight = yield* service.readSummary(allTime).pipe(Effect.forkChild);
+        yield* Deferred.await(allTimeReachedGrok);
+        // A bounded scan runs to completion, prune included, while the
+        // all-time scan is still walking.
+        assert.strictEqual(totalOutputTokens(yield* service.readSummary(WINDOW)), 0);
+        yield* Deferred.succeed(releaseAllTime, undefined);
+        assert.strictEqual(totalOutputTokens(yield* Fiber.join(inFlight)), 5);
+
+        const persisted = yield* fileSystem.readFileString(
+          NodePath.join(config.stateDir, "usage-scan-cache.json"),
+        );
+        assert.isTrue(decodeScanCache(decodeJsonDocument(persisted)).has(transcript));
+      }).pipe(
+        Effect.provide(
+          serviceLayers({ prefix: "usage-service-concurrent-prune-test", home, settings }),
+        ),
+      );
+    }).pipe(Effect.scoped),
+  );
+
   it.live("does not share an in-flight scan after custom prices change", () =>
     Effect.gen(function* () {
       const { transcript, settings, home } = yield* setup;
