@@ -142,7 +142,15 @@ private struct RPCResponseEnvelope: Decodable, Sendable {
 
     let _tag: String
     let requestId: Int?
-    let values: [JSONValue]?
+    // Validate array framing without materializing values before their
+    // subscription's concrete decoder consumes them.
+    struct Values: Decodable, Sendable {
+        init(from decoder: any Decoder) throws {
+            _ = try decoder.unkeyedContainer()
+        }
+    }
+
+    let values: Values?
     let exit: Exit?
     let defect: JSONValue?
 }
@@ -173,6 +181,45 @@ public actor WebSocketRPCClient {
         case terminated
     }
 
+    /// Decode and yield in order: a bad value retains its delivered prefix,
+    /// and a full buffer stops decoding before later values can change the error.
+    private struct SubscriptionChunk<Value: Decodable & Sendable>: DecodableWithConfiguration {
+        typealias DecodingConfiguration = (batchSize: Int, yield: @Sendable (Result<[Value], Error>) -> SubscriptionYieldResult)
+        private enum CodingKeys: String, CodingKey { case values }
+        let result: SubscriptionYieldResult
+
+        init(from decoder: any Decoder, configuration: DecodingConfiguration) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            guard container.contains(.values), try !container.decodeNil(forKey: .values) else {
+                result = .enqueued
+                return
+            }
+            var values = try container.nestedUnkeyedContainer(forKey: .values)
+            while !values.isAtEnd {
+                var batch: [Value] = []
+                batch.reserveCapacity(configuration.batchSize)
+                do {
+                    while !values.isAtEnd && batch.count < configuration.batchSize {
+                        batch.append(try values.decode(Value.self))
+                    }
+                } catch {
+                    result = configuration.yield(.failure(error))
+                    return
+                }
+                switch configuration.yield(.success(batch)) {
+                case .enqueued: continue
+                case .dropped:
+                    result = .dropped
+                    return
+                case .terminated:
+                    result = .terminated
+                    return
+                }
+            }
+            result = .enqueued
+        }
+    }
+
     private struct Subscription {
         let tag: String
         let payload: JSONValue
@@ -181,8 +228,7 @@ public actor WebSocketRPCClient {
         /// The connection that assigned `requestID`. Request IDs are reissued
         /// after reconnects, so an Interrupt is only valid on this connection.
         var requestConnectionID: UUID?
-        let batchSize: Int
-        let yield: @Sendable ([JSONValue]) -> SubscriptionYieldResult
+        let yieldChunk: @Sendable (Data) throws -> SubscriptionYieldResult
         let finish: @Sendable (Error?) -> Void
     }
 
@@ -400,9 +446,7 @@ public actor WebSocketRPCClient {
         reconnect: Bool = true,
         as type: Value.Type
     ) -> AsyncThrowingStream<Value, Error> {
-        subscribe(tag, payload: payload, reconnect: reconnect, batchSize: 1) {
-            try $0[0].decode(type)
-        }
+        subscribe(tag, payload: payload, reconnect: reconnect, batchSize: 1, as: type) { $0[0] }
     }
 
     /// Preserve server batches for consumers that can apply several events at once.
@@ -414,18 +458,17 @@ public actor WebSocketRPCClient {
         as type: Value.Type
     ) -> AsyncThrowingStream<[Value], Error> {
         subscribe(tag, payload: payload, reconnect: reconnect,
-                  batchSize: min(64, subscriptionBufferLimit)) { values in
-            try values.map { try $0.decode(type) }
-        }
+                  batchSize: min(64, subscriptionBufferLimit), as: type) { $0 }
     }
 
-    private func subscribe<Value: Sendable>(
+    private func subscribe<Value: Decodable & Sendable, Output: Sendable>(
         _ tag: String,
         payload: JSONValue,
         reconnect: Bool,
         batchSize: Int,
-        decode: @escaping @Sendable ([JSONValue]) throws -> Value
-    ) -> AsyncThrowingStream<Value, Error> {
+        as type: Value.Type,
+        transform: @escaping @Sendable ([Value]) -> Output
+    ) -> AsyncThrowingStream<Output, Error> {
         let subscriptionID = UUID()
         return AsyncThrowingStream(bufferingPolicy: .bufferingOldest(max(1, subscriptionBufferLimit / batchSize))) {
             continuation in
@@ -434,23 +477,25 @@ public actor WebSocketRPCClient {
                 payload: payload,
                 reconnect: reconnect,
                 requestID: nil,
-                batchSize: batchSize,
-                yield: { value in
-                    do {
-                        switch continuation.yield(try decode(value)) {
-                        case .enqueued:
-                            return .enqueued
-                        case .dropped:
-                            return .dropped
-                        case .terminated:
-                            return .terminated
-                        @unknown default:
-                            return .dropped
-                        }
-                    } catch {
-                        continuation.finish(throwing: error)
-                        return .terminated
-                    }
+                yieldChunk: { data in
+                    try JSONDecoder.t3.decode(
+                        SubscriptionChunk<Value>.self,
+                        from: data,
+                        configuration: (batchSize: batchSize, yield: { result in
+                            switch result {
+                            case let .success(value):
+                                switch continuation.yield(transform(value)) {
+                                case .enqueued: return .enqueued
+                                case .dropped: return .dropped
+                                case .terminated: return .terminated
+                                @unknown default: return .dropped
+                                }
+                            case let .failure(error):
+                                continuation.finish(throwing: error)
+                                return .terminated
+                            }
+                        })
+                    ).result
                 },
                 finish: { error in
                     if let error {
@@ -698,11 +743,11 @@ public actor WebSocketRPCClient {
         guard connectionID == expectedConnectionID else { return false }
         let response = try JSONDecoder.t3.decode(RPCResponseEnvelope.self, from: data)
         awaitingKeepaliveResponse = false
-        try await handle(response)
+        try await handle(response, data: data)
         return connectionID == expectedConnectionID
     }
 
-    private func handle(_ response: RPCResponseEnvelope) async throws {
+    private func handle(_ response: RPCResponseEnvelope, data: Data) async throws {
         switch response._tag {
         case "Pong":
             return
@@ -711,26 +756,22 @@ public actor WebSocketRPCClient {
                   let subscriptionID = subscriptionByRequestID[requestID],
                   let subscription = subscriptions[subscriptionID]
             else { return }
-            let values = response.values ?? []
-            for start in stride(from: 0, to: values.count, by: subscription.batchSize) {
-                let end = min(start + subscription.batchSize, values.count)
-                switch subscription.yield(Array(values[start..<end])) {
-                case .enqueued:
-                    continue
-                case .dropped:
-                    let error = RPCError.protocolViolation(
-                        "The live stream exceeded its buffered event limit."
-                    )
-                    if !subscription.reconnect {
-                        subscriptionByRequestID.removeValue(forKey: requestID)
-                        subscriptions.removeValue(forKey: subscriptionID)
-                        subscription.finish(error)
-                    }
-                    throw error
-                case .terminated:
-                    await removeSubscription(subscriptionID)
-                    return
+            switch try subscription.yieldChunk(data) {
+            case .enqueued:
+                break
+            case .dropped:
+                let error = RPCError.protocolViolation(
+                    "The live stream exceeded its buffered event limit."
+                )
+                if !subscription.reconnect {
+                    subscriptionByRequestID.removeValue(forKey: requestID)
+                    subscriptions.removeValue(forKey: subscriptionID)
+                    subscription.finish(error)
                 }
+                throw error
+            case .terminated:
+                await removeSubscription(subscriptionID)
+                return
             }
             try await sendControl("Ack", requestID: requestID)
         case "Exit":
