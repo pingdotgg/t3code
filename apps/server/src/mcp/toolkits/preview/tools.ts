@@ -19,10 +19,12 @@ import {
   PreviewAutomationWaitForInput,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
+import * as FileSystem from "effect/FileSystem";
 import { Tool, Toolkit } from "effect/unstable/ai";
 
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
+import * as ServerConfig from "../../../config.ts";
 
 const dependencies = [
   McpInvocationContext.McpInvocationContext,
@@ -207,11 +209,11 @@ export const PreviewRecordingStartTool = safeBrowserTool(
 export const PreviewRecordingStopTool = safeBrowserTool(
   Tool.make("preview_recording_stop", {
     description:
-      "Stop recording the collaborative browser tab selected by tabId, or this agent session's current tab when omitted, and save it as a local evidence artifact.",
+      "Stop recording the collaborative browser tab selected by tabId, or this agent session's current tab when omitted, and transfer the compressed recording once (up to 50 MiB) to an evidence file readable in this agent's environment. Returns its environment-local path after transfer succeeds.",
     parameters: PreviewAutomationTabTargetInput,
     success: PreviewAutomationRecordingArtifact,
     failure: PreviewAutomationError,
-    dependencies,
+    dependencies: [...dependencies, FileSystem.FileSystem, ServerConfig.ServerConfig],
   }).annotate(Tool.Title, "Stop browser recording"),
 );
 

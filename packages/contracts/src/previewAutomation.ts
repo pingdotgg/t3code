@@ -553,6 +553,8 @@ export const PreviewAutomationRecordingStatus = Schema.Struct({
 });
 export type PreviewAutomationRecordingStatus = typeof PreviewAutomationRecordingStatus.Type;
 
+export const PREVIEW_RECORDING_STOP_TIMEOUT_MS = 120_000;
+
 export const PreviewAutomationRecordingArtifact = Schema.Struct({
   id: Schema.String,
   tabId: PreviewTabId,
@@ -856,7 +858,50 @@ export class PreviewAutomationMalformedResponseError extends Schema.TaggedErrorC
   }
 }
 
+export class PreviewAutomationRecordingTransferError extends Schema.TaggedErrorClass<PreviewAutomationRecordingTransferError>()(
+  "PreviewAutomationRecordingTransferError",
+  {
+    threadId: ThreadId,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    return "Preview recording could not be saved to the agent environment. The saved copy remains on the desktop.";
+  }
+}
+
+export class PreviewAutomationRecordingDesktopUpdateRequiredError extends Schema.TaggedErrorClass<PreviewAutomationRecordingDesktopUpdateRequiredError>()(
+  "PreviewAutomationRecordingDesktopUpdateRequiredError",
+  { threadId: ThreadId, cause: Schema.optional(Schema.Defect()) },
+) {
+  override get message(): string {
+    return "Update the desktop app to transfer recordings. The recording remains on the desktop.";
+  }
+}
+
+export class PreviewAutomationRecordingTooLargeError extends Schema.TaggedErrorClass<PreviewAutomationRecordingTooLargeError>()(
+  "PreviewAutomationRecordingTooLargeError",
+  { threadId: ThreadId, cause: Schema.optional(Schema.Defect()) },
+) {
+  override get message(): string {
+    return "The recording exceeds 50 MiB. The saved copy remains on the desktop.";
+  }
+}
+
+export class PreviewAutomationRecordingDeadlineExpiredError extends Schema.TaggedErrorClass<PreviewAutomationRecordingDeadlineExpiredError>()(
+  "PreviewAutomationRecordingDeadlineExpiredError",
+  { threadId: ThreadId, cause: Schema.optional(Schema.Defect()) },
+) {
+  override get message(): string {
+    return "The recording transfer deadline expired. The saved copy remains on the desktop.";
+  }
+}
+
 export const PreviewAutomationError = Schema.Union([
+  PreviewAutomationRecordingTransferError,
+  PreviewAutomationRecordingDesktopUpdateRequiredError,
+  PreviewAutomationRecordingTooLargeError,
+  PreviewAutomationRecordingDeadlineExpiredError,
   PreviewAutomationUnavailableError,
   PreviewAutomationNoAvailableHostError,
   PreviewAutomationUnsupportedClientError,
