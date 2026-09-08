@@ -427,10 +427,7 @@ const ThreadSettlementWorkerLive = Layer.effectDiscard(
 
 const ThreadPullRequestWorkerLive = Layer.effectDiscard(
   ThreadPullRequestService.make.pipe(Effect.flatMap((service) => service.start())),
-).pipe(
-  Layer.provide(PullRequestServiceLive),
-  Layer.provide(OrchestrationInfrastructureLayerLive),
-);
+).pipe(Layer.provide(PullRequestServiceLive), Layer.provide(OrchestrationInfrastructureLayerLive));
 
 const AntigravityInstallationRefreshLive = Layer.effectDiscard(
   Effect.gen(function* () {
