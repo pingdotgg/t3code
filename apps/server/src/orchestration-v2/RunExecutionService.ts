@@ -571,6 +571,25 @@ export const layer: Layer.Layer<
         const shouldFinalizeRun =
           input.shouldFinalizeRun === undefined ? true : yield* input.shouldFinalizeRun();
         if (!shouldFinalizeRun) {
+          if (input.terminal.status !== "completed") {
+            yield* eventSink.writeWithEffects({
+              events: [],
+              effects: [
+                {
+                  id: `effect:checkpoint.baseline.cleanup:${input.run.id}:attempt:${input.attempt.id}`,
+                  commandId: CommandId.make(
+                    `command:checkpoint.baseline.cleanup:${input.attempt.id}`,
+                  ),
+                  threadId: input.run.threadId,
+                  request: {
+                    type: "checkpoint.baseline.cleanup",
+                    runId: input.run.id,
+                    scopeId: input.checkpointScope.id,
+                  },
+                },
+              ],
+            });
+          }
           // Superseded attempt (steer / selection restart). Emit
           // run_interrupt_result only when hard Stop left an unpaired request
           // for this run; plain steers and already-paired stops emit nothing.
@@ -667,7 +686,18 @@ export const layer: Layer.Layer<
                     },
                   },
                 ]
-              : [],
+              : [
+                  {
+                    id: `effect:checkpoint.baseline.cleanup:${input.run.id}`,
+                    commandId: checkpointCaptureCommandId,
+                    threadId: input.run.threadId,
+                    request: {
+                      type: "checkpoint.baseline.cleanup" as const,
+                      runId: input.run.id,
+                      scopeId: input.checkpointScope.id,
+                    },
+                  },
+                ],
           events: [
             // Terminalize open run-owned subagent rows before the root run
             // settles so projections never keep a forever-running subagent card.
@@ -797,10 +827,41 @@ export const layer: Layer.Layer<
                   }),
               ),
             );
+          // A turn that never reaches its provider still owns the baseline
+          // captured above; the cleanup effect decides from the projection
+          // whether the run actually abandoned it.
+          const enqueueBaselineCleanup = (suffix: string) =>
+            eventSink
+              .writeWithEffects({
+                events: [],
+                effects: [
+                  {
+                    id: `effect:checkpoint.baseline.cleanup:${input.run.id}:${suffix}:${input.attempt.id}`,
+                    commandId: input.commandId,
+                    threadId: input.run.threadId,
+                    request: {
+                      type: "checkpoint.baseline.cleanup" as const,
+                      runId: input.run.id,
+                      scopeId: input.checkpointScope.id,
+                    },
+                  },
+                ],
+              })
+              .pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new RunExecutionStartError({
+                      commandId: input.commandId,
+                      runId: input.run.id,
+                      cause,
+                    }),
+                ),
+              );
           if (
             input.shouldStartProviderTurn !== undefined &&
             !(yield* input.shouldStartProviderTurn())
           ) {
+            yield* enqueueBaselineCleanup("before-start");
             return;
           }
           // Startup failure and stream shutdown can report the same attempt.
@@ -1265,6 +1326,7 @@ export const layer: Layer.Layer<
             !(yield* input.shouldStartProviderTurn())
           ) {
             yield* Fiber.interrupt(providerEventFiber);
+            yield* enqueueBaselineCleanup("before-turn");
             return;
           }
 

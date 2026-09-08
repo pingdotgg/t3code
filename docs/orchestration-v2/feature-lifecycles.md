@@ -359,6 +359,7 @@ Pre-run baseline:
 ```text
 before root execution starts
   -> ensure root checkpoint for current app run ordinal - 1
+  -> snapshot the turn-start ref for the current app run ordinal
 ```
 
 Post-root-run checkpoint:
@@ -367,7 +368,7 @@ Post-root-run checkpoint:
 root node terminal
   -> drain/finalize streams
   -> capture root checkpoint for app run ordinal
-  -> compute diff from prior root checkpoint
+  -> compute diff from the turn-start snapshot when present, else the prior root checkpoint
   -> mark run terminal with checkpoint
 ```
 
