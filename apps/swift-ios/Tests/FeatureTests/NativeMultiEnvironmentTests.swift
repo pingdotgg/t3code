@@ -249,6 +249,39 @@ final class NativeMultiEnvironmentTests: XCTestCase {
         await fixture.client.disconnect()
     }
 
+    func testSourceControlMonitorPreservesTheRemoteWorkingDirectory() async throws {
+        for path in [#"C:\work\My Repo"#, #"\\server\share\repo"#, "/srv/my repo"] {
+            let server = MultiEnvironmentConfigurationServer()
+            let fixture = try await Self.makeFixture(
+                webSocketConnector: MultiEnvironmentConfigurationConnector(server: server)
+            )
+            let client = fixture.client
+            let directory = fixture.directory
+            addTeardownBlock {
+                await client.disconnect()
+                try? FileManager.default.removeItem(at: directory)
+            }
+            await fixture.transport.setShell(
+                multiEnvironmentShell(
+                    projectID: "project-two", threadID: "thread-two", title: "Remote work",
+                    workspaceRoot: path
+                ),
+                host: "two.example"
+            )
+            let snapshot = try await fixture.hydratedSnapshot()
+            let thread = try XCTUnwrap(snapshot.threads.first { $0.environmentID == "two" })
+            let monitor = Task {
+                for await _ in client.sourceControlStatusEvents(threadID: thread.id) {}
+            }
+            defer { monitor.cancel() }
+            let request = await server.nextSourceControlDirectory()
+            XCTAssertEqual(request.host, "two.example")
+            XCTAssertEqual(request.cwd, path)
+            await client.disconnect()
+            await monitor.value
+        }
+    }
+
     func testProviderCatalogueUsesStableProviderAndModelIdentities() {
         let normalized = NativeFeatureClient.normalizedProviders([
             FeatureProvider(
@@ -1923,6 +1956,8 @@ private struct UnavailableMultiEnvironmentWebSocketConnector: WebSocketConnectin
 }
 
 private actor MultiEnvironmentConfigurationServer {
+    private var sourceControlDirectories: [(host: String, cwd: String)] = []
+    private var sourceControlWaiters: [CheckedContinuation<(host: String, cwd: String), Never>] = []
     private var settingsByHost: [String: [String: JSONValue]] = [:]
     private var settingsUpdateHosts: [String] = []
     private let restartSupportHosts: Set<String>
@@ -1959,6 +1994,10 @@ private actor MultiEnvironmentConfigurationServer {
     }
 
     func updatedHosts() -> [String] { settingsUpdateHosts }
+    func nextSourceControlDirectory() async -> (host: String, cwd: String) {
+        if !sourceControlDirectories.isEmpty { return sourceControlDirectories.removeFirst() }
+        return await withCheckedContinuation { sourceControlWaiters.append($0) }
+    }
     func settings(host: String) -> [String: JSONValue] { settingsByHost[host] ?? [:] }
     func fileRequests() -> [(host: String, input: JSONValue)] { directoryRequests }
     func pullRequestRequests() -> [(host: String, method: String, input: JSONValue)] { prRequests }
@@ -2000,6 +2039,16 @@ private actor MultiEnvironmentConfigurationServer {
             )
         case "server.getSettings":
             value = .object(settingsByHost[host] ?? [:])
+        case RPCMethod.subscribeVCSStatus.rawValue:
+            guard let cwd = request["payload"]?["cwd"]?.stringValue else {
+                throw URLError(.badServerResponse)
+            }
+            if sourceControlWaiters.isEmpty {
+                sourceControlDirectories.append((host, cwd))
+            } else {
+                sourceControlWaiters.removeFirst().resume(returning: (host, cwd))
+            }
+            return nil
         case RPCMethod.subscribeServerConfig.rawValue:
             return .object([
                 "_tag": .string("Chunk"), "requestId": .number(id),
