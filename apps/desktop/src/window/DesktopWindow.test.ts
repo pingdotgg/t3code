@@ -7,12 +7,14 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as References from "effect/References";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as Electron from "electron";
+import * as NodeEvents from "node:events";
 import { vi } from "vite-plus/test";
 
 vi.mock("electron", async (importOriginal) => ({
@@ -71,6 +73,8 @@ function makeFakeBrowserWindow() {
   let zoomLevel = 0;
   const webContents = {
     copyImageAt: vi.fn(),
+    focus: vi.fn(),
+    isDestroyed: vi.fn(() => false),
     getURL: vi.fn(() => "t3code-dev://app/"),
     getZoomLevel: vi.fn(() => zoomLevel),
     setZoomLevel: vi.fn((level: number) => {
@@ -214,6 +218,8 @@ function makeTestLayer(input: {
     bounds: DesktopAppSettings.DesktopWindowBounds,
   ) => Effect.Effect<void>;
   readonly openedExternalUrls?: unknown[];
+  readonly copiedTexts?: string[];
+  readonly onPopupTemplate?: (input: ElectronMenu.ElectronMenuTemplateInput) => Effect.Effect<void>;
   readonly previewZoomReapplies?: number[];
   readonly onReveal?: (window: Electron.BrowserWindow) => void;
 }) {
@@ -281,7 +287,11 @@ function makeTestLayer(input: {
         desktopServerExposureLayer,
         DesktopState.layer,
         electronAppLayer,
-        electronMenuLayer,
+        Layer.succeed(ElectronMenu.ElectronMenu, {
+          setApplicationMenu: () => Effect.void,
+          showContextMenu: () => Effect.succeed(Option.none()),
+          popupTemplate: input.onPopupTemplate ?? (() => Effect.void),
+        }),
         Layer.succeed(ElectronShell.ElectronShell, {
           openExternal: (url) =>
             Effect.sync(() => {
@@ -289,7 +299,10 @@ function makeTestLayer(input: {
               return true;
             }),
           openSystemSettings: () => Effect.succeed(true),
-          copyText: () => Effect.void,
+          copyText: (text) =>
+            Effect.sync(() => {
+              input.copiedTexts?.push(text);
+            }),
         } satisfies ElectronShell.ElectronShell["Service"]),
         electronThemeLayer,
         electronWindowLayer,
@@ -412,6 +425,120 @@ const captureOne = DesktopSnapShotId.make("11111111-1111-4111-8111-111111111111"
 const captureTwo = DesktopSnapShotId.make("22222222-2222-4222-8222-222222222222");
 
 describe("DesktopWindow", () => {
+  it.effect("shows native context menus for browser guests and sign-in popups", () =>
+    Effect.gen(function* () {
+      const host = makeFakeBrowserWindow();
+      const popup = makeFakeBrowserWindow();
+      let focusedContents: unknown = host.window.webContents;
+      const makeContents = () => {
+        const contents = Object.assign(new NodeEvents.EventEmitter(), {
+          isDestroyed: vi.fn(() => false),
+          focus: vi.fn(() => {
+            focusedContents = contents;
+          }),
+          copyImageAt: vi.fn(),
+          replaceMisspelling: vi.fn(),
+        });
+        return contents;
+      };
+      const guest = makeContents();
+      const popupContents = makeContents();
+      const popupWindow = { ...popup.window, webContents: popupContents };
+      const menus = yield* Queue.unbounded<{
+        input: ElectronMenu.ElectronMenuTemplateInput;
+        focusedContents: unknown;
+      }>();
+      const copiedTexts: string[] = [];
+      const layer = makeTestLayer({
+        window: host.window,
+        createCount: yield* Ref.make(0),
+        mainWindow: yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none()),
+        copiedTexts,
+        onPopupTemplate: (input) =>
+          Queue.offer(menus, { input, focusedContents }).pipe(Effect.asVoid),
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+        const attach = host.webContentsListeners.get("did-attach-webview");
+        assert.isDefined(attach);
+        attach({}, guest);
+        attach({}, guest);
+        guest.emit("did-create-window", popupWindow);
+        guest.emit("did-create-window", popupWindow);
+
+        for (const [contents, owner] of [
+          [guest, host.window],
+          [popupContents, popupWindow],
+        ] as const) {
+          const frame = { routingId: 7 } as Electron.WebFrameMain;
+          const preventDefault = vi.fn();
+          const params = {
+            frame,
+            x: 12,
+            y: 34,
+            misspelledWord: "helo",
+            dictionarySuggestions: ["hello"],
+            linkURL: "",
+            mediaType: "none",
+            editFlags: { canCut: false, canCopy: true, canPaste: true, canSelectAll: true },
+          };
+          focusedContents = host.window.webContents;
+          contents.emit("context-menu", { preventDefault }, params);
+          const menu = yield* Queue.take(menus);
+          assert.strictEqual(menu.input.window, owner);
+          assert.strictEqual(menu.input.frame, frame);
+          assert.strictEqual(menu.focusedContents, contents);
+          assert.equal(preventDefault.mock.calls.length, 1);
+          assert.deepEqual(
+            menu.input.template.filter((item) => item.role),
+            [
+              { role: "cut", enabled: false },
+              { role: "copy", enabled: true },
+              { role: "paste", enabled: true },
+              { role: "selectAll", enabled: true },
+            ],
+          );
+          const correction = menu.input.template.find((item) => item.label === "hello");
+          assert.isDefined(correction?.click);
+          correction.click({} as Electron.MenuItem, undefined, {} as Electron.KeyboardEvent);
+          assert.deepEqual(contents.replaceMisspelling.mock.calls, [["hello"]]);
+
+          contents.emit(
+            "context-menu",
+            { preventDefault },
+            {
+              ...params,
+              frame: null,
+              misspelledWord: "",
+              dictionarySuggestions: [],
+              mediaType: "image",
+              linkURL: "https://example.com/image.png",
+            },
+          );
+          const imageMenu = (yield* Queue.take(menus)).input;
+          assert.isUndefined(imageMenu.frame);
+          const copyImage = imageMenu.template.find((item) => item.label === "Copy Image");
+          const copyLink = imageMenu.template.find((item) => item.label === "Copy Link");
+          assert.isDefined(copyImage?.click);
+          assert.isDefined(copyLink?.click);
+          copyImage.click({} as Electron.MenuItem, undefined, {} as Electron.KeyboardEvent);
+          copyLink.click({} as Electron.MenuItem, undefined, {} as Electron.KeyboardEvent);
+          assert.deepEqual(contents.copyImageAt.mock.calls, [[12, 34]]);
+          assert.equal(copiedTexts.at(-1), "https://example.com/image.png");
+
+          contents.isDestroyed.mockReturnValue(true);
+          correction.click({} as Electron.MenuItem, undefined, {} as Electron.KeyboardEvent);
+          copyImage.click({} as Electron.MenuItem, undefined, {} as Electron.KeyboardEvent);
+          assert.equal(contents.replaceMisspelling.mock.calls.length, 1);
+          assert.equal(contents.copyImageAt.mock.calls.length, 1);
+          assert.equal(yield* Queue.size(menus), 0);
+        }
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
   it("leaves fullscreen before concealing a pending quit", () => {
     const fakeWindow = makeFakeBrowserWindow();
 
