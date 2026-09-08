@@ -222,12 +222,14 @@ describe("vendored libghostty-vt WebAssembly", () => {
       expect(scrollbar).not.toBeNull();
       const scrollbackRows = scrollbar!.total - scrollbar!.len;
 
-      // The wasm32 build releases complete 674-row pages at 80 columns.
-      // Choosing 11,000 inputs exercises a material page-granularity
-      // undershoot and is more than one page past the requested limit. This
-      // also fails if the production constructor leaves Ghostty's 10,000-byte
+      // The pinned wasm32 PageList releases complete 674-row pages at 80
+      // columns after crossing the limit, so retained history may undershoot
+      // by less than one page. Choosing 11,000 inputs exercises that pruning
+      // path and is more than one page past the requested limit. This also
+      // fails if the production constructor leaves Ghostty's 10,000-byte
       // default active or omits the independent line limit.
-      expect(Math.abs(scrollbackRows - 10_000)).toBeLessThanOrEqual(674);
+      expect(scrollbackRows).toBeGreaterThan(10_000 - 674);
+      expect(scrollbackRows).toBeLessThanOrEqual(10_000);
     } finally {
       terminal?.dispose();
       vi.unstubAllGlobals();
