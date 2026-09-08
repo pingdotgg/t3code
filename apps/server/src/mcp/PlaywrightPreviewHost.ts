@@ -704,14 +704,17 @@ const make = Effect.gen(function* PlaywrightPreviewHostMake() {
       ),
     );
     const { page } = tab;
+    // A new page loads about:blank on its own. The tab stays Idle, so the
+    // empty state with the local servers shows until the user picks a URL.
     page.on("framenavigated", (frame) => {
-      if (frame !== page.mainFrame()) return;
+      if (frame !== page.mainFrame() || frame.url() === "about:blank") return;
       if (!view.historyMove) view.forwardSteps = 0;
       view.historyMove = false;
       reportView(tab, { _tag: "Loading", url: frame.url(), title: "" });
     });
     page.on("load", () => {
       const url = page.url();
+      if (url === "about:blank") return;
       void Promise.all([
         page.title().catch(() => ""),
         page.evaluate("history.length > 1").catch(() => false),

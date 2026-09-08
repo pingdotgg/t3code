@@ -129,7 +129,7 @@ export function EngineFrameSurface({ threadRef, tabId, frameUrl, httpBaseUrl, vi
         <img
           key={streamAttempt}
           ref={imageRef}
-          src={`${httpBaseUrl}${frameUrl}`}
+          src={new URL(frameUrl, httpBaseUrl).toString()}
           alt=""
           draggable={false}
           className="absolute inset-0 h-full w-full object-contain object-left-top"
