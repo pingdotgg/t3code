@@ -1,33 +1,67 @@
-<svg width="1080" height="760" viewBox="0 0 540 380" fill="none" xmlns="http://www.w3.org/2000/svg">
+<?xml version="1.0"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="864" viewBox="0 0 640 432">
   <defs>
-    <linearGradient id="latest-surface" x1="0" y1="0" x2="540" y2="380" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#FAFAF9"/>
-      <stop offset="1" stop-color="#F5F5F4"/>
-    </linearGradient>
-    <radialGradient id="latest-light" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(430 0) rotate(152) scale(320 150)">
-      <stop stop-color="#FFFFFF"/>
-      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
+    <radialGradient id="glow">
+      <stop stop-color="#6F73BB" stop-opacity=".28"/>
+      <stop offset="1" stop-color="#5B6BA2" stop-opacity="0"/>
     </radialGradient>
+    <linearGradient id="veil" x1="0" y1="0" x2="0" y2="1">
+      <stop stop-color="#817BE0" stop-opacity="0"/>
+      <stop offset=".55" stop-color="#6679C3" stop-opacity=".24"/>
+      <stop offset="1" stop-color="#C2B8E7" stop-opacity=".4"/>
+    </linearGradient>
+    <linearGradient id="silk" x1="0" y1="0" x2="1" y2="0">
+      <stop stop-color="#AED7D9"/>
+      <stop offset=".5" stop-color="#BACAE9"/>
+      <stop offset="1" stop-color="#B8A7DE"/>
+    </linearGradient>
   </defs>
-
-  <rect width="540" height="380" fill="url(#latest-surface)"/>
-  <rect width="540" height="112" fill="#EFEFED"/>
-  <rect width="540" height="112" fill="url(#latest-light)"/>
-  <path d="M0 111.5H540" stroke="#18181B" stroke-opacity="0.08"/>
-  <path d="M32 28H64" stroke="#18181B" stroke-width="2"/>
-
-  <g font-family="-apple-system, BlinkMacSystemFont, sans-serif" fill="#18181B">
-    <text x="32" y="50" font-size="12" font-weight="600" letter-spacing="1.4">T3 CODE</text>
-    <text x="32" y="82" font-size="22" font-weight="600" letter-spacing="-0.45">Desktop</text>
-    <text x="508" y="50" text-anchor="end" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="8.5" font-weight="600" letter-spacing="1.2" fill="#71717A">LATEST RELEASE</text>
-  </g>
-
-  <path d="M196 224C242 239 307 201 362 220" stroke="#71717A" stroke-width="1.5" stroke-linecap="round" stroke-dasharray="1 7" opacity="0.42"/>
-  <circle cx="362" cy="220" r="2" fill="#71717A" opacity="0.55"/>
-  <path d="M176 204V227L182 221L187.5 232L192 229.8L186.5 219H194L176 204Z" fill="#71717A" stroke="#F7F7F5" stroke-width="1.5" stroke-linejoin="round"/>
-
-  <g font-family="-apple-system, BlinkMacSystemFont, sans-serif" text-anchor="middle">
-    <text x="270" y="322" font-size="13" font-weight="600" letter-spacing="-0.1" fill="#18181B">Drag T3 Code to Applications</text>
-    <text x="270" y="345" font-size="9.5" fill="#71717A">Open it from Applications when the copy finishes.</text>
-  </g>
+  <svg width="640" height="400" viewBox="0 0 128 128" preserveAspectRatio="none">
+    <defs>
+      <linearGradient id="night" x1="12" y1="6" x2="116" y2="124" gradientUnits="userSpaceOnUse">
+        <stop stop-color="#07152F"/>
+        <stop offset="0.5" stop-color="#151443"/>
+        <stop offset="1" stop-color="#32155B"/>
+      </linearGradient>
+      <radialGradient id="skyGlow" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(90 28) rotate(137) scale(78 70)">
+        <stop stop-color="#5165D8" stop-opacity="0.4"/>
+        <stop offset="0.5" stop-color="#283075" stop-opacity="0.16"/>
+        <stop offset="1" stop-color="#111635" stop-opacity="0"/>
+      </radialGradient>
+      <radialGradient id="horizonGlow" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(42 127) rotate(-70) scale(68 96)">
+        <stop stop-color="#6646B6" stop-opacity="0.34"/>
+        <stop offset="1" stop-color="#352066" stop-opacity="0"/>
+      </radialGradient>
+      <clipPath id="frame">
+        <rect width="128" height="128"/>
+      </clipPath>
+    </defs>
+    <g clip-path="url(#frame)">
+      <rect width="128" height="128" fill="url(#night)"/>
+      <rect width="128" height="128" fill="url(#skyGlow)"/>
+      <rect width="128" height="128" fill="url(#horizonGlow)"/>
+      <!-- A few tiny stars kept to the perimeter so the wordmark stays clear. -->
+      <g fill="#E4EAFF">
+        <circle cx="17" cy="18" r="0.55" fill-opacity="0.82"/>
+        <circle cx="54" cy="14" r="0.4" fill-opacity="0.65"/>
+        <circle cx="116" cy="42" r="0.45" fill-opacity="0.72"/>
+        <circle cx="10" cy="70" r="0.35" fill-opacity="0.56"/>
+        <circle cx="117" cy="88" r="0.4" fill-opacity="0.6"/>
+      </g>
+      <path d="M31 22V24.8M29.6 23.4H32.4" stroke="#EEF2FF" stroke-width="0.5" stroke-linecap="round" opacity="0.72"/>
+      <path d="M111 58V60M110 59H112" stroke="#CBD8FF" stroke-width="0.45" stroke-linecap="round" opacity="0.58"/>
+      <!-- Broad horizon remains below the T3 baseline (y=94). -->
+      <path d="M-12 119C14 99 39 99 63 110C87 121 110 116 140 96V140H-12V119Z" fill="#20184E" fill-opacity="0.42"/>
+      <path d="M-12 129C15 111 42 112 66 122C91 132 114 124 140 107V140H-12V129Z" fill="#6946B8" fill-opacity="0.22"/>
+    </g>
+  </svg>
+  <circle cx="435" cy="200" r="200" fill="url(#glow)" opacity="1"/>
+  <path d="M-60 293C95 220 214 304 362 256S559 191 707 257" stroke="url(#veil)" stroke-width="146" fill="none" opacity="1" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M-60 306C113 252 223 298 367 272S553 242 707 280" stroke="url(#silk)" stroke-width="86" fill="none" opacity="1" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M-60 266C113 212 223 258 367 232S553 202 707 240" stroke="#C7F2F1" stroke-width="0.8" fill="none" opacity="0.42" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="32" y="40" fill="#edf0ff" font-family="Helvetica" font-size="17" font-weight="700" text-anchor="start">T3 Code</text>
+  <text x="608" y="38" fill="#C3C8E5" font-family="Helvetica" font-size="9" font-weight="400" text-anchor="end">FOR MAC</text>
+  <text x="320" y="104" fill="#edf0ff" font-family="Helvetica" font-size="23" font-weight="700" text-anchor="middle">Drag T3 Code into Applications.</text>
+  <path d="M270 204Q320 179 370 204M358 190L370 204L351 209" stroke="#ECEDFF" stroke-width="2.2" fill="none" opacity="1" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="320" y="367" fill="#D0CFE6" font-family="Helvetica" font-size="12" font-weight="400" text-anchor="middle">Once copied, open it from Applications.</text>
 </svg>
