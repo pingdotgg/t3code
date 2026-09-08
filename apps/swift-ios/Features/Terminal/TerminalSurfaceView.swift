@@ -184,6 +184,35 @@ enum TerminalText {
     }
 }
 
+enum TerminalAccessibilityPaging {
+    static func rowOffset(
+        for direction: UIAccessibilityScrollDirection,
+        visibleRows: Int
+    ) -> Int? {
+        let page = max(visibleRows - 1, 1)
+        return switch direction {
+        case .down: page
+        case .up: -page
+        default: nil
+        }
+    }
+}
+
+@MainActor
+private final class TerminalAccessibilityViewport: UIView {
+    var valueProvider: (() -> String?)?
+    var scrollHandler: ((UIAccessibilityScrollDirection) -> Bool)?
+
+    override var accessibilityValue: String? {
+        get { valueProvider?() ?? super.accessibilityValue }
+        set { super.accessibilityValue = newValue }
+    }
+
+    override func accessibilityScroll(_ direction: UIAccessibilityScrollDirection) -> Bool {
+        scrollHandler?(direction) ?? false
+    }
+}
+
 private enum GhosttyRuntime {
     private static let lock = NSLock()
     nonisolated(unsafe) private static var initialized = false
@@ -642,11 +671,6 @@ final class GhosttyTerminalView: UIView, UITextFieldDelegate, UIContextMenuInter
         didSet {
             guard oldValue != buffer else { return }
             applyRemoteBuffer(buffer)
-            if UIAccessibility.isVoiceOverRunning {
-                terminalViewport.accessibilityValue = TerminalText.plainText(
-                    from: String(buffer.suffix(8_192))
-                )
-            }
         }
     }
 
@@ -689,7 +713,7 @@ final class GhosttyTerminalView: UIView, UITextFieldDelegate, UIContextMenuInter
         }
     }
 
-    private let terminalViewport = UIView()
+    private let terminalViewport = TerminalAccessibilityViewport()
     private let inputField = TerminalInputField()
     private let accessoryView = TerminalAccessoryView()
     private let keyboardButton = UIButton(type: .system)
@@ -725,7 +749,15 @@ final class GhosttyTerminalView: UIView, UITextFieldDelegate, UIContextMenuInter
         terminalViewport.isUserInteractionEnabled = true
         terminalViewport.isAccessibilityElement = true
         terminalViewport.accessibilityLabel = "Terminal output"
+        terminalViewport.accessibilityHint = "Swipe up or down with three fingers to page through output."
         terminalViewport.accessibilityTraits = .staticText
+        terminalViewport.valueProvider = { [weak self] in
+            guard let self else { return nil }
+            return TerminalText.plainText(from: String(self.buffer.suffix(8_192)))
+        }
+        terminalViewport.scrollHandler = { [weak self] direction in
+            self?.scrollAccessibleOutput(direction) ?? false
+        }
 
         inputField.delegate = self
         inputField.inputAccessoryView = accessoryView
@@ -1205,6 +1237,24 @@ final class GhosttyTerminalView: UIView, UITextFieldDelegate, UIContextMenuInter
             pendingVerticalScrollPoints = 0
             gesture.setTranslation(.zero, in: terminalViewport)
         }
+    }
+
+    private func scrollAccessibleOutput(_ direction: UIAccessibilityScrollDirection) -> Bool {
+        guard let surface,
+              let rows = lastReportedGrid?.rows,
+              let offset = TerminalAccessibilityPaging.rowOffset(
+                  for: direction,
+                  visibleRows: rows
+              ) else {
+            return false
+        }
+        ghostty_surface_mouse_scroll(surface, 0, Double(offset), 0)
+        redrawSurface()
+        UIAccessibility.post(
+            notification: .pageScrolled,
+            argument: offset > 0 ? "Earlier terminal output" : "Later terminal output"
+        )
+        return true
     }
 
     @objc private func viewportPinched(_ gesture: UIPinchGestureRecognizer) {
