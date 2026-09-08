@@ -228,6 +228,16 @@ describe("AgentAwarenessRelay", () => {
     }
   });
 
+  it("does not publish imported thread creation as new agent activity", () => {
+    assert.isFalse(
+      shouldPublishAgentAwarenessEvent({
+        type: "thread.created",
+        payload: { historyOrigin: "v1_import" },
+      }),
+    );
+    assert.isTrue(shouldPublishAgentAwarenessEvent({ type: "thread.created", payload: {} }));
+  });
+
   it.effect("coalesces queued updates and reruns a thread dirtied during publishing", () =>
     Effect.gen(function* () {
       const started = yield* Deferred.make<void>();

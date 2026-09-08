@@ -80,7 +80,10 @@ import { planClaudeSkillDispatch } from "../../provider/Drivers/ClaudeSkillDispa
 import { discoverClaudeSkills } from "../../provider/Drivers/ClaudeSkills.ts";
 import { compileClaudeModelSelection } from "../../claudeModelOptions.ts";
 import { ServerConfig } from "../../config.ts";
-import { makeClaudeEnvironment } from "../../provider/Drivers/ClaudeHome.ts";
+import {
+  claudeSignedOutMessage,
+  makeClaudeEnvironment,
+} from "../../provider/Drivers/ClaudeHome.ts";
 import {
   BUNDLED_CLAUDE_MODEL_CATALOG,
   resolveClaudeCatalogContextWindow,
@@ -2003,14 +2006,54 @@ const awaitClaudeUserInputAnswers = Effect.fn("awaitClaudeUserInputAnswers")(fun
  * so they must never become the error banner (#5557).
  */
 function resultUserFacingError(result: SDKResultMessage): string | undefined {
-  if (result.subtype === "success" || !Array.isArray(result.errors)) {
+  const errors = "errors" in result && Array.isArray(result.errors) ? result.errors : [];
+  if (result.subtype === "success" && !result.is_error) {
     return undefined;
   }
-  return result.errors.find((error) => !error.startsWith("[ede_diagnostic]"));
+  return errors.find(
+    (error): error is string => typeof error === "string" && !error.startsWith("[ede_diagnostic]"),
+  );
+}
+
+function terminalResultError(
+  reason: SDKResultMessage["terminal_reason"],
+  failureHint?: string,
+): string | undefined {
+  switch (reason) {
+    case "api_error":
+      return failureHint ?? "Claude gave up after repeated API errors.";
+    case "malformed_tool_use_exhausted":
+      return "Claude gave up after repeated malformed tool calls.";
+    case "budget_exhausted":
+      return "Claude stopped: the turn's token budget was exhausted.";
+    case "structured_output_retry_exhausted":
+      return "Claude could not produce the requested structured output.";
+    case "tool_deferred_unavailable":
+      return "Claude could not resume a deferred tool call: the tool is no longer available.";
+    case "turn_setup_failed":
+      return "Claude could not start the turn.";
+    case "blocking_limit":
+      return "Claude stopped: a usage limit blocked the request.";
+    case "rapid_refill_breaker":
+      return "Claude stopped: the context refilled too quickly after compaction.";
+    case "prompt_too_long":
+      return "Claude stopped: the prompt exceeds the model's context window.";
+    case "image_error":
+      return "Claude stopped: an image in the conversation could not be processed.";
+    case "model_error":
+      return "Claude stopped: the model returned an error.";
+    default:
+      return undefined;
+  }
+}
+
+function isOverloadedResult(result: SDKResultMessage): boolean {
+  return result.subtype === "success" && result.api_error_status === 529;
 }
 
 function terminalStatusFromResult(
   message: SDKResultMessage,
+  failureHint?: string,
 ): Extract<
   OrchestrationV2ProviderTurn["status"],
   "completed" | "interrupted" | "failed" | "cancelled"
@@ -2018,7 +2061,11 @@ function terminalStatusFromResult(
   if (message.subtype === "success") {
     // The SDK reports API-level failures (401 auth, 529 overloaded, …) as
     // subtype "success" with is_error set; the turn produced no real work.
-    return message.is_error ? "failed" : "completed";
+    return isOverloadedResult(message) ||
+      terminalResultError(message.terminal_reason, failureHint) !== undefined ||
+      (message.is_error && failureHint !== undefined)
+      ? "failed"
+      : "completed";
   }
   // The CLI stamps user aborts explicitly: interrupting mid-tool-call yields
   // "aborted_tools" (with an internal "[ede_diagnostic] ..." error and
@@ -2058,20 +2105,25 @@ function isClaudeTaskNotificationOriginResult(message: SDKMessage): message is S
 
 function providerFailureFromResult(
   message: SDKResultMessage,
+  failureHint?: string,
 ): OrchestrationV2ProviderFailure | null {
+  const listedError = resultUserFacingError(message);
+  const structuredError = isOverloadedResult(message)
+    ? "Claude API is overloaded (529). Try again shortly."
+    : terminalResultError(message.terminal_reason, failureHint);
   if (message.subtype !== "success") {
     return makeProviderFailure({
-      message: resultUserFacingError(message) ?? message.errors.join("\n"),
+      message: listedError ?? structuredError ?? message.errors.join("\n"),
       code: message.subtype,
       class: "provider_error",
     });
   }
-  if (!message.is_error) {
+  if (!message.is_error && structuredError === undefined) {
     return null;
   }
   const apiErrorStatus = message.api_error_status ?? null;
   return makeProviderFailure({
-    message: message.result,
+    message: listedError ?? structuredError ?? failureHint ?? message.result,
     code: apiErrorStatus === null ? "sdk_result_error" : `api_error_${apiErrorStatus}`,
     class: "provider_error",
     retryable: apiErrorStatus === 429 || apiErrorStatus === 529 ? true : null,
@@ -2242,6 +2294,9 @@ interface ActiveClaudeTurnContext {
   readonly toolCalls: Map<string, ActiveClaudeToolCall>;
   readonly ignoredTaskIds: Set<string>;
   readonly announcedUsageLimits: Set<string>;
+  authenticationFailureMessage: string | undefined;
+  readonly rejectedRateLimitTypes: Set<string>;
+  latestAssistantRateLimited: boolean;
   readonly subagentsByTaskId: Map<string, ActiveClaudeSubagent>;
   readonly subagentsByToolUseId: Map<string, ActiveClaudeSubagent>;
   readonly subagentNodesByTaskId: Map<string, OrchestrationV2ExecutionNode["id"]>;
@@ -4385,17 +4440,28 @@ export function makeClaudeAdapterV2(
               });
             }
             const context = yield* Ref.get(activeTurn);
+            const overageAllowed =
+              rateLimitInfo.overageStatus === "allowed" ||
+              rateLimitInfo.overageStatus === "allowed_warning" ||
+              rateLimitInfo.isUsingOverage === true ||
+              rateLimitInfo.overageInUse === true;
+            const blocked = rateLimitInfo.status === "rejected" && !overageAllowed;
+            const limitType = rateLimitInfo.rateLimitType ?? "unknown";
+            if (context !== null) {
+              if (blocked) {
+                context.rejectedRateLimitTypes.add(limitType);
+              } else if (
+                rateLimitInfo.status === "allowed" ||
+                rateLimitInfo.status === "allowed_warning" ||
+                overageAllowed
+              ) {
+                context.rejectedRateLimitTypes.delete(limitType);
+              }
+            }
             // Rejected windows pause the SDK without ending its turn. Overage
             // and warnings keep running; repeats of a window need only one notice.
-            if (
-              context !== null &&
-              rateLimitInfo.status === "rejected" &&
-              rateLimitInfo.overageStatus !== "allowed" &&
-              rateLimitInfo.overageStatus !== "allowed_warning" &&
-              rateLimitInfo.isUsingOverage !== true &&
-              rateLimitInfo.overageInUse !== true
-            ) {
-              const limitKey = `${rateLimitInfo.rateLimitType ?? "unknown"}:${rateLimitInfo.resetsAt ?? "unknown"}`;
+            if (context !== null && blocked) {
+              const limitKey = `${limitType}:${rateLimitInfo.resetsAt ?? "unknown"}`;
               if (!context.announcedUsageLimits.has(limitKey)) {
                 context.announcedUsageLimits.add(limitKey);
                 const nativeItemId = `usage-limit:${context.providerTurnId}:${limitKey}`;
@@ -4461,6 +4527,15 @@ export function makeClaudeAdapterV2(
 
           if (message.type === "assistant") {
             context.nativeMessageCursor = message.uuid;
+            if (message.parent_tool_use_id === null) {
+              context.latestAssistantRateLimited = message.error === "rate_limit";
+              if (message.error === "authentication_failed") {
+                context.authenticationFailureMessage = claudeSignedOutMessage({
+                  configDir: adapterOptions.environment.CLAUDE_CONFIG_DIR,
+                  cwd: path.resolve(context.input.runtimePolicy.cwd ?? "."),
+                });
+              }
+            }
           }
 
           if (message.type === "system" && message.subtype === "compact_boundary") {
@@ -4933,10 +5008,17 @@ export function makeClaudeAdapterV2(
               next.delete(context.providerTurnId);
               return next;
             });
-            const resultFailure = interrupted ? null : providerFailureFromResult(message);
+            const failureHint =
+              context.authenticationFailureMessage ??
+              (context.rejectedRateLimitTypes.size > 0 || context.latestAssistantRateLimited
+                ? "Claude usage limit reached. Send the message again once the limit resets."
+                : undefined);
+            const resultFailure = interrupted
+              ? null
+              : providerFailureFromResult(message, failureHint);
             yield* finalizeActiveTurn({
               context,
-              status: interrupted ? "interrupted" : terminalStatusFromResult(message),
+              status: interrupted ? "interrupted" : terminalStatusFromResult(message, failureHint),
               completedAt,
               result: message,
               ...(resultFailure === null ? {} : { failure: resultFailure }),
@@ -5398,6 +5480,9 @@ export function makeClaudeAdapterV2(
               toolCalls: new Map(),
               ignoredTaskIds: new Set(),
               announcedUsageLimits: new Set(),
+              authenticationFailureMessage: undefined,
+              rejectedRateLimitTypes: new Set(),
+              latestAssistantRateLimited: false,
               subagentsByTaskId: new Map(),
               subagentsByToolUseId: new Map(),
               subagentNodesByTaskId: new Map(),

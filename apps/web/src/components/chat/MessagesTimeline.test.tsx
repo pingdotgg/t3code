@@ -216,14 +216,14 @@ function buildProps() {
     activeTurnInProgress: false,
     listRef: createRef<LegendListRef | null>(),
     latestRun: null,
-    turnDiffSummaryByAssistantMessageId: new Map(),
+    turnDiffSummaries: [],
     routeThreadKey: "environment-local:thread-1",
     onOpenTurnDiff: () => {},
     onOpenThread: () => {},
     onForkFromRun: async () => {},
     onRollbackCheckpoint: () => {},
-    revertTurnCountByUserMessageId: new Map(),
-    onRevertUserMessage: () => {},
+    supportsConversationRollback: false,
+    onRevertToTurnCount: () => {},
     isRevertingCheckpoint: false,
     openingVideoAttachmentId: null,
     onImageExpand: () => {},
@@ -276,6 +276,33 @@ function buildAssistantTimelineEntry(text: string) {
   };
 }
 
+function buildSnapShotTimelineEntry(previewUrl?: string) {
+  const entry = buildUserTimelineEntry("First prompt.");
+  return {
+    ...entry,
+    message: {
+      ...entry.message,
+      attachments: [
+        {
+          type: "image" as const,
+          id: "attachment-1",
+          name: "screenshot.png",
+          mimeType: "image/png",
+          sizeBytes: 1,
+          ...(previewUrl ? { previewUrl } : {}),
+          source: {
+            kind: "snap-shot" as const,
+            capturedAt: "2026-03-17T19:12:28.000Z",
+            appName: "Terminal",
+            windowTitle: "t3code — Tests",
+            appIconDataUrl: "data:image/png;base64,aWNvbg==",
+          },
+        },
+      ],
+    },
+  };
+}
+
 describe("MessagesTimeline", () => {
   it.each([
     { toolLifecycleStatus: "inProgress", isAtEnd: true },
@@ -306,17 +333,19 @@ describe("MessagesTimeline", () => {
         getState: () => ({ isAtEnd: timelineIsAtEnd }),
         getScrollableNode: () => null,
       } as unknown as LegendListRef;
-      let isResting = true;
+      let isResting = false;
+      let composerState: ReturnType<typeof useComposerFocusState> | undefined;
       function ThreadProbe() {
-        const composer = useComposerFocusState(false);
+        const composer = useComposerFocusState();
         useLayoutEffect(() => {
+          composerState = composer;
           isResting = shouldUseRestingComposerLayout({
             isExistingThread: true,
             isMobileViewport: false,
-            isFocused: composer.isComposerFocused,
             isScrollCollapsed: composer.isComposerScrollCollapsed,
             hasExpandedChrome: false,
-            collapseOnBlur: true,
+            hasMultilinePrompt: false,
+            timelineOverflows: true,
           });
         });
         return (
@@ -349,6 +378,8 @@ describe("MessagesTimeline", () => {
         await act(() => {
           renderer = create(<ThreadProbe />);
         });
+        // The user scrolled up to read, so the composer is resting.
+        await act(() => composerState!.setIsComposerScrollCollapsed(true));
         const toggle = renderer!.root.findByProps({ "aria-expanded": false });
         await act(() => toggle.props.onClick());
         await flushFrame();
@@ -583,22 +614,17 @@ describe("MessagesTimeline", () => {
             },
           },
         ]}
-        turnDiffSummaryByAssistantMessageId={
-          new Map([
-            [
-              assistantMessageId,
-              {
-                runId,
-                checkpointTurnCount: 1,
-                checkpointRef: CheckpointRef.make("checkpoint-with-files"),
-                status: "ready",
-                files: [{ path: "README.md", kind: "modified", additions: 2, deletions: 1 }],
-                assistantMessageId,
-                completedAt: MESSAGE_CREATED_AT,
-              },
-            ],
-          ])
-        }
+        turnDiffSummaries={[
+          {
+            runId,
+            checkpointTurnCount: 1,
+            checkpointRef: CheckpointRef.make("checkpoint-with-files"),
+            status: "ready",
+            files: [{ path: "README.md", kind: "modified", additions: 2, deletions: 1 }],
+            assistantMessageId,
+            completedAt: MESSAGE_CREATED_AT,
+          },
+        ]}
       />,
     );
 
@@ -749,6 +775,40 @@ describe("MessagesTimeline", () => {
     expect(onAnchorReady).toHaveBeenCalledOnce();
     expect(onAnchorReady).toHaveBeenCalledWith(secondEntry.message.id, 1);
     expect(onAnchorSizeChanged).toHaveBeenCalledWith(secondEntry.message.id, 240);
+  });
+
+  it("renders SnapShot window details after the preview resolves", () => {
+    const onAnchorReady = vi.fn();
+    const firstEntry = buildSnapShotTimelineEntry("data:image/png;base64,iVBORw0KGgo=");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        anchorMessageId={firstEntry.message.id}
+        onAnchorReady={onAnchorReady}
+        contentInsetEndAdjustment={144}
+        timelineEntries={[firstEntry]}
+      />,
+    );
+
+    expect(markup).toContain("Terminal");
+    expect(markup).toContain("t3code — Tests");
+    expect(markup).toContain('src="data:image/png;base64,aWNvbg=="');
+    expect(markup).toContain("h-28 w-52 max-w-full");
+    expect(markup).not.toContain("col-span-2");
+    expect(onAnchorReady).toHaveBeenCalledOnce();
+    expect(onAnchorReady).toHaveBeenCalledWith(firstEntry.message.id, 0);
+  });
+
+  it("does not render SnapShot window details before the preview resolves", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline {...buildProps()} timelineEntries={[buildSnapShotTimelineEntry()]} />,
+    );
+
+    expect(markup).toContain("screenshot.png");
+    expect(markup).not.toContain("Terminal");
+    expect(markup).not.toContain("t3code — Tests");
+    expect(markup).not.toContain('src="data:image/png;base64,aWNvbg=="');
+    expect(markup).not.toContain("h-28 w-52 max-w-full");
   });
 
   it("does not reserve end space for a follow-up user message", () => {

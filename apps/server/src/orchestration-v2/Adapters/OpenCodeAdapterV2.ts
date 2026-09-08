@@ -2649,10 +2649,21 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
           providerThread: OrchestrationV2ProviderThread,
         ) {
           const sessionId = nativeThreadId(providerThread);
+          const sessionResponse = yield* sdkCall("session.get", { sessionID: sessionId }, () =>
+            client.session.get({ sessionID: sessionId }),
+          );
+          const nativeSession = unwrapData("session.get", sessionResponse);
           const response = yield* sdkCall("session.messages", { sessionID: sessionId }, () =>
             client.session.messages({ sessionID: sessionId }),
           );
-          const nativeMessages = unwrapData("session.messages", response);
+          const nativeMessages = [];
+          for (const entry of unwrapData("session.messages", response)) {
+            // OpenCode retains reverted records in session.messages. Its
+            // revert marker identifies the first removed message, so stop
+            // before it or a restart resurrects rolled-back assistant work.
+            if (entry.info.id === nativeSession.revert?.messageID) break;
+            nativeMessages.push(entry);
+          }
           const state = threads.get(sessionId);
           const snapshotNow = yield* DateTime.now;
           const messages: Array<OrchestrationV2ConversationMessage> = nativeMessages.flatMap(
