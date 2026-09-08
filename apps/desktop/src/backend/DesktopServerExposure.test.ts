@@ -260,6 +260,45 @@ describe("DesktopServerExposure", () => {
     ),
   );
 
+  it.effect("treats Windows virtual adapters with parentheses as virtual", () =>
+    withHarness(
+      {
+        "vEthernet (Default Switch)": [{ address: "172.25.32.1", family: "IPv4", internal: false }],
+        ...multiHomedNetworkInterfaces,
+      },
+      Effect.gen(function* () {
+        const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+        yield* settings.setServerExposureMode("network-accessible");
+        yield* serverExposure.configureFromSettings({ port: 4173 });
+
+        const endpoints = yield* serverExposure.getAdvertisedEndpoints;
+        assert.isFalse(endpoints.some((endpoint) => endpoint.httpBaseUrl.includes("172.25.32.1")));
+      }),
+    ),
+  );
+
+  it.effect("advertises every physical interface without truncation", () =>
+    withHarness(
+      Object.fromEntries(
+        Array.from({ length: 10 }, (_, index) => [
+          `en${index}`,
+          [{ address: `10.0.0.${index + 2}`, family: "IPv4", internal: false }],
+        ]),
+      ),
+      Effect.gen(function* () {
+        const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+        yield* settings.setServerExposureMode("network-accessible");
+        yield* serverExposure.configureFromSettings({ port: 4173 });
+
+        const endpoints = yield* serverExposure.getAdvertisedEndpoints;
+        const lanEndpoints = endpoints.filter((endpoint) => endpoint.id.startsWith("desktop-lan:"));
+        assert.equal(lanEndpoints.length, 10);
+      }),
+    ),
+  );
+
   it.effect("honors a preferred LAN interface", () =>
     withHarness(
       multiHomedNetworkInterfaces,

@@ -78,7 +78,7 @@ const isUsableLanIpv4Address = (address: string): boolean =>
  * nothing else exists.
  */
 const VIRTUAL_INTERFACE_NAME_PATTERN =
-  /^(?:docker\d*|br-[0-9a-f]+|virbr\d*|veth\w*|vmnet\d*|vEthernet[\s\w]*|wg\d*|tun\d+|lo)$/iu;
+  /^(?:docker\d*|br-[0-9a-f]+|virbr\d*|veth\w*|vmnet\d*|vEthernet[\s\w()]*|wg\d*|tun\d+|lo)$/iu;
 
 export const isVirtualLanInterfaceName = (name: string): boolean =>
   VIRTUAL_INTERFACE_NAME_PATTERN.test(name);
@@ -246,7 +246,7 @@ const resolveDesktopCoreAdvertisedEndpoints = (
         description: "Reachable from devices on the same network.",
       }),
     );
-    for (const candidate of alternativeInterfaces.slice(0, 8)) {
+    for (const candidate of alternativeInterfaces) {
       const url = `http://${candidate.address}:${input.port}`;
       endpoints.push(
         createDesktopEndpoint({

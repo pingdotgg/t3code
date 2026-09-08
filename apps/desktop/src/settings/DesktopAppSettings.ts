@@ -273,6 +273,9 @@ function toDesktopSettingsDocument(
   if (settings.mainWindowMaximized) {
     document.mainWindowMaximized = true;
   }
+  if (settings.preferredLanInterfaceName !== defaults.preferredLanInterfaceName) {
+    document.preferredLanInterfaceName = settings.preferredLanInterfaceName;
+  }
   if (settings.serverExposureMode !== defaults.serverExposureMode) {
     document.serverExposureMode = settings.serverExposureMode;
   }

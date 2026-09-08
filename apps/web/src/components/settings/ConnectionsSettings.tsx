@@ -3148,7 +3148,7 @@ export function ConnectionsSettings() {
     }
     const selectValue = preferredLanInterfaceName ?? "auto";
     const automaticCandidate = desktopLanInterfaces.find(
-      (candidate) => candidate.name === desktopServerExposureState?.advertisedHost,
+      (candidate) => candidate.address === desktopServerExposureState?.advertisedHost,
     );
     const automaticLabel =
       desktopServerExposureState?.advertisedHost === null || automaticCandidate === undefined

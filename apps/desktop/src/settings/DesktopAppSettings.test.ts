@@ -170,6 +170,23 @@ describe("DesktopSettings", () => {
     ),
   );
 
+  it.effect("persists the LAN interface preference and survives unrelated settings saves", () =>
+    withSettings(
+      Effect.gen(function* () {
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+
+        yield* settings.setPreferredLanInterfaceName("en1");
+        yield* settings.setServerExposureMode("network-accessible");
+
+        // `load` re-reads the settings file from disk, so both values must
+        // survive the second write's document serialization.
+        const reloaded = yield* settings.load;
+        assert.equal(reloaded.preferredLanInterfaceName, "en1");
+        assert.equal(reloaded.serverExposureMode, "network-accessible");
+      }),
+    ),
+  );
+
   it.effect("reports the failed desktop settings write operation and path", () =>
     withSettings(
       Effect.gen(function* () {
