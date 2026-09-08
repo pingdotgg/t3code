@@ -138,22 +138,31 @@ export async function fetchDeviceAxTree(
   const root = nodes[0]?.bounds as Record<string, unknown> | undefined;
   const screenWidth = Math.max(1, numberOr(root?.right, 1));
   const screenHeight = Math.max(1, numberOr(root?.bottom, 1));
-  const elements = nodes.slice(1).map((node): DeviceAxElement => {
+  // Layout containers span the whole window and would tint the entire
+  // screen; only nodes a user could point at are worth drawing.
+  const elements = nodes.slice(1).flatMap((node): DeviceAxElement[] => {
     const bounds = node.bounds as Record<string, unknown>;
     const left = numberOr(bounds.left, 0);
     const top = numberOr(bounds.top, 0);
+    const width = (numberOr(bounds.right, left) - left) / screenWidth;
+    const height = (numberOr(bounds.bottom, top) - top) / screenHeight;
     const text = typeof node.text === "string" ? node.text : "";
     const description = typeof node.contentDescription === "string" ? node.contentDescription : "";
+    const label = text || description;
+    if (width >= 0.95 && height >= 0.9) return [];
+    if (!label && node.clickable !== true) return [];
     const className = typeof node.className === "string" ? node.className : "";
-    return {
-      id: String(node.id ?? ""),
-      label: text || description,
-      role: className.split(".").at(-1) ?? "",
-      x: left / screenWidth,
-      y: top / screenHeight,
-      width: (numberOr(bounds.right, left) - left) / screenWidth,
-      height: (numberOr(bounds.bottom, top) - top) / screenHeight,
-    };
+    return [
+      {
+        id: String(node.id ?? ""),
+        label,
+        role: className.split(".").at(-1) ?? "",
+        x: left / screenWidth,
+        y: top / screenHeight,
+        width,
+        height,
+      },
+    ];
   });
   return { elements, errors: [] };
 }
