@@ -47,6 +47,31 @@ final class WebSocketRPCRaceTests: XCTestCase {
         await client.stop()
     }
 
+    func testHungKeepaliveSendReplacesTheSocket() async throws {
+        let hung = SuspendedSendConnection()
+        let recovered = AutoReplyConnection(respondsToPings: true)
+        let connector = SequencedConnector(connections: [hung, recovered])
+        let client = WebSocketRPCClient(
+            connector: connector,
+            keepaliveInterval: .milliseconds(20),
+            reconnectBackoff: { _ in .zero },
+            endpointProvider: { URL(string: "wss://studio.example/ws")! }
+        )
+        addTeardownBlock {
+            await hung.releaseSend()
+            await client.stop()
+        }
+
+        await client.start()
+        await hung.waitUntilSending()
+        await connector.waitUntilConnectionCount(2)
+        let response = try await client.request("server.afterHungPing", as: JSONValue.self)
+        XCTAssertEqual(response, .object([:]))
+        await hung.releaseSend()
+        let afterRelease = try await client.request("server.afterOldPingReturns", as: JSONValue.self)
+        XCTAssertEqual(afterRelease, .object([:]))
+    }
+
     func testColdSubscriptionRetainsFailedSocketIdentity() async throws {
         let connection = SubscriptionTrafficConnection(sendsInvalidSubscriptionValue: true)
         let connector = GatedConnector(connection: connection)
