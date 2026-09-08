@@ -68,6 +68,18 @@ export function shouldShowComposerContextStrip(input: {
   );
 }
 
+export function shouldShowGitControls(input: {
+  activeWorkspaceIsGitRepo: boolean;
+  hasActiveProject: boolean;
+  hasActiveWorktree: boolean;
+  projectCheckoutIsGitRepo: boolean | null;
+}): boolean {
+  if (input.activeWorkspaceIsGitRepo) return true;
+  return (
+    input.hasActiveProject && input.hasActiveWorktree && input.projectCheckoutIsGitRepo !== false
+  );
+}
+
 // Labels collapse to icons when the strip's content no longer fits. A small
 // hysteresis on the way back out keeps the boundary from flapping.
 const CONTEXT_STRIP_COMPACT_EXPAND_HYSTERESIS_PX = 16;
@@ -261,6 +273,17 @@ export function resolveBranchSelectionTarget(input: {
     nextWorktreePath,
     reuseExistingWorktree: false,
   };
+}
+
+export function resolveBranchWorkspaceCwd(input: {
+  activeProjectCwd: string | null;
+  activeWorktreePath: string | null;
+  activeWorktreeIsRepo: boolean | null;
+}): string | null {
+  const { activeProjectCwd, activeWorktreePath, activeWorktreeIsRepo } = input;
+  return activeWorktreePath !== null && activeWorktreeIsRepo !== false
+    ? activeWorktreePath
+    : activeProjectCwd;
 }
 
 // Git rejects ASCII space and the ASCII control characters (tab, newline and
