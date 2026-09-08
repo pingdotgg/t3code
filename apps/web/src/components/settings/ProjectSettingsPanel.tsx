@@ -727,7 +727,8 @@ function ProjectDetail({
   );
   // What the "Default" option resolves to while no override is set: the
   // repo's t3.json value when present, otherwise the environment setting.
-  const inheritedEnvMode = t3File.file?.defaultThreadEnvMode ?? scriptSettings.defaultThreadEnvMode;
+  const inheritedEnvMode =
+    t3File.file?.defaultThreadEnvMode ?? selectedServerConfig?.settings.defaultThreadEnvMode;
   const inheritedEnvModeSource =
     t3File.file?.defaultThreadEnvMode != null ? "t3.json" : "environment";
   const importableScripts = useMemo(
@@ -977,9 +978,11 @@ function ProjectDetail({
       label: `${member.environmentLabel ?? "Environment"} · ${member.workspaceRoot}`,
       value:
         resolved.value === undefined
-          ? hasMultipleCheckouts
-            ? "Open checkout to resolve repository default"
-            : "Loading workspace default…"
+          ? resolved.source === "Unavailable"
+            ? "Unavailable"
+            : hasMultipleCheckouts
+              ? "Open checkout to resolve repository default"
+              : "Loading workspace default…"
           : resolveEnvModeLabel(resolved.value),
       source:
         resolved.source === "Environment default"
@@ -1211,7 +1214,9 @@ function ProjectDetail({
                         ? "Inherit each checkout's default"
                         : t3File.status === "loading"
                           ? "Inherit checkout default"
-                          : `Default (${inheritedEnvModeSource}: ${resolveEnvModeLabel(inheritedEnvMode).toLowerCase()})`}
+                          : inheritedEnvMode === undefined
+                            ? "Environment default unavailable"
+                            : `Default (${inheritedEnvModeSource}: ${resolveEnvModeLabel(inheritedEnvMode).toLowerCase()})`}
                     </SelectItem>
                     <SelectItem value="worktree">{resolveEnvModeLabel("worktree")}</SelectItem>
                     <SelectItem value="local">{resolveEnvModeLabel("local")}</SelectItem>

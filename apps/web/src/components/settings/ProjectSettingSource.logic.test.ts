@@ -76,4 +76,59 @@ describe("project setting sources", () => {
       }),
     ).toEqual({ value: undefined, source: "t3.json or environment default", overridden: false });
   });
+
+  it("reports unavailable workspace defaults after the repository lookup settles", () => {
+    const input = {
+      override: null,
+      environmentDefault: undefined,
+      repositoryDefault: null,
+      repositoryResolved: false,
+    } as const;
+    expect(resolveProjectWorkspaceSource(input)).toEqual({
+      value: undefined,
+      source: "t3.json or environment default",
+      overridden: false,
+    });
+    expect(resolveProjectWorkspaceSource({ ...input, repositoryResolved: true })).toEqual({
+      value: undefined,
+      source: "Unavailable",
+      overridden: false,
+    });
+    expect(
+      resolveProjectWorkspaceSource({
+        ...input,
+        repositoryResolved: true,
+        environmentDefault: "local",
+      }),
+    ).toEqual({ value: "local", source: "Environment default", overridden: false });
+  });
+
+  it.each([
+    {
+      override: "local",
+      repositoryDefault: "worktree",
+      source: "Project override",
+      value: "local",
+      overridden: true,
+    },
+    {
+      override: null,
+      repositoryDefault: "worktree",
+      source: "t3.json",
+      value: "worktree",
+      overridden: false,
+    },
+  ] as const)(
+    "keeps $source available without environment config",
+    ({ override, repositoryDefault, source, value, overridden }) => {
+      expect(
+        resolveProjectWorkspaceSource({
+          override,
+          environmentDefault: undefined,
+          repositoryDefault,
+          repositoryResolved: true,
+        }),
+      ).toEqual({ value, source, overridden });
+    },
+  );
 });

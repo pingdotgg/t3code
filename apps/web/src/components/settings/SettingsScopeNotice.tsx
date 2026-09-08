@@ -42,13 +42,12 @@ export function SettingsScopeNotice({
           }))
         : target === "environment"
           ? environments.map((entry) => ({
-              label:
-                environments.some(
-                  (other) =>
-                    other.environmentId !== entry.environmentId && other.label === entry.label,
-                )
-                  ? `${entry.label} · ${entry.displayUrl || entry.environmentId}`
-                  : entry.label,
+              label: environments.some(
+                (other) =>
+                  other.environmentId !== entry.environmentId && other.label === entry.label,
+              )
+                ? `${entry.label} · ${entry.displayUrl || entry.environmentId}`
+                : entry.label,
               search: { machine: entry.environmentId },
             }))
           : [
@@ -67,9 +66,9 @@ export function SettingsScopeNotice({
             {choices.map((choice) => (
               <Button
                 key={JSON.stringify(choice.search)}
-                size="sm"
+                size="sm-multiline"
                 variant="outline"
-                className="h-auto max-w-full whitespace-normal break-all text-left"
+                className="max-w-full break-all text-left"
                 onClick={() => {
                   if (targetId) void navigate({ search: choice.search, hash: targetId });
                   else selectScope(choice.search);

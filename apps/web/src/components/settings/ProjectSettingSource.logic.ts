@@ -44,5 +44,8 @@ export function resolveProjectWorkspaceSource(input: {
   if (input.repositoryDefault !== null) {
     return { value: input.repositoryDefault, source: "t3.json", overridden: false };
   }
+  if (input.environmentDefault === undefined) {
+    return { value: undefined, source: "Unavailable", overridden: false };
+  }
   return { value: input.environmentDefault, source: "Environment default", overridden: false };
 }
