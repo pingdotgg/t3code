@@ -13,6 +13,7 @@ import type {
   GitActionProgressEvent,
   GitResolvePullRequestResult,
   GitStackedAction,
+  ModelSelection,
   SourceControlCloneProtocol,
   SourceControlRepositoryVisibility,
   ThreadId,
@@ -218,6 +219,7 @@ export function useGitStackedAction(scope: SourceControlActionScope) {
       commitMessage?: string;
       featureBranch?: boolean;
       filePaths?: string[];
+      modelSelection?: ModelSelection;
       onProgress?: (event: GitActionProgressEvent) => void;
     }) => {
       if (resolveScope(scope) === null) {
@@ -237,6 +239,7 @@ export function useGitStackedAction(scope: SourceControlActionScope) {
         ...(input.commitMessage ? { commitMessage: input.commitMessage } : {}),
         ...(input.featureBranch ? { featureBranch: true } : {}),
         ...(input.filePaths?.length ? { filePaths: input.filePaths } : {}),
+        ...(input.modelSelection ? { modelSelection: input.modelSelection } : {}),
         ...(input.onProgress ? { onProgress: input.onProgress } : {}),
       });
     },
