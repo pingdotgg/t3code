@@ -50,6 +50,10 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     private let aggregateIdleRefreshInterval: Duration
     private let aggregateFailureRefreshInterval: Duration
     private let aggregateRefreshSleep: @Sendable (Duration) async throws -> Void
+    private let aggregateRefreshReceipt: @MainActor @Sendable (NativePassiveShellReceipt) -> Void
+    private let aggregateStreamRetrySleep: @Sendable (String, Duration) async throws -> Void
+    private let aggregatePublishSleep: @Sendable () async throws -> Void
+    private let aggregatePeerRefreshSleep: @Sendable (String, Duration) async throws -> Void
     private let environmentShellTimeoutInterval: TimeInterval
     private let threadSnapshotTimeoutInterval: TimeInterval
     private let catchUpDelay: @Sendable () async throws -> Void
@@ -107,11 +111,26 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     private var terminalSnapshots: [TerminalKey: FeatureTerminalSnapshot] = [:]
     // Keep versions unique when a terminal cache is evicted or an environment reconnects.
     private var terminalLifecycleVersion = 0
+    private var foregroundBootstrapID = UUID()
+    private var activeHydrationTask: Task<Void, Never>?
+    private var activeHydrationID: UUID?
+    private var activeHydrationPending = false
+    private var activeHTTPAuthorityRevision = 0
+    private var shellConnectionIDsByEnvironmentID: [String: UUID] = [:]
+    private var activeShellConnectionID: UUID?
+    private var activeShellEpochHasSnapshot = false
+    private var activeHasHydrated = false
+    private var activeStreamIsAuthoritative = false
     private var pollingTask: Task<Void, Never>?
     private var fallbackPollingTask: Task<Void, Never>?
     private var configurationTask: Task<Void, Never>?
     private var aggregateRefreshTask: Task<Void, Never>?
     private var aggregateRefreshID: UUID?
+    private var aggregatePublishTask: Task<Void, Never>?
+    private var isForeground = true
+    private(set) var aggregateRefreshWorkers: [
+        String: (environment: Environment, task: Task<Void, Never>)
+    ] = [:]
     private var shellPublishTask: Task<Void, Never>?
     private var archivedRefreshTask: Task<Void, Never>?
     private var detailRefreshTask: Task<Void, Never>?
@@ -153,6 +172,16 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         aggregateRefreshSleep: @escaping @Sendable (Duration) async throws -> Void = {
             try await Task.sleep(for: $0)
         },
+        aggregatePeerRefreshSleep: @escaping @Sendable (String, Duration) async throws -> Void = { _, interval in
+            try await Task.sleep(for: interval)
+        },
+        aggregateStreamRetrySleep: @escaping @Sendable (String, Duration) async throws -> Void = { _, interval in
+            try await Task.sleep(for: interval)
+        },
+        aggregatePublishSleep: @escaping @Sendable () async throws -> Void = {
+            try await Task.sleep(for: .milliseconds(250))
+        },
+        aggregateRefreshReceipt: @escaping @MainActor @Sendable (NativePassiveShellReceipt) -> Void = { _ in },
         environmentShellTimeoutInterval: TimeInterval = 6,
         threadSnapshotTimeoutInterval: TimeInterval = 8,
         catchUpDelay: @escaping @Sendable () async throws -> Void = {
@@ -192,6 +221,10 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         self.aggregateRefreshInterval = aggregateRefreshInterval
         self.aggregateIdleRefreshInterval = aggregateIdleRefreshInterval
         self.aggregateFailureRefreshInterval = aggregateFailureRefreshInterval
+        self.aggregateRefreshReceipt = aggregateRefreshReceipt
+        self.aggregateStreamRetrySleep = aggregateStreamRetrySleep
+        self.aggregatePublishSleep = aggregatePublishSleep
+        self.aggregatePeerRefreshSleep = aggregatePeerRefreshSleep
         self.aggregateRefreshSleep = aggregateRefreshSleep
         self.environmentShellTimeoutInterval = environmentShellTimeoutInterval
         self.threadSnapshotTimeoutInterval = threadSnapshotTimeoutInterval
@@ -204,10 +237,13 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     }
 
     deinit {
+        activeHydrationTask?.cancel()
         pollingTask?.cancel()
         fallbackPollingTask?.cancel()
         configurationTask?.cancel()
         aggregateRefreshTask?.cancel()
+        aggregatePublishTask?.cancel()
+        aggregateRefreshWorkers.values.forEach { $0.task.cancel() }
         shellPublishTask?.cancel()
         archivedRefreshTask?.cancel()
         detailRefreshTask?.cancel()
@@ -219,44 +255,166 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     }
 
     func initialSnapshot() async throws -> FeatureSnapshot {
+        beginForegroundBootstrap()
+        let bootstrapID = foregroundBootstrapID
         let environments = try await runtime.environments()
+        guard bootstrapID == foregroundBootstrapID else { throw CancellationError() }
         guard let activeClient = try await runtime.activeClient() else {
-            await clearActiveEnvironment()
+            await clearActiveEnvironment(disconnectClient: false)
             let snapshot = disconnectedSnapshot(environments: environments)
             latestSnapshot = snapshot
             return snapshot
         }
-        // The runtime actor can change its active selection at any suspension
-        // point. Derive both values from one client so the snapshot cannot pair
-        // one environment with another environment's connection.
+        guard bootstrapID == foregroundBootstrapID else { throw CancellationError() }
         let environment = activeClient.environment
-
         await adoptEnvironment(environment, client: activeClient)
-        let generation = environmentGeneration
-        let loads = await loadEnvironmentShells(environments.filter(\.isEnabled))
-        guard isCurrentSession(client: activeClient, generation: generation) else {
+        guard bootstrapID == foregroundBootstrapID,
+              isCurrentSession(client: activeClient, generation: environmentGeneration) else {
             throw CancellationError()
         }
-        reconcileEnvironmentLoads(loads, savedEnvironments: environments)
+        reconcileEnvironmentLoads([], savedEnvironments: environments)
+        for saved in environments where saved.isEnabled {
+            environmentConnectionStates[saved.id] = .reconnecting
+            environmentConnectionDetails[saved.id] = nil
+        }
         latestShell = shellsByEnvironmentID[environment.id]
-        startPolling(activeClient)
-        let activeIsReachable = loads.contains {
-            $0.environment.id == environment.id && $0.shell != nil
-        }
-        if activeIsReachable {
-            scheduleArchivedRefresh(client: activeClient, environment: environment)
-        }
         let snapshot = makeSnapshot(
-            environments: environments,
-            activeEnvironment: environment,
-            connectionState: activeIsReachable ? .connected : .disconnected,
-            connectionDetail: activeIsReachable ? nil : "That server is currently unreachable."
+            environments: environments, activeEnvironment: environment,
+            connectionState: .reconnecting
         )
         latestSnapshot = snapshot
+        // No suspension after assigning the seed: the root installs it before
+        // it consumes buffered hydration events through its single iterator.
+        if isForeground {
+            startPolling(activeClient)
+            requestActiveShellHydration(activeClient, bootstrapID: bootstrapID)
+            startAggregateRefresh(activeClient, refreshImmediately: true)
+        }
         return snapshot
     }
 
+    private func beginForegroundBootstrap() {
+        foregroundBootstrapID = UUID()
+        activeHydrationTask?.cancel()
+        activeHydrationTask = nil
+        activeHydrationID = nil
+        activeHydrationPending = false
+        activeHTTPAuthorityRevision &+= 1
+        activeHasHydrated = false
+        activeStreamIsAuthoritative = false
+        pollingTask?.cancel()
+        fallbackPollingTask?.cancel()
+        configurationTask?.cancel()
+        archivedRefreshTask?.cancel()
+        archivedRefreshTask = nil
+        shellPublishTask?.cancel()
+        shellPublishTask = nil
+        cancelAggregateRefresh()
+    }
+
+    private func isCurrentForeground(_ client: T3Client, generation: Int, bootstrapID: UUID) -> Bool {
+        !Task.isCancelled && isForeground && foregroundBootstrapID == bootstrapID
+            && isCurrentSession(client: client, generation: generation)
+    }
+
+    /// Bootstrap, fallback polling, and unknown stream events share one HTTP
+    /// request owner. An invalidated request drains before its pending repair.
+    private func requestActiveShellHydration(_ activeClient: T3Client, bootstrapID: UUID, force: Bool = false) {
+        let generation = environmentGeneration
+        guard isCurrentForeground(activeClient, generation: generation, bootstrapID: bootstrapID) else { return }
+        guard activeHydrationTask == nil else {
+            if force { activeHydrationPending = true }
+            return
+        }
+        let requestID = UUID()
+        let revision = activeHTTPAuthorityRevision
+        let runtime = runtime
+        let timeout = environmentShellTimeoutInterval
+        activeHydrationID = requestID
+        activeHydrationPending = false
+        activeHydrationTask = Task { [weak self] in
+            let shell = try? await activeClient.shellSnapshot(timeoutInterval: timeout)
+            let environments = try? await runtime.environments()
+            guard let self else { return }
+            defer { self.aggregateRefreshReceipt(.httpFinished(environmentID: activeClient.environment.id)) }
+            guard self.activeHydrationID == requestID,
+                  self.isCurrentForeground(activeClient, generation: generation, bootstrapID: bootstrapID)
+            else { return }
+            self.activeHydrationTask = nil
+            self.activeHydrationID = nil
+            guard let environments, environments.contains(activeClient.environment),
+                  activeClient.environment.isEnabled else { return }
+            if revision == self.activeHTTPAuthorityRevision {
+                if let shell {
+                    self.activeHydrationPending = false
+                    self.acceptActiveShell(shell, client: activeClient, environments: environments,
+                                           socketAuthoritative: false, connectHeader: false)
+                } else {
+                    self.emitConnection(
+                        self.activeHasHydrated ? .reconnecting : .disconnected,
+                        detail: "Server unreachable. Retrying automatically."
+                    )
+                }
+            }
+            if self.activeHydrationPending && !self.activeStreamIsAuthoritative {
+                self.requestActiveShellHydration(activeClient, bootstrapID: bootstrapID)
+            }
+        }
+    }
+
+    private func acceptActiveShell(
+        _ candidate: OrchestrationShellSnapshot, client: T3Client,
+        environments: [Environment], socketAuthoritative: Bool, connectHeader: Bool
+    ) {
+        let shell: OrchestrationShellSnapshot
+        if activeShellEpochHasSnapshot, let cached = latestShell,
+           cached.snapshotSequence > candidate.snapshotSequence { shell = cached }
+        else { shell = candidate }
+        let firstHydration = !activeHasHydrated
+        activeShellEpochHasSnapshot = true
+        activeHasHydrated = true
+        if socketAuthoritative {
+            shellConnectionIDsByEnvironmentID[client.environment.id] = activeShellConnectionID
+            activeStreamIsAuthoritative = true
+            activeHTTPAuthorityRevision &+= 1
+            activeHydrationPending = false
+            lastShellEventAt = .now
+        }
+        let removed = Set(shellsByEnvironmentID[client.environment.id]?.threads.map(\.id) ?? [])
+            .subtracting(shell.threads.map(\.id))
+        for id in removed {
+            clearRemovedThreadDetail(FeatureScopedID.thread(environmentID: client.environment.id, wireID: id))
+        }
+        latestShell = shell
+        shellsByEnvironmentID[client.environment.id] = shell
+        environmentConnectionStates[client.environment.id] = .connected
+        environmentConnectionDetails[client.environment.id] = nil
+        rebuildEntityIndexes(environments)
+        synchronizeActiveDetail(with: shell, environment: client.environment)
+        guard let activeEnvironment else { return }
+        publish(makeSnapshot(
+            environments: environments, activeEnvironment: activeEnvironment,
+            connectionState: connectHeader ? .connected : (latestSnapshot?.connection.state ?? .reconnecting),
+            connectionDetail: connectHeader ? nil : latestSnapshot?.connection.detail
+        ))
+        aggregateRefreshReceipt(.shellApplied(environmentID: client.environment.id, sequence: shell.snapshotSequence))
+        if firstHydration { scheduleArchivedRefresh(client: client, environment: client.environment) }
+    }
+
+    func suspendForBackground() {
+        isForeground = false
+        beginForegroundBootstrap()
+    }
+
     func resumeAfterBackground(reconnect: Bool) async {
+        isForeground = true
+        if client == nil {
+            if let snapshot = try? await initialSnapshot(), isForeground {
+                continuation.yield(.snapshot(snapshot))
+            }
+            return
+        }
+        if let client { startAggregateRefresh(client) }
         let sessionGeneration = environmentGeneration
         let selectedRoute = activeThreadID.flatMap { try? threadRoute(for: $0) }
         detailWasSynchronized = false
@@ -281,7 +439,10 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             }
         }
         guard sessionGeneration == environmentGeneration else { return }
-        if let client { startPolling(client) }
+        if let client {
+            startPolling(client)
+            requestActiveShellHydration(client, bootstrapID: foregroundBootstrapID)
+        }
         if let selectedRoute, activeThreadID == selectedRoute.uiID,
            isKnownClient(selectedRoute.client, environmentID: selectedRoute.environmentID, generation: sessionGeneration) {
             resetDetailRefresh()
@@ -334,6 +495,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             pairedClient = try await runtime.pair(url: endpoint, clientLabel: "T3 Code Swift")
         }
         await adoptEnvironment(pairedClient.environment, client: pairedClient)
+        startAggregateRefresh(pairedClient)
         startPolling(pairedClient)
     }
 
@@ -410,6 +572,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             )
             publish(snapshot)
         }
+        startAggregateRefresh(managedClient)
         startPolling(managedClient)
     }
 
@@ -461,6 +624,10 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     }
 
     func setEnvironmentEnabled(id: String, enabled: Bool) async throws {
+        if !enabled {
+            shellConnectionIDsByEnvironmentID[id] = nil
+            aggregateRefreshWorkers.removeValue(forKey: id)?.task.cancel()
+        }
         try await runtime.setEnabled(id: id, enabled: enabled)
         if !enabled {
             environmentConnectionStates[id] = .disconnected
@@ -476,6 +643,8 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     }
 
     func removeEnvironment(id: String) async throws {
+        shellConnectionIDsByEnvironmentID[id] = nil
+        aggregateRefreshWorkers.removeValue(forKey: id)?.task.cancel()
         let removesActiveEnvironment = activeEnvironment?.id == id
         let environment = try await runtime.environments().first { $0.id == id }
         if environment?.kind == .managedDPoP {
@@ -853,18 +1022,22 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         _ environment: Environment,
         client newClient: T3Client
     ) async {
+        cancelAggregateRefresh()
         if activeEnvironment?.id == environment.id, client === newClient {
             activeEnvironment = environment
             environmentClients[environment.id] = newClient
             latestShell = shellsByEnvironmentID[environment.id]
-            startAggregateRefresh(newClient)
             return
         }
-        let previousClient = client
+        let bootstrapID = foregroundBootstrapID
+        let generation = environmentGeneration
+        let adoptedConnectionID = await newClient.currentConnectionID()
+        let selectedEnvironment = try? await runtime.activeEnvironment()
+        guard bootstrapID == foregroundBootstrapID, generation == environmentGeneration,
+              selectedEnvironment == environment else { return }
         pollingTask?.cancel()
         fallbackPollingTask?.cancel()
         configurationTask?.cancel()
-        aggregateRefreshTask?.cancel()
         archivedRefreshTask?.cancel()
         pollingTask = nil
         fallbackPollingTask = nil
@@ -872,23 +1045,27 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         aggregateRefreshTask = nil
         aggregateRefreshID = nil
         archivedRefreshTask = nil
+        // A passive snapshot is authoritative for adoption only while its
+        // exact socket is still current. A replacement socket starts a new epoch.
+        activeShellConnectionID = adoptedConnectionID
+        activeShellEpochHasSnapshot = adoptedConnectionID != nil
+            && shellConnectionIDsByEnvironmentID[environment.id] == adoptedConnectionID
         clearEnvironmentState(preserveEnvironmentSnapshots: true)
         activeEnvironment = environment
         client = newClient
         environmentClients[environment.id] = newClient
         latestShell = shellsByEnvironmentID[environment.id]
-        if let previousClient, previousClient !== newClient {
-            await previousClient.disconnect()
-        }
-        startAggregateRefresh(newClient)
+        // Runtime owns shared transports. The former inbox client may now
+        // serve a passive shell or a selected detail, so adoption does not close it.
     }
 
     private func clearActiveEnvironment(disconnectClient: Bool = true) async {
+        beginForegroundBootstrap()
         let previousClient = client
         pollingTask?.cancel()
         fallbackPollingTask?.cancel()
         configurationTask?.cancel()
-        aggregateRefreshTask?.cancel()
+        cancelAggregateRefresh()
         archivedRefreshTask?.cancel()
         pollingTask = nil
         fallbackPollingTask = nil
@@ -905,6 +1082,13 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     }
 
     private func clearEnvironmentState(preserveEnvironmentSnapshots: Bool = false) {
+        activeHydrationTask?.cancel()
+        activeHydrationTask = nil
+        activeHydrationID = nil
+        activeHydrationPending = false
+        activeHTTPAuthorityRevision &+= 1
+        activeHasHydrated = false
+        activeStreamIsAuthoritative = false
         environmentGeneration &+= 1
         resetDetailRefresh()
         resetDetailStream()
@@ -917,6 +1101,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         latestServerConfig = nil
         if !preserveEnvironmentSnapshots {
             environmentClients.removeAll()
+            shellConnectionIDsByEnvironmentID.removeAll()
             shellsByEnvironmentID.removeAll()
             shellProjectionCache.removeAll()
             indexedShellMembership = nil
@@ -3392,64 +3577,67 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         fallbackPollingTask?.cancel()
         configurationTask?.cancel()
         let generation = environmentGeneration
+        let bootstrapID = foregroundBootstrapID
+        let streamRetrySleep = aggregateStreamRetrySleep
         pollingTask = Task { [weak self] in
             while !Task.isCancelled,
-                self?.isCurrentSession(client: activeClient, generation: generation) == true
+                self?.isCurrentForeground(activeClient, generation: generation, bootstrapID: bootstrapID) == true
             {
                 do {
                     await activeClient.connect()
                     guard
-                        self?.isCurrentSession(
-                            client: activeClient,
-                            generation: generation
-                        ) == true
+                        self?.isCurrentForeground(activeClient, generation: generation, bootstrapID: bootstrapID) == true
                     else {
                         return
                     }
-                    let sequence = self?.latestShell?.snapshotSequence
-                    let events = await activeClient.shellEventBatches(after: sequence, reconnect: false)
+                    let subscription = try await activeClient.shellEventBatchesOnCurrentConnection()
+                    guard self?.isCurrentForeground(activeClient, generation: generation, bootstrapID: bootstrapID) == true
+                    else { return }
+                    if let previous = self?.activeShellConnectionID, previous != subscription.connectionID {
+                        self?.activeShellEpochHasSnapshot = false
+                        self?.activeHTTPAuthorityRevision &+= 1
+                        self?.requestActiveShellHydration(activeClient, bootstrapID: bootstrapID, force: true)
+                    }
+                    self?.activeShellConnectionID = subscription.connectionID
+                    let events = subscription.events
                     // Re-bind self per event instead of holding it strongly across
                     // the indefinite stream, so the client can deinit mid-stream.
-                    for try await batch in events {
+                    shellEvents: for try await batch in events {
                         guard !Task.isCancelled,
                             let self,
-                            self.isCurrentSession(
-                                client: activeClient,
-                                generation: generation
-                            )
+                            self.isCurrentForeground(activeClient, generation: generation, bootstrapID: bootstrapID)
                         else {
                             break
                         }
-                        self.lastShellEventAt = .now
-                        self.emitConnection(.connected)
+                        let environments = try await self.runtime.environments()
+                        let connectionID = await activeClient.currentConnectionID()
+                        guard self.isCurrentForeground(activeClient, generation: generation, bootstrapID: bootstrapID),
+                              connectionID == subscription.connectionID,
+                              environments.contains(activeClient.environment) else { break }
                         var deltas: [ShellStreamItem] = []
                         for item in batch {
-                            switch item {
-                            case let .snapshot(shell):
-                                await self.consume(deltas: deltas, client: activeClient, generation: generation)
-                                deltas.removeAll(keepingCapacity: true)
-                                await self.consume(
-                                    shell: shell,
-                                    client: activeClient,
-                                    generation: generation,
-                                    refreshActiveThread: true
-                                )
-                            case .projectUpserted, .projectRemoved, .threadUpserted, .threadRemoved:
-                                deltas.append(item)
-                            case .refreshRequired:
-                                await self.consume(deltas: deltas, client: activeClient, generation: generation)
-                                deltas.removeAll(keepingCapacity: true)
-                                if let shell = try? await activeClient.shellSnapshot() {
-                                    await self.consume(
-                                        shell: shell,
-                                        client: activeClient,
-                                        generation: generation,
-                                        refreshActiveThread: true
-                                    )
-                                }
-                            case .synchronized:
-                                break
+                        switch item {
+                        case let .snapshot(shell):
+                            await self.consume(deltas: deltas, client: activeClient, generation: generation)
+                            deltas.removeAll(keepingCapacity: true)
+                            self.acceptActiveShell(shell, client: activeClient, environments: environments,
+                                                   socketAuthoritative: true, connectHeader: true)
+                        case .projectUpserted, .projectRemoved, .threadUpserted, .threadRemoved:
+                            guard self.activeStreamIsAuthoritative else {
+                                self.activeHTTPAuthorityRevision &+= 1
+                                self.requestActiveShellHydration(activeClient, bootstrapID: bootstrapID, force: true)
+                                break shellEvents
                             }
+                            deltas.append(item)
+                        case .refreshRequired:
+                            self.activeStreamIsAuthoritative = false
+                            self.activeHTTPAuthorityRevision &+= 1
+                            self.emitConnection(.reconnecting, detail: "Refreshing environment data.")
+                            self.requestActiveShellHydration(activeClient, bootstrapID: bootstrapID, force: true)
+                            break shellEvents
+                        case .synchronized:
+                            break
+                        }
                         }
                         await self.consume(deltas: deltas, client: activeClient, generation: generation)
                     }
@@ -3462,16 +3650,22 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
 
                 guard !Task.isCancelled,
                     let self,
-                    self.isCurrentSession(client: activeClient, generation: generation)
+                    self.isCurrentForeground(activeClient, generation: generation, bootstrapID: bootstrapID)
                 else {
                     return
                 }
                 self.lastShellEventAt = nil
+                self.shellConnectionIDsByEnvironmentID[activeClient.environment.id] = nil
+                if self.activeStreamIsAuthoritative {
+                    self.activeHTTPAuthorityRevision &+= 1
+                }
+                self.activeStreamIsAuthoritative = false
+                self.requestActiveShellHydration(activeClient, bootstrapID: bootstrapID, force: true)
                 self.emitConnection(
                     .reconnecting,
                     detail: "Live updates paused. Refreshing over HTTP."
                 )
-                do { try await Task.sleep(for: .milliseconds(250)) } catch { return }
+                do { try await streamRetrySleep(activeClient.environment.id, .seconds(20)) } catch { return }
             }
         }
         let fallbackPollingInitialDelay = fallbackPollingInitialDelay
@@ -3484,49 +3678,11 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             }
             while !Task.isCancelled {
                 guard let self,
-                      self.isCurrentSession(
-                          client: activeClient,
-                          generation: generation
-                      ) else {
+                      self.isCurrentForeground(activeClient, generation: generation, bootstrapID: bootstrapID) else {
                     return
                 }
-                let socketIsSynchronized =
-                    await activeClient.liveConnectionActive()
-                    && self.lastShellEventAt != nil
-                if !socketIsSynchronized {
-                    self.emitConnection(
-                        .reconnecting,
-                        detail: "Live updates reconnecting. Refreshing over HTTP."
-                    )
-                    do {
-                        let shell = try await activeClient.shellSnapshot()
-                        guard !Task.isCancelled,
-                              self.isCurrentSession(
-                                  client: activeClient,
-                                  generation: generation
-                              ) else {
-                            return
-                        }
-                        await self.consumeFallbackShell(
-                            shell: shell,
-                            client: activeClient,
-                            generation: generation
-                        )
-                    } catch is CancellationError {
-                        return
-                    } catch {
-                        guard !Task.isCancelled,
-                              self.isCurrentSession(
-                                  client: activeClient,
-                                  generation: generation
-                              ) else {
-                            return
-                        }
-                        self.emitConnection(
-                            .reconnecting,
-                            detail: "Server unreachable. Retrying automatically."
-                        )
-                    }
+                if !self.activeStreamIsAuthoritative {
+                    self.requestActiveShellHydration(activeClient, bootstrapID: bootstrapID)
                 }
                 do {
                     try await Task.sleep(for: fallbackPollingInterval)
@@ -3540,10 +3696,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                 for try await event in await activeClient.serverConfigEvents() {
                     guard !Task.isCancelled,
                           let self,
-                          self.isCurrentSession(
-                              client: activeClient,
-                              generation: generation
-                          ) else {
+                          self.isCurrentForeground(activeClient, generation: generation, bootstrapID: bootstrapID) else {
                         break
                     }
                     switch event {
@@ -3605,11 +3758,15 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                     case .unrelated:
                         continue
                     }
-                    if let shell = self.latestShell {
-                        await self.emitSnapshot(
-                            shell, client: activeClient, expectedGeneration: generation
-                        )
-                    }
+                    let environments = try await self.runtime.environments()
+                    guard self.isCurrentForeground(activeClient, generation: generation, bootstrapID: bootstrapID),
+                          environments.contains(activeClient.environment), let activeEnvironment = self.activeEnvironment
+                    else { return }
+                    self.publish(self.makeSnapshot(
+                        environments: environments, activeEnvironment: activeEnvironment,
+                        connectionState: self.latestSnapshot?.connection.state ?? .reconnecting,
+                        connectionDetail: self.latestSnapshot?.connection.detail
+                    ))
                 }
             } catch is CancellationError {
                 return
@@ -3623,118 +3780,441 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     /// Non-active environments do not hold WebSocket subscriptions. A quiet
     /// HTTP refresh keeps their home rows and reachability useful without
     /// multiplying live streams or creating a high-frequency battery cost.
-    private func startAggregateRefresh(_ activeClient: T3Client) {
+    private func cancelAggregateRefresh() {
         aggregateRefreshTask?.cancel()
-        let generation = environmentGeneration
-        let refreshID = UUID()
-        let fastInterval = aggregateRefreshInterval
-        let idleInterval = aggregateIdleRefreshInterval
-        let failureInterval = aggregateFailureRefreshInterval
-        let sleep = aggregateRefreshSleep
-        let loadEnvironments = aggregateEnvironmentLoader
-        aggregateRefreshID = refreshID
-        aggregateRefreshTask = Task { [weak self] in
-            var nextInterval = fastInterval
-            var failureBackoffs: [String: Duration] = [:]
-            while !Task.isCancelled {
-                let elapsedInterval = nextInterval
+        aggregatePublishTask?.cancel()
+        aggregateRefreshWorkers.values.forEach { $0.task.cancel() }
+        aggregateRefreshWorkers.removeAll()
+        aggregatePublishTask = nil
+        aggregateRefreshID = nil
+    }
+
+    private func startAggregateRefresh(_ activeClient: T3Client, refreshImmediately: Bool = false) {
+        cancelAggregateRefresh()
+        guard isForeground else { return }
+        let context = AggregateRefreshContext(owner: self, activeClient: activeClient, refreshImmediately: refreshImmediately)
+        aggregateRefreshID = context.refreshID
+        aggregateRefreshTask = Task {
+            defer { context.cancelWorkers() }
+            while context.isCurrent {
+                var interval = context.fastInterval
                 do {
-                    try await sleep(nextInterval)
-                } catch {
-                    return
-                }
-                guard let self,
-                      self.aggregateRefreshID == refreshID,
-                      self.isCurrentSession(
-                          client: activeClient,
-                          generation: generation
-                      ),
-                      let activeEnvironment = self.activeEnvironment else {
-                    return
-                }
-                let environments: [Environment]
-                do {
-                    environments = try await loadEnvironments(self.runtime)
+                    let environments = try await context.loadEnvironments(context.runtime)
+                    guard context.isCurrent else { return }
+                    interval = context.reconcileWorkers(environments)
                 } catch is CancellationError where Task.isCancelled {
                     return
                 } catch {
-                    // Persistence can be briefly unavailable while another
-                    // actor atomically replaces the environment document.
-                    // Back off while keeping the loop alive for recovery.
-                    nextInterval = failureInterval
-                    continue
+                    interval = context.failureInterval
                 }
-                guard !Task.isCancelled,
-                      self.aggregateRefreshID == refreshID,
-                      self.isCurrentSession(
-                          client: activeClient,
-                          generation: generation
-                      ) else {
-                    return
-                }
-                let passiveEnvironments = environments.filter {
-                    $0.isEnabled && $0.id != activeEnvironment.id
-                }
-                guard !passiveEnvironments.isEmpty else {
-                    nextInterval = idleInterval
-                    continue
-                }
-                let passiveIDs = Set(passiveEnvironments.map(\.id))
-                failureBackoffs = failureBackoffs.reduce(into: [:]) { result, entry in
-                    guard passiveIDs.contains(entry.key) else { return }
-                    result[entry.key] = max(.zero, entry.value - elapsedInterval)
-                }
-                let refreshableEnvironments = passiveEnvironments.filter {
-                    failureBackoffs[$0.id, default: .zero] <= .zero
-                }
-                guard !refreshableEnvironments.isEmpty else {
-                    nextInterval = fastInterval
-                    continue
-                }
-                let loads = await self.loadEnvironmentShells(refreshableEnvironments)
-                guard !Task.isCancelled,
-                      self.aggregateRefreshID == refreshID,
-                      self.isCurrentSession(
-                          client: activeClient,
-                          generation: generation
-                      ) else {
-                    return
-                }
-                let shellsChanged = loads.contains { load in
-                    guard let shell = load.shell else { return false }
-                    return shell != self.shellsByEnvironmentID[load.environment.id]
-                }
-                let hasActiveWork = loads.contains { load in
-                    load.shell.map(Self.shellNeedsFrequentAggregateRefresh) == true
-                }
-                for load in loads {
-                    if load.shell == nil {
-                        failureBackoffs[load.environment.id] = failureInterval
-                    } else {
-                        failureBackoffs[load.environment.id] = nil
+                do { try await context.sleep(interval) } catch { return }
+            }
+        }
+    }
+
+    /// A worker retains runtime inputs, never its UI owner across a suspension.
+    /// This lets deinit cancel the exact outstanding shell/catalogue tasks.
+    @MainActor
+    private final class AggregateRefreshContext {
+        weak var owner: NativeFeatureClient?
+        let runtime: EnvironmentRuntime
+        let activeClient: T3Client
+        let generation: Int
+        let refreshID = UUID()
+        let refreshImmediately: Bool
+        let fastInterval: Duration
+        let idleInterval: Duration
+        let failureInterval: Duration
+        let shellTimeout: TimeInterval
+        let sleep: @Sendable (Duration) async throws -> Void
+        let peerSleep: @Sendable (String, Duration) async throws -> Void
+        let loadEnvironments: @Sendable (EnvironmentRuntime) async throws -> [Environment]
+        let streamRetrySleep: @Sendable (String, Duration) async throws -> Void
+        let publishSleep: @Sendable () async throws -> Void
+        let refreshReceipt: @MainActor @Sendable (NativePassiveShellReceipt) -> Void
+        var savedEnvironments: [Environment] = []
+        var dirtyEnvironmentIDs = Set<String>()
+
+        init(owner: NativeFeatureClient, activeClient: T3Client, refreshImmediately: Bool) {
+            self.owner = owner
+            self.refreshImmediately = refreshImmediately
+            runtime = owner.runtime
+            self.activeClient = activeClient
+            generation = owner.environmentGeneration
+            fastInterval = owner.aggregateRefreshInterval
+            idleInterval = owner.aggregateIdleRefreshInterval
+            failureInterval = owner.aggregateFailureRefreshInterval
+            shellTimeout = owner.environmentShellTimeoutInterval
+            sleep = owner.aggregateRefreshSleep
+            peerSleep = owner.aggregatePeerRefreshSleep
+            loadEnvironments = owner.aggregateEnvironmentLoader
+            streamRetrySleep = owner.aggregateStreamRetrySleep
+            publishSleep = owner.aggregatePublishSleep
+            refreshReceipt = owner.aggregateRefreshReceipt
+        }
+
+        var isCurrent: Bool {
+            !Task.isCancelled && owner?.isForeground == true && owner?.aggregateRefreshID == refreshID
+                && owner?.isCurrentSession(client: activeClient, generation: generation) == true
+        }
+
+        func cancelWorkers() {
+            guard let owner, owner.aggregateRefreshID == refreshID else { return }
+            owner.aggregateRefreshWorkers.values.forEach { $0.task.cancel() }
+            owner.aggregateRefreshWorkers.removeAll()
+            owner.aggregatePublishTask?.cancel()
+            owner.aggregatePublishTask = nil
+        }
+
+        func owns(_ environment: Environment) -> Bool {
+            isCurrent && owner?.aggregateRefreshWorkers[environment.id]?.environment == environment
+                && owner?.activeEnvironment?.id != environment.id
+        }
+
+        func reconcileWorkers(_ environments: [Environment]) -> Duration {
+            guard let owner, isCurrent else { return idleInterval }
+            savedEnvironments = environments
+            let passive = environments.filter { $0.isEnabled && $0.id != owner.activeEnvironment?.id }
+            let current = Dictionary(uniqueKeysWithValues: passive.map { ($0.id, $0) })
+            for (id, worker) in owner.aggregateRefreshWorkers where current[id] != worker.environment {
+                worker.task.cancel()
+                owner.aggregateRefreshWorkers[id] = nil
+            }
+            // Prune once per topology check, not once per shell result.
+            owner.reconcileEnvironmentLoads([], savedEnvironments: environments)
+            if owner.latestSnapshot?.environments != environments.map({
+                owner.mapEnvironment($0, activeID: owner.activeEnvironment?.id)
+            }) {
+                owner.publishAggregateSnapshot(environments)
+            }
+            for environment in passive where owner.aggregateRefreshWorkers[environment.id] == nil {
+                let state = PassiveShellState()
+                state.needsHTTP = refreshImmediately || owner.shellsByEnvironmentID[environment.id] == nil
+                let task = Task {
+                    await withTaskGroup(of: Void.self) { group in
+                        group.addTask { await self.refreshShell(environment, state: state) }
+                        group.addTask { await self.followShell(environment, state: state) }
+                        group.addTask { await self.refreshCatalogue(environment) }
                     }
                 }
-                self.reconcileEnvironmentLoads(loads, savedEnvironments: environments)
-                let currentConnection = self.latestSnapshot?.connection
-                    ?? FeatureConnection(
-                        state: .disconnected,
-                        environmentName: activeEnvironment.label,
-                        endpoint: activeEnvironment.httpBaseURL.absoluteString
+                owner.aggregateRefreshWorkers[environment.id] = (environment, task)
+            }
+            if let dirtyID = dirtyEnvironmentIDs.first { schedulePublication(dirtyID) }
+            return passive.isEmpty ? idleInterval : fastInterval
+        }
+
+        /// Revalidate membership after suspension, including endpoint edits.
+        /// Persistence errors retry; removed or disabled peers end their work.
+        func currentEnvironments(for environment: Environment) async throws -> [Environment]? {
+            guard isCurrent else { return nil }
+            let environments = try await runtime.environments()
+            guard isCurrent, environments.contains(environment), environment.isEnabled,
+                  owner?.activeEnvironment?.id != environment.id else { return nil }
+            return environments
+        }
+
+        func refreshShell(_ environment: Environment, state: PassiveShellState) async {
+            var interval = fastInterval
+            while owns(environment) {
+                do {
+                    if state.isLive { await state.waitForRepair() }
+                    if !state.needsHTTP {
+                        let delay = interval
+                        await withTaskGroup(of: Void.self) { group in
+                            group.addTask { try? await self.peerSleep(environment.id, delay) }
+                            group.addTask { await state.waitForRepair() }
+                            _ = await group.next()
+                            group.cancelAll()
+                        }
+                    }
+                    guard owns(environment) else { return }
+                    state.needsHTTP = false
+                    guard !state.isLive else { continue }
+                    guard try await currentEnvironments(for: environment) != nil else { return }
+                    let client = await runtime.client(for: environment)
+                    let epoch = state.epoch
+                    let authority = state.authorityRevision
+                    let connectionID = await client.currentConnectionID()
+                    guard owns(environment), epoch == state.epoch,
+                          authority == state.authorityRevision else { continue }
+                    let shell = try? await client.shellSnapshot(timeoutInterval: shellTimeout)
+                    defer { refreshReceipt(.httpFinished(environmentID: environment.id)) }
+                    let currentConnection = await client.currentConnectionID()
+                    guard let environments = try await currentEnvironments(for: environment) else { return }
+                    guard owns(environment), epoch == state.epoch,
+                          authority == state.authorityRevision, connectionID == currentConnection,
+                          !state.isLive else { continue }
+                    // A validated HTTP snapshot remains in this socket's cache
+                    // epoch without claiming that the live stream is complete.
+                    if shell != nil { owner?.shellConnectionIDsByEnvironmentID[environment.id] = connectionID }
+                    // The first authoritative response in this subscription epoch
+                    // may reset a cache left over from a restarted server.
+                    interval = applyShell(
+                        shell, client: client, environment: environment, saved: environments,
+                        replacingEpoch: state.cacheEpoch != epoch
                     )
-                let snapshot = self.makeSnapshot(
-                    environments: environments,
-                    activeEnvironment: activeEnvironment,
-                    connectionState: currentConnection.state,
-                    connectionDetail: currentConnection.detail
-                )
-                self.publish(snapshot)
-                if shellsChanged || hasActiveWork {
-                    nextInterval = fastInterval
-                } else {
-                    nextInterval = idleInterval
+                    if shell != nil { state.cacheEpoch = epoch }
+                } catch is CancellationError where Task.isCancelled {
+                    return
+                } catch {
+                    interval = failureInterval
                 }
             }
         }
+
+        func followShell(_ environment: Environment, state: PassiveShellState) async {
+            while owns(environment) {
+                do {
+                    guard try await currentEnvironments(for: environment) != nil else { return }
+                    let client = await runtime.client(for: environment)
+                    let subscription = try await client.shellEventsOnCurrentConnection()
+                    guard try await currentEnvironments(for: environment) != nil,
+                          owns(environment) else { return }
+                    if state.connectionID != subscription.connectionID {
+                        let needsRepair = state.connectionID != nil
+                            || owner?.shellsByEnvironmentID[environment.id] == nil
+                        state.connectionID = subscription.connectionID
+                        state.epoch = UUID()
+                        // A fresh bootstrap already read this peer. Its first
+                        // socket attempt need not duplicate that HTTP request.
+                        if needsRepair { state.requestRepair() }
+                    }
+                    let epoch = state.epoch
+                    state.isLive = false
+                    for try await item in subscription.events {
+                        let connectionID = await client.currentConnectionID()
+                        guard owns(environment), epoch == state.epoch,
+                              connectionID == subscription.connectionID else { break }
+                        guard applyStream(item, client: client, environment: environment, state: state)
+                        else { break }
+                    }
+                } catch is CancellationError where Task.isCancelled {
+                    return
+                } catch {
+                    // HTTP recovery belongs to this peer's single fallback loop.
+                }
+                guard owns(environment) else { return }
+                state.isLive = false
+                // A read begun before the stream lost completeness cannot
+                // repair that gap, even if the socket identity is unchanged.
+                state.authorityRevision &+= 1
+                markStreamPaused(environment)
+                state.requestRepair()
+                do { try await streamRetrySleep(environment.id, failureInterval) } catch { return }
+            }
+        }
+
+        func markStreamPaused(_ environment: Environment) {
+            guard let owner, owns(environment) else { return }
+            owner.shellConnectionIDsByEnvironmentID[environment.id] = nil
+            owner.environmentConnectionStates[environment.id] = .reconnecting
+            owner.environmentConnectionDetails[environment.id] = "Live updates paused. Refreshing over HTTP."
+            schedulePublication(environment.id)
+        }
+
+        func applyStream(
+            _ item: ShellStreamItem, client: T3Client, environment: Environment, state: PassiveShellState
+        ) -> Bool {
+            guard let owner, owns(environment) else { return false }
+            let current = owner.shellsByEnvironmentID[environment.id]
+            let shell: OrchestrationShellSnapshot
+            switch item {
+            case let .snapshot(snapshot):
+                if state.cacheEpoch == state.epoch, let current,
+                   current.snapshotSequence > snapshot.snapshotSequence {
+                    shell = current
+                } else {
+                    shell = snapshot
+                }
+                let remainingIDs = Set(shell.threads.map(\.id))
+                for removed in current?.threads ?? [] where !remainingIDs.contains(removed.id) {
+                    owner.clearRemovedThreadDetail(FeatureScopedID.thread(
+                        environmentID: environment.id, wireID: removed.id
+                    ))
+                }
+                owner.shellConnectionIDsByEnvironmentID[environment.id] = state.connectionID
+                state.authorityRevision &+= 1
+                state.cacheEpoch = state.epoch
+                state.isLive = true
+                state.needsHTTP = false
+            case .synchronized:
+                // A completion marker cannot make an arbitrary cached shell authoritative.
+                return state.isLive
+            case .refreshRequired:
+                return false
+            case .projectUpserted, .projectRemoved, .threadUpserted, .threadRemoved:
+                guard state.isLive, let current else { return false }
+                var projects = current.projects
+                var threads = current.threads
+                let sequence: Int
+                switch item {
+                case let .projectUpserted(nextSequence, project):
+                    sequence = nextSequence
+                    guard sequence > current.snapshotSequence else { return true }
+                    if let index = projects.firstIndex(where: { $0.id == project.id }) {
+                        projects[index] = project
+                    } else { projects.append(project) }
+                case let .projectRemoved(nextSequence, id):
+                    sequence = nextSequence
+                    guard sequence > current.snapshotSequence else { return true }
+                    projects.removeAll { $0.id == id }
+                case let .threadUpserted(nextSequence, thread):
+                    sequence = nextSequence
+                    guard sequence > current.snapshotSequence else { return true }
+                    owner.archivedThreadsByEnvironmentID[environment.id]?.removeAll {
+                        ($0.wireID ?? $0.id) == thread.id
+                    }
+                    if let index = threads.firstIndex(where: { $0.id == thread.id }) {
+                        threads[index] = thread
+                    } else { threads.append(thread) }
+                case let .threadRemoved(nextSequence, id):
+                    sequence = nextSequence
+                    guard sequence > current.snapshotSequence else { return true }
+                    threads.removeAll { $0.id == id }
+                    owner.clearRemovedThreadDetail(FeatureScopedID.thread(
+                        environmentID: environment.id, wireID: id
+                    ))
+                default:
+                    return false
+                }
+                shell = OrchestrationShellSnapshot(
+                    snapshotSequence: sequence, projects: projects, threads: threads, updatedAt: current.updatedAt
+                )
+            }
+            let membershipChanged = current?.projects.map(\.id) != shell.projects.map(\.id)
+                || current?.threads.map(\.id) != shell.threads.map(\.id)
+            owner.shellsByEnvironmentID[environment.id] = shell
+            owner.environmentClients[environment.id] = client
+            owner.environmentConnectionStates[environment.id] = .connected
+            owner.environmentConnectionDetails[environment.id] = nil
+            if membershipChanged { owner.rebuildEntityIndexes(savedEnvironments) }
+            owner.synchronizeActiveDetail(with: shell, environment: environment)
+            refreshReceipt(.shellApplied(environmentID: environment.id, sequence: shell.snapshotSequence))
+            schedulePublication(environment.id)
+            return true
+        }
+
+        func schedulePublication(_ environmentID: String) {
+            guard let owner, isCurrent else { return }
+            dirtyEnvironmentIDs.insert(environmentID)
+            guard owner.aggregatePublishTask == nil else { return }
+            owner.aggregatePublishTask = Task {
+                do { try await self.publishSleep() } catch { return }
+                let environments: [Environment]
+                do { environments = try await self.runtime.environments() }
+                catch {
+                    if self.isCurrent { self.owner?.aggregatePublishTask = nil }
+                    return
+                }
+                guard let owner = self.owner, self.isCurrent else { return }
+                self.savedEnvironments = environments
+                owner.reconcileEnvironmentLoads([], savedEnvironments: environments)
+                let dirty = self.dirtyEnvironmentIDs.filter {
+                    owner.aggregateRefreshWorkers[$0] != nil
+                }
+                self.dirtyEnvironmentIDs.removeAll()
+                owner.aggregatePublishTask = nil
+                guard !dirty.isEmpty else { return }
+                owner.publishAggregateSnapshot(self.savedEnvironments, changedEnvironmentIDs: dirty)
+            }
+        }
+
+        func applyShell(
+            _ shell: OrchestrationShellSnapshot?, client: T3Client,
+            environment: Environment, saved: [Environment], replacingEpoch: Bool = false
+        ) -> Duration {
+            guard let owner, isCurrent else { return failureInterval }
+            let previous = owner.shellsByEnvironmentID[environment.id]
+            let changed = shell.map { $0 != previous } ?? false
+            let membershipChanged = shell.map {
+                $0.projects.map(\.id) != previous?.projects.map(\.id)
+                    || $0.threads.map(\.id) != previous?.threads.map(\.id)
+            } ?? false
+            if replacingEpoch, let shell { owner.shellsByEnvironmentID[environment.id] = shell }
+            owner.applyEnvironmentLoad(EnvironmentShellLoad(
+                environment: environment, client: client, shell: shell, config: nil
+            ))
+            if membershipChanged { owner.rebuildEntityIndexes(saved) }
+            owner.publishAggregateSnapshot(saved, changedEnvironmentIDs: [environment.id])
+            guard let shell else { return failureInterval }
+            return changed || NativeFeatureClient.shellNeedsFrequentAggregateRefresh(shell)
+                ? fastInterval : idleInterval
+        }
+
+        func refreshCatalogue(_ environment: Environment) async {
+            while isCurrent && owner?.serverConfigsByEnvironmentID[environment.id] == nil {
+                do {
+                    guard try await currentEnvironments(for: environment) != nil else { return }
+                    // Never disconnect the shared client if this peer becomes selected.
+                    let probe = await runtime.ephemeralClient(for: environment)
+                    let config = try? await probe.serverConfig()
+                    await probe.disconnect()
+                    guard let environments = try await currentEnvironments(for: environment) else { return }
+                    if let config {
+                        applyCatalogue(config, environment: environment, saved: environments)
+                        return
+                    }
+                } catch is CancellationError where Task.isCancelled {
+                    return
+                } catch {
+                    // Retry a transient environment-document read just like a failed probe.
+                }
+                do { try await Task.sleep(for: failureInterval) } catch { return }
+            }
+        }
+
+        func applyCatalogue(_ config: ServerConfigSnapshot, environment: Environment, saved: [Environment]) {
+            guard let owner, isCurrent else { return }
+            owner.setServerConfig(config, environmentID: environment.id)
+            owner.publishAggregateSnapshot(saved, changedEnvironmentIDs: [environment.id])
+        }
+    }
+
+    @MainActor
+    private final class PassiveShellState {
+        var epoch = UUID()
+        var connectionID: UUID?
+        var cacheEpoch: UUID?
+        var authorityRevision = 0
+        var isLive = false
+        var needsHTTP = false
+        private var waiter: (id: UUID, continuation: CheckedContinuation<Void, Never>)?
+
+        func requestRepair() {
+            needsHTTP = true
+            waiter?.continuation.resume()
+            waiter = nil
+        }
+
+        func waitForRepair() async {
+            guard !needsHTTP else { return }
+            let id = UUID()
+            await withTaskCancellationHandler {
+                await withCheckedContinuation { continuation in
+                    if Task.isCancelled || needsHTTP { continuation.resume() }
+                    else { waiter = (id, continuation) }
+                }
+            } onCancel: {
+                Task { @MainActor [weak self] in
+                    guard self?.waiter?.id == id else { return }
+                    self?.waiter?.continuation.resume()
+                    self?.waiter = nil
+                }
+            }
+        }
+    }
+
+    private func publishAggregateSnapshot(
+        _ environments: [Environment], changedEnvironmentIDs: Set<String>? = nil
+    ) {
+        guard let activeEnvironment else { return }
+        let connection = latestSnapshot?.connection
+        publish(makeSnapshot(
+            environments: environments, activeEnvironment: activeEnvironment,
+            connectionState: connection?.state ?? .disconnected,
+            connectionDetail: connection?.detail,
+            changedEnvironmentIDs: changedEnvironmentIDs
+        ))
     }
 
     nonisolated private static func shellNeedsFrequentAggregateRefresh(
@@ -3863,20 +4343,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                 changedThreadIDs.insert(uiThreadID)
                 shouldRefreshArchived = true
                 threads.removeAll { $0.id == threadID }
-                latestDetails[uiThreadID] = nil
-                detailRenderCaches[uiThreadID] = nil
-                detailCacheRecency.removeAll { $0 == uiThreadID }
-                if activeThreadID == uiThreadID {
-                    resetDetailRefresh()
-                    resetDetailStream()
-                    activeThreadID = nil
-                    activeThreadEnvironmentID = nil
-                    activeRawThread = nil
-                    activeThreadSequence = nil
-                    activeThreadPage = nil
-                    threadHistoryEpoch &+= 1
-                    pendingOlderThreadPage = nil
-                }
+                clearRemovedThreadDetail(uiThreadID)
             case .snapshot, .synchronized, .refreshRequired:
                 continue
             }
@@ -3899,6 +4366,23 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         }
         if let activeThreadID, changedThreadIDs.contains(activeThreadID) {
             scheduleDetailRefresh(threadID: activeThreadID, client: client)
+        }
+    }
+
+    private func clearRemovedThreadDetail(_ uiThreadID: String) {
+        latestDetails[uiThreadID] = nil
+        detailRenderCaches[uiThreadID] = nil
+        detailCacheRecency.removeAll { $0 == uiThreadID }
+        if activeThreadID == uiThreadID {
+            resetDetailRefresh()
+            resetDetailStream()
+            activeThreadID = nil
+            activeThreadEnvironmentID = nil
+            activeRawThread = nil
+            activeThreadSequence = nil
+            activeThreadPage = nil
+            threadHistoryEpoch &+= 1
+            pendingOlderThreadPage = nil
         }
     }
 
@@ -4432,6 +4916,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     ) {
         let savedIDs = Set(savedEnvironments.map(\.id))
         environmentClients = environmentClients.filter { savedIDs.contains($0.key) }
+        shellConnectionIDsByEnvironmentID = shellConnectionIDsByEnvironmentID.filter { savedIDs.contains($0.key) }
         shellsByEnvironmentID = shellsByEnvironmentID.filter { savedIDs.contains($0.key) }
         shellProjectionCache = shellProjectionCache.filter { savedIDs.contains($0.key) }
         serverConfigsByEnvironmentID = serverConfigsByEnvironmentID.filter {
@@ -4453,28 +4938,30 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             savedIDs.contains($0.key)
         }
 
-        for load in loads {
-            environmentClients[load.environment.id] = load.client
-            if let config = load.config {
-                setServerConfig(config, environmentID: load.environment.id)
-                if load.environment.id == activeEnvironment?.id {
-                    latestServerConfig = config
-                }
-            }
-            if let shell = load.shell {
-                if shell.snapshotSequence
-                    >= (shellsByEnvironmentID[load.environment.id]?.snapshotSequence ?? .min) {
-                    shellsByEnvironmentID[load.environment.id] = shell
-                }
-                environmentConnectionStates[load.environment.id] = .connected
-                environmentConnectionDetails[load.environment.id] = nil
-            } else {
-                environmentConnectionStates[load.environment.id] = .disconnected
-                environmentConnectionDetails[load.environment.id] =
-                    "That server is currently unreachable."
+        for load in loads { applyEnvironmentLoad(load) }
+        rebuildEntityIndexes(savedEnvironments)
+    }
+
+    private func applyEnvironmentLoad(_ load: EnvironmentShellLoad) {
+        environmentClients[load.environment.id] = load.client
+        if let config = load.config {
+            setServerConfig(config, environmentID: load.environment.id)
+            if load.environment.id == activeEnvironment?.id {
+                latestServerConfig = config
             }
         }
-        rebuildEntityIndexes(savedEnvironments)
+        if let shell = load.shell {
+            if shell.snapshotSequence
+                >= (shellsByEnvironmentID[load.environment.id]?.snapshotSequence ?? .min) {
+                shellsByEnvironmentID[load.environment.id] = shell
+            }
+            environmentConnectionStates[load.environment.id] = .connected
+            environmentConnectionDetails[load.environment.id] = nil
+        } else {
+            environmentConnectionStates[load.environment.id] = .disconnected
+            environmentConnectionDetails[load.environment.id] =
+                "That server is currently unreachable."
+        }
     }
 
     private func newestShell(
@@ -4599,42 +5086,60 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         indexedProvisionalRoutes = provisionalThreadRoutes
     }
 
+    /// A missing expectation means an ordinary publication. A present value
+    /// retains even an absent source cache or socket as an exact expectation.
+    private struct RefreshPublicationGuard {
+        let bootstrapID: UUID
+        let sourceSequence: Int?
+        let connectionID: UUID?
+        let activeAuthorityRevision: Int?
+    }
+
     private func refresh(client: T3Client, includeArchived: Bool = false) async throws {
         let environment = client.environment
         let generation = environmentGeneration
+        let bootstrapID = foregroundBootstrapID
+        let sourceSequence = shellsByEnvironmentID[environment.id]?.snapshotSequence
+        let authorityRevision = activeHTTPAuthorityRevision
+        // Archive RPC can establish the first socket. Bind the subsequent shell
+        // read to that socket instead of treating its creation as replacement.
+        let archivedShell = includeArchived ? try? await client.archivedShellSnapshot() : nil
+        let connectionID = await client.currentConnectionID()
+        guard !Task.isCancelled, bootstrapID == foregroundBootstrapID else { throw CancellationError() }
         let shell = try await client.shellSnapshot()
-        guard isKnownClient(client, environmentID: environment.id, generation: generation) else {
+        guard !Task.isCancelled, bootstrapID == foregroundBootstrapID,
+              isKnownClient(client, environmentID: environment.id, generation: generation) else {
+            throw CancellationError()
+        }
+        let currentConnectionID = await client.currentConnectionID()
+        guard !Task.isCancelled, bootstrapID == foregroundBootstrapID,
+              isKnownClient(client, environmentID: environment.id, generation: generation),
+              connectionID == currentConnectionID,
+              sourceSequence == shellsByEnvironmentID[environment.id]?.snapshotSequence,
+              activeEnvironment?.id != environment.id || authorityRevision == activeHTTPAuthorityRevision else {
             throw CancellationError()
         }
         guard shell.snapshotSequence
-            >= (shellsByEnvironmentID[environment.id]?.snapshotSequence ?? .min) else {
-            return
-        }
-        shellsByEnvironmentID[environment.id] = shell
-        if activeEnvironment?.id == environment.id {
-            latestShell = shell
-        }
-        if includeArchived,
-           let archivedShell = try? await client.archivedShellSnapshot(),
-           isKnownClient(client, environmentID: environment.id, generation: generation) {
-            archivedThreadsByEnvironmentID[environment.id] = archivedShell.threads.map {
-                mapThread($0, environment: environment)
-            }
-            archivedShellThreadsByEnvironmentID[environment.id] = Dictionary(
-                uniqueKeysWithValues: archivedShell.threads.map { ($0.id, $0) }
-            )
-        }
-        await emitSnapshot(shell, client: client, expectedGeneration: generation)
+            >= (shellsByEnvironmentID[environment.id]?.snapshotSequence ?? .min) else { return }
+        await emitSnapshot(
+            shell, client: client, expectedGeneration: generation,
+            refreshGuard: RefreshPublicationGuard(
+                bootstrapID: bootstrapID, sourceSequence: sourceSequence, connectionID: connectionID,
+                activeAuthorityRevision: activeEnvironment?.id == environment.id ? authorityRevision : nil
+            ), archivedShell: archivedShell
+        )
     }
 
     private func scheduleArchivedRefresh(client: T3Client, environment: Environment) {
         archivedRefreshTask?.cancel()
         let generation = environmentGeneration
+        let bootstrapID = foregroundBootstrapID
         archivedRefreshTask = Task { [weak self] in
-            guard let self,
-                  let archivedShell = try? await client.archivedShellSnapshot(),
+            guard let self else { return }
+            defer { self.aggregateRefreshReceipt(.archiveFinished(environmentID: environment.id)) }
+            guard let archivedShell = try? await client.archivedShellSnapshot(),
                   !Task.isCancelled,
-                  self.isCurrentSession(client: client, generation: generation) else {
+                  self.isCurrentForeground(client, generation: generation, bootstrapID: bootstrapID) else {
                 return
             }
             self.archivedThreadsByEnvironmentID[environment.id] = archivedShell.threads.map {
@@ -4644,7 +5149,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                 uniqueKeysWithValues: archivedShell.threads.map { ($0.id, $0) }
             )
             if let shell = self.latestShell {
-                await self.emitSnapshot(shell, client: client, expectedGeneration: generation)
+                await self.emitSnapshot(shell, client: client, expectedGeneration: generation, markSourceConnected: false)
             }
         }
     }
@@ -4727,16 +5232,32 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         _ shell: OrchestrationShellSnapshot,
         client sourceClient: T3Client,
         expectedGeneration: Int,
+        refreshGuard: RefreshPublicationGuard? = nil,
+        archivedShell: OrchestrationShellSnapshot? = nil,
         markSourceConnected: Bool = true
     ) async {
         let sourceEnvironment = sourceClient.environment
         guard !Task.isCancelled,
+              refreshGuard.map({
+                  $0.bootstrapID == foregroundBootstrapID
+                      && $0.sourceSequence == shellsByEnvironmentID[sourceEnvironment.id]?.snapshotSequence
+                      && ($0.activeAuthorityRevision.map { $0 == activeHTTPAuthorityRevision } ?? true)
+              }) ?? true,
               let environment = activeEnvironment,
               isKnownClient(
                   sourceClient, environmentID: sourceEnvironment.id, generation: expectedGeneration
               ) else { return }
         let environments = (try? await runtime.environments()) ?? [environment]
+        // The metadata await can outlive the socket too. Read its identity last,
+        // then validate all expectations together before any cache mutation.
+        let currentConnectionID = refreshGuard == nil ? nil : await sourceClient.currentConnectionID()
         guard !Task.isCancelled,
+              refreshGuard.map({ $0.connectionID == currentConnectionID }) ?? true,
+              refreshGuard.map({
+                  $0.bootstrapID == foregroundBootstrapID
+                      && $0.sourceSequence == shellsByEnvironmentID[sourceEnvironment.id]?.snapshotSequence
+                      && ($0.activeAuthorityRevision.map { $0 == activeHTTPAuthorityRevision } ?? true)
+              }) ?? true,
               isKnownClient(
                   sourceClient, environmentID: sourceEnvironment.id, generation: expectedGeneration
               ),
@@ -4746,6 +5267,17 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                   >= (shellsByEnvironmentID[sourceEnvironment.id]?.snapshotSequence ?? .min) else {
             return
         }
+        if let archivedShell {
+            archivedThreadsByEnvironmentID[sourceEnvironment.id] = archivedShell.threads.map {
+                mapThread($0, environment: sourceEnvironment)
+            }
+            archivedShellThreadsByEnvironmentID[sourceEnvironment.id] = Dictionary(
+                uniqueKeysWithValues: archivedShell.threads.map { ($0.id, $0) }
+            )
+        }
+        if let refreshGuard {
+            shellConnectionIDsByEnvironmentID[sourceEnvironment.id] = refreshGuard.connectionID
+        }
         shellsByEnvironmentID[sourceEnvironment.id] = shell
         if markSourceConnected {
             environmentConnectionStates[sourceEnvironment.id] = .connected
@@ -4753,6 +5285,11 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         }
         if sourceEnvironment.id == environment.id {
             latestShell = shell
+            if markSourceConnected {
+                activeHasHydrated = true
+                activeShellEpochHasSnapshot = true
+                activeHTTPAuthorityRevision &+= 1
+            }
         }
         rebuildEntityIndexes(environments)
         synchronizeActiveDetail(
@@ -4762,8 +5299,9 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         let connectionState: FeatureConnection.State
         let connectionDetail: String?
         if sourceEnvironment.id == environment.id, markSourceConnected {
-            connectionState = .connected
-            connectionDetail = nil
+            connectionState = activeStreamIsAuthoritative ? .connected : .reconnecting
+            connectionDetail = activeStreamIsAuthoritative ? nil
+                : latestSnapshot?.connection.detail ?? "Live updates reconnecting. Refreshing over HTTP."
         } else {
             connectionState = latestSnapshot?.connection.state
                 ?? environmentConnectionStates[environment.id]
@@ -5051,14 +5589,29 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         environments: [Environment],
         activeEnvironment: Environment,
         connectionState: FeatureConnection.State,
-        connectionDetail: String? = nil
+        connectionDetail: String? = nil,
+        changedEnvironmentIDs: Set<String>? = nil
     ) -> FeatureSnapshot {
         let enabledEnvironments = environments.filter(\.isEnabled)
         let enabledIDs = Set(enabledEnvironments.map(\.id))
         shellProjectionCache = shellProjectionCache.filter { enabledIDs.contains($0.key) }
         var threads: [FeatureThread] = []
         var projects: [FeatureProject] = []
+        let previousThreads = changedEnvironmentIDs == nil ? [:]
+            : Dictionary(grouping: latestSnapshot?.threads ?? [], by: \.environmentID)
+        let previousProjects = changedEnvironmentIDs == nil ? [:]
+            : Dictionary(grouping: latestSnapshot?.projects ?? [], by: \.environmentID)
+        let previousEnvironments = Dictionary(uniqueKeysWithValues:
+            (latestSnapshot?.environments ?? []).map { ($0.id, $0) }
+        )
         for environment in enabledEnvironments {
+            if let changedEnvironmentIDs, !changedEnvironmentIDs.contains(environment.id),
+               previousEnvironments[environment.id]
+                == mapEnvironment(environment, activeID: activeEnvironment.id) {
+                threads.append(contentsOf: previousThreads[environment.id] ?? [])
+                projects.append(contentsOf: previousProjects[environment.id] ?? [])
+                continue
+            }
             // Take ownership while updating so the cache does not copy its
             // retained arrays when one row changes.
             var projection = shellProjectionCache.removeValue(forKey: environment.id)
@@ -5125,6 +5678,11 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         let providersByEnvironment = enabledEnvironments.reduce(
             into: [String: [FeatureProvider]]()
         ) { catalogues, environment in
+            if let changedEnvironmentIDs, !changedEnvironmentIDs.contains(environment.id),
+               let previous = latestSnapshot?.providersByEnvironment?[environment.id] {
+                catalogues[environment.id] = previous
+                return
+            }
             guard let shell = shellsByEnvironmentID[environment.id] else { return }
             catalogues[environment.id] = mapProviders(
                 environmentID: environment.id,
@@ -6188,6 +6746,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             providerCatalogCache[environmentID] = nil
         }
         serverConfigsByEnvironmentID[environmentID] = config
+        aggregateRefreshReceipt(.configurationApplied(environmentID: environmentID))
     }
 
     private func mapProviders(
@@ -7808,4 +8367,12 @@ private enum NativeFeatureClientError: LocalizedError {
             "Couldn't check the remote status. Try reloading."
         }
     }
+}
+
+/// Deterministic receipts at the passive transport/publication boundary.
+enum NativePassiveShellReceipt: Sendable {
+    case shellApplied(environmentID: String, sequence: Int)
+    case httpFinished(environmentID: String)
+    case configurationApplied(environmentID: String)
+    case archiveFinished(environmentID: String)
 }
