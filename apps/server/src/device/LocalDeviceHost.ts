@@ -25,6 +25,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -684,6 +685,8 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
   };
   return host;
 });
+
+export const layer = Layer.effect(DeviceHost.DeviceHost, make());
 
 /** Exposed for tests. */
 export const __testing = {

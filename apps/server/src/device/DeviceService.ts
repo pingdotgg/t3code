@@ -749,9 +749,7 @@ export const make = Effect.gen(function* () {
   });
 });
 
-export const layer = Layer.effect(DeviceService, make).pipe(
-  Layer.provide(Layer.effect(DeviceHost.DeviceHost, LocalDeviceHost.make())),
-);
+export const layer = Layer.effect(DeviceService, make).pipe(Layer.provide(LocalDeviceHost.layer));
 
 /** State stream for WS subscribers: current snapshot first, then every change. */
 export const stateStream = (service: DeviceService["Service"]): Stream.Stream<DeviceServiceState> =>
