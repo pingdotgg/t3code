@@ -1,10 +1,11 @@
-import { readFileSync } from "node:fs";
+// @effect-diagnostics nodeBuiltinImport:off
+import * as NodeFS from "node:fs";
 import { describe, expect, it } from "vite-plus/test";
 
 import { parseCommandCodeNdjsonLine } from "./Layers/CommandCodeAdapter.ts";
 
 const fixtureLines = (name: string): ReadonlyArray<string> =>
-  readFileSync(
+  NodeFS.readFileSync(
     new URL(`./testFixtures/commandCodeHeadless/${name}`, import.meta.url),
     "utf8",
   ).split(/\r?\n/);
@@ -36,8 +37,7 @@ describe("parseCommandCodeNdjsonLine", () => {
 
 describe("captured headless transcript fixtures", () => {
   it("text turn: starts with run_start and ends with a success result", () => {
-    const lines = fixtureLines("turn-text-success.ndjson");
-    const parsed = lines.map(parseCommandCodeNdjsonLine);
+    const parsed = fixtureLines("turn-text-success.ndjson").map(parseCommandCodeNdjsonLine);
 
     const firstFrame = parsed.find((entry) => entry.kind === "frame");
     expect(firstFrame?.kind === "frame" ? firstFrame.frame["type"] : "").toBe("run_start");
@@ -51,8 +51,7 @@ describe("captured headless transcript fixtures", () => {
   });
 
   it("tool turn exposes tool lifecycle frames", () => {
-    const lines = fixtureLines("turn-with-tools.ndjson");
-    const frameTypes = lines
+    const frameTypes = fixtureLines("turn-with-tools.ndjson")
       .map(parseCommandCodeNdjsonLine)
       .filter(
         (
@@ -68,9 +67,8 @@ describe("captured headless transcript fixtures", () => {
     expect(frameTypes[0]).toBe("run_start");
   });
 
-  it("resumed turn keeps context (usage grows) and returns the same session", () => {
-    const resumed = fixtureLines("turn-resume-success.ndjson");
-    const result = resumed
+  it("resumed turn keeps context and returns the same session", () => {
+    const result = fixtureLines("turn-resume-success.ndjson")
       .map(parseCommandCodeNdjsonLine)
       .find((entry) => entry.kind === "result" && entry.result.subtype === "success");
     expect(result?.kind === "result" ? result.result.sessionId : undefined).toBe(
@@ -79,7 +77,7 @@ describe("captured headless transcript fixtures", () => {
   });
 
   it("an unknown-model failure writes no NDJSON result, only stderr", () => {
-    const stderr = readFileSync(
+    const stderr = NodeFS.readFileSync(
       new URL("./testFixtures/commandCodeHeadless/error-bad-model.stderr.txt", import.meta.url),
       "utf8",
     );

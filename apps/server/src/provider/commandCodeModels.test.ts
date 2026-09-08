@@ -1,4 +1,5 @@
-import { readFileSync } from "node:fs";
+// @effect-diagnostics nodeBuiltinImport:off
+import * as NodeFS from "node:fs";
 import { describe, expect, it } from "vite-plus/test";
 
 import { parseCommandCodeModelList } from "./commandCodeModels.ts";
@@ -60,11 +61,8 @@ describe("parseCommandCodeModelList", () => {
 });
 
 describe("commandCodeModels fixture", () => {
-  it("parses a real captured --list-models style line set", () => {
-    // Guard against the fixture drifting from the parser contract: the
-    // captured NDJSON fixtures are turn transcripts, so this checks the one
-    // model-shaped line family we know ships with the CLI.
-    const lines = readFileSync(
+  it("loads the captured transcript fixture", () => {
+    const lines = NodeFS.readFileSync(
       new URL("./testFixtures/commandCodeHeadless/turn-text-success.ndjson", import.meta.url),
       "utf8",
     ).split("\n");

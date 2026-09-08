@@ -381,6 +381,11 @@ export function makeCommandCodeAdapter(
         let messageIndex = 0;
         let reasoningIndex = 0;
         let activeItemId: string | undefined;
+        // Item ids must be unique across turns: ingestion derives assistant
+        // message ids from them, and a reused id would append a new turn's
+        // text onto the previous turn's message.
+        const assistantItemPrefix = `assistant-${input.turnId}-`;
+        const reasoningItemPrefix = `reasoning-${input.turnId}-`;
 
         const handleLine = (line: string): Effect.Effect<void> =>
           Effect.gen(function* () {
@@ -410,7 +415,7 @@ export function makeCommandCodeAdapter(
               }
               case "message_start": {
                 messageIndex += 1;
-                activeItemId = `assistant-${messageIndex}`;
+                activeItemId = `${assistantItemPrefix}${messageIndex}`;
                 yield* offer({
                   type: "item.started",
                   threadId: input.threadId,
@@ -426,7 +431,7 @@ export function makeCommandCodeAdapter(
                   type: "content.delta",
                   threadId: input.threadId,
                   turnId: input.turnId,
-                  itemId: activeItemId ?? `assistant-${messageIndex + 1}`,
+                  itemId: activeItemId ?? `${assistantItemPrefix}${messageIndex + 1}`,
                   payload: { streamKind: "assistant_text", delta: frame["delta"] },
                 });
                 return;
@@ -437,7 +442,7 @@ export function makeCommandCodeAdapter(
                   type: "item.started",
                   threadId: input.threadId,
                   turnId: input.turnId,
-                  itemId: `reasoning-${reasoningIndex}`,
+                  itemId: `${reasoningItemPrefix}${reasoningIndex}`,
                   payload: { itemType: "reasoning", status: "inProgress" },
                 });
                 return;
@@ -448,7 +453,7 @@ export function makeCommandCodeAdapter(
                   type: "content.delta",
                   threadId: input.threadId,
                   turnId: input.turnId,
-                  itemId: `reasoning-${reasoningIndex}`,
+                  itemId: `${reasoningItemPrefix}${reasoningIndex}`,
                   payload: { streamKind: "reasoning_text", delta: frame["delta"] },
                 });
                 return;
@@ -458,7 +463,7 @@ export function makeCommandCodeAdapter(
                   type: "item.completed",
                   threadId: input.threadId,
                   turnId: input.turnId,
-                  itemId: `reasoning-${reasoningIndex}`,
+                  itemId: `${reasoningItemPrefix}${reasoningIndex}`,
                   payload: { itemType: "reasoning", status: "completed" },
                 });
                 return;
