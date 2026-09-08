@@ -97,6 +97,7 @@ While the agent works, its activity row shows how long ago the last message was 
 
 ## Tool activity
 
-Tool activity stays in transcript order. Consecutive updates to the same tool call share a row;
-an update after text or another tool call starts a new row, preserving the earlier activity.
-Each tool and activity row shows its latest update’s local date and time on the right.
+Consecutive tool calls and updates share one compact, expandable group. Tap the group to
+read its calls and details. Text, notices and a new turn start a separate group; later tool
+updates stay below intervening text. The age on the right uses the group’s most recent
+event, such as **just now**, **20s ago** or **2m ago**, and advances while visible.
