@@ -967,14 +967,7 @@ function ProjectDetail({
             }
             control={
               <div className="flex items-center gap-2">
-                <ProjectFavicon
-                  environmentId={representative.environmentId}
-                  cwd={representative.workspaceRoot}
-                  projectName={representative.title}
-                  faviconPath={faviconPath}
-                  projectIcon={projectIcon}
-                  className="size-6"
-                />
+                <ProjectFavicon project={representative} className="size-6" />
                 <Button
                   size="sm"
                   variant="outline"

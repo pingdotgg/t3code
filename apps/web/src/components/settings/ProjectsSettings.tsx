@@ -145,16 +145,7 @@ export function ProjectsSettings({
                 options={groups.map((group) => ({
                   value: group.projectKey,
                   label: group.displayName,
-                  icon: (
-                    <ProjectFavicon
-                      environmentId={group.environmentId}
-                      cwd={group.workspaceRoot}
-                      projectName={group.title}
-                      faviconPath={group.faviconPath}
-                      projectIcon={group.projectIcon}
-                      className="size-3.5"
-                    />
-                  ),
+                  icon: <ProjectFavicon project={group} className="size-3.5" />,
                 }))}
                 onChange={(value) => onScopeChange(value, machineId)}
               />
