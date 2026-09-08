@@ -82,7 +82,6 @@ Codex file citations open the cited file when available. Artifact templates incl
 **Use** action. **Use** inserts an editable prompt into the composer. Review or change it before
 you send it.
 
-
 ## Stopping a turn
 
 Tap **Stop** to request cancellation. **Stopping…** remains visible while the app waits for the
@@ -92,7 +91,6 @@ will not send duplicate requests. Acceptance of the request does not mean the ag
 If the connection fails or the app cannot confirm the outcome, it shows **Stop unconfirmed**.
 **Retry stop** checks the computer’s current thread status before sending another request. Some
 background work does not report a turn outcome, so its stop may remain unconfirmed.
-
 
 The thread header shows the last update received on this device, with a local date and time.
 Connection status appears separately: **Connected** does not mean a new message has arrived.
