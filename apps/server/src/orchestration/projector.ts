@@ -608,13 +608,18 @@ export function projectEvent(
         event.type,
         "payload",
       ).pipe(
-        Effect.map((payload) => ({
-          ...nextBase,
-          threads: updateThread(nextBase.threads, payload.threadId, {
-            pendingCheckpointRevertMessageIds: [],
-            updatedAt: event.occurredAt,
-          }),
-        })),
+        Effect.map((payload) => {
+          const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+          if (!thread) return nextBase;
+          return {
+            ...nextBase,
+            threads: updateThread(nextBase.threads, payload.threadId, {
+              pendingCheckpointRevertMessageIds: thread.pendingCheckpointRevertMessageIds ?? [],
+              pendingCheckpointRevertCount: (thread.pendingCheckpointRevertCount ?? 0) + 1,
+              updatedAt: event.occurredAt,
+            }),
+          };
+        }),
       );
 
     case "thread.message-sent":
@@ -894,6 +899,10 @@ export function projectEvent(
                   assistantMessageId: latestCheckpoint.assistantMessageId,
                 };
 
+          const pendingCheckpointRevertCount = Math.max(
+            0,
+            (thread.pendingCheckpointRevertCount ?? 1) - 1,
+          );
           return {
             ...nextBase,
             threads: updateThread(nextBase.threads, payload.threadId, {
@@ -902,7 +911,12 @@ export function projectEvent(
               proposedPlans,
               activities,
               latestTurn,
-              pendingCheckpointRevertMessageIds: null,
+              pendingCheckpointRevertMessageIds:
+                pendingCheckpointRevertCount === 0
+                  ? null
+                  : (thread.pendingCheckpointRevertMessageIds ?? []),
+              pendingCheckpointRevertCount:
+                pendingCheckpointRevertCount === 0 ? null : pendingCheckpointRevertCount,
               updatedAt: event.occurredAt,
             }),
           };
@@ -931,8 +945,12 @@ export function projectEvent(
           const pendingTurnStartMessageId = activityClearsPendingTurnStart(thread, payload.activity)
             ? null
             : (thread.pendingTurnStartMessageId ?? null);
+          const revertFailed = payload.activity.kind === "checkpoint.revert.failed";
+          const pendingCheckpointRevertCount = revertFailed
+            ? Math.max(0, (thread.pendingCheckpointRevertCount ?? 1) - 1)
+            : (thread.pendingCheckpointRevertCount ?? null);
           const pendingCheckpointRevertMessageIds =
-            payload.activity.kind === "checkpoint.revert.failed"
+            revertFailed && pendingCheckpointRevertCount === 0
               ? null
               : (thread.pendingCheckpointRevertMessageIds ?? null);
 
@@ -942,6 +960,8 @@ export function projectEvent(
               activities,
               pendingTurnStartMessageId,
               pendingCheckpointRevertMessageIds,
+              pendingCheckpointRevertCount:
+                pendingCheckpointRevertCount === 0 ? null : pendingCheckpointRevertCount,
               updatedAt: event.occurredAt,
             }),
           };

@@ -1,6 +1,7 @@
 import {
   ApprovalRequestId,
   isImportedAgentSessionMessageId,
+  MessageId,
   UserInputAttachmentAnswerPayload,
   type ChatAttachment,
   type OrchestrationEvent,
@@ -1271,7 +1272,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
               return;
             }
           }
-          yield* projectionTurnRepository.replacePendingTurnStart({
+          yield* projectionTurnRepository.insertPendingTurnStart({
             threadId: event.payload.threadId,
             messageId: event.payload.messageId,
             sourceProposedPlanThreadId: event.payload.sourceProposedPlan?.threadId ?? null,
@@ -1286,31 +1287,21 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             event.payload.activity.kind === "context-compaction" ||
             event.payload.activity.kind === "provider.auth.signed-out"
           ) {
-            const pendingTurnStart = yield* projectionTurnRepository.getPendingTurnStartByThreadId(
-              event.payload,
-            );
-            if (
-              Option.isNone(pendingTurnStart) ||
-              String(pendingTurnStart.value.messageId) !==
-                extractActivityRequestId(event.payload.activity.payload)
-            ) {
-              return;
-            }
-            yield* projectionTurnRepository.deletePendingTurnStartByThreadId(event.payload);
+            const requestId = extractActivityRequestId(event.payload.activity.payload);
+            if (requestId === null) return;
+            yield* projectionTurnRepository.deletePendingTurnStart({
+              threadId: event.payload.threadId,
+              messageId: MessageId.make(String(requestId)),
+            });
             return;
           }
           if (event.payload.activity.kind !== "provider.turn.start.failed") return;
-          const pendingTurnStart = yield* projectionTurnRepository.getPendingTurnStartByThreadId(
-            event.payload,
-          );
-          if (
-            Option.isNone(pendingTurnStart) ||
-            String(pendingTurnStart.value.messageId) !==
-              extractActivityRequestId(event.payload.activity.payload)
-          ) {
-            return;
-          }
-          yield* projectionTurnRepository.deletePendingTurnStartByThreadId(event.payload);
+          const requestId = extractActivityRequestId(event.payload.activity.payload);
+          if (requestId === null) return;
+          yield* projectionTurnRepository.deletePendingTurnStart({
+            threadId: event.payload.threadId,
+            messageId: MessageId.make(String(requestId)),
+          });
           return;
         }
 
@@ -1436,9 +1427,12 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             });
           }
 
-          yield* projectionTurnRepository.deletePendingTurnStartByThreadId({
-            threadId: event.payload.threadId,
-          });
+          if (Option.isSome(pendingTurnStart)) {
+            yield* projectionTurnRepository.deletePendingTurnStart({
+              threadId: event.payload.threadId,
+              messageId: pendingTurnStart.value.messageId,
+            });
+          }
           return;
         }
 
@@ -1616,7 +1610,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
               turn.turnId === null
                 ? turn.pendingMessageId === null
                   ? Effect.void
-                  : projectionTurnRepository.replacePendingTurnStart({
+                  : projectionTurnRepository.insertPendingTurnStart({
                       threadId: turn.threadId,
                       messageId: turn.pendingMessageId,
                       sourceProposedPlanThreadId: turn.sourceProposedPlanThreadId,

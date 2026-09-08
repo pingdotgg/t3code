@@ -174,7 +174,7 @@ describe("ProviderCommandReactor", () => {
     readonly unreadableHistory?: boolean;
     readonly titleRegenerationCompletionDispatchFailures?: number;
     readonly titleRegenerationBeforeStart?: "one" | "two";
-    readonly turnStartBeforeStart?: boolean;
+    readonly turnStartBeforeStart?: "one" | "two";
     readonly serverActivation?: Effect.Effect<void>;
     readonly beforeReadySessionDispatch?: () => Effect.Effect<void>;
     readonly compactThreadEffect?: () => Effect.Effect<void, ProviderAdapterRequestError>;
@@ -578,23 +578,26 @@ describe("ProviderCommandReactor", () => {
         }),
       );
     }
-    if (input?.turnStartBeforeStart === true) {
-      await runEffect(
-        engine.dispatch({
-          type: "thread.turn.start",
-          commandId: CommandId.make("cmd-turn-start-before-reactor-start"),
-          threadId: ThreadId.make("thread-1"),
-          message: {
-            messageId: MessageId.make("message-turn-start-before-reactor-start"),
-            role: "user",
-            text: "This start cannot be replayed after restart",
-            attachments: [],
-          },
-          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-          runtimeMode: "approval-required",
-          createdAt: now,
-        }),
-      );
+    const pendingTurnStartCount = input?.turnStartBeforeStart === "two" ? 2 : 1;
+    if (input?.turnStartBeforeStart !== undefined) {
+      for (let index = 1; index <= pendingTurnStartCount; index += 1) {
+        await runEffect(
+          engine.dispatch({
+            type: "thread.turn.start",
+            commandId: CommandId.make(`cmd-turn-start-before-reactor-start-${index}`),
+            threadId: ThreadId.make("thread-1"),
+            message: {
+              messageId: MessageId.make(`message-turn-start-before-reactor-start-${index}`),
+              role: "user",
+              text: `This start cannot be replayed after restart (${index})`,
+              attachments: [],
+            },
+            interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+            runtimeMode: "approval-required",
+            createdAt: now,
+          }),
+        );
+      }
     }
 
     scope = await Effect.runPromise(Scope.make("sequential"));
@@ -1161,7 +1164,11 @@ describe("ProviderCommandReactor", () => {
         }),
       );
       expect(harness.sendTurn).toHaveBeenCalledTimes(1);
+      // Neither the original send nor the compact request received a
+      // correlated provider turn. Keep both durable; the later user turn was
+      // rejected while compaction was restoring the session and adds no row.
       expect(yield* Effect.promise(() => harness.readPendingTurnStarts())).toEqual([
+        { threadId: "thread-1" },
         { threadId: "thread-1" },
       ]);
 
@@ -1790,21 +1797,40 @@ describe("ProviderCommandReactor", () => {
     expect(thread?.titleRegeneration).toBeNull();
   });
 
-  it("marks a turn start left pending across reactor startup as failed", async () => {
-    const harness = await createHarness({ turnStartBeforeStart: true });
+  it("marks every turn start left pending across reactor startup as failed", async () => {
+    const harness = await createHarness({ turnStartBeforeStart: "two" });
 
     expect(harness.sendTurn).not.toHaveBeenCalled();
     expect(await harness.readPendingTurnStarts()).toEqual([]);
     const readModel = await harness.readModel();
-    expect(readModel.threads[0]?.activities).toContainEqual(
-      expect.objectContaining({
-        kind: "provider.turn.start.failed",
-        payload: expect.objectContaining({
-          requestId: "message-turn-start-before-reactor-start",
-          detail: expect.stringContaining("server restarted"),
-        }),
-      }),
+    const startupFailures = readModel.threads[0]?.activities.filter(
+      (activity) => activity.kind === "provider.turn.start.failed",
     );
+    expect(
+      startupFailures
+        ?.flatMap((activity) =>
+          typeof activity.payload === "object" &&
+          activity.payload !== null &&
+          "requestId" in activity.payload &&
+          typeof activity.payload.requestId === "string"
+            ? [activity.payload.requestId]
+            : [],
+        )
+        .toSorted(),
+    ).toEqual([
+      "message-turn-start-before-reactor-start-1",
+      "message-turn-start-before-reactor-start-2",
+    ]);
+    expect(
+      startupFailures?.every(
+        (activity) =>
+          typeof activity.payload === "object" &&
+          activity.payload !== null &&
+          "detail" in activity.payload &&
+          typeof activity.payload.detail === "string" &&
+          activity.payload.detail.includes("server restarted"),
+      ),
+    ).toBe(true);
   });
 
   it("continues clearing startup title regeneration state after one completion fails", async () => {

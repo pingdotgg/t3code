@@ -593,6 +593,78 @@ describe("orchestration projector", () => {
     }),
   );
 
+  effectIt.effect("keeps queued messages reserved when one of consecutive reverts fails", () =>
+    Effect.gen(function* () {
+      const now = "2026-09-08T00:00:00.000Z";
+      const threadId = "thread-consecutive-revert-failure";
+      const event = (sequence: number, type: OrchestrationEvent["type"], payload: unknown) =>
+        makeEvent({
+          sequence,
+          type,
+          payload,
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: now,
+          commandId: `consecutive-revert-${sequence}`,
+        });
+      let model = yield* projectEvent(
+        createEmptyReadModel(now),
+        event(1, "thread.created", {
+          threadId,
+          projectId: "project-1",
+          title: "Consecutive revert failure",
+          modelSelection: { instanceId: "codex", model: "test" },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          createdAt: now,
+          updatedAt: now,
+        }),
+      );
+      for (const sequence of [2, 3]) {
+        model = yield* projectEvent(
+          model,
+          event(sequence, "thread.checkpoint-revert-requested", {
+            threadId,
+            turnCount: 0,
+            createdAt: now,
+          }),
+        );
+      }
+      for (const [index, messageId] of ["queued-1", "queued-2"].entries()) {
+        model = yield* projectEvent(
+          model,
+          event(index + 4, "thread.turn-start-requested", {
+            threadId,
+            messageId,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            createdAt: now,
+          }),
+        );
+      }
+      model = yield* projectEvent(
+        model,
+        event(6, "thread.activity-appended", {
+          threadId,
+          activity: {
+            id: "revert-failed-1",
+            kind: "checkpoint.revert.failed",
+            summary: "Checkpoint revert failed",
+            tone: "error",
+            turnId: null,
+            createdAt: now,
+            payload: { detail: "first revert failed" },
+          },
+        }),
+      );
+
+      expect(model.threads[0]?.pendingCheckpointRevertCount).toBe(1);
+      expect(model.threads[0]?.pendingCheckpointRevertMessageIds).toEqual(["queued-1", "queued-2"]);
+    }),
+  );
+
   it("updates canonical thread runtime mode from thread.runtime-mode-set", async () => {
     const createdAt = "2026-02-23T08:00:00.000Z";
     const updatedAt = "2026-02-23T08:00:05.000Z";

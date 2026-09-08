@@ -94,6 +94,13 @@ export const GetProjectionPendingTurnStartInput = Schema.Struct({
 });
 export type GetProjectionPendingTurnStartInput = typeof GetProjectionPendingTurnStartInput.Type;
 
+export const DeleteProjectionPendingTurnStartInput = Schema.Struct({
+  threadId: ThreadId,
+  messageId: MessageId,
+});
+export type DeleteProjectionPendingTurnStartInput =
+  typeof DeleteProjectionPendingTurnStartInput.Type;
+
 export const DeleteProjectionTurnsByThreadInput = Schema.Struct({
   threadId: ThreadId,
 });
@@ -115,24 +122,27 @@ export interface ProjectionTurnRepositoryShape {
   ) => Effect.Effect<void, ProjectionRepositoryError>;
 
   /**
-   * Replaces any existing pending-start placeholder rows for a thread with exactly one latest pending-start row.
+   * Inserts one pending-start placeholder. Multiple accepted starts may wait
+   * behind serialized checkpoint work and must remain independently durable.
    */
-  readonly replacePendingTurnStart: (
+  readonly insertPendingTurnStart: (
     row: ProjectionPendingTurnStart,
   ) => Effect.Effect<void, ProjectionRepositoryError>;
 
   /**
-   * Returns the newest pending-start placeholder for a thread; this is expected to be at most one row after replacement writes.
+   * Returns the oldest pending-start placeholder for a thread, which is the
+   * next request a provider lifecycle event can adopt.
    */
   readonly getPendingTurnStartByThreadId: (
     input: GetProjectionPendingTurnStartInput,
   ) => Effect.Effect<Option.Option<ProjectionPendingTurnStart>, ProjectionRepositoryError>;
 
   /**
-   * Deletes only pending-start placeholder rows (`turnId = null`) for a thread and leaves concrete turn rows untouched.
+   * Deletes one correlated pending-start placeholder and leaves other queued
+   * starts and concrete turn rows untouched.
    */
-  readonly deletePendingTurnStartByThreadId: (
-    input: GetProjectionPendingTurnStartInput,
+  readonly deletePendingTurnStart: (
+    input: DeleteProjectionPendingTurnStartInput,
   ) => Effect.Effect<void, ProjectionRepositoryError>;
 
   /**

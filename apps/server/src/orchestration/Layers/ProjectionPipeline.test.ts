@@ -3702,6 +3702,75 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
 it.layer(makeProjectionPipelinePrefixedTestLayer("t3-pending-turn-terminal-test-"))(
   "OrchestrationProjectionPipeline pending turn cleanup",
   (it) => {
+    it.effect("adopts queued pending starts in request order", () =>
+      Effect.gen(function* () {
+        const projectionPipeline = yield* OrchestrationProjectionPipeline;
+        const eventStore = yield* OrchestrationEventStore;
+        const sql = yield* SqlClient.SqlClient;
+        const threadId = ThreadId.make("thread-queued-adoption");
+
+        for (const index of [1, 2]) {
+          const createdAt = `2026-02-26T13:00:0${index}.000Z`;
+          yield* eventStore.append({
+            type: "thread.turn-start-requested",
+            eventId: EventId.make(`evt-queued-adoption-${index}`),
+            aggregateKind: "thread",
+            aggregateId: threadId,
+            occurredAt: createdAt,
+            commandId: CommandId.make(`cmd-queued-adoption-${index}`),
+            causationEventId: null,
+            correlationId: CorrelationId.make(`cmd-queued-adoption-${index}`),
+            metadata: {},
+            payload: {
+              threadId,
+              messageId: MessageId.make(`message-queued-adoption-${index}`),
+              runtimeMode: "approval-required",
+              createdAt,
+            },
+          });
+        }
+        yield* eventStore.append({
+          type: "thread.session-set",
+          eventId: EventId.make("evt-queued-adoption-running"),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: "2026-02-26T13:00:03.000Z",
+          commandId: CommandId.make("cmd-queued-adoption-running"),
+          causationEventId: null,
+          correlationId: CorrelationId.make("cmd-queued-adoption-running"),
+          metadata: {},
+          payload: {
+            threadId,
+            session: {
+              threadId,
+              status: "running",
+              providerName: "codex",
+              runtimeMode: "approval-required",
+              activeTurnId: TurnId.make("turn-queued-adoption-1"),
+              lastError: null,
+              updatedAt: "2026-02-26T13:00:03.000Z",
+            },
+          },
+        });
+
+        yield* projectionPipeline.bootstrap;
+
+        const rows = yield* sql<{
+          readonly turnId: string | null;
+          readonly messageId: string | null;
+        }>`
+          SELECT turn_id AS "turnId", pending_message_id AS "messageId"
+          FROM projection_turns
+          WHERE thread_id = ${threadId}
+          ORDER BY row_id ASC
+        `;
+        assert.deepEqual(rows, [
+          { turnId: null, messageId: "message-queued-adoption-2" },
+          { turnId: "turn-queued-adoption-1", messageId: "message-queued-adoption-1" },
+        ]);
+      }),
+    );
+
     it.effect("keeps newer pending turn starts when a stale session reaches a terminal state", () =>
       Effect.gen(function* () {
         const projectionPipeline = yield* OrchestrationProjectionPipeline;
@@ -3782,14 +3851,21 @@ it.layer(makeProjectionPipelinePrefixedTestLayer("t3-pending-turn-terminal-test-
           FROM projection_turns
           WHERE turn_id IS NULL
             AND state = 'pending'
+            AND thread_id LIKE 'thread-terminal-%'
           ORDER BY thread_id ASC
         `;
         assert.deepEqual(pendingRows, [
+          { threadId: "thread-terminal-error", messageId: "message-terminal-error" },
           { threadId: "thread-terminal-error", messageId: "message-newer-error" },
+          {
+            threadId: "thread-terminal-interrupted",
+            messageId: "message-terminal-interrupted",
+          },
           {
             threadId: "thread-terminal-interrupted",
             messageId: "message-newer-interrupted",
           },
+          { threadId: "thread-terminal-stopped", messageId: "message-terminal-stopped" },
           { threadId: "thread-terminal-stopped", messageId: "message-newer-stopped" },
         ]);
       }),

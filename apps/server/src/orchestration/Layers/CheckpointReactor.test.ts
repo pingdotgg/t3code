@@ -2062,81 +2062,117 @@ describe("CheckpointReactor", () => {
     });
   });
 
-  effectIt.effect(
-    "processes consecutive revert requests with deterministic rollback sequencing",
-    () =>
-      Effect.gen(function* () {
-        const harness = yield* Effect.promise(() => createHarness());
-        const createdAt = "2026-01-01T00:00:00.000Z";
-
-        yield* harness.engine.dispatch({
-          type: "thread.session.set",
-          commandId: CommandId.make("cmd-session-set-inline-revert"),
-          threadId: ThreadId.make("thread-1"),
-          session: {
-            threadId: ThreadId.make("thread-1"),
-            status: "ready",
-            providerName: "codex",
-            runtimeMode: "approval-required",
-            activeTurnId: null,
-            lastError: null,
-            updatedAt: createdAt,
+  effectIt.effect("preserves every queued start across consecutive revert requests", () =>
+    Effect.gen(function* () {
+      const firstRollbackStarted = yield* Deferred.make<void>();
+      const releaseFirstRollback = yield* Deferred.make<void>();
+      let rollbackCount = 0;
+      const harness = yield* Effect.promise(() =>
+        createHarness({
+          rollbackConversationEffect: () => {
+            rollbackCount += 1;
+            return rollbackCount === 1
+              ? Deferred.succeed(firstRollbackStarted, undefined).pipe(
+                  Effect.andThen(Deferred.await(releaseFirstRollback)),
+                )
+              : Effect.void;
           },
-          createdAt,
-        });
+        }),
+      );
+      const createdAt = "2026-01-01T00:00:00.000Z";
 
-        yield* harness.engine.dispatch({
-          type: "thread.turn.diff.complete",
-          commandId: CommandId.make("cmd-inline-revert-diff-1"),
+      yield* harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-session-set-inline-revert"),
+        threadId: ThreadId.make("thread-1"),
+        session: {
           threadId: ThreadId.make("thread-1"),
-          turnId: asTurnId("turn-1"),
-          completedAt: createdAt,
-          checkpointRef: checkpointRefForThreadTurn(ThreadId.make("thread-1"), 1),
           status: "ready",
-          files: [],
-          checkpointTurnCount: 1,
-          createdAt,
-        });
-        yield* harness.engine.dispatch({
-          type: "thread.turn.diff.complete",
-          commandId: CommandId.make("cmd-inline-revert-diff-2"),
-          threadId: ThreadId.make("thread-1"),
-          turnId: asTurnId("turn-2"),
-          completedAt: createdAt,
-          checkpointRef: checkpointRefForThreadTurn(ThreadId.make("thread-1"), 2),
-          status: "ready",
-          files: [],
-          checkpointTurnCount: 2,
-          createdAt,
-        });
+          providerName: "codex",
+          runtimeMode: "approval-required",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: createdAt,
+        },
+        createdAt,
+      });
 
+      yield* harness.engine.dispatch({
+        type: "thread.turn.diff.complete",
+        commandId: CommandId.make("cmd-inline-revert-diff-1"),
+        threadId: ThreadId.make("thread-1"),
+        turnId: asTurnId("turn-1"),
+        completedAt: createdAt,
+        checkpointRef: checkpointRefForThreadTurn(ThreadId.make("thread-1"), 1),
+        status: "ready",
+        files: [],
+        checkpointTurnCount: 1,
+        createdAt,
+      });
+      yield* harness.engine.dispatch({
+        type: "thread.turn.diff.complete",
+        commandId: CommandId.make("cmd-inline-revert-diff-2"),
+        threadId: ThreadId.make("thread-1"),
+        turnId: asTurnId("turn-2"),
+        completedAt: createdAt,
+        checkpointRef: checkpointRefForThreadTurn(ThreadId.make("thread-1"), 2),
+        status: "ready",
+        files: [],
+        checkpointTurnCount: 2,
+        createdAt,
+      });
+
+      yield* harness.engine.dispatch({
+        type: "thread.checkpoint.revert",
+        commandId: CommandId.make("cmd-sequenced-revert-request-1"),
+        threadId: ThreadId.make("thread-1"),
+        turnCount: 1,
+        createdAt,
+      });
+      yield* Deferred.await(firstRollbackStarted);
+      yield* harness.engine.dispatch({
+        type: "thread.checkpoint.revert",
+        commandId: CommandId.make("cmd-sequenced-revert-request-0"),
+        threadId: ThreadId.make("thread-1"),
+        turnCount: 0,
+        createdAt,
+      });
+      for (const [index, messageId] of ["queued-message-1", "queued-message-2"].entries()) {
         yield* harness.engine.dispatch({
-          type: "thread.checkpoint.revert",
-          commandId: CommandId.make("cmd-sequenced-revert-request-1"),
+          type: "thread.turn.start",
+          commandId: CommandId.make(`cmd-queued-turn-${index + 1}`),
           threadId: ThreadId.make("thread-1"),
-          turnCount: 1,
+          message: {
+            messageId: MessageId.make(messageId),
+            role: "user",
+            text: `Queued work ${index + 1}`,
+            attachments: [],
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
           createdAt,
         });
-        yield* harness.engine.dispatch({
-          type: "thread.checkpoint.revert",
-          commandId: CommandId.make("cmd-sequenced-revert-request-0"),
-          threadId: ThreadId.make("thread-1"),
-          turnCount: 0,
-          createdAt,
-        });
+      }
 
-        yield* Effect.promise(() => harness.drain());
+      yield* Deferred.succeed(releaseFirstRollback, undefined);
+      yield* Effect.promise(() => harness.drain());
 
-        expect(harness.provider.rollbackConversation).toHaveBeenCalledTimes(2);
-        expect(harness.provider.rollbackConversation.mock.calls[0]?.[0]).toEqual({
-          threadId: ThreadId.make("thread-1"),
-          numTurns: 1,
-        });
-        expect(harness.provider.rollbackConversation.mock.calls[1]?.[0]).toEqual({
-          threadId: ThreadId.make("thread-1"),
-          numTurns: 1,
-        });
-      }),
+      expect(harness.provider.rollbackConversation).toHaveBeenCalledTimes(2);
+      expect(harness.provider.rollbackConversation.mock.calls[0]?.[0]).toEqual({
+        threadId: ThreadId.make("thread-1"),
+        numTurns: 1,
+      });
+      expect(harness.provider.rollbackConversation.mock.calls[1]?.[0]).toEqual({
+        threadId: ThreadId.make("thread-1"),
+        numTurns: 1,
+      });
+      const readModel = yield* Effect.promise(() => harness.readModel());
+      expect(
+        readModel.threads[0]?.messages
+          .filter((message) => message.role === "user")
+          .map((message) => message.id),
+      ).toEqual(["queued-message-1", "queued-message-2"]);
+    }),
   );
 
   effectIt.effect(

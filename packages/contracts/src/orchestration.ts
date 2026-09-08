@@ -660,6 +660,9 @@ export const OrchestrationThread = Schema.Struct({
   // User messages accepted after a checkpoint revert begins. The server uses
   // this pending-only list to preserve every queued start when the revert lands.
   pendingCheckpointRevertMessageIds: Schema.optional(Schema.NullOr(Schema.Array(MessageId))),
+  // Number of checkpoint reverts still in flight for this thread. Consecutive
+  // requests share the preservation list until their final completion lands.
+  pendingCheckpointRevertCount: Schema.optional(Schema.NullOr(NonNegativeInt)),
   deletedAt: Schema.NullOr(IsoDateTime),
   messages: Schema.Array(OrchestrationMessage),
   proposedPlans: Schema.Array(OrchestrationProposedPlan).pipe(
