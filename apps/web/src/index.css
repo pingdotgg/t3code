@@ -2122,15 +2122,6 @@ code {
   }
 }
 
-@keyframes sidebar-cloud-drift {
-  from {
-    transform: translateX(0);
-  }
-  to {
-    transform: translateX(48px);
-  }
-}
-
 /* Animate only during a reveal; there are no running animations at rest. */
 @media (prefers-reduced-motion: no-preference) {
   .sidebar-pull-root[data-pulling="true"] :is(.stage-night-star-group, .stage-night-sparkle) {
@@ -2145,12 +2136,6 @@ code {
     :is(.stage-night-star-group, .stage-night-sparkle):nth-child(3) {
     animation-duration: 5.3s;
     animation-delay: -2.8s;
-  }
-  .sidebar-pull-root[data-pulling="true"] .stage-night-cloud {
-    animation: sidebar-cloud-drift 24s ease-in-out infinite alternate;
-  }
-  .sidebar-pull-root[data-pulling="true"] .stage-night-cloud-distant {
-    animation-duration: 38s;
   }
 }
 
