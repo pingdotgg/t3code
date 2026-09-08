@@ -14,6 +14,7 @@ public struct ThreadDetailView: View {
     let submitMessage: (FeatureMessageSubmission) async -> Bool
     let onNavigateBack: () -> Void
     private let draftStore: FeatureComposerDraftStore
+    private let managesThreadPresentation: Bool
 
     @State private var draft = ""
     @State private var selection: FeatureSelection?
@@ -43,20 +44,22 @@ public struct ThreadDetailView: View {
         thread: FeatureThread,
         submitMessage: @escaping (FeatureMessageSubmission) async -> Bool,
         onNavigateBack: @escaping () -> Void = {},
-        draftStore: FeatureComposerDraftStore = .shared
+        draftStore: FeatureComposerDraftStore = .shared,
+        managesThreadPresentation: Bool = true
     ) {
         self.model = model
         self.thread = thread
         self.submitMessage = submitMessage
         self.onNavigateBack = onNavigateBack
         self.draftStore = draftStore
+        self.managesThreadPresentation = managesThreadPresentation
     }
 
     public var body: some View {
         Group {
             if let detail {
                 timeline(detail)
-            } else if isLoading {
+            } else if isOpening {
                 FeatureThreadOpeningView()
             } else {
                 ContentUnavailableView {
@@ -81,9 +84,11 @@ public struct ThreadDetailView: View {
             }
         }
         .task(id: thread.id) {
+            guard managesThreadPresentation else { return }
             isLoading = true
-            _ = await model.detail(for: thread.id, force: true)
-            isLoading = false
+            await model.runThreadPresentation(id: thread.id) {
+                isLoading = false
+            }
         }
         .task(id: thread.id) {
             // A cached thread can already show its composer while the server
@@ -108,7 +113,7 @@ public struct ThreadDetailView: View {
         .onChange(of: threadConnectionState) { _, state in
             if state == .connected,
                case .failed = model.detailLoadStates[thread.id],
-               !isLoading {
+               !isOpening {
                 reloadThread()
             }
         }
@@ -118,7 +123,6 @@ public struct ThreadDetailView: View {
             }
         }
         .onDisappear {
-            model.releaseThread(thread.id)
             persistDraftBeforeLeaving()
         }
         .sheet(item: $toolSurface) { surface in
@@ -264,6 +268,12 @@ public struct ThreadDetailView: View {
         } message: {
             Text(linkedMediaPreviewError ?? "The file could not be opened.")
         }
+    }
+
+    private var isOpening: Bool {
+        if managesThreadPresentation { return isLoading }
+        if case .failed = model.detailLoadStates[thread.id] { return false }
+        return detail == nil || model.detailLoadStates[thread.id] == .loading
     }
 
     private var detail: FeatureThreadDetail? {
@@ -581,10 +591,8 @@ public struct ThreadDetailView: View {
     }
 
     private func reloadThread() {
-        isLoading = true
-        Task {
-            _ = await model.detail(for: thread.id, force: true, fresh: true)
-            isLoading = false
+        if model.refreshThreadPresentation(id: thread.id, onLoaded: { isLoading = false }) {
+            isLoading = true
         }
     }
 
@@ -597,7 +605,7 @@ public struct ThreadDetailView: View {
         ThreadRefreshPresentation.resolve(
             loadState: model.detailLoadStates[thread.id],
             connectionState: threadConnectionState,
-            isOpening: isLoading,
+            isOpening: isOpening,
             syncState: model.threadSyncStates[thread.id]
         )
     }
@@ -717,10 +725,12 @@ public struct ThreadDetailView: View {
                     isSending: isSending,
                     isWorking: detail.thread.state == .working || detail.thread.state == .queued
                         || isCompacting,
+                    stopPhase: model.stopPhase(threadID: thread.id),
+                    onRetryStop: { model.retryCancelTurn(threadID: thread.id) },
                     focused: $composerFocused,
                     onSend: send,
                     onStop: {
-                        Task { await model.cancelTurn(threadID: thread.id) }
+                        model.requestCancelTurn(threadID: thread.id)
                     },
                     pendingApprovals: detail.approvals,
                     pendingUserInputs: detail.userInputs,

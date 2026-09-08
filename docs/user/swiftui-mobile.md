@@ -81,3 +81,13 @@ or is canceled.
 Codex file citations open the cited file when available. Artifact templates include a
 **Use** action. **Use** inserts an editable prompt into the composer. Review or change it before
 you send it.
+
+## Stopping a turn
+
+Tap **Stop** to request cancellation. **Stopping…** remains visible while the app waits for the
+thread to confirm its outcome, including after closing and reopening the thread. Repeated taps
+will not send duplicate requests. Acceptance of the request does not mean the agent has finished.
+
+If the connection fails or the app cannot confirm the outcome, it shows **Stop unconfirmed**.
+**Retry stop** checks the computer’s current thread status before sending another request. Some
+background work does not report a turn outcome, so its stop may remain unconfirmed.

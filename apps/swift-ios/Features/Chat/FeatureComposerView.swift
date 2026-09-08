@@ -61,6 +61,8 @@ struct FeatureComposerView: View {
     private let materializesDefaultSelection: Bool
     private let isSending: Bool
     private let isWorking: Bool
+    private let stopPhase: FeatureStopPhase?
+    private let onRetryStop: (() -> Void)?
     @Binding private var focused: Bool
     private let contextUsage: Double?
     private let forceExpanded: Bool
@@ -91,6 +93,8 @@ struct FeatureComposerView: View {
         materializesDefaultSelection: Bool = true,
         isSending: Bool,
         isWorking: Bool,
+        stopPhase: FeatureStopPhase? = nil,
+        onRetryStop: (() -> Void)? = nil,
         focused: Binding<Bool>,
         onSend: @escaping () -> Void,
         onStop: @escaping () -> Void,
@@ -126,6 +130,8 @@ struct FeatureComposerView: View {
         self.materializesDefaultSelection = materializesDefaultSelection
         self.isSending = isSending
         self.isWorking = isWorking
+        self.stopPhase = stopPhase
+        self.onRetryStop = onRetryStop
         _focused = focused
         self.onSend = onSend
         self.onStop = onStop
@@ -241,12 +247,28 @@ struct FeatureComposerView: View {
 
     private var composerSurface: some View {
         VStack(spacing: 0) {
+            if let stopPhase {
+                HStack {
+                    Text(stopIsUnconfirmed
+                         ? "Stop unconfirmed. Waiting for the thread’s status."
+                         : "Stopping… Waiting for the agent to finish.")
+                    if stopPhase == .unconfirmed, let onRetryStop {
+                        Button("Retry stop", action: onRetryStop)
+                            .disabled(!environmentIsConnected)
+                    }
+                }
+                .font(T3Typography.supporting)
+                .foregroundStyle(T3Colors.textSecondary)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .accessibilityIdentifier("thread-stop-status")
+            }
             if let approval = pendingApprovals.first, let onApprovalDecision {
                 FeatureComposerApprovalPanel(
                     approval: approval,
                     position: 1,
                     total: pendingApprovals.count,
-                    isResponding: isResolvingRequest,
+                    isResponding: isResolvingRequest || stopPhase != nil,
                     onDecision: { decision in
                         onApprovalDecision(approval.id, decision)
                     },
@@ -263,6 +285,8 @@ struct FeatureComposerView: View {
                     environmentID: environmentID,
                     attachmentPreferences: attachmentPreferences
                 )
+                .disabled(stopPhase != nil)
+                .opacity(stopPhase != nil ? 0.56 : 1)
             } else if isExpanded {
                 expandedComposer
             } else {
@@ -656,12 +680,18 @@ struct FeatureComposerView: View {
     }
 
     private var submitSymbol: String {
-        if isSending { return "ellipsis" }
+        if isSending || (showsStop && stopPhase != nil) { return "ellipsis" }
         return showsStop ? "stop.fill" : "arrow.up"
+    }
+
+    private var stopIsUnconfirmed: Bool {
+        stopPhase != nil && (stopPhase == .unconfirmed || !environmentIsConnected)
     }
 
     private var submitAccessibilityLabel: String {
         if isSending { return "Sending message" }
+        if showsStop, stopIsUnconfirmed { return "Stop outcome unconfirmed" }
+        if showsStop, stopPhase != nil { return "Stopping agent" }
         if showsStop { return "Stop agent" }
         return isWorking ? "Queue message" : "Send message"
     }
@@ -686,7 +716,7 @@ struct FeatureComposerView: View {
     }
 
     private var submitDisabled: Bool {
-        isSending || (!showsStop && !canSend)
+        isSending || (showsStop && stopPhase != nil) || (!showsStop && !canSend)
     }
 
     private var textIsEmpty: Bool {
