@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { GhosttyTerminalCore, type GhosttyCell, type GhosttyRow } from "./core";
+import { GHOSTTY_CELL_WIDE, GhosttyTerminalCore, type GhosttyCell, type GhosttyRow } from "./core";
 import {
   DEFAULT_TERMINAL_FONT_FAMILY,
   DEFAULT_TERMINAL_FONT_SIZE,
@@ -429,9 +429,9 @@ describe("GhosttyTerminalSurface visibility", () => {
   );
 });
 
-const cell = (text: string): GhosttyCell => ({
+const cell = (text: string, wide: GhosttyCell["wide"] = GHOSTTY_CELL_WIDE.narrow): GhosttyCell => ({
   text,
-  wide: 0,
+  wide,
   foreground: { r: 255, g: 255, b: 255 },
   background: { r: 0, g: 0, b: 0 },
   bold: false,
@@ -442,6 +442,28 @@ const cell = (text: string): GhosttyCell => ({
   underline: false,
   selected: false,
 });
+
+const rowFromCells = (
+  cells: GhosttyCell[],
+  isWrapContinuation = false,
+  wrapsToNext = false,
+): GhosttyRow => ({
+  cells,
+  text: cells
+    .map(
+      (value) =>
+        value.text ||
+        (value.wide === GHOSTTY_CELL_WIDE.spacerTail || value.wide === GHOSTTY_CELL_WIDE.spacerHead
+          ? ""
+          : " "),
+    )
+    .join("")
+    .trimEnd(),
+  isWrapContinuation,
+  wrapsToNext,
+});
+
+const textCells = (text: string): GhosttyCell[] => Array.from(text, (character) => cell(character));
 
 describe("isTerminalAltGraphText", () => {
   it("defers printable AltGr output to the textarea input event", () => {
@@ -510,6 +532,103 @@ describe("shouldBlinkTerminalCursor", () => {
 });
 
 describe("terminalLinkAtPositionWithRange", () => {
+  it("keeps links contiguous across Ghostty spacer tails and preserves real blanks", () => {
+    const urlPrefix = "https://example.com/";
+    const url = `${urlPrefix}日本/report`;
+    const urlRow = rowFromCells([
+      ...textCells(urlPrefix),
+      cell("日"),
+      cell("", GHOSTTY_CELL_WIDE.spacerTail),
+      cell("本"),
+      cell("", GHOSTTY_CELL_WIDE.spacerTail),
+      ...textCells("/report"),
+    ]);
+
+    for (const column of [urlPrefix.length, urlPrefix.length + 1, urlPrefix.length + 2]) {
+      expect(terminalLinkAtPositionWithRange([urlRow], 0, column)?.text).toBe(url);
+    }
+
+    const path = "~/日本/report.ts";
+    const pathStart = "~/".length;
+    const pathRow = rowFromCells([
+      ...textCells("~/"),
+      cell("日"),
+      cell("", GHOSTTY_CELL_WIDE.spacerTail),
+      cell("本"),
+      cell("", GHOSTTY_CELL_WIDE.spacerTail),
+      ...textCells("/report.ts"),
+    ]);
+    expect(terminalLinkAtPositionWithRange([pathRow], 0, pathStart + 1)?.text).toBe(path);
+
+    const separatedRow = rowFromCells([
+      ...textCells(urlPrefix),
+      cell("日"),
+      cell("", GHOSTTY_CELL_WIDE.spacerTail),
+      cell(""),
+      ...textCells("next"),
+    ]);
+    expect(terminalLinkAtPositionWithRange([separatedRow], 0, urlPrefix.length)?.text).toBe(
+      "https://example.com/日",
+    );
+  });
+
+  it("maps both cells of a trailing emoji and includes its spacer tail in the range", () => {
+    const prefix = "https://example.com/";
+    const url = `${prefix}🙂`;
+    const row = rowFromCells([
+      ...textCells(prefix),
+      cell("🙂"),
+      cell("", GHOSTTY_CELL_WIDE.spacerTail),
+    ]);
+
+    for (const column of [prefix.length, prefix.length + 1]) {
+      expect(terminalLinkAtPositionWithRange([row], 0, column)).toEqual({
+        text: url,
+        range: {
+          start: { x: 0, y: 0 },
+          end: { x: prefix.length + 1, y: 0 },
+        },
+      });
+    }
+  });
+
+  it("keeps spacer tails out of links split across wrapped rows", () => {
+    const firstRow = rowFromCells(
+      [...textCells("https://example.com/"), cell("日"), cell("", GHOSTTY_CELL_WIDE.spacerTail)],
+      false,
+    );
+    const secondRow = rowFromCells(
+      [cell("本"), cell("", GHOSTTY_CELL_WIDE.spacerTail), ...textCells("/report")],
+      true,
+    );
+    const rows = [firstRow, secondRow];
+
+    expect(terminalLinkAtPositionWithRange(rows, 0, "https://example.com/".length)?.text).toBe(
+      "https://example.com/日本/report",
+    );
+    expect(terminalLinkAtPositionWithRange(rows, 1, 0)?.text).toBe(
+      "https://example.com/日本/report",
+    );
+  });
+
+  it("does not turn a soft-wrap spacer head into a link-breaking blank", () => {
+    const firstRow = rowFromCells(
+      [...textCells("https://example.com/"), cell("", GHOSTTY_CELL_WIDE.spacerHead)],
+      false,
+      true,
+    );
+    const secondRow = rowFromCells(
+      [cell("日"), cell("", GHOSTTY_CELL_WIDE.spacerTail), ...textCells("/report")],
+      true,
+    );
+    const rows = [firstRow, secondRow];
+
+    expect(terminalLinkAtPositionWithRange(rows, 0, "https://example.com/".length)?.text).toBe(
+      "https://example.com/日/report",
+    );
+    expect(terminalLinkAtPositionWithRange(rows, 1, 0)?.text).toBe("https://example.com/日/report");
+  });
+
   it("maps terminal cells to UTF-16 offsets after a wide emoji", () => {
     const cells = [
       cell("🙂"),
