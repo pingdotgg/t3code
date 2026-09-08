@@ -16,6 +16,7 @@ import type {
   ServerProviderAuth,
   ServerProviderModel,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
 import * as PubSub from "effect/PubSub";
@@ -33,7 +34,6 @@ import { parseCommandCodeModelList } from "./commandCodeModels.ts";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "./providerMaintenance.ts";
 import {
   buildServerProvider,
-  isCommandMissingCause,
   spawnAndCollect,
   type CommandResult,
   type ServerProviderDraft,
@@ -42,15 +42,13 @@ import type { ServerProviderShape } from "./Services/ServerProvider.ts";
 
 const UNKNOWN_AUTH: ServerProviderAuth = { status: "unknown" };
 
+const checkedAtEffect = Effect.map(DateTime.now, DateTime.formatIso);
+
 /** Version probe may start with an auto-update banner; the CLI version is the last semver. */
 export function parseCommandCodeVersion(output: string): string | null {
   const matches = [...output.matchAll(/\b(\d+\.\d+\.\d+)\b/g)];
   return matches.length > 0 ? matches[matches.length - 1]![1]! : null;
 }
-
-type CliRun =
-  | { readonly kind: "ok"; readonly result: CommandResult }
-  | { readonly kind: "failure" };
 
 const runCommandCodeCli = (
   binaryPath: string,
@@ -58,6 +56,7 @@ const runCommandCodeCli = (
   env: NodeJS.ProcessEnv,
 ) =>
   Effect.gen(function* () {
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const resolved = yield* resolveSpawnCommand(binaryPath, [...args], { env, extendEnv: true });
     return yield* spawnAndCollect(
       binaryPath,
@@ -67,13 +66,20 @@ const runCommandCodeCli = (
         shell: resolved.shell,
       }),
     );
-  }).pipe(
-    Effect.map((result) => ({ kind: "ok", result }) as const),
-    Effect.catchAll((cause) =>
-      isCommandMissingCause(cause)
-        ? Effect.succeed({ kind: "failure" } as const)
-        : Effect.fail(cause),
-    ),
+  });
+
+/**
+ * One-shot probe that never fails: a launch problem becomes a synthetic
+ * `code: -1` result so callers branch on data, not on the error channel.
+ */
+const probeCommandCodeCli = (
+  binaryPath: string,
+  args: ReadonlyArray<string>,
+  env: NodeJS.ProcessEnv,
+): Effect.Effect<CommandResult, never, ChildProcessSpawner.ChildProcessSpawner> =>
+  runCommandCodeCli(binaryPath, args, env).pipe(
+    Effect.map((result) => result),
+    Effect.catch((error) => Effect.succeed({ stdout: "", stderr: String(error), code: -1 })),
   );
 
 export interface CommandCodeStatusCheckInput {
@@ -81,12 +87,32 @@ export interface CommandCodeStatusCheckInput {
   readonly env: NodeJS.ProcessEnv;
 }
 
-export function checkCommandCodeProvider(
-  input: CommandCodeStatusCheckInput,
-): Effect.Effect<ServerProviderDraft, unknown> {
+function notInstalledDraft(input: {
+  readonly enabled: boolean;
+  readonly checkedAt: string;
+  readonly binaryPath: string;
+}): ServerProviderDraft {
+  return buildServerProvider({
+    presentation: { displayName: "Command Code" },
+    enabled: input.enabled,
+    checkedAt: input.checkedAt,
+    models: [],
+    probe: {
+      installed: false,
+      version: null,
+      status: "error",
+      auth: UNKNOWN_AUTH,
+      message:
+        `Command Code CLI could not be started (looked for ${input.binaryPath}). ` +
+        "Install it or set the Binary path in this instance's settings.",
+    },
+  });
+}
+
+export function checkCommandCodeProvider(input: CommandCodeStatusCheckInput) {
   return Effect.gen(function* () {
     const enabled = input.config.enabled;
-    const checkedAt = new Date().toISOString();
+    const checkedAt = yield* checkedAtEffect;
 
     if (!enabled) {
       return buildServerProvider({
@@ -99,26 +125,12 @@ export function checkCommandCodeProvider(
     }
 
     const binaryPath = input.config.binaryPath || "command-code";
-    const versionRun = yield* runCommandCodeCli(binaryPath, COMMAND_CODE_VERSION_ARGS, input.env);
-    if (versionRun.kind === "failure") {
-      return buildServerProvider({
-        presentation: { displayName: "Command Code" },
-        enabled,
-        checkedAt,
-        models: [],
-        probe: {
-          installed: false,
-          version: null,
-          status: "error",
-          auth: UNKNOWN_AUTH,
-          message:
-            `Command Code CLI not found (looked for ${binaryPath}). ` +
-            "Install it or set the Binary path in this instance's settings.",
-        },
-      });
+    const versionRun = yield* probeCommandCodeCli(binaryPath, COMMAND_CODE_VERSION_ARGS, input.env);
+    if (versionRun.code === -1) {
+      return notInstalledDraft({ enabled, checkedAt, binaryPath });
     }
 
-    const version = parseCommandCodeVersion(versionRun.result.stdout);
+    const version = parseCommandCodeVersion(versionRun.stdout);
     if (version === null) {
       return buildServerProvider({
         presentation: { displayName: "Command Code" },
@@ -130,17 +142,19 @@ export function checkCommandCodeProvider(
           version: null,
           status: "error",
           auth: UNKNOWN_AUTH,
-          message: `Command Code answered a --version probe that did not contain a version (stdout: ${versionRun.result.stdout.trim().slice(0, 200) || "<empty>"}).`,
+          message: `Command Code answered a --version probe without a version (stdout: ${
+            versionRun.stdout.trim().slice(0, 200) || "<empty>"
+          }).`,
         },
       });
     }
 
-    const modelsRun = yield* runCommandCodeCli(
+    const modelsRun = yield* probeCommandCodeCli(
       binaryPath,
       COMMAND_CODE_LIST_MODELS_ARGS,
       input.env,
     );
-    if (modelsRun.kind === "failure") {
+    if (modelsRun.code === -1) {
       return buildServerProvider({
         presentation: { displayName: "Command Code" },
         enabled,
@@ -156,9 +170,7 @@ export function checkCommandCodeProvider(
       });
     }
 
-    const models: ReadonlyArray<ServerProviderModel> = parseCommandCodeModelList(
-      modelsRun.result.stdout,
-    );
+    const models: ReadonlyArray<ServerProviderModel> = parseCommandCodeModelList(modelsRun.stdout);
     return buildServerProvider({
       presentation: { displayName: "Command Code" },
       enabled,
@@ -176,19 +188,20 @@ export function checkCommandCodeProvider(
 
 function pendingCommandCodeProvider(input: {
   readonly enabled: boolean;
-  readonly displayName: string;
+  readonly checkedAt: string;
+  readonly message: string | undefined;
 }): ServerProviderDraft {
   return buildServerProvider({
-    presentation: { displayName: input.displayName },
+    presentation: { displayName: "Command Code" },
     enabled: input.enabled,
-    checkedAt: new Date().toISOString(),
+    checkedAt: input.checkedAt,
     models: [],
     probe: {
       installed: input.enabled,
       version: null,
       status: "warning",
       auth: UNKNOWN_AUTH,
-      message: input.enabled ? "Checking Command Code…" : undefined,
+      ...(input.message !== undefined ? { message: input.message } : {}),
     },
   });
 }
@@ -207,18 +220,19 @@ export interface CommandCodeSnapshotInput {
  * not apply to a CLI that self-updates on launch, so this holder just runs
  * the status probe on demand and on settings-triggered recreation.
  */
-export function makeCommandCodeSnapshotShape(
-  input: CommandCodeSnapshotInput,
-): Effect.Effect<ServerProviderShape, never, Scope.Scope> {
+export function makeCommandCodeSnapshotShape(input: CommandCodeSnapshotInput) {
   return Effect.gen(function* () {
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const changes = yield* Effect.acquireRelease(
       PubSub.unbounded<ServerProvider>(),
       PubSub.shutdown,
     );
+    const checkedAt = yield* checkedAtEffect;
     const pending = input.stamp(
       pendingCommandCodeProvider({
         enabled: input.config.enabled,
-        displayName: input.displayName,
+        checkedAt,
+        message: input.config.enabled ? "Checking Command Code…" : undefined,
       }),
     );
     const state = yield* Ref.make<ServerProvider>(pending);
@@ -235,16 +249,9 @@ export function makeCommandCodeSnapshotShape(
         ),
       );
 
-    const refresh: Effect.Effect<ServerProvider> = Effect.gen(function* () {
-      const draft = yield* checkCommandCodeProvider({
-        config: input.config,
-        env: input.env,
-      }).pipe(
-        Effect.catchAll(() =>
-          Effect.succeed(
-            pendingCommandCodeProvider({ enabled: true, displayName: input.displayName }),
-          ),
-        ),
+    const refresh = Effect.gen(function* () {
+      const draft = yield* checkCommandCodeProvider({ config: input.config, env: input.env }).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
       );
       const next = input.stamp(draft);
       yield* publish(next);

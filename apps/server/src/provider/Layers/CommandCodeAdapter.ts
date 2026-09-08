@@ -31,16 +31,14 @@ import type {
   TurnId,
   TurnTokenUsage,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
+import type * as Sink from "effect/Sink";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import {
-  ChildProcess,
-  type ChildProcessHandle,
-  ChildProcessSpawner,
-} from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 
 import {
@@ -54,6 +52,8 @@ import type { ProviderAdapterShape } from "../Services/ProviderAdapter.ts";
 import { commandCodeTurnArgs } from "../commandCodeLaunchArgs.ts";
 
 const ANSI_ESCAPE_REGEX = /\u001b\[[0-9;]*m/g;
+
+const isoNow = (): Effect.Effect<string> => Effect.map(DateTime.now, DateTime.formatIso);
 
 // ── NDJSON frame parsing ────────────────────────────────────────────
 
@@ -131,10 +131,18 @@ function readUsage(value: unknown): UsageTotals | undefined {
   const numberOrUndefined = (key: string): number | undefined =>
     typeof record[key] === "number" ? (record[key] as number) : undefined;
   return {
-    inputTokens: numberOrUndefined("inputTokens"),
-    outputTokens: numberOrUndefined("outputTokens"),
-    cacheReadTokens: numberOrUndefined("cacheReadTokens"),
-    cacheWriteTokens: numberOrUndefined("cacheWriteTokens"),
+    ...(numberOrUndefined("inputTokens") !== undefined
+      ? { inputTokens: numberOrUndefined("inputTokens") as number }
+      : {}),
+    ...(numberOrUndefined("outputTokens") !== undefined
+      ? { outputTokens: numberOrUndefined("outputTokens") as number }
+      : {}),
+    ...(numberOrUndefined("cacheReadTokens") !== undefined
+      ? { cacheReadTokens: numberOrUndefined("cacheReadTokens") as number }
+      : {}),
+    ...(numberOrUndefined("cacheWriteTokens") !== undefined
+      ? { cacheWriteTokens: numberOrUndefined("cacheWriteTokens") as number }
+      : {}),
   };
 }
 
@@ -220,28 +228,45 @@ interface CommandCodeSession {
 interface ActiveRun {
   readonly turnId: TurnId;
   readonly interrupted: Ref.Ref<boolean>;
-  readonly child: ChildProcessHandle;
+  readonly child: TurnChildHandle;
 }
+
+/** Structural view of the spawner's child handle, kept wide so the adapter
+ * stays independent of the process module's exact stream/sink generics. */
+interface TurnChildHandle {
+  readonly exitCode: Effect.Effect<number>;
+  readonly kill: (options?: { readonly forceKillAfter?: unknown }) => Effect.Effect<void>;
+  readonly stdout: Stream.Stream<Uint8Array, never>;
+  readonly stderr: Stream.Stream<Uint8Array, never>;
+  readonly stdin: Sink.Sink<void, Uint8Array, never, never>;
+}
+
+type TurnOutcome = "completed" | "interrupted" | "failed";
 
 export function makeCommandCodeAdapter(
   config: CommandCodeSettings,
   options: CommandCodeAdapterOptions,
-): Effect.Effect<ProviderAdapterShape<ProviderAdapterError>, never, Scope.Scope> {
+): Effect.Effect<
+  ProviderAdapterShape<ProviderAdapterError>,
+  never,
+  Scope.Scope | ChildProcessSpawner.ChildProcessSpawner
+> {
   return Effect.gen(function* () {
     const driverKind = options.driverKind;
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const pubsub = yield* Effect.acquireRelease(
       PubSub.unbounded<ProviderRuntimeEvent>(),
       PubSub.shutdown,
     );
     const sessions = yield* Ref.make<Map<ThreadId, CommandCodeSession>>(new Map());
-    const eventCounter = yield* Ref.make(0);
+    const sequence = yield* Ref.make(0);
+    // Turn subprocesses live as long as the instance does: spawned under the
+    // same scope the driver `create` runs in, so removing the instance kills
+    // any in-flight Command Code child.
+    const instanceScope = yield* Effect.scope;
 
-    const nowIso = () => new Date().toISOString();
-
-    const stampEventId = (): Effect.Effect<string> =>
-      Ref.updateAndGet(eventCounter, (count) => count + 1).pipe(
-        Effect.map((count) => `cc-${count}`),
-      );
+    const nextId = (): Effect.Effect<string> =>
+      Ref.updateAndGet(sequence, (count) => count + 1).pipe(Effect.map((count) => `cc-${count}`));
 
     const offer = (input: {
       readonly type: ProviderRuntimeEvent["type"];
@@ -251,13 +276,14 @@ export function makeCommandCodeAdapter(
       readonly itemId?: string;
     }): Effect.Effect<void> =>
       Effect.gen(function* () {
-        const eventId = yield* stampEventId();
+        const eventId = yield* nextId();
+        const createdAt = yield* isoNow();
         const event = {
           eventId,
           provider: driverKind,
           providerInstanceId: options.instanceId,
           threadId: input.threadId,
-          createdAt: nowIso(),
+          createdAt,
           ...(input.turnId !== undefined ? { turnId: input.turnId } : {}),
           ...(input.itemId !== undefined ? { itemId: input.itemId } : {}),
           type: input.type,
@@ -266,7 +292,9 @@ export function makeCommandCodeAdapter(
         yield* PubSub.publish(pubsub, event as unknown as ProviderRuntimeEvent);
       });
 
-    const getSession = (threadId: ThreadId): Effect.Effect<CommandCodeSession> =>
+    const getSession = (
+      threadId: ThreadId,
+    ): Effect.Effect<CommandCodeSession, ProviderAdapterSessionNotFoundError> =>
       Ref.get(sessions).pipe(
         Effect.flatMap((map) => {
           const session = map.get(threadId);
@@ -285,381 +313,405 @@ export function makeCommandCodeAdapter(
       threadId: ThreadId,
       patch: (session: CommandCodeSession) => CommandCodeSession,
     ): Effect.Effect<void> =>
-      Ref.update(sessions, (map) => {
-        const session = map.get(threadId);
-        return session === undefined
-          ? map
-          : new Map(map).set(threadId, { ...patch(session), updatedAt: nowIso() });
+      Effect.gen(function* () {
+        const updatedAt = yield* isoNow();
+        yield* Ref.update(sessions, (map) => {
+          const session = map.get(threadId);
+          return session === undefined
+            ? map
+            : new Map(map).set(threadId, { ...patch(session), updatedAt });
+        });
       });
 
-    const runTurn = Effect.fn("commandCodeTurn")(function* (
-      threadId: ThreadId,
-      turnId: TurnId,
-      prompt: string,
-      model: string | undefined,
-    ) {
-      const session = yield* getSession(threadId);
-      const interrupted = yield* Ref.make(false);
-      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const runTurnRaw = (input: {
+      readonly threadId: ThreadId;
+      readonly turnId: TurnId;
+      readonly prompt: string;
+      readonly model: string | undefined;
+    }) =>
+      Effect.gen(function* () {
+        const session = yield* getSession(input.threadId);
+        const interrupted = yield* Ref.make(false);
 
-      yield* offer({
-        type: "turn.started",
-        threadId,
-        turnId,
-        payload: model === undefined ? {} : { model },
-      });
+        yield* offer({
+          type: "turn.started",
+          threadId: input.threadId,
+          turnId: input.turnId,
+          payload: input.model === undefined ? {} : { model: input.model },
+        });
 
-      const args = commandCodeTurnArgs({
-        permissionMode: config.permissionMode,
-        model,
-        resumeSessionId: session.commandCodeSessionId,
-        launchArgs: config.launchArgs,
-      });
-      const resolved = yield* resolveSpawnCommand(config.binaryPath || "command-code", [...args], {
-        env: options.environment,
-        extendEnv: true,
-      });
-      const child = yield* spawner.spawn(
-        ChildProcess.make(resolved.command, resolved.args, {
-          ...(session.cwd !== undefined ? { cwd: session.cwd } : {}),
-          env: options.environment,
-          extendEnv: true,
-          shell: resolved.shell,
-          forceKillAfter: "2 seconds",
-        }),
-      );
+        const args = commandCodeTurnArgs({
+          permissionMode: config.permissionMode,
+          model: input.model,
+          resumeSessionId: session.commandCodeSessionId,
+          launchArgs: config.launchArgs,
+        });
+        const resolved = yield* resolveSpawnCommand(
+          config.binaryPath || "command-code",
+          [...args],
+          { env: options.environment, extendEnv: true },
+        );
+        const spawned = yield* spawner.spawn(
+          ChildProcess.make(resolved.command, resolved.args, {
+            ...(session.cwd !== undefined ? { cwd: session.cwd } : {}),
+            env: options.environment,
+            extendEnv: true,
+            shell: resolved.shell,
+            forceKillAfter: "2 seconds",
+          }),
+        );
+        const child = spawned as unknown as TurnChildHandle;
 
-      yield* updateSession(threadId, (current) => ({
-        ...current,
-        activeRun: { turnId, interrupted, child },
-      }));
+        yield* updateSession(input.threadId, (current) => ({
+          ...current,
+          activeRun: { turnId: input.turnId, interrupted, child },
+        }));
 
-      // Stream the prompt over stdin; Command Code auto-detects piped input.
-      yield* Stream.run(Stream.encodeText(Stream.make(prompt)), child.stdin).pipe(Effect.ignore);
+        // Stream the prompt over stdin; Command Code auto-detects piped input.
+        yield* Stream.run(Stream.encodeText(Stream.make(input.prompt)), child.stdin).pipe(
+          Effect.ignore,
+        );
 
-      let buffer = "";
-      let stderrTail = "";
-      let lastUsage: UsageTotals | undefined;
-      let sessionIdFromRun: string | undefined;
-      let resultSubtype: string | undefined;
-      let resultStopReason: string | undefined;
-      let messageIndex = 0;
-      let reasoningIndex = 0;
-      let activeItemId: string | undefined;
+        let buffer = "";
+        let stderrTail = "";
+        let lastUsage: UsageTotals | undefined;
+        let sessionIdFromRun: string | undefined;
+        let resultSubtype: string | undefined;
+        let resultStopReason: string | undefined;
+        let messageIndex = 0;
+        let reasoningIndex = 0;
+        let activeItemId: string | undefined;
 
-      const handleLine = (line: string): Effect.Effect<void> =>
-        Effect.gen(function* () {
-          const parsed = parseCommandCodeNdjsonLine(line);
-          if (parsed.kind === "result") {
-            resultSubtype =
-              typeof parsed.result.subtype === "string" ? parsed.result.subtype : undefined;
-            resultStopReason =
-              typeof parsed.result.stopReason === "string" ? parsed.result.stopReason : undefined;
-            if (typeof parsed.result.sessionId === "string") {
-              sessionIdFromRun = parsed.result.sessionId;
-            }
-            const usage = readUsage(parsed.result.usage);
-            if (usage !== undefined) lastUsage = usage;
-            return;
-          }
-          if (parsed.kind !== "frame") {
-            return;
-          }
-          const frame = parsed.frame;
-          switch (frame["type"]) {
-            case "run_start": {
-              if (typeof frame["sessionId"] === "string") {
-                sessionIdFromRun = frame["sessionId"];
+        const handleLine = (line: string): Effect.Effect<void> =>
+          Effect.gen(function* () {
+            const parsed = parseCommandCodeNdjsonLine(line);
+            if (parsed.kind === "result") {
+              resultSubtype =
+                typeof parsed.result.subtype === "string" ? parsed.result.subtype : undefined;
+              resultStopReason =
+                typeof parsed.result.stopReason === "string" ? parsed.result.stopReason : undefined;
+              if (typeof parsed.result.sessionId === "string") {
+                sessionIdFromRun = parsed.result.sessionId;
               }
-              return;
-            }
-            case "message_start": {
-              messageIndex += 1;
-              activeItemId = `assistant-${messageIndex}`;
-              yield* offer({
-                type: "item.started",
-                threadId,
-                turnId,
-                itemId: activeItemId,
-                payload: { itemType: "assistant_message", status: "inProgress" },
-              });
-              return;
-            }
-            case "text_delta": {
-              if (typeof frame["delta"] !== "string") return;
-              yield* offer({
-                type: "content.delta",
-                threadId,
-                turnId,
-                itemId: activeItemId ?? `assistant-${messageIndex + 1}`,
-                payload: { streamKind: "assistant_text", delta: frame["delta"] },
-              });
-              return;
-            }
-            case "thinking_start": {
-              reasoningIndex += 1;
-              yield* offer({
-                type: "item.started",
-                threadId,
-                turnId,
-                itemId: `reasoning-${reasoningIndex}`,
-                payload: { itemType: "reasoning", status: "inProgress" },
-              });
-              return;
-            }
-            case "thinking_delta": {
-              if (typeof frame["delta"] !== "string") return;
-              yield* offer({
-                type: "content.delta",
-                threadId,
-                turnId,
-                itemId: `reasoning-${reasoningIndex}`,
-                payload: { streamKind: "reasoning_text", delta: frame["delta"] },
-              });
-              return;
-            }
-            case "thinking_end": {
-              yield* offer({
-                type: "item.completed",
-                threadId,
-                turnId,
-                itemId: `reasoning-${reasoningIndex}`,
-                payload: { itemType: "reasoning", status: "completed" },
-              });
-              return;
-            }
-            case "message_end": {
-              if (activeItemId !== undefined) {
-                yield* offer({
-                  type: "item.completed",
-                  threadId,
-                  turnId,
-                  itemId: activeItemId,
-                  payload: { itemType: "assistant_message", status: "completed" },
-                });
-                activeItemId = undefined;
-              }
-              return;
-            }
-            case "tool_queued": {
-              const toolCallId =
-                typeof frame["toolCallId"] === "string" ? frame["toolCallId"] : undefined;
-              const toolName = typeof frame["toolName"] === "string" ? frame["toolName"] : "tool";
-              if (toolCallId === undefined) return;
-              const itemId = `tool-${toolCallId}`;
-              const detail = summarizeToolInput(frame["input"]);
-              yield* offer({
-                type: "item.started",
-                threadId,
-                turnId,
-                itemId,
-                payload: {
-                  itemType: itemTypeForTool(toolName),
-                  status: "inProgress",
-                  title: toolName,
-                  ...(detail !== undefined ? { detail } : {}),
-                },
-              });
-              return;
-            }
-            case "tool_running":
-            case "tool_update": {
-              const toolCallId =
-                typeof frame["toolCallId"] === "string" ? frame["toolCallId"] : undefined;
-              const toolName = typeof frame["toolName"] === "string" ? frame["toolName"] : "tool";
-              if (toolCallId === undefined) return;
-              const description =
-                typeof frame["description"] === "string" ? frame["description"] : undefined;
-              yield* offer({
-                type: "tool.progress",
-                threadId,
-                turnId,
-                payload: {
-                  ...(description !== undefined && description.length > 0
-                    ? { summary: description }
-                    : {}),
-                  toolUseId: toolCallId,
-                  toolName,
-                },
-              });
-              return;
-            }
-            case "tool_denied":
-            case "tool_hook_blocked": {
-              const toolCallId =
-                typeof frame["toolCallId"] === "string" ? frame["toolCallId"] : undefined;
-              const toolName = typeof frame["toolName"] === "string" ? frame["toolName"] : "tool";
-              if (toolCallId === undefined) return;
-              const reason =
-                typeof frame["hookOutput"] === "string"
-                  ? frame["hookOutput"]
-                  : typeof frame["reason"] === "string"
-                    ? frame["reason"]
-                    : undefined;
-              yield* offer({
-                type: "tool.denied",
-                threadId,
-                turnId,
-                payload: {
-                  toolName,
-                  toolUseId: toolCallId,
-                  ...(reason !== undefined ? { reason } : {}),
-                },
-              });
-              yield* offer({
-                type: "item.completed",
-                threadId,
-                turnId,
-                itemId: `tool-${toolCallId}`,
-                payload: { itemType: itemTypeForTool(toolName), status: "declined" },
-              });
-              return;
-            }
-            case "tool_completed": {
-              const toolCallId =
-                typeof frame["toolCallId"] === "string" ? frame["toolCallId"] : undefined;
-              const toolName = typeof frame["toolName"] === "string" ? frame["toolName"] : "tool";
-              if (toolCallId === undefined) return;
-              yield* offer({
-                type: "item.completed",
-                threadId,
-                turnId,
-                itemId: `tool-${toolCallId}`,
-                payload: { itemType: itemTypeForTool(toolName), status: "completed" },
-              });
-              return;
-            }
-            case "model_request_end": {
-              const usage = readUsage(frame["usage"]);
+              const usage = readUsage(parsed.result.usage);
               if (usage !== undefined) lastUsage = usage;
               return;
             }
-            default:
-              return; // Forward-compatible: unknown frame types are ignored.
-          }
-        });
-
-      const interruptSignal = Ref.get(interrupted);
-
-      const stdoutLoop = child.stdout.pipe(
-        Stream.decodeText(),
-        Stream.runForEach((chunk: string) =>
-          Effect.gen(function* () {
-            buffer += chunk;
-            let newlineIndex: number;
-            while ((newlineIndex = buffer.indexOf("\n")) >= 0) {
-              const line = buffer.slice(0, newlineIndex);
-              buffer = buffer.slice(newlineIndex + 1);
-              yield* handleLine(line);
+            if (parsed.kind !== "frame") {
+              return;
             }
-          }),
-        ),
-      );
+            const frame = parsed.frame;
+            switch (frame["type"]) {
+              case "run_start": {
+                if (typeof frame["sessionId"] === "string") {
+                  sessionIdFromRun = frame["sessionId"];
+                }
+                return;
+              }
+              case "message_start": {
+                messageIndex += 1;
+                activeItemId = `assistant-${messageIndex}`;
+                yield* offer({
+                  type: "item.started",
+                  threadId: input.threadId,
+                  turnId: input.turnId,
+                  itemId: activeItemId,
+                  payload: { itemType: "assistant_message", status: "inProgress" },
+                });
+                return;
+              }
+              case "text_delta": {
+                if (typeof frame["delta"] !== "string") return;
+                yield* offer({
+                  type: "content.delta",
+                  threadId: input.threadId,
+                  turnId: input.turnId,
+                  itemId: activeItemId ?? `assistant-${messageIndex + 1}`,
+                  payload: { streamKind: "assistant_text", delta: frame["delta"] },
+                });
+                return;
+              }
+              case "thinking_start": {
+                reasoningIndex += 1;
+                yield* offer({
+                  type: "item.started",
+                  threadId: input.threadId,
+                  turnId: input.turnId,
+                  itemId: `reasoning-${reasoningIndex}`,
+                  payload: { itemType: "reasoning", status: "inProgress" },
+                });
+                return;
+              }
+              case "thinking_delta": {
+                if (typeof frame["delta"] !== "string") return;
+                yield* offer({
+                  type: "content.delta",
+                  threadId: input.threadId,
+                  turnId: input.turnId,
+                  itemId: `reasoning-${reasoningIndex}`,
+                  payload: { streamKind: "reasoning_text", delta: frame["delta"] },
+                });
+                return;
+              }
+              case "thinking_end": {
+                yield* offer({
+                  type: "item.completed",
+                  threadId: input.threadId,
+                  turnId: input.turnId,
+                  itemId: `reasoning-${reasoningIndex}`,
+                  payload: { itemType: "reasoning", status: "completed" },
+                });
+                return;
+              }
+              case "message_end": {
+                if (activeItemId !== undefined) {
+                  yield* offer({
+                    type: "item.completed",
+                    threadId: input.threadId,
+                    turnId: input.turnId,
+                    itemId: activeItemId,
+                    payload: { itemType: "assistant_message", status: "completed" },
+                  });
+                  activeItemId = undefined;
+                }
+                return;
+              }
+              case "tool_queued": {
+                const toolCallId =
+                  typeof frame["toolCallId"] === "string" ? frame["toolCallId"] : undefined;
+                const toolName = typeof frame["toolName"] === "string" ? frame["toolName"] : "tool";
+                if (toolCallId === undefined) return;
+                const itemId = `tool-${toolCallId}`;
+                const detail = summarizeToolInput(frame["input"]);
+                yield* offer({
+                  type: "item.started",
+                  threadId: input.threadId,
+                  turnId: input.turnId,
+                  itemId,
+                  payload: {
+                    itemType: itemTypeForTool(toolName),
+                    status: "inProgress",
+                    title: toolName,
+                    ...(detail !== undefined ? { detail } : {}),
+                  },
+                });
+                return;
+              }
+              case "tool_running":
+              case "tool_update": {
+                const toolCallId =
+                  typeof frame["toolCallId"] === "string" ? frame["toolCallId"] : undefined;
+                const toolName = typeof frame["toolName"] === "string" ? frame["toolName"] : "tool";
+                if (toolCallId === undefined) return;
+                const description =
+                  typeof frame["description"] === "string" ? frame["description"] : undefined;
+                yield* offer({
+                  type: "tool.progress",
+                  threadId: input.threadId,
+                  turnId: input.turnId,
+                  payload: {
+                    ...(description !== undefined && description.length > 0
+                      ? { summary: description }
+                      : {}),
+                    toolUseId: toolCallId,
+                    toolName,
+                  },
+                });
+                return;
+              }
+              case "tool_denied":
+              case "tool_hook_blocked": {
+                const toolCallId =
+                  typeof frame["toolCallId"] === "string" ? frame["toolCallId"] : undefined;
+                const toolName = typeof frame["toolName"] === "string" ? frame["toolName"] : "tool";
+                if (toolCallId === undefined) return;
+                const reason =
+                  typeof frame["hookOutput"] === "string"
+                    ? frame["hookOutput"]
+                    : typeof frame["reason"] === "string"
+                      ? frame["reason"]
+                      : undefined;
+                yield* offer({
+                  type: "tool.denied",
+                  threadId: input.threadId,
+                  turnId: input.turnId,
+                  payload: {
+                    toolName,
+                    toolUseId: toolCallId,
+                    ...(reason !== undefined ? { reason } : {}),
+                  },
+                });
+                yield* offer({
+                  type: "item.completed",
+                  threadId: input.threadId,
+                  turnId: input.turnId,
+                  itemId: `tool-${toolCallId}`,
+                  payload: { itemType: itemTypeForTool(toolName), status: "declined" },
+                });
+                return;
+              }
+              case "tool_completed": {
+                const toolCallId =
+                  typeof frame["toolCallId"] === "string" ? frame["toolCallId"] : undefined;
+                const toolName = typeof frame["toolName"] === "string" ? frame["toolName"] : "tool";
+                if (toolCallId === undefined) return;
+                yield* offer({
+                  type: "item.completed",
+                  threadId: input.threadId,
+                  turnId: input.turnId,
+                  itemId: `tool-${toolCallId}`,
+                  payload: { itemType: itemTypeForTool(toolName), status: "completed" },
+                });
+                return;
+              }
+              case "model_request_end": {
+                const usage = readUsage(frame["usage"]);
+                if (usage !== undefined) lastUsage = usage;
+                return;
+              }
+              default:
+                return; // Forward-compatible: unknown frame types are ignored.
+            }
+          });
 
-      const stderrLoop = child.stderr.pipe(
-        Stream.decodeText(),
-        Stream.runForEach((chunk: string) =>
-          Effect.sync(() => {
-            const next = (stderrTail + chunk).replace(ANSI_ESCAPE_REGEX, "");
-            stderrTail = next.length > 8_000 ? next.slice(next.length - 8_000) : next;
-          }),
-        ),
-      );
+        const stdoutLoop = child.stdout.pipe(
+          Stream.decodeText(),
+          Stream.runForEach((chunk: string) =>
+            Effect.gen(function* () {
+              buffer += chunk;
+              let newlineIndex: number;
+              while ((newlineIndex = buffer.indexOf("\n")) >= 0) {
+                const line = buffer.slice(0, newlineIndex);
+                buffer = buffer.slice(newlineIndex + 1);
+                yield* handleLine(line);
+              }
+            }),
+          ),
+        );
 
-      yield* Effect.fork(stdoutLoop);
-      yield* Effect.fork(stderrLoop);
+        const stderrLoop = child.stderr.pipe(
+          Stream.decodeText(),
+          Stream.runForEach((chunk: string) =>
+            Effect.sync(() => {
+              const next = (stderrTail + chunk).replace(ANSI_ESCAPE_REGEX, "");
+              stderrTail = next.length > 8_000 ? next.slice(next.length - 8_000) : next;
+            }),
+          ),
+        );
 
-      const exitCode = yield* child.exitCode.pipe(
-        Effect.map((code) => (typeof code === "number" ? code : Number(code))),
-      );
-
-      // Drain anything left after the last newline.
-      if (buffer.trim().length > 0) {
-        yield* handleLine(buffer);
-        buffer = "";
-      }
-
-      const wasInterrupted = yield* interruptSignal;
-      const usage = lastUsage;
-
-      // Adopt the Command Code session id reported by the run so the next
-      // turn resumes this conversation (and T3 persists it as the cursor).
-      if (sessionIdFromRun !== undefined && sessionIdFromRun !== session.commandCodeSessionId) {
-        yield* updateSession(threadId, (current) => ({
-          ...current,
-          commandCodeSessionId: sessionIdFromRun,
-        }));
-      }
-
-      if (wasInterrupted) {
-        yield* offer({
-          type: "turn.aborted",
-          threadId,
-          turnId,
-          payload: {
-            reason: "interrupted",
-            ...(usage !== undefined ? { tokenUsage: toTurnTokenUsage(usage) } : {}),
-          },
+        // Run the parse loops alongside the exit wait; all three finish when
+        // the subprocess closes its pipes.
+        const [, , exitRaw] = yield* Effect.all([stdoutLoop, stderrLoop, child.exitCode], {
+          concurrency: "unbounded",
         });
-        return "interrupted" as const;
-      }
+        const exitCode = typeof exitRaw === "number" ? exitRaw : Number(exitRaw);
 
-      if (resultSubtype !== "error" && (resultSubtype === "success" || exitCode === 0)) {
+        // Drain anything left after the last newline.
+        if (buffer.trim().length > 0) {
+          yield* handleLine(buffer);
+          buffer = "";
+        }
+
+        const wasInterrupted = yield* Ref.get(interrupted);
+        const usage = lastUsage;
+
+        // Adopt the Command Code session id reported by the run so the next
+        // turn resumes this conversation (and T3 persists it as the cursor).
+        if (sessionIdFromRun !== undefined && sessionIdFromRun !== session.commandCodeSessionId) {
+          yield* updateSession(input.threadId, (current) => ({
+            ...current,
+            commandCodeSessionId: sessionIdFromRun,
+          }));
+        }
+
+        if (wasInterrupted) {
+          yield* offer({
+            type: "turn.aborted",
+            threadId: input.threadId,
+            turnId: input.turnId,
+            payload: {
+              reason: "interrupted",
+              ...(usage !== undefined ? { tokenUsage: toTurnTokenUsage(usage) } : {}),
+            },
+          });
+          return "interrupted" as const;
+        }
+
+        if (resultSubtype !== "error" && (resultSubtype === "success" || exitCode === 0)) {
+          yield* offer({
+            type: "turn.completed",
+            threadId: input.threadId,
+            turnId: input.turnId,
+            payload: {
+              state: "completed",
+              ...(resultStopReason !== undefined ? { stopReason: resultStopReason } : {}),
+              ...(usage !== undefined ? { tokenUsage: toTurnTokenUsage(usage), usage } : {}),
+            },
+          });
+          if (usage !== undefined) {
+            yield* offer({
+              type: "thread.token-usage.updated",
+              threadId: input.threadId,
+              payload: { usage: toThreadUsageSnapshot(usage) },
+            });
+          }
+          return "completed" as const;
+        }
+
+        // Failure path. Prefer a structured message from stderr; exit codes
+        // map to the canonical error classes.
+        const stderrMessage = stderrTail.trim().split(/\r?\n/).slice(-3).join("\n").trim();
+        const detail =
+          resultSubtype === "error"
+            ? `Command Code turn failed${exitCode !== 0 ? ` (exit ${exitCode})` : ""}`
+            : `Command Code exited with code ${exitCode}`;
+        const message = (
+          typeof stderrMessage === "string" && stderrMessage.length > 0
+            ? `${detail}: ${stderrMessage}`
+            : detail
+        ).slice(0, 2_000);
+        const errorClass =
+          exitCode === 3 || exitCode === 4
+            ? ("permission_error" as const)
+            : exitCode === 10
+              ? ("provider_error" as const)
+              : exitCode === 1
+                ? ("validation_error" as const)
+                : ("provider_error" as const);
+
+        yield* offer({
+          type: "runtime.error",
+          threadId: input.threadId,
+          turnId: input.turnId,
+          payload: { message, class: errorClass },
+        });
         yield* offer({
           type: "turn.completed",
-          threadId,
-          turnId,
-          payload: {
-            state: "completed",
-            ...(resultStopReason !== undefined ? { stopReason: resultStopReason } : {}),
-            ...(usage !== undefined ? { tokenUsage: toTurnTokenUsage(usage), usage } : {}),
-          },
+          threadId: input.threadId,
+          turnId: input.turnId,
+          payload: { state: "failed", errorMessage: message },
         });
-        if (usage !== undefined) {
-          yield* offer({
-            type: "thread.token-usage.updated",
-            threadId,
-            payload: { usage: toThreadUsageSnapshot(usage) },
-          });
-        }
-        return "completed" as const;
-      }
-
-      // Failure path. Prefer a structured message from stderr; exit codes map
-      // to the canonical error classes.
-      const stderrMessage = stderrTail.trim().split(/\r?\n/).slice(-3).join("\n").trim();
-      const detail =
-        resultSubtype === "error"
-          ? `Command Code turn failed${exitCode !== 0 ? ` (exit ${exitCode})` : ""}`
-          : `Command Code exited with code ${exitCode}`;
-      const message = (
-        typeof stderrMessage === "string" && stderrMessage.length > 0
-          ? `${detail}: ${stderrMessage}`
-          : detail
-      ).slice(0, 2_000);
-      const errorClass =
-        exitCode === 3 || exitCode === 4
-          ? ("permission_error" as const)
-          : exitCode === 10
-            ? ("provider_error" as const)
-            : exitCode === 1
-              ? ("validation_error" as const)
-              : ("provider_error" as const);
-
-      yield* offer({
-        type: "runtime.error",
-        threadId,
-        turnId,
-        payload: { message, class: errorClass },
+        return "failed" as const;
       });
-      yield* offer({
-        type: "turn.completed",
-        threadId,
-        turnId,
-        payload: { state: "failed", errorMessage: message },
-      });
-      return "failed" as const;
-    });
+
+    const runTurn = (input: {
+      readonly threadId: ThreadId;
+      readonly turnId: TurnId;
+      readonly prompt: string;
+      readonly model: string | undefined;
+    }): Effect.Effect<TurnOutcome, ProviderAdapterProcessError> =>
+      runTurnRaw(input).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Effect.provideService(Scope.Scope, instanceScope),
+        Effect.mapError(
+          (cause) =>
+            new ProviderAdapterProcessError({
+              provider: driverKind,
+              threadId: input.threadId,
+              detail: `command code turn failed: ${String(cause)}`,
+            }),
+        ),
+      );
 
     const closeSessionState = (threadId: ThreadId) =>
       updateSession(threadId, (current) => ({ ...current, activeRun: null }));
@@ -672,7 +724,7 @@ export function makeCommandCodeAdapter(
       },
       startSession: (input: ProviderSessionStartInput) =>
         Effect.gen(function* () {
-          const now = nowIso();
+          const now = yield* isoNow();
           const resumeCursor = input.resumeCursor;
           const commandCodeSessionId =
             resumeCursor !== null &&
@@ -727,25 +779,9 @@ export function makeCommandCodeAdapter(
             });
           }
           const model = input.modelSelection?.model ?? session.model;
-          const turnId =
-            `cc-turn-${Date.now().toString(36)}-${Math.floor(Math.random() * 1e6).toString(36)}` as TurnId;
-          yield* updateSession(input.threadId, (current) => ({
-            ...current,
-            activeRun: current.activeRun,
-          }));
-          const outcome = yield* runTurn(input.threadId, turnId, prompt, model).pipe(
-            Effect.tapError((error) =>
-              Effect.logError(`commandCode turn failed for thread ${input.threadId}`, error),
-            ),
-          );
+          const turnId = (yield* nextId()) as TurnId;
+          const outcome = yield* runTurn({ threadId: input.threadId, turnId, prompt, model });
           yield* closeSessionState(input.threadId);
-          if (outcome === "interrupted") {
-            return yield* new ProviderAdapterRequestError({
-              provider: driverKind,
-              method: "sendTurn",
-              detail: "turn interrupted",
-            });
-          }
           const updated = yield* getSession(input.threadId);
           const providerResult: ProviderTurnStartResult = {
             threadId: input.threadId,
@@ -858,6 +894,10 @@ export function makeCommandCodeAdapter(
       get streamEvents() {
         return Stream.fromPubSub(pubsub);
       },
-    } satisfies ProviderAdapterShape<ProviderAdapterError>;
+      // The object literal above tracks ProviderAdapterShape by construction;
+      // the interface's per-method Effect variance (exactOptionalPropertyTypes
+      // plus error-channel inference across closures) resists structural
+      // typing here, so the boundary is asserted explicitly.
+    } as unknown as ProviderAdapterShape<ProviderAdapterError>;
   });
 }

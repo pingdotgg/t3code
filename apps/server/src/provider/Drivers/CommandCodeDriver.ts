@@ -13,11 +13,11 @@
 import { CommandCodeSettings, ProviderDriverKind } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import { ChildProcessSpawner } from "effect/unstable/process";
 
 import { makeCommandCodeTextGeneration } from "../../textGeneration/CommandCodeTextGeneration.ts";
 import { expandHomePath } from "../../pathExpansion.ts";
 import { makeCommandCodeSnapshotShape } from "../CommandCodeProvider.ts";
-import { ProviderDriverError } from "../Errors.ts";
 import { makeCommandCodeAdapter } from "../Layers/CommandCodeAdapter.ts";
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
 import {
@@ -30,7 +30,7 @@ import { withInstanceIdentity } from "./instanceIdentity.ts";
 const DRIVER_KIND = ProviderDriverKind.make("commandCode");
 const decodeCommandCodeSettings = Schema.decodeSync(CommandCodeSettings);
 
-export type CommandCodeDriverEnv = never;
+export type CommandCodeDriverEnv = ChildProcessSpawner.ChildProcessSpawner;
 
 export const CommandCodeDriver: ProviderDriver<CommandCodeSettings, CommandCodeDriverEnv> = {
   driverKind: DRIVER_KIND,
@@ -89,15 +89,5 @@ export const CommandCodeDriver: ProviderDriver<CommandCodeSettings, CommandCodeD
         adapter,
         textGeneration,
       } satisfies ProviderInstance;
-    }).pipe(
-      Effect.mapError(
-        (cause) =>
-          new ProviderDriverError({
-            driver: DRIVER_KIND,
-            instanceId,
-            detail: `Failed to build Command Code instance: ${cause.message ?? String(cause)}`,
-            cause,
-          }),
-      ),
-    ),
+    }),
 };

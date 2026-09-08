@@ -73,6 +73,7 @@ export function parseCommandCodeModelList(output: string): ReadonlyArray<ServerP
       // capability prose, and the picker searches both fields anyway.
       name: row.slug,
       isCustom: false,
+      capabilities: null,
       ...(isDefault ? { isDefault: true } : {}),
     };
   });
