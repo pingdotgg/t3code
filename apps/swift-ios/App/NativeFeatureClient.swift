@@ -1869,7 +1869,10 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             detail.page = cached.page
             markThreadCacheRecentlyUsed(route.uiID)
             startDetailStream(route, warmConnectionID: warmConnectionID)
-            return detail
+            if let shell = shellsByEnvironmentID[environment.id] {
+                synchronizeActiveDetail(with: shell, environment: environment)
+            }
+            return latestDetails[route.uiID] ?? detail
         }
         continuation.yield(.threadSync(id: route.uiID, state: .catchingUp))
         let snapshot: OrchestrationThreadDetailSnapshot
@@ -4788,10 +4791,11 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         guard activeThreadEnvironmentID == environment.id,
               let threadID = activeThreadID,
               let wireID = threadWireIDs[threadID],
-              let shellThread = shell.threads.first(where: { $0.id == wireID }),
-              var detail = latestDetails[threadID] else {
+              let shellThread = shell.threads.first(where: { $0.id == wireID }) else {
             return
         }
+        repairMissingCompletedTurn(shellThread, sequence: shell.snapshotSequence, threadID: threadID)
+        guard var detail = latestDetails[threadID] else { return }
 
         let backgroundLiveness = shellThread.backgroundLiveness
         let backgroundWorkIsActive = backgroundLiveness == .working
@@ -4826,6 +4830,33 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             : 0
         guard latestDetails[threadID] != detail else { return }
         publish(detail, threadID: threadID, renderCacheIsSource: true)
+    }
+
+    private func repairMissingCompletedTurn(
+        _ shellThread: OrchestrationThreadShell, sequence: Int, threadID: String
+    ) {
+        guard let rawThread = activeRawThread,
+              sequence > (activeThreadSequence ?? .min),
+              let completed = shellThread.latestTurn, completed.state == "completed",
+              let route = try? threadRoute(for: threadID) else { return }
+        if let messageID = completed.assistantMessageId {
+            if let message = rawThread.messages.first(where: { $0.id == messageID }),
+               !message.streaming { return }
+        } else if rawThread.latestTurn?.turnId == completed.turnId,
+                  rawThread.latestTurn?.state == completed.state,
+                  rawThread.latestTurn?.completedAt == completed.completedAt,
+                  !rawThread.messages.contains(where: {
+                      $0.role == "assistant" && $0.turnId == completed.turnId && $0.streaming
+                  }) {
+            return
+        }
+
+        // Keep rendered partial text while requiring a snapshot that includes
+        // the shell's completion. Later detail events advance this same floor.
+        flushDetailPublish(route)
+        activeRawThread = nil
+        activeThreadSequence = sequence
+        scheduleDetailRefresh(threadID: threadID, client: route.client, force: true)
     }
 
     /// Thread-only shell changes stay granular so Home does not replace and

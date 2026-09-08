@@ -24,6 +24,171 @@ final class NativeThreadCatchUpTests: XCTestCase {
         await fixture.client.disconnect()
     }
 
+    func testShellCompletionRepairsMissingOrStreamingFinalWithoutClosingDetailStream() async throws {
+        for mode in ["missing", "streaming", "no-message-id", "no-message-id-streaming"] {
+            let fixture = try await CatchUpFixture.make()
+            defer { fixture.cleanUp() }
+            if mode == "streaming" || mode == "no-message-id-streaming" {
+                await fixture.http.setCompletionResponse(text: "Partial", sequence: 2, streaming: true)
+            }
+            var requests = fixture.requests.makeAsyncIterator()
+            let shell = try await nextShellRequest(&requests)
+            var events = fixture.client.events().makeAsyncIterator()
+            _ = try await fixture.client.loadThread(id: fixture.firstID)
+            let detail = try await nextThreadRequest(&requests)
+            if mode == "no-message-id-streaming" {
+                try await detail.completeTurnWithoutMessageID(sequence: 3)
+            }
+            try await detail.synchronize()
+            _ = await messagesBeforeLive(&events, threadID: fixture.firstID)
+
+            await fixture.http.setCompletionResponse(text: "Final assistant response", sequence: 10)
+            await fixture.http.holdThreadReads(true)
+            let began = expectation(description: "Completion starts a required snapshot: \(mode)")
+            let waiting = Task { @MainActor in
+                var reads = fixture.http.heldRequests.makeAsyncIterator()
+                let read = await reads.next(isolation: #isolation)
+                if read != nil { began.fulfill() }
+                return read
+            }
+            try await shell.completeShell(sequence: 10, assistantMessageID: mode.hasPrefix("no-message-id") ? nil : "answer-0")
+            // Failure watchdog only: successful progress is signaled by the held HTTP read.
+            await fulfillment(of: [began], timeout: 2)
+            waiting.cancel()
+            guard let read = await waiting.value else {
+                await fixture.client.disconnect()
+                continue
+            }
+            read.succeed()
+            let repaired = await messagesBeforeLive(&events, threadID: fixture.firstID)
+            XCTAssertEqual(repaired, ["Final assistant response"], mode)
+
+            // The same subscription remains usable after HTTP repair.
+            try await detail.sendMessage(text: "Next response", sequence: 11)
+            try await detail.synchronize()
+            let next = await messagesBeforeLive(&events, threadID: fixture.firstID)
+            XCTAssertEqual(next, ["Final assistant response", "Next response"], mode)
+            try await shell.completeShell(
+                sequence: 30, assistantMessageID: mode.hasPrefix("no-message-id") ? nil : "answer-0",
+                activeOrderKey: "already-complete"
+            )
+            while let event = await events.next(isolation: #isolation) {
+                if case .threadSync(fixture.firstID, .catchingUp) = event {
+                    XCTFail("Already-complete detail must not start another repair")
+                }
+                if case let .detail(value) = event, value.thread.activeOrderKey == "already-complete" { break }
+                if case let .detailDelta(value, _) = event, value.thread.activeOrderKey == "already-complete" { break }
+            }
+            let count = await fixture.http.threadRequests.count
+            XCTAssertEqual(count, 2, mode)
+            await fixture.client.disconnect()
+        }
+    }
+
+    func testShellCompletionCoalescesWhileRequiredSnapshotTracksNewerDetailEvents() async throws {
+        let fixture = try await CatchUpFixture.make()
+        defer { fixture.cleanUp() }
+        var requests = fixture.requests.makeAsyncIterator()
+        let shell = try await nextShellRequest(&requests)
+        var events = fixture.client.events().makeAsyncIterator()
+        _ = try await fixture.client.loadThread(id: fixture.firstID)
+        let detail = try await nextThreadRequest(&requests)
+        try await detail.synchronize()
+        _ = await messagesBeforeLive(&events, threadID: fixture.firstID)
+        await fixture.http.setCompletionResponse(text: "Final", sequence: 10)
+        await fixture.http.holdThreadReads(true)
+        let began = expectation(description: "Completion starts required read")
+        let waiting = Task { @MainActor in
+            var reads = fixture.http.heldRequests.makeAsyncIterator()
+            let read = await reads.next(isolation: #isolation)
+            if read != nil { began.fulfill() }
+            return read
+        }
+        try await shell.completeShell(sequence: 10, assistantMessageID: "answer-0")
+        await fulfillment(of: [began], timeout: 2)
+        waiting.cancel()
+        guard let first = await waiting.value else {
+            await fixture.client.disconnect()
+            return
+        }
+        await nextCatchUp(&events, threadID: fixture.firstID)
+
+        // An unrelated shell cursor advance must not invalidate the same completion twice.
+        try await shell.completeShell(sequence: 100, assistantMessageID: "answer-0", activeOrderKey: "completion-seen-again")
+        while let event = await events.next(isolation: #isolation) {
+            if case let .detail(value) = event, value.thread.activeOrderKey == "completion-seen-again" { break }
+            if case let .detailDelta(value, _) = event, value.thread.activeOrderKey == "completion-seen-again" { break }
+        }
+        await fixture.http.setCompletionResponse(text: "Final with newer detail", sequence: 20)
+        try await detail.sendMessage(text: "Final with newer detail", sequence: 20)
+        await nextCatchUp(&events, threadID: fixture.firstID)
+        var reads = fixture.http.heldRequests.makeAsyncIterator()
+        first.succeed()
+        let replacement = try await nextHeldRead(&reads)
+        replacement.succeed()
+        let repaired = await messagesBeforeLive(&events, threadID: fixture.firstID)
+        XCTAssertEqual(repaired, ["Final with newer detail"])
+        let count = await fixture.http.threadRequests.count
+        XCTAssertEqual(count, 3, "Initial read plus one stale repair and one cursor replacement")
+        await fixture.client.disconnect()
+    }
+
+    func testWarmCachedOpenRepairsAlreadyCompletedShellWithoutAnotherShellEvent() async throws {
+        let fixture = try await CatchUpFixture.make()
+        defer { fixture.cleanUp() }
+        var requests = fixture.requests.makeAsyncIterator()
+        let shell = try await nextShellRequest(&requests)
+        var events = fixture.client.events().makeAsyncIterator()
+        _ = try await fixture.client.loadThread(id: fixture.firstID)
+        let first = try await nextThreadRequest(&requests)
+        try await first.synchronize()
+        _ = await messagesBeforeLive(&events, threadID: fixture.firstID)
+        fixture.client.releaseThread(id: fixture.firstID)
+        try await shell.completeShell(sequence: 10, assistantMessageID: "answer-0", activeOrderKey: "cached-completion")
+        while let event = await events.next(isolation: #isolation) {
+            if case let .thread(value) = event, value.activeOrderKey == "cached-completion" { break }
+            if case let .snapshot(value) = event,
+               value.threads.contains(where: { $0.activeOrderKey == "cached-completion" }) { break }
+        }
+        await fixture.http.setCompletionResponse(text: "Final while closed", sequence: 10)
+        await fixture.http.holdThreadReads(true)
+        let began = expectation(description: "Cached completion starts required read on reopen")
+        let waiting = Task { @MainActor in
+            var reads = fixture.http.heldRequests.makeAsyncIterator()
+            let read = await reads.next(isolation: #isolation)
+            if read != nil { began.fulfill() }
+            return read
+        }
+        _ = try await fixture.client.loadThread(id: fixture.firstID)
+        let resumed = try await nextThreadRequest(&requests)
+        try await resumed.synchronize()
+        await fulfillment(of: [began], timeout: 2)
+        waiting.cancel()
+        guard let read = await waiting.value else {
+            await fixture.client.disconnect()
+            return
+        }
+        // Ignore the warm-cache immediate live receipt preceding the repair.
+        while let event = await events.next(isolation: #isolation) {
+            if case .threadSync(fixture.firstID, .catchingUp) = event { break }
+        }
+        read.succeed()
+        let repaired = await messagesBeforeLive(&events, threadID: fixture.firstID)
+        XCTAssertEqual(repaired, ["Final while closed"])
+        let count = await fixture.http.threadRequests.count
+        XCTAssertEqual(count, 2)
+        await fixture.client.disconnect()
+    }
+
+    private func nextShellRequest(
+        _ iterator: inout AsyncStream<CatchUpRequest>.Iterator
+    ) async throws -> CatchUpRequest {
+        while let request = await iterator.next(isolation: #isolation) {
+            if request.tag == RPCMethod.subscribeShell.rawValue { return request }
+        }
+        throw CancellationError()
+    }
+
     func testRequestSnapshotsKeepTerminalRequestsClosedAndOtherFailuresRetryable() async throws {
         var activities: [OrchestrationActivity] = []
         for kind in ["approval", "user-input"] {
@@ -978,14 +1143,17 @@ private struct CatchUpFixture {
                 requests: requests.continuation, completionMarker: completionMarker
             )
         )
+        let readiness = CatchUpBootstrapReadiness()
         let client = NativeFeatureClient(
             runtime: runtime, settingsStore: UserDefaults(suiteName: UUID().uuidString)!,
             fallbackPollingInitialDelay: .seconds(3_600),
             aggregateRefreshInterval: .seconds(3_600),
+            aggregateRefreshReceipt: { readiness.record($0) },
             catchUpDelay: { try await delay.wait() },
             threadRetryDelay: threadRetryDelay
         )
         _ = try await client.initialSnapshot()
+        try await readiness.wait()
         return Self(client: client, http: http, requests: requests.stream, delay: delay, directory: directory)
     }
 
@@ -996,6 +1164,7 @@ private actor CatchUpHTTPTransport: HTTPTransport {
     private(set) var threadRequests: [URLRequest] = []
     private var messages: [OrchestrationMessage] = []
     private var activities: [OrchestrationActivity] = []
+    private var completionResponse = false
     private var sequence = 2
     private var holdsThreadReads = false
     private let heldReadContinuation: AsyncStream<CatchUpHTTPRead>.Continuation
@@ -1017,6 +1186,15 @@ private actor CatchUpHTTPTransport: HTTPTransport {
             catchUpMessage(text, index: index, withImage: withImage)
         }
         self.sequence = sequence
+    }
+
+    func setCompletionResponse(text: String, sequence: Int, streaming: Bool = false) {
+        messages = [OrchestrationMessage(
+            id: "answer-0", role: "assistant", text: text, attachments: [], turnId: "turn-1",
+            streaming: streaming, createdAt: "2026-09-02T12:00:00Z", updatedAt: "2026-09-02T12:00:00Z"
+        )]
+        self.sequence = sequence
+        completionResponse = !streaming
     }
 
     func holdThreadReads(_ hold: Bool) { holdsThreadReads = hold }
@@ -1046,6 +1224,11 @@ private actor CatchUpHTTPTransport: HTTPTransport {
             )
             var thread = snapshot.thread
             thread.activities = activities
+            if completionResponse {
+                var object = try JSONValue.encode(thread).decode([String: JSONValue].self)
+                object["latestTurn"] = catchUpCompletedTurn(assistantMessageID: "answer-0")
+                thread = try JSONValue.object(object).decode(OrchestrationThread.self)
+            }
             value = try .encode(OrchestrationThreadDetailSnapshot(
                 snapshotSequence: snapshot.snapshotSequence, thread: thread, page: snapshot.page
             ))
@@ -1107,6 +1290,34 @@ private struct CatchUpRequest: Sendable {
     let id: Int
     let payload: JSONValue
     let socket: CatchUpSocket
+
+    func completeShell(sequence: Int, assistantMessageID: String?, activeOrderKey: String? = nil) async throws {
+        let shell = multiEnvironmentShell(projectID: "project", threadID: "first", title: "First")
+        var thread = try JSONValue.encode(shell.threads[0]).decode([String: JSONValue].self)
+        thread["latestTurn"] = catchUpCompletedTurn(assistantMessageID: assistantMessageID)
+        thread["activeOrderKey"] = activeOrderKey.map(JSONValue.string)
+        let snapshot = OrchestrationShellSnapshot(
+            snapshotSequence: sequence, projects: shell.projects,
+            threads: [try JSONValue.object(thread).decode(OrchestrationThreadShell.self)], updatedAt: shell.updatedAt
+        )
+        try await socket.chunk(id: id, values: [.object([
+            "kind": .string("snapshot"), "snapshot": try .encode(snapshot),
+        ])])
+    }
+
+    func completeTurnWithoutMessageID(sequence: Int) async throws {
+        try await socket.chunk(id: id, values: [.object([
+            "kind": .string("event"), "event": .object([
+                "type": .string("thread.turn-diff-completed"), "sequence": .number(Double(sequence)),
+                "occurredAt": .string("2026-09-02T12:01:00Z"), "payload": .object([
+                    "threadId": payload["threadId"]!, "turnId": .string("turn-1"),
+                    "checkpointTurnCount": .number(1), "checkpointRef": .string("refs/t3/checkpoints/turn-1"),
+                    "status": .string("ready"), "files": .array([]),
+                    "completedAt": .string("2026-09-02T12:01:00Z"), "assistantMessageId": .null,
+                ]),
+            ]),
+        ])])
+    }
 
     func terminate(_ failure: CatchUpStreamFailure) async throws {
         switch failure {
@@ -1324,5 +1535,50 @@ private actor CatchUpDelay {
     }
     private func cancel(_ id: UUID) {
         waiters.removeValue(forKey: id)?.resume(throwing: CancellationError())
+    }
+}
+
+private func catchUpCompletedTurn(assistantMessageID: String?) -> JSONValue {
+    .object([
+        "turnId": .string("turn-1"), "state": .string("completed"),
+        "requestedAt": .string("2026-09-02T12:00:00Z"),
+        "startedAt": .string("2026-09-02T12:00:00Z"),
+        "completedAt": .string("2026-09-02T12:01:00Z"),
+        "assistantMessageId": assistantMessageID.map(JSONValue.string) ?? .null,
+    ])
+}
+
+/// The detail tests retain their one FeatureEvent consumer. Readiness comes
+/// from applied shell/config receipts and does not drain that event stream.
+@MainActor
+private final class CatchUpBootstrapReadiness {
+    private var hasShell = false
+    private var hasConfig = false
+    private var waiters: [UUID: CheckedContinuation<Void, Error>] = [:]
+
+    func record(_ receipt: NativePassiveShellReceipt) {
+        switch receipt {
+        case .shellApplied(environmentID: "one", sequence: _): hasShell = true
+        case .configurationApplied(environmentID: "one"): hasConfig = true
+        default: break
+        }
+        if hasShell && hasConfig {
+            let pending = waiters.values
+            waiters.removeAll()
+            pending.forEach { $0.resume() }
+        }
+    }
+
+    func wait() async throws {
+        try Task.checkCancellation()
+        guard !hasShell || !hasConfig else { return }
+        let id = UUID()
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { waiters[id] = $0 }
+        } onCancel: {
+            Task { @MainActor [weak self] in
+                self?.waiters.removeValue(forKey: id)?.resume(throwing: CancellationError())
+            }
+        }
     }
 }
