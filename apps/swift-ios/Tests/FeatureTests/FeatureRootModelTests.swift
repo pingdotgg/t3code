@@ -9,6 +9,163 @@ import XCTest
 @MainActor
 @Suite("Feature root model")
 struct FeatureRootModelTests {
+    @Test(arguments: [["a", "b", "a"], ["a", "a"]])
+    func presentationTaskReplacementAndCloseReleaseExactlyOnce(threadIDs: [String]) async {
+        let client = FeatureClientStub()
+        let model = FeatureRootModel(client: client)
+        let loaded = AsyncStream<String>.makeStream()
+        var loads = loaded.stream.makeAsyncIterator()
+        var previous: Task<Void, Never>?
+        for id in threadIDs {
+            let next = Task {
+                await model.runThreadPresentation(id: id) { loaded.continuation.yield(id) }
+            }
+            #expect(await loads.next() == id)
+            // Replacement finishes the old lifetime even before SwiftUI cancels its task.
+            await previous?.value
+            previous?.cancel()
+            previous = next
+        }
+        #expect(client.loadedThreadIDs == threadIDs)
+        #expect(client.releasedThreadIDs == Array(threadIDs.dropLast()))
+        previous?.cancel()
+        await previous?.value
+        #expect(client.releasedThreadIDs == threadIDs)
+        loaded.continuation.finish()
+    }
+
+    @Test
+    func cancelledPresentationTaskCannotReplaceVisibleThread() async {
+        let client = FeatureClientStub()
+        let model = FeatureRootModel(client: client)
+        let loaded = AsyncStream<Void>.makeStream()
+        let current = Task {
+            await model.runThreadPresentation(id: "a") { loaded.continuation.yield(()) }
+        }
+        var loads = loaded.stream.makeAsyncIterator()
+        await loads.next()
+        let cancelled = Task { @MainActor in
+            withUnsafeCurrentTask { $0?.cancel() }
+            await model.runThreadPresentation(id: "a")
+        }
+        await cancelled.value
+        #expect(client.loadedThreadIDs == ["a"])
+        #expect(client.releasedThreadIDs.isEmpty)
+        current.cancel()
+        await current.value
+        #expect(client.releasedThreadIDs == ["a"])
+        loaded.continuation.finish()
+    }
+
+    @Test(arguments: [false, true])
+    func cancellationReleasesSuspendedPresentationBeforeItsLoadReturns(cancelBeforeReplacement: Bool) async {
+        let client = FeatureClientStub()
+        let model = FeatureRootModel(client: client)
+        let started = AsyncStream<Void>.makeStream()
+        let released = AsyncStream<String>.makeStream()
+        let loaded = AsyncStream<Void>.makeStream()
+        client.onReleaseThread = { released.continuation.yield($0) }
+        var pendingLoad: CheckedContinuation<FeatureThreadDetail, any Error>?
+        client.loadThreadHandler = { _ in
+            try await withCheckedThrowingContinuation { continuation in
+                pendingLoad = continuation
+                started.continuation.yield(())
+            }
+        }
+        var oldLoaded = false
+        let old = Task { await model.runThreadPresentation(id: "a") { oldLoaded = true } }
+        var starts = started.stream.makeAsyncIterator()
+        await starts.next()
+        var releases = released.stream.makeAsyncIterator()
+        if cancelBeforeReplacement {
+            old.cancel()
+            #expect(await releases.next() == "a")
+        }
+        #expect(pendingLoad != nil)
+        #expect(!oldLoaded)
+
+        client.loadThreadHandler = nil
+        let replacement = Task {
+            await model.runThreadPresentation(id: "a") { loaded.continuation.yield(()) }
+        }
+        var loads = loaded.stream.makeAsyncIterator()
+        await loads.next()
+        if !cancelBeforeReplacement {
+            // The old cancellation handler runs only after the same-ID replacement owns transport.
+            old.cancel()
+            #expect(await releases.next() == "a")
+        }
+        pendingLoad?.resume(returning: FeatureThreadDetail(thread: client.createdThread))
+        pendingLoad = nil
+        await old.value
+        #expect(!oldLoaded)
+        #expect(client.releasedThreadIDs == ["a"])
+        replacement.cancel()
+        await replacement.value
+        #expect(client.releasedThreadIDs == ["a", "a"])
+        #expect(client.loadedThreadIDs == ["a", "a"])
+        started.continuation.finish()
+        released.continuation.finish()
+        loaded.continuation.finish()
+    }
+
+    @Test
+    func presentationCloseStillReleasesAfterConnectionReload() async {
+        let client = FeatureClientStub()
+        let model = FeatureRootModel(client: client)
+        let loaded = AsyncStream<Void>.makeStream()
+        let presentation = Task {
+            await model.runThreadPresentation(id: "a") { loaded.continuation.yield(()) }
+        }
+        var loads = loaded.stream.makeAsyncIterator()
+        await loads.next()
+        await model.reloadAfterConnection()
+        presentation.cancel()
+        await presentation.value
+        #expect(client.releasedThreadIDs == ["a"])
+        loaded.continuation.finish()
+    }
+
+    @Test
+    func presentationCloseCancelsRetryAndRejectsLateRetry() async {
+        let client = FeatureClientStub()
+        let model = FeatureRootModel(client: client)
+        let loaded = AsyncStream<Void>.makeStream()
+        let started = AsyncStream<Void>.makeStream()
+        let cancelled = AsyncStream<Void>.makeStream()
+        let presentation = Task {
+            await model.runThreadPresentation(id: "a") { loaded.continuation.yield(()) }
+        }
+        var loads = loaded.stream.makeAsyncIterator()
+        await loads.next()
+        var pendingRetry: CheckedContinuation<FeatureThreadDetail, any Error>?
+        client.loadThreadHandler = { _ in
+            try await withTaskCancellationHandler {
+                try await withCheckedThrowingContinuation { continuation in
+                    pendingRetry = continuation
+                    started.continuation.yield(())
+                }
+            } onCancel: {
+                cancelled.continuation.yield(())
+            }
+        }
+        #expect(model.refreshThreadPresentation(id: "a"))
+        var retries = started.stream.makeAsyncIterator()
+        await retries.next()
+        presentation.cancel()
+        await presentation.value
+        var cancellations = cancelled.stream.makeAsyncIterator()
+        await cancellations.next()
+        #expect(client.releasedThreadIDs == ["a"])
+        #expect(!model.refreshThreadPresentation(id: "a"))
+        pendingRetry?.resume(throwing: CancellationError())
+        pendingRetry = nil
+        #expect(client.loadedThreadIDs == ["a", "a"])
+        loaded.continuation.finish()
+        started.continuation.finish()
+        cancelled.continuation.finish()
+    }
+
     @Test
     func transcriptSkillPillsUseTheThreadWorkspaceCatalog() async {
         let skill = FeatureProviderSkill(name: "project-only", displayName: "Project only")
@@ -81,6 +238,7 @@ struct FeatureRootModelTests {
         await model.applicationDidBecomeActive(at: start.addingTimeInterval(10))
         await model.applicationDidBecomeActive(at: start.addingTimeInterval(11))
         #expect(client.foregroundReconnects == [false, true])
+        #expect(client.backgroundSuspends == 2)
     }
 
     @Test
@@ -3559,7 +3717,16 @@ private func orchestrationThread(
 
 @MainActor
 private final class FeatureClientStub: FeatureClient, T3ConnectCapable {
+    var loadedThreadIDs: [String] = []
+    var releasedThreadIDs: [String] = []
+    var onReleaseThread: ((String) -> Void)?
+    func releaseThread(id: String) {
+        releasedThreadIDs.append(id)
+        onReleaseThread?(id)
+    }
     var foregroundReconnects: [Bool] = []
+    var backgroundSuspends = 0
+    func suspendForBackground() { backgroundSuspends += 1 }
     func resumeAfterBackground(reconnect: Bool) async { foregroundReconnects.append(reconnect) }
     private let eventStream: AsyncStream<FeatureEvent>
     private let eventContinuation: AsyncStream<FeatureEvent>.Continuation
@@ -3749,6 +3916,7 @@ private final class FeatureClientStub: FeatureClient, T3ConnectCapable {
     }
 
     func loadThread(id: String) async throws -> FeatureThreadDetail {
+        loadedThreadIDs.append(id)
         if let loadThreadError {
             throw loadThreadError
         }

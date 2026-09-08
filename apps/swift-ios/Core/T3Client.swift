@@ -654,6 +654,29 @@ public actor T3Client {
         )
     }
 
+    /// Passive shells start with a full snapshot on each socket subscription.
+    /// Registering its identity atomically prevents late socket results from
+    /// acquiring authority over a replacement connection.
+    public func shellEventsOnCurrentConnection() async throws -> (
+        events: AsyncThrowingStream<ShellStreamItem, Error>, connectionID: UUID
+    ) {
+        try await rpc.subscribeOnCurrentConnection(
+            RPCMethod.subscribeShell.rawValue,
+            payload: .object(["requestCompletionMarker": .bool(true)]),
+            as: ShellStreamItem.self
+        )
+    }
+
+    public func shellEventBatchesOnCurrentConnection() async throws -> (
+        events: AsyncThrowingStream<[ShellStreamItem], Error>, connectionID: UUID
+    ) {
+        try await rpc.subscribeBatchesOnCurrentConnection(
+            RPCMethod.subscribeShell.rawValue,
+            payload: .object(["requestCompletionMarker": .bool(true)]),
+            as: ShellStreamItem.self
+        )
+    }
+
     public func threadEvents(
         threadID: String,
         after sequence: Int? = nil,

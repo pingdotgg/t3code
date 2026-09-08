@@ -81,6 +81,10 @@ public final class FeatureRootModel {
     private var pendingSettlementMutations: [String: PendingSettlementMutation] = [:]
     private var pendingCompletionSubmissionIDs: Set<String> = []
     private var pendingDiscardSubmissionIDs: Set<String> = []
+    @ObservationIgnored private var activeDetailPresentation: (
+        threadID: String, owner: UUID, lifetime: AsyncStream<Void>.Continuation,
+        refreshTask: Task<Void, Never>?
+    )?
     private var detailRecency: [String] = []
     private var detailLoadGeneration: UInt64 = 0
     private var detailLoadRevisions: [String: UInt64] = [:]
@@ -135,6 +139,7 @@ public final class FeatureRootModel {
 
     func applicationDidEnterBackground(at date: Date = .now) {
         backgroundedAt = date
+        client.suspendForBackground()
     }
 
     func applicationDidBecomeActive(at date: Date = .now) async {
@@ -614,6 +619,55 @@ public final class FeatureRootModel {
         }
     }
 
+    /// Holds selected-thread transport for the owning presentation task, including after loading.
+    func runThreadPresentation(id: String, onLoaded: @MainActor () -> Void = {}) async {
+        guard !Task.isCancelled else { return }
+        if let previous = activeDetailPresentation {
+            releaseThread(previous.threadID)
+        }
+        let owner = UUID()
+        let lifetime = AsyncStream<Void>.makeStream()
+        activeDetailPresentation = (id, owner, lifetime.continuation, nil)
+        await withTaskCancellationHandler {
+            defer { releaseThreadPresentation(id: id, owner: owner) }
+            _ = await detail(for: id, force: true)
+            guard !Task.isCancelled,
+                  activeDetailPresentation?.owner == owner else { return }
+            onLoaded()
+            for await _ in lifetime.stream {}
+        } onCancel: {
+            // Cancellation must release even when the detail read is still suspended.
+            Task { @MainActor [weak self] in
+                self?.releaseThreadPresentation(id: id, owner: owner)
+            }
+        }
+    }
+
+    /// Retries belong to the current presentation and cannot outlive a close or replacement.
+    @discardableResult
+    func refreshThreadPresentation(
+        id: String, fresh: Bool = true, onLoaded: @escaping @MainActor () -> Void = {}
+    ) -> Bool {
+        guard let presentation = activeDetailPresentation, presentation.threadID == id else { return false }
+        presentation.refreshTask?.cancel()
+        let owner = presentation.owner
+        activeDetailPresentation?.refreshTask = Task { [weak self] in
+            guard let self, !Task.isCancelled,
+                  self.activeDetailPresentation?.owner == owner else { return }
+            _ = await self.detail(for: id, force: true, fresh: fresh)
+            guard !Task.isCancelled,
+                  self.activeDetailPresentation?.owner == owner else { return }
+            onLoaded()
+        }
+        return true
+    }
+
+    private func releaseThreadPresentation(id: String, owner: UUID) {
+        guard activeDetailPresentation?.threadID == id,
+              activeDetailPresentation?.owner == owner else { return }
+        releaseThread(id)
+    }
+
     public func detail(for id: String, force: Bool = false, fresh: Bool = false) async -> FeatureThreadDetail? {
         if !force, let cached = details[id] {
             return cached
@@ -692,6 +746,11 @@ public final class FeatureRootModel {
 
     /// Ends any selected-thread transport work when its detail view closes.
     public func releaseThread(_ id: String) {
+        if let presentation = activeDetailPresentation, presentation.threadID == id {
+            activeDetailPresentation = nil
+            presentation.refreshTask?.cancel()
+            presentation.lifetime.finish()
+        }
         client.releaseThread(id: id)
         markDetailRecentlyUsed(id)
         evictOldThreadDetailsIfNeeded()
