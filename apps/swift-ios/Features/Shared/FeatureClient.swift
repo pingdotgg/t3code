@@ -68,6 +68,9 @@ public protocol FeatureClient: AnyObject {
     func setInteractionMode(id: String, mode: FeatureInteractionMode) async throws
     func deleteThread(id: String) async throws
 
+    /// Looks up a queued thread independently of the partially hydrated sidebar.
+    /// `nil` means the owning server explicitly reported thread_not_found.
+    func recoverQueuedThread(environmentID: String, wireID: String) async throws -> FeatureThread?
     /// `fresh` bypasses the client's warm cache and reads from the server.
     func loadThread(id: String, fresh: Bool) async throws -> FeatureThreadDetail
     func loadEarlierThreadTurns(id: String) async throws -> FeatureThreadDetail?
@@ -250,6 +253,10 @@ public extension FeatureClient {
         prepareRecovery: @MainActor (FeatureRevertedMessage) async throws -> Void
     ) async throws {
         throw FeatureCapabilityUnavailable("Conversation rewind")
+    }
+
+    func recoverQueuedThread(environmentID: String, wireID: String) async throws -> FeatureThread? {
+        throw URLError(.resourceUnavailable)
     }
 
     func serverPreferences(environmentID: String) async throws -> ServerSettingsSnapshot {

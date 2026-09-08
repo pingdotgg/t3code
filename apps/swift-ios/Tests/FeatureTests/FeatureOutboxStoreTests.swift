@@ -325,7 +325,7 @@ struct FeatureOutboxStoreTests {
         var followUp = creation
         followUp.creation = nil
         snapshot.threads = []
-        #expect(FeatureOutboxPolicy.decision(for: followUp, snapshot: snapshot) == .discard)
+        #expect(FeatureOutboxPolicy.decision(for: followUp, snapshot: snapshot) == .wait)
         #expect(
             FeatureOutboxPolicy.decision(
                 for: followUp,
