@@ -231,6 +231,7 @@ function SettingsContentLayout() {
 function SettingsRouteLayout() {
   const rawSearch = Route.useSearch();
   const navigate = Route.useNavigate();
+  const pathname = useLocation({ select: (location) => location.pathname });
   const search = Object.values(rawSearch).some((value) => value !== undefined)
     ? rawSearch
     : { scope: "device" as const };
@@ -238,7 +239,7 @@ function SettingsRouteLayout() {
     <SettingsScopeProvider
       search={search}
       onChange={(next) => {
-        void navigate({ search: next, hash: "", resetScroll: false });
+        void navigate({ to: pathname, search: () => next, hash: "", resetScroll: false });
       }}
     >
       <SettingsContentLayout />
