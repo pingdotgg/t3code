@@ -34,11 +34,6 @@ export function useScopedSettings<T = UnifiedSettings>(
   return useMemo(() => (selector ? selector(settings) : (settings as T)), [selector, settings]);
 }
 
-export function useScopedSettingsAvailable(): boolean {
-  const { scope, connectedEnvironments } = useSettingsScope();
-  return (scope.kind === "environment" || scope.kind === "all") && connectedEnvironments.length > 0;
-}
-
 export function useScopedSettingsMixed(keys: readonly (keyof ServerSettings)[]): boolean {
   const { connectedEnvironments } = useSettingsScope();
   return scopedSettingsAreMixed(connectedEnvironments, keys);
