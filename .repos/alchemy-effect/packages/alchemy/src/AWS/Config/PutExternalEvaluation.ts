@@ -17,9 +17,8 @@ export interface PutExternalEvaluationRequest extends Omit<
  *
  * Provide `Config.PutExternalEvaluationHttp` on the hosting Lambda Function
  * to satisfy the requirement.
- * @binding
- * @section Reporting Evaluations (Custom Rules)
- * @example Push an External Evaluation
+ * ### Reporting Evaluations (Custom Rules)
+ * **Example:** Push an External Evaluation
  * ```typescript
  * // init — grants config:PutExternalEvaluation
  * const putExternalEvaluation = yield* AWS.Config.PutExternalEvaluation(rule);
@@ -34,6 +33,8 @@ export interface PutExternalEvaluationRequest extends Omit<
  *   },
  * });
  * ```
+ *
+ * @binding
  */
 export interface PutExternalEvaluation extends Binding.Service<
   PutExternalEvaluation,

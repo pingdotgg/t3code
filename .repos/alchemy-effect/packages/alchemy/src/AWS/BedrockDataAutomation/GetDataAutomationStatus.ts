@@ -10,9 +10,8 @@ import * as Binding from "../../Binding.ts";
  *
  * Provide the implementation with
  * `Effect.provide(AWS.BedrockDataAutomation.GetDataAutomationStatusHttp)`.
- * @binding
- * @section Polling Job Status
- * @example Check An Async Job's Status
+ * ### Polling Job Status
+ * **Example:** Check An Async Job's Status
  * ```typescript
  * // deploy time — account-level binding
  * const getStatus = yield* AWS.BedrockDataAutomation.GetDataAutomationStatus();
@@ -23,6 +22,8 @@ import * as Binding from "../../Binding.ts";
  *   yield* Effect.log(`results at ${outputConfiguration?.s3Uri}`);
  * }
  * ```
+ *
+ * @binding
  */
 export interface GetDataAutomationStatus extends Binding.Service<
   GetDataAutomationStatus,

@@ -172,7 +172,10 @@ test.provider(
       yield* stack.destroy();
 
       yield* waitForGone(zoneId, cert.certificateId);
-    }).pipe(Effect.ensuring(stack.destroy().pipe(Effect.ignore)), logLevel),
+    }).pipe(
+      Effect.ensuring(stack.destroy().pipe(Effect.orDie).pipe(Effect.ignore)),
+      logLevel,
+    ),
   { timeout: 120_000 },
 );
 
@@ -214,7 +217,10 @@ test.provider(
       yield* stack.destroy();
 
       yield* waitForGone(zoneId, replaced.certificateId);
-    }).pipe(Effect.ensuring(stack.destroy().pipe(Effect.ignore)), logLevel),
+    }).pipe(
+      Effect.ensuring(stack.destroy().pipe(Effect.orDie).pipe(Effect.ignore)),
+      logLevel,
+    ),
   { timeout: 120_000 },
 );
 
@@ -287,7 +293,10 @@ test.provider(
       yield* stack.destroy();
 
       yield* waitForGone(zoneId, recovered.certificateId);
-    }).pipe(Effect.ensuring(stack.destroy().pipe(Effect.ignore)), logLevel),
+    }).pipe(
+      Effect.ensuring(stack.destroy().pipe(Effect.orDie).pipe(Effect.ignore)),
+      logLevel,
+    ),
   { timeout: 120_000 },
 );
 
@@ -339,6 +348,9 @@ test.provider(
       yield* stack.destroy();
 
       yield* waitForGone(zoneId, cert.certificateId);
-    }).pipe(Effect.ensuring(stack.destroy().pipe(Effect.ignore)), logLevel),
+    }).pipe(
+      Effect.ensuring(stack.destroy().pipe(Effect.orDie).pipe(Effect.ignore)),
+      logLevel,
+    ),
   { timeout: 120_000 },
 );

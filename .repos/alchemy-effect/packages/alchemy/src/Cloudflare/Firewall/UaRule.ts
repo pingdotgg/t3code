@@ -95,11 +95,8 @@ export type UaRule = Resource<
  * state, `read` scans the zone for an existing rule with the same
  * User-Agent string and reports it as `Unowned`, so the engine refuses to
  * take it over unless `--adopt` (or `adopt(true)`) is set.
- * @resource
- * @product Firewall
- * @category Application Security
- * @section Blocking a User-Agent
- * @example Block a scraper outright
+ * ### Blocking a User-Agent
+ * **Example:** Block a scraper outright
  * ```typescript
  * yield* Cloudflare.Firewall.UaRule("BlockScraper", {
  *   zoneId: zone.zoneId,
@@ -109,8 +106,8 @@ export type UaRule = Resource<
  * });
  * ```
  *
- * @section Challenging a User-Agent
- * @example Managed challenge instead of a hard block
+ * ### Challenging a User-Agent
+ * **Example:** Managed challenge instead of a hard block
  * ```typescript
  * yield* Cloudflare.Firewall.UaRule("ChallengeOldClient", {
  *   zoneId: zone.zoneId,
@@ -119,8 +116,8 @@ export type UaRule = Resource<
  * });
  * ```
  *
- * @section Pausing a rule
- * @example Temporarily disable a rule without deleting it
+ * ### Pausing a rule
+ * **Example:** Temporarily disable a rule without deleting it
  * ```typescript
  * yield* Cloudflare.Firewall.UaRule("BlockScraper", {
  *   zoneId: zone.zoneId,
@@ -131,6 +128,10 @@ export type UaRule = Resource<
  * ```
  *
  * @see https://developers.cloudflare.com/waf/tools/user-agent-blocking/
+ *
+ * @resource
+ * @product Firewall
+ * @category Application Security
  */
 export const UaRule = Resource<UaRule>(UaRuleTypeId);
 

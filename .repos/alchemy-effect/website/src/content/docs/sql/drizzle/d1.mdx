@@ -3,16 +3,31 @@ title: D1
 description: Drizzle on Cloudflare D1 — declare the schema, generate and apply migrations on deploy, and query from a Worker with Drizzle.D1.
 ---
 
+import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+
+export const deps = `drizzle-orm @effect/sql-d1`;
+export const devDeps = `drizzle-kit`;
+
 Drizzle on D1, end to end: a schema module, a `Drizzle.Schema`
 resource that generates migration SQL on deploy, a D1 database that
 applies it, and a Worker that queries through `Drizzle.D1`.
 
 Install the toolchain — all optional peers of alchemy:
 
-```sh
-bun add drizzle-orm @effect/sql-d1
-bun add -D drizzle-kit
-```
+<Tabs syncKey="pkgManager">
+  <TabItem label="bun" icon="bun">
+    <Code code={`bun add ${deps}\nbun add -d ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="npm" icon="npm">
+    <Code code={`npm install ${deps}\nnpm install -D ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="pnpm" icon="pnpm">
+    <Code code={`pnpm add ${deps}\npnpm add -D ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="yarn" icon="seti:yarn">
+    <Code code={`yarn add ${deps}\nyarn add -D ${devDeps}`} lang="sh" />
+  </TabItem>
+</Tabs>
 
 ## Define the schema
 
@@ -50,7 +65,7 @@ export const relations = defineRelations({ Users, Posts }, (t) => ({
 
 `Drizzle.Schema` diffs the schema module on each deploy and writes
 pending migration SQL to `out`. Passing `schema.out` as the
-database's `migrationsDir` creates the dependency edge: generate
+database's `migrations` prop creates the dependency edge: generate
 first, apply second, in one `alchemy deploy`:
 
 ```typescript
@@ -67,8 +82,7 @@ export const Database = Effect.gen(function* () {
   });
 
   return yield* Cloudflare.D1.Database("app-db", {
-    migrationsDir: schema.out,
-    migrationsTable: "drizzle_migrations",
+    migrations: schema,
   });
 });
 ```

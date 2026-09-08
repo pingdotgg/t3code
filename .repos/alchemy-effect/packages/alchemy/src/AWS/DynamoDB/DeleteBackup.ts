@@ -12,15 +12,16 @@ export interface DeleteBackupRequest extends DynamoDB.DeleteBackupInput {}
  * that deletes one of the bound table's on-demand backups by ARN. The IAM
  * grant covers every backup of the bound table (`{tableArn}/backup/*`).
  * Provide the `DeleteBackupHttp` layer on the Function to satisfy the binding.
- * @binding
- * @section Backup and Restore
- * @example Delete an Expired Backup
+ * ### Backup and Restore
+ * **Example:** Delete an Expired Backup
  * ```typescript
  * const deleteBackup = yield* AWS.DynamoDB.DeleteBackup(table);
  *
  * const response = yield* deleteBackup({ BackupArn: backupArn });
  * const status = response.BackupDescription?.BackupDetails?.BackupStatus;
  * ```
+ *
+ * @binding
  */
 export interface DeleteBackup extends Binding.Service<
   DeleteBackup,

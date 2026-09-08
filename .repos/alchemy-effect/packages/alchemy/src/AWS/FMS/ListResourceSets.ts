@@ -12,9 +12,8 @@ export interface ListResourceSetsRequest extends fms.ListResourceSetsRequest {}
  *
  * Returns an array of `ResourceSetSummary` objects for the resource sets in the administrator's account. Provide the
  * implementation with `Effect.provide(AWS.FMS.ListResourceSetsHttp)`.
- * @binding
- * @section Resource Sets
- * @example List Resource Sets
+ * ### Resource Sets
+ * **Example:** List Resource Sets
  * ```typescript
  * // init — account-level binding takes no resource
  * const listResourceSets = yield* AWS.FMS.ListResourceSets();
@@ -23,6 +22,8 @@ export interface ListResourceSetsRequest extends fms.ListResourceSetsRequest {}
  * const result = yield* listResourceSets();
  * console.log(result.ResourceSets?.length);
  * ```
+ *
+ * @binding
  */
 export interface ListResourceSets extends Binding.Service<
   ListResourceSets,

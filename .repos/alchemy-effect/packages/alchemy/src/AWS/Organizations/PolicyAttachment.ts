@@ -53,9 +53,8 @@ export interface PolicyAttachment extends Resource<
  * Existence-only resource: changing either `policyId` or `targetId` replaces
  * the attachment. The policy's type must already be enabled on the root (see
  * {@link RootPolicyType}).
- * @resource
- * @section Attaching Policies
- * @example Attach an SCP to an Organizational Unit
+ * ### Attaching Policies
+ * **Example:** Attach an SCP to an Organizational Unit
  * ```typescript
  * const workloads = yield* OrganizationalUnit("Workloads", {
  *   parentId: root.rootId,
@@ -85,13 +84,15 @@ export interface PolicyAttachment extends Resource<
  * });
  * ```
  *
- * @example Attach a Policy to a Member Account
+ * **Example:** Attach a Policy to a Member Account
  * ```typescript
  * yield* PolicyAttachment("DenyRegionsOnDev", {
  *   policyId: denyRegions.policyId,
  *   targetId: devAccount.accountId,
  * });
  * ```
+ *
+ * @resource
  */
 export const PolicyAttachment = Resource<PolicyAttachment>(
   "AWS.Organizations.PolicyAttachment",

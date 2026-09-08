@@ -22,9 +22,8 @@ export interface CreateSnapshotRequest extends Omit<
  * takes an application-consistent backup before a risky migration. The
  * snapshot is created `pending` and completes asynchronously. Provide the
  * implementation with `Effect.provide(AWS.EC2.CreateSnapshotHttp)`.
- * @binding
- * @section Volume Backups
- * @example Snapshot the bound volume
+ * ### Volume Backups
+ * **Example:** Snapshot the bound volume
  * ```typescript
  * // init — bind the operation to the volume
  * const createSnapshot = yield* AWS.EC2.CreateSnapshot(volume);
@@ -35,6 +34,8 @@ export interface CreateSnapshotRequest extends Omit<
  * });
  * console.log(snapshot.SnapshotId, snapshot.State);
  * ```
+ *
+ * @binding
  */
 export interface CreateSnapshot extends Binding.Service<
   CreateSnapshot,

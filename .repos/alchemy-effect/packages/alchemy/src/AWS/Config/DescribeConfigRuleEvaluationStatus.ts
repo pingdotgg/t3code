@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  *
  * Provide `Config.DescribeConfigRuleEvaluationStatusHttp` on the hosting Lambda Function to
  * satisfy the requirement.
- * @binding
- * @section Rule Evaluation Status
- * @example Read Rule Evaluation Status
+ * ### Rule Evaluation Status
+ * **Example:** Read Rule Evaluation Status
  * ```typescript
  * // init — grants config:DescribeConfigRuleEvaluationStatus
  * const describeConfigRuleEvaluationStatus = yield* AWS.Config.DescribeConfigRuleEvaluationStatus();
@@ -22,6 +21,8 @@ import * as Binding from "../../Binding.ts";
  *   console.log(status.ConfigRuleName, status.LastSuccessfulInvocationTime);
  * }
  * ```
+ *
+ * @binding
  */
 export interface DescribeConfigRuleEvaluationStatus extends Binding.Service<
   DescribeConfigRuleEvaluationStatus,

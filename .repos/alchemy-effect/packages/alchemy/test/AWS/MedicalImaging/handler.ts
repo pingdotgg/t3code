@@ -48,7 +48,7 @@ const NONEXISTENT_IMAGE_SET = "0123456789abcdef0123456789abcdef";
 export default MedicalImagingTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     timeout: Duration.seconds(30),
   },
   Effect.gen(function* () {

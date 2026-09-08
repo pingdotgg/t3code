@@ -197,9 +197,8 @@ export interface TargetGroup extends Resource<
  * (IPs, EC2 instances, ALBs, or Lambda functions) that a lattice service's
  * listeners and rules forward traffic to.
  *
- * @resource
- * @section Creating Target Groups
- * @example Lambda Target Group
+ * ### Creating Target Groups
+ * **Example:** Lambda Target Group
  * ```typescript
  * const targets = yield* TargetGroup("ApiTargets", {
  *   type: "LAMBDA",
@@ -207,7 +206,7 @@ export interface TargetGroup extends Resource<
  * });
  * ```
  *
- * @example IP Target Group with Health Check
+ * **Example:** IP Target Group with Health Check
  * ```typescript
  * const targets = yield* TargetGroup("BackendTargets", {
  *   type: "IP",
@@ -223,6 +222,8 @@ export interface TargetGroup extends Resource<
  *   targets: [{ id: "10.0.1.10", port: 80 }],
  * });
  * ```
+ *
+ * @resource
  */
 export const TargetGroup = Resource<TargetGroup>("AWS.VpcLattice.TargetGroup");
 

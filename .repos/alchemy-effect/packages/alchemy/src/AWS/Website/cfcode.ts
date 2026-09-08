@@ -1,24 +1,59 @@
+// Alchemy modifications are licensed under Apache-2.0.
+// This file includes third-party code; see /THIRD_PARTY_LICENSES.md.
 /**
  * CloudFront Function injection code ported from SST's Router component.
  * These are JavaScript code strings that get injected into CloudFront Function handlers.
  */
 
-export const CF_BLOCK_CLOUDFRONT_URL_INJECTION = `
-if (event.request.headers.host.value.includes('cloudfront.net')) {
-  return {
-    statusCode: 403,
-    statusDescription: 'Forbidden',
-    body: {
-      encoding: "text",
-      data: '<html><head><title>403 Forbidden</title></head><body><center><h1>403 Forbidden</h1></center></body></html>'
-    }
-  };
-}`;
+/**
+ * Host-based 301 handling injected at the very top of a generated
+ * viewer-request handler (before route matching). Redirects requests whose
+ * `Host` is one of the configured redirect hostnames — and, when
+ * `cloudfrontUrl: false`, requests arriving via the distribution's default
+ * `*.cloudfront.net` domain (the default domain is not knowable inside its
+ * own function config before the distribution exists, but only requests
+ * served via the default domain ever carry a `.cloudfront.net` Host;
+ * alternate domain names never do) — to the canonical hostname with path
+ * and query preserved.
+ *
+ * Relies on `buildHostRedirectResponse` declared by
+ * {@link CF_ROUTER_INJECTION} (function declarations hoist within the
+ * handler). Returns an empty string when there is nothing to redirect.
+ */
+export const buildHostRedirectInjection = ({
+  to,
+  hosts,
+  cloudfrontDefault,
+}: {
+  /** Canonical hostname redirected to. */
+  to: string | undefined;
+  /** Exact redirect hostnames. */
+  hosts: string[];
+  /** Also redirect the distribution's default `*.cloudfront.net` domain. */
+  cloudfrontDefault: boolean;
+}): string => {
+  if (!to || (hosts.length === 0 && !cloudfrontDefault)) return "";
+  const conditions = [
+    ...(hosts.length > 0
+      ? [`${JSON.stringify(hosts)}.indexOf(redirectHost) !== -1`]
+      : []),
+    ...(cloudfrontDefault ? [`redirectHost.endsWith(".cloudfront.net")`] : []),
+  ];
+  return `
+  var redirectHost = event.request.headers.host.value;
+  if (${conditions.join(" || ")}) {
+    return buildHostRedirectResponse(${JSON.stringify(to)});
+  }`;
+};
 
 const CLOUDFRONT_FUNCTION_SAFE_HEADER_LIMIT = 10240 - 512;
 
 export const CF_ROUTER_INJECTION = `
 async function routeSite(kvNamespace, metadata) {
+  if (metadata.redirect && metadata.redirect.hosts.indexOf(event.request.headers.host.value) !== -1) {
+    return buildHostRedirectResponse(metadata.redirect.to);
+  }
+
   var baselessUri = metadata.base
     ? event.request.uri.replace(metadata.base, "")
     : event.request.uri;
@@ -137,6 +172,30 @@ async function routeSite(kvNamespace, metadata) {
 
 function setForwardedHost() {
   event.request.headers["x-forwarded-host"] = event.request.headers.host;
+}
+
+function serializeQuerystring() {
+  var parts = [];
+  for (var key in event.request.querystring) {
+    var q = event.request.querystring[key];
+    if (q.multiValue) {
+      for (var i = 0; i < q.multiValue.length; i++) parts.push(key + "=" + q.multiValue[i].value);
+    } else {
+      parts.push(q.value === "" ? key : key + "=" + q.value);
+    }
+  }
+  return parts.length ? "?" + parts.join("&") : "";
+}
+
+function buildHostRedirectResponse(toHost) {
+  return {
+    statusCode: 301,
+    statusDescription: "Moved Permanently",
+    headers: {
+      location: { value: "https://" + toHost + event.request.uri + serializeQuerystring() },
+      "cache-control": { value: "no-store" },
+    },
+  };
 }
 
 function setUrlOrigin(urlHost, override) {

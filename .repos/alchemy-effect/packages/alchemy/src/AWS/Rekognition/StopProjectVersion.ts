@@ -11,9 +11,8 @@ import * as Binding from "../../Binding.ts";
  * their identifiers are unknown at deploy time). Provide the
  * implementation with `Effect.provide(AWS.Rekognition.StopProjectVersionHttp)`.
  *
- * @binding
- * @section Custom Labels
- * @example Stop a Model Version
+ * ### Custom Labels
+ * **Example:** Stop a Model Version
  * ```typescript
  * // init
  * const stopProjectVersion = yield* AWS.Rekognition.StopProjectVersion();
@@ -22,6 +21,8 @@ import * as Binding from "../../Binding.ts";
  * const stopped = yield* stopProjectVersion({ ProjectVersionArn: modelArn });
  * // stopped.Status
  * ```
+ *
+ * @binding
  */
 export interface StopProjectVersion extends Binding.Service<
   StopProjectVersion,

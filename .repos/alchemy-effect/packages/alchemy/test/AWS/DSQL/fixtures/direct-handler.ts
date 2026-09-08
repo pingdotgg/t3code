@@ -26,7 +26,7 @@ export class DsqlDirectFunction extends Lambda.Function<Lambda.Function>()(
 export default DsqlDirectFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     timeout: Duration.seconds(30),
     // Preserve `pg` as CommonJS in node_modules; bundling it rewrites the
     // Client constructor into a namespace object and crashes Lambda init.

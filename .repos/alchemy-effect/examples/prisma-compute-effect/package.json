@@ -1,0 +1,27 @@
+{
+  "name": "prisma-compute-effect",
+  "version": "0.0.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alchemy-run/alchemy-effect.git",
+    "directory": "examples/prisma-compute-effect"
+  },
+  "type": "module",
+  "scripts": {
+    "build": "tsc -b",
+    "deploy": "alchemy deploy",
+    "destroy": "alchemy destroy",
+    "tail": "alchemy tail"
+  },
+  "dependencies": {
+    "@effect/platform-bun": "catalog:effect",
+    "alchemy": "workspace:*",
+    "effect": "catalog:effect"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:tooling",
+    "typescript": "catalog:build"
+  }
+}

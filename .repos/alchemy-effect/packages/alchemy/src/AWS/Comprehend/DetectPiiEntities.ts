@@ -11,9 +11,8 @@ import * as Binding from "../../Binding.ts";
  * has no resource-level IAM). To only test *whether* a document contains
  * PII, use the cheaper {@link ContainsPiiEntities}.
  *
- * @binding
- * @section Real-Time Analysis
- * @example Locate PII in a Document
+ * ### Real-Time Analysis
+ * **Example:** Locate PII in a Document
  * ```typescript
  * // init
  * const detectPiiEntities = yield* AWS.Comprehend.DetectPiiEntities();
@@ -25,6 +24,8 @@ import * as Binding from "../../Binding.ts";
  * });
  * // result.Entities: [{ Type: "NAME", BeginOffset: 11, … }, { Type: "EMAIL", … }]
  * ```
+ *
+ * @binding
  */
 export interface DetectPiiEntities extends Binding.Service<
   DetectPiiEntities,

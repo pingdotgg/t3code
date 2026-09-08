@@ -12,9 +12,8 @@ export interface StopPipelineExecutionRequest extends Omit<
  * Runtime binding for `codepipeline:StopPipelineExecution` — stops an
  * in-progress execution, either finishing in-flight actions first or
  * abandoning them (`abandon: true`).
- * @binding
- * @section Running Pipelines
- * @example Stop an Execution
+ * ### Running Pipelines
+ * **Example:** Stop an Execution
  * ```typescript
  * const stopExecution = yield* AWS.CodePipeline.StopPipelineExecution(pipeline);
  *
@@ -24,6 +23,8 @@ export interface StopPipelineExecutionRequest extends Omit<
  *   reason: "superseded by hotfix",
  * });
  * ```
+ *
+ * @binding
  */
 export interface StopPipelineExecution extends Binding.Service<
   StopPipelineExecution,

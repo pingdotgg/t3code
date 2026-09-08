@@ -90,11 +90,8 @@ export type ProviderKey = {
  * `providerSlug`) renames the secret — a replacement — and cascades: the
  * provider config is replaced and re-pointed at the new secret.
  *
- * @resource
- * @product AI Gateway
- * @category AI
- * @section Bringing your own key
- * @example Bring your own OpenAI key
+ * ### Bringing your own key
+ * **Example:** Bring your own OpenAI key
  * ```typescript
  * const store = yield* Cloudflare.SecretsStore.Store("Store");
  *
@@ -111,7 +108,7 @@ export type ProviderKey = {
  * });
  * ```
  *
- * @example Multiple keys for one provider
+ * **Example:** Multiple keys for one provider
  * Distinguish keys for the same provider with an `alias` — each alias gets
  * its own secret and provider config.
  * ```typescript
@@ -132,6 +129,10 @@ export type ProviderKey = {
  * ```
  *
  * @see https://developers.cloudflare.com/ai-gateway/configuration/bring-your-own-keys/
+ *
+ * @resource
+ * @product AI Gateway
+ * @category AI
  */
 export const ProviderKey = (id: string, props: InputProps<ProviderKeyProps>) =>
   Effect.gen(function* () {

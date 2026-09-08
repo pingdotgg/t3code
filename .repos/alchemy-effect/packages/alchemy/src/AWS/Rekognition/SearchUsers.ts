@@ -11,9 +11,8 @@ import * as Binding from "../../Binding.ts";
  * their identifiers are unknown at deploy time). Provide the
  * implementation with `Effect.provide(AWS.Rekognition.SearchUsersHttp)`.
  *
- * @binding
- * @section User Search
- * @example Search Users by Face ID
+ * ### User Search
+ * **Example:** Search Users by Face ID
  * ```typescript
  * // init
  * const searchUsers = yield* AWS.Rekognition.SearchUsers();
@@ -25,6 +24,8 @@ import * as Binding from "../../Binding.ts";
  * });
  * const matches = result.UserMatches ?? [];
  * ```
+ *
+ * @binding
  */
 export interface SearchUsers extends Binding.Service<
   SearchUsers,

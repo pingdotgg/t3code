@@ -6,6 +6,7 @@ export * from "./IdentityPoolAuth.ts";
 export * from "./IdentityPoolAuthHttp.ts";
 export * from "./IdentityPoolRoleAttachment.ts";
 export * from "./IdentityProvider.ts";
+export * from "./ManagedLoginBranding.ts";
 export * from "./ResourceServer.ts";
 export * from "./User.ts";
 export * from "./UserPool.ts";

@@ -16,17 +16,17 @@
     "test": "bun test"
   },
   "dependencies": {
-    "@cloudflare/workers-types": "catalog:",
-    "@effect/platform-bun": "catalog:",
-    "@effect/platform-node": "catalog:",
-    "@effect/sql-pg": "catalog:",
+    "@cloudflare/workers-types": "catalog:cloudflare-runtime",
+    "@effect/platform-bun": "catalog:effect",
+    "@effect/platform-node": "catalog:effect",
+    "@effect/sql-pg": "catalog:effect",
     "alchemy": "workspace:*",
-    "drizzle-orm": "catalog:",
-    "effect": "catalog:",
-    "pg": "^8.13.0"
+    "drizzle-orm": "catalog:database",
+    "effect": "catalog:effect",
+    "pg": "catalog:database"
   },
   "devDependencies": {
-    "@types/pg": "^8.11.0",
-    "drizzle-kit": "catalog:"
+    "@types/pg": "catalog:database",
+    "drizzle-kit": "catalog:database"
   }
 }

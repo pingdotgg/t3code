@@ -22,9 +22,8 @@ export interface GetDICOMImportJobRequest extends Omit<
  * `outputS3Uri` for per-object results. Provide the implementation with
  * `Effect.provide(AWS.MedicalImaging.GetDICOMImportJobHttp)`.
  *
- * @binding
- * @section Importing DICOM Data
- * @example Poll an Import Job Until It Completes
+ * ### Importing DICOM Data
+ * **Example:** Poll an Import Job Until It Completes
  * ```typescript
  * const getImportJob = yield* MedicalImaging.GetDICOMImportJob(datastore);
  *
@@ -37,6 +36,8 @@ export interface GetDICOMImportJobRequest extends Omit<
  *   }),
  * );
  * ```
+ *
+ * @binding
  */
 export interface GetDICOMImportJob extends Binding.Service<
   GetDICOMImportJob,

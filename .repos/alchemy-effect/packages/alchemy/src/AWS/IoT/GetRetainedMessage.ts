@@ -13,14 +13,15 @@ export interface GetRetainedMessageRequest
  * topics (or all topics when the filter is omitted) and returns a callable
  * that reads the retained MQTT message for a concrete topic. Provide the
  * implementation with `Effect.provide(AWS.IoT.GetRetainedMessageHttp)`.
- * @binding
- * @section Retained Messages
- * @example Read a Retained Message
+ * ### Retained Messages
+ * **Example:** Read a Retained Message
  * ```typescript
  * const getRetained = yield* AWS.IoT.GetRetainedMessage("sensors/*");
  *
  * const { payload } = yield* getRetained({ topic: "sensors/1/state" });
  * ```
+ *
+ * @binding
  */
 export interface GetRetainedMessage extends Binding.Service<
   GetRetainedMessage,

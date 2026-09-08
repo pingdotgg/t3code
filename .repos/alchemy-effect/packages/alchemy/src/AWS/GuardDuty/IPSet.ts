@@ -99,8 +99,8 @@ export interface IPSet extends Resource<
  * file must exist in S3 before activation; name, location, and activation
  * are updatable in place, while format changes replace the set.
  *
- * @section Trusting Known IPs
- * @example Trust the office IP range
+ * ### Trusting Known IPs
+ * **Example:** Trust the office IP range
  * ```typescript
  * const detector = yield* AWS.GuardDuty.Detector("Detector", {});
  * const ipSet = yield* AWS.GuardDuty.IPSet("OfficeIPs", {
@@ -110,7 +110,7 @@ export interface IPSet extends Resource<
  * });
  * ```
  *
- * @example Stage a list without activating it
+ * **Example:** Stage a list without activating it
  * ```typescript
  * const ipSet = yield* AWS.GuardDuty.IPSet("StagedIPs", {
  *   detectorId: detector.detectorId,

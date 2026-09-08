@@ -155,13 +155,12 @@ export interface SecurityGroupRule extends Resource<
  * Most properties (protocol, ports, source, `type`) replace the rule when
  * changed; only `description` and `tags` are updated in place.
  *
- * @resource
- * @section Ingress vs Egress
+ * ### Ingress vs Egress
  * The `type` field decides the direction: `"ingress"` for inbound rules and
  * `"egress"` for outbound. Everything else (protocol, ports, source) is shared
  * between the two directions.
  *
- * @example Inbound HTTPS from anywhere
+ * **Example:** Inbound HTTPS from anywhere
  * ```typescript
  * const httpsRule = yield* AWS.EC2.SecurityGroupRule("HttpsIngress", {
  *   groupId: sg.groupId,
@@ -177,7 +176,7 @@ export interface SecurityGroupRule extends Resource<
  * Opens TCP 443 inbound from the entire internet on the target group. A single
  * port is expressed by setting `fromPort` and `toPort` to the same value.
  *
- * @example Outbound to a database port
+ * **Example:** Outbound to a database port
  * ```typescript
  * const egressRule = yield* AWS.EC2.SecurityGroupRule("DbEgress", {
  *   groupId: sg.groupId,
@@ -194,12 +193,12 @@ export interface SecurityGroupRule extends Resource<
  * only PostgreSQL within the VPC CIDR. Adding any egress rule to a group
  * supersedes the default allow-all-outbound behavior.
  *
- * @section Rule Sources
+ * ### Rule Sources
  * A rule's source (for ingress) or destination (for egress) is exactly one of:
  * an IPv4 CIDR (`cidrIpv4`), an IPv6 CIDR (`cidrIpv6`), another security group
  * (`referencedGroupId`), or a managed prefix list (`prefixListId`).
  *
- * @example Allow traffic from another security group
+ * **Example:** Allow traffic from another security group
  * ```typescript
  * const dbFromWeb = yield* AWS.EC2.SecurityGroupRule("DbFromWeb", {
  *   groupId: dbSg.groupId,
@@ -216,7 +215,7 @@ export interface SecurityGroupRule extends Resource<
  * reach the database, even as the tier's IPs change. This is the preferred way
  * to wire trust between tiers.
  *
- * @example Allow an IPv6 range
+ * **Example:** Allow an IPv6 range
  * ```typescript
  * const ipv6Rule = yield* AWS.EC2.SecurityGroupRule("HttpsIpv6", {
  *   groupId: sg.groupId,
@@ -233,7 +232,7 @@ export interface SecurityGroupRule extends Resource<
  * `0.0.0.0/0`. IPv4 and IPv6 are separate rules — you'd pair this with a
  * `cidrIpv4` rule to cover both.
  *
- * @example Allow from a managed prefix list
+ * **Example:** Allow from a managed prefix list
  * ```typescript
  * const sshRule = yield* AWS.EC2.SecurityGroupRule("SshFromCorp", {
  *   groupId: sg.groupId,
@@ -249,12 +248,12 @@ export interface SecurityGroupRule extends Resource<
  * A `prefixListId` references a centrally-managed set of CIDRs by ID, so the
  * rule's effective ranges update automatically whenever the prefix list does.
  *
- * @section Protocols & Ports
+ * ### Protocols & Ports
  * `ipProtocol` accepts `tcp`, `udp`, `icmp`/`icmpv6`, a protocol number, or `-1`
  * for all protocols. For ICMP, `fromPort` is the ICMP type and `toPort` is the
  * ICMP code, with `-1` meaning "all".
  *
- * @example Allow all traffic from a trusted CIDR
+ * **Example:** Allow all traffic from a trusted CIDR
  * ```typescript
  * const allRule = yield* AWS.EC2.SecurityGroupRule("AllFromVpc", {
  *   groupId: sg.groupId,
@@ -268,7 +267,7 @@ export interface SecurityGroupRule extends Resource<
  * With `ipProtocol: "-1"`, ports are ignored and every protocol is permitted —
  * appropriate only for fully trusted sources such as your own VPC CIDR.
  *
- * @example Allow ICMP echo (ping)
+ * **Example:** Allow ICMP echo (ping)
  * ```typescript
  * const icmpRule = yield* AWS.EC2.SecurityGroupRule("AllowPing", {
  *   groupId: sg.groupId,
@@ -284,6 +283,8 @@ export interface SecurityGroupRule extends Resource<
  * For ICMP the port fields carry the type and code: type `8` / code `0` is an
  * echo request (ping). Use `fromPort: -1, toPort: -1` to allow every ICMP
  * type/code instead.
+ *
+ * @resource
  */
 export const SecurityGroupRule = Resource<SecurityGroupRule>(
   "AWS.EC2.SecurityGroupRule",

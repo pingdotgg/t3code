@@ -17,9 +17,8 @@ export interface GetPriceListFileUrlRequest
  * API. Provide the implementation with
  * `Effect.provide(AWS.Pricing.GetPriceListFileUrlHttp)`.
  *
- * @binding
- * @section Downloading Price List Files
- * @example Resolve a Price List Download URL
+ * ### Downloading Price List Files
+ * **Example:** Resolve a Price List Download URL
  * ```typescript
  * // init
  * const listPriceLists = yield* AWS.Pricing.ListPriceLists();
@@ -40,6 +39,8 @@ export interface GetPriceListFileUrlRequest
  *   });
  * }
  * ```
+ *
+ * @binding
  */
 export interface GetPriceListFileUrl extends Binding.Service<
   GetPriceListFileUrl,

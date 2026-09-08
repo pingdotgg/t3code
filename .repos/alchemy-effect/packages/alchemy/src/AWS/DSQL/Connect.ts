@@ -53,15 +53,15 @@ export const connectEnvPrefix = (logicalId: string): string =>
  * re-mints the token, and execution-scoped pools (`Drizzle.Postgres`)
  * rebuild per execution — a ~15-minute token can never outlive its pool.
  *
- * @section Connecting to a Cluster
- * @example Resolve Connection Info inside a Function
+ * ### Connecting to a Cluster
+ * **Example:** Resolve Connection Info inside a Function
  * ```typescript
  * const conn = yield* DSQL.Connect(cluster, { admin: true });
  * // inside a handler — each yield mints a fresh auth token:
  * const { host, port, username, password, url } = yield* conn;
  * ```
  *
- * @example Drizzle over DSQL
+ * **Example:** Drizzle over DSQL
  * ```typescript
  * const conn = yield* DSQL.Connect(cluster, { admin: true });
  * const db = yield* Drizzle.Postgres(conn.pipe(Effect.map((info) => info.url)));
@@ -69,13 +69,14 @@ export const connectEnvPrefix = (logicalId: string): string =>
  * const rows = yield* db.select().from(Widgets);
  * ```
  *
- * @example Connect as a Custom Database Role
+ * **Example:** Connect as a Custom Database Role
  * ```typescript
  * const conn = yield* DSQL.Connect(cluster, {
  *   username: "app",
  *   database: "postgres",
  * });
  * ```
+ *
  * @binding
  */
 export interface Connect extends Binding.Service<
