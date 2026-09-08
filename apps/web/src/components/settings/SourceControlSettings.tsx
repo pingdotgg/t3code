@@ -273,9 +273,12 @@ function itemSummary({
 
 function DiscoveryItemRow({
   item,
+  expandForSearchTarget,
   children,
 }: {
   readonly item: VcsDiscoveryItem | SourceControlProviderDiscoveryItem;
+  /** Search-target id of a setting inside this row, so a jump reveals it. */
+  readonly expandForSearchTarget?: string | undefined;
   readonly children?: ReactNode;
 }) {
   const version = optionLabel(item.version);
@@ -290,10 +293,10 @@ function DiscoveryItemRow({
   const searchTargetId = useSettingsSearchTargetId();
 
   useEffect(() => {
-    if (item.kind === "git" && searchTargetId === searchableSetting("git-fetch-interval").id) {
+    if (expandForSearchTarget !== undefined && searchTargetId === expandForSearchTarget) {
       setIsExpanded(true);
     }
-  }, [item.kind, searchTargetId]);
+  }, [expandForSearchTarget, searchTargetId]);
 
   return (
     <div
@@ -389,7 +392,7 @@ function HostingCliPathSettings({
   };
 
   return (
-    <SettingsSearchTarget id={setting.id} className="grid gap-3">
+    <div className="grid gap-3">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0 space-y-1">
           <div className="flex min-w-0 items-center gap-1">
@@ -441,7 +444,7 @@ function HostingCliPathSettings({
           />
         </div>
       </div>
-    </SettingsSearchTarget>
+    </div>
   );
 }
 
@@ -680,29 +683,51 @@ export function SourceControlSettingsPanel() {
               headerAction={scanButton}
             >
               {result.versionControlSystems.map((item) => (
-                <DiscoveryItemRow key={`vcs:${item.kind}`} item={item}>
-                  {item.kind === "git" ? <GitFetchIntervalSettings /> : undefined}
+                <DiscoveryItemRow
+                  key={`vcs:${item.kind}`}
+                  item={item}
+                  expandForSearchTarget={
+                    item.kind === "git"
+                      ? searchableSetting("git-fetch-interval").id
+                      : undefined
+                  }
+                >
+                  {item.kind === "git" ? (
+                    <GitFetchIntervalSettings />
+                  ) : undefined}
                 </DiscoveryItemRow>
               ))}
             </SettingsSection>
           ) : null}
 
           {result.sourceControlProviders.length > 0 ? (
-            <SettingsSection
-              id={hasVersionControlSystems ? undefined : searchableSetting("source-control").id}
-              title={
-                hasVersionControlSystems
-                  ? "Source Control Providers"
-                  : `Source Control Providers${environmentSuffix}`
-              }
-              headerAction={hasVersionControlSystems ? null : scanButton}
-            >
-              {result.sourceControlProviders.map((item) => (
-                <DiscoveryItemRow key={`provider:${item.kind}`} item={item}>
-                  {hostingCliPathField(item.kind, item.label, isPrimaryEnvironment)}
-                </DiscoveryItemRow>
-              ))}
-            </SettingsSection>
+            // The CLI path field renders once per provider inside a collapsed
+            // row, so the section owns the anchor and the rows expand into it.
+            <SettingsSearchTarget id={searchableSetting("hosting-cli-path").id}>
+              <SettingsSection
+                id={hasVersionControlSystems ? undefined : searchableSetting("source-control").id}
+                title={
+                  hasVersionControlSystems
+                    ? "Source Control Providers"
+                    : `Source Control Providers${environmentSuffix}`
+                }
+                headerAction={hasVersionControlSystems ? null : scanButton}
+              >
+                {result.sourceControlProviders.map((item) => (
+                  <DiscoveryItemRow
+                    key={`provider:${item.kind}`}
+                    item={item}
+                    expandForSearchTarget={
+                      SOURCE_CONTROL_PROVIDER_CLI[item.kind] && isPrimaryEnvironment
+                        ? searchableSetting("hosting-cli-path").id
+                        : undefined
+                    }
+                  >
+                    {hostingCliPathField(item.kind, item.label, isPrimaryEnvironment)}
+                  </DiscoveryItemRow>
+                ))}
+              </SettingsSection>
+            </SettingsSearchTarget>
           ) : null}
         </>
       ) : (
