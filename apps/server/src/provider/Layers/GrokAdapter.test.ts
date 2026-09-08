@@ -297,8 +297,15 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
   it.effect("retires a crashed process so a deliberate retry can resume", () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("grok-crash-recovery");
+      const tempDir = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "grok-crash-recovery-")),
+      );
+      const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
       const wrapper = yield* Effect.promise(() =>
-        makeMockGrokWrapper({ T3_ACP_CRASH_PROMPT: "1" }),
+        makeMockGrokWrapper({
+          T3_ACP_CRASH_PROMPT: "1",
+          T3_ACP_REQUEST_LOG_PATH: requestLogPath,
+        }),
       );
       const adapter = yield* makeTestAdapter(wrapper);
       const exited =
@@ -331,6 +338,19 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
       const turn = yield* adapter.sendTurn({ threadId, input: "retry now", attachments: [] });
       assert.equal(turn.threadId, threadId);
       yield* adapter.stopSession(threadId);
+      const requests = yield* Effect.promise(() => readJsonLines(requestLogPath));
+      assert.equal(requests.filter((request) => request.method === "session/new").length, 1);
+      assert.deepStrictEqual(session.resumeCursor, {
+        schemaVersion: 1,
+        sessionId: "mock-session-1",
+      });
+      const resumes = requests.filter((request) => request.method === "session/load");
+      assert.equal(resumes.length, 1);
+      assert.deepStrictEqual(resumes[0]?.params, {
+        sessionId: "mock-session-1",
+        cwd: process.cwd(),
+        mcpServers: [],
+      });
     }),
   );
 
