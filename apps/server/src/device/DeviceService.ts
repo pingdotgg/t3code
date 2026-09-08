@@ -468,8 +468,10 @@ export const layer = Layer.effect(DeviceService, make);
 export const stateStream = (service: DeviceService["Service"]): Stream.Stream<DeviceServiceState> =>
   Stream.unwrap(
     Effect.gen(function* () {
-      const initial = yield* service.state;
+      // Subscribe before reading the snapshot so no change between the two
+      // is lost; the scope lives as long as the stream does.
       const subscription = yield* service.subscribe;
+      const initial = yield* service.state;
       return Stream.concat(Stream.make(initial), Stream.fromSubscription(subscription));
     }),
-  );
+  ).pipe(Stream.scoped);
