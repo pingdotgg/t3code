@@ -30,6 +30,13 @@ const state = path.join(root, 'hosts', owner);
 const run = (command, args, options = {}) => spawnSync(command, args, { encoding: 'utf8', timeout: 30000, ...options });
 const read = (file) => { try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return null; } };
 const write = (file, value) => { const tmp = file + '.' + process.pid; fs.writeFileSync(tmp, JSON.stringify(value), { mode: 0o600 }); fs.renameSync(tmp, file); };
+const stopHub = hub => {
+  if (!hub || hub.owner !== owner) return;
+  const command = run('ps', ['-p', String(hub.pid), '-o', 'command=']).stdout || '';
+  if (command.includes(hub.entryPath) && command.includes(String(hub.port))) {
+    try { process.kill(hub.pid, 'SIGTERM'); } catch {}
+  }
+};
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const healthy = async (port, route) => { try { return (await fetch('http://127.0.0.1:' + port + route, { signal: AbortSignal.timeout(2000) })).ok; } catch { return false; } };
 const port = () => new Promise((resolve, reject) => { const server = net.createServer(); server.once('error', reject); server.listen(0, '127.0.0.1', () => { const value = server.address().port; server.close(() => resolve(value)); }); });
@@ -83,10 +90,7 @@ async function install(name, version, entry) {
   if (mode === 'stop') {
     const hub = read(hubFile);
     if (hub && hub.owner === owner) {
-      const command = run('ps', ['-p', String(hub.pid), '-o', 'command=']).stdout || '';
-      if (command.includes(hub.entryPath) && command.includes(String(hub.port))) {
-        try { process.kill(hub.pid, 'SIGTERM'); } catch {}
-      }
+      stopHub(hub);
       fs.rmSync(hubFile, { force: true });
     }
     const entry = path.join(root, 'tools', 'agent-device@' + agentVersion, 'node_modules', 'agent-device', 'bin', 'agent-device.mjs');
@@ -99,6 +103,7 @@ async function install(name, version, entry) {
   const agentEntry = await install('agent-device', agentVersion, 'bin/agent-device.mjs');
   let hub = read(hubFile);
   if (!hub || hub.owner !== owner || !await healthy(hub.port, '/readyz')) {
+    stopHub(hub);
     const hubPort = await port();
     const log = fs.openSync(path.join(state, 'hub.log'), 'a');
     const child = spawn(process.execPath, [hubEntry, '--port', String(hubPort), '--host', '127.0.0.1', '--hide-sidebar', '--hide-boot-device'], {

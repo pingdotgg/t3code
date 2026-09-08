@@ -47,8 +47,8 @@ describe("remote helper lifecycle", () => {
         await NodeFSP.writeFile(NodePath.join(agentDir, ".install-complete"), AGENT_DEVICE_VERSION);
         await NodeFSP.writeFile(
           hub,
-          `import http from 'node:http';
-const args=process.argv.slice(2); http.createServer((req,res)=>res.end('ok')).listen(Number(args[args.indexOf('--port')+1]),'127.0.0.1');`,
+          `import http from 'node:http'; import fs from 'node:fs';
+const args=process.argv.slice(2); http.createServer((req,res)=>{res.statusCode=fs.existsSync('unhealthy-'+process.pid)?503:200;res.end('ok');}).listen(Number(args[args.indexOf('--port')+1]),'127.0.0.1');`,
         );
         await NodeFSP.writeFile(
           agent,
@@ -63,7 +63,11 @@ else { const child=spawn(process.execPath,[process.argv[1],'serve'],{detached:tr
         );
         const invoke = async (owner: string, mode: "start" | "stop") => {
           const file = NodePath.join(home, `${owner}-${mode}.cjs`);
-          await NodeFSP.writeFile(file, remoteDeviceScript(owner, mode));
+          await NodeFSP.writeFile(
+            file,
+            `const originalKill = process.kill; process.kill = (pid, signal) => { if (signal === 'SIGTERM') require('node:fs').appendFileSync(${JSON.stringify(NodePath.join(home, "stops"))}, pid+'\\n'); return originalKill(pid, signal); };\n` +
+              remoteDeviceScript(owner, mode),
+          );
           const result = await exec(process.execPath, [file], {
             env: { ...process.env, HOME: home, PATH: `${bin}:${process.env.PATH}` },
           });
@@ -77,6 +81,20 @@ else { const child=spawn(process.execPath,[process.argv[1],'serve'],{detached:tr
           expect(reused.daemonPort).toBe(first.daemonPort);
           expect(second.hubPort).not.toBe(first.hubPort);
           expect(second.daemonPort).not.toBe(first.daemonPort);
+          const firstHub = JSON.parse(
+            await NodeFSP.readFile(NodePath.join(root, "hosts/one/hub.json"), "utf8"),
+          );
+          const secondHub = JSON.parse(
+            await NodeFSP.readFile(NodePath.join(root, "hosts/two/hub.json"), "utf8"),
+          );
+          await NodeFSP.writeFile(NodePath.join(root, `hosts/one/unhealthy-${firstHub.pid}`), "");
+          const repaired = await invoke("one", "start");
+          expect(repaired.hubPort).not.toBe(first.hubPort);
+          const stopped = (await NodeFSP.readFile(NodePath.join(home, "stops"), "utf8"))
+            .trim()
+            .split("\n");
+          expect(stopped).toContain(String(firstHub.pid));
+          expect(stopped).not.toContain(String(secondHub.pid));
           await invoke("one", "stop");
           expect((await fetch(`http://127.0.0.1:${second.hubPort}/readyz`)).ok).toBe(true);
           expect(
