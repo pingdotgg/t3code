@@ -216,29 +216,7 @@ enum EndpointNetworkScope {
     }
 
     static func isLocalHost(_ rawHost: String) -> Bool {
-        let host = hostWithoutPort(rawHost).lowercased()
-
-        if host == "localhost" || host.hasSuffix(".local") || host == "::1" {
-            return true
-        }
-
-        let octets = host.split(separator: ".").compactMap { Int($0) }
-        if octets.count == 4, octets.allSatisfy({ 0 ... 255 ~= $0 }) {
-            return octets[0] == 10
-                || octets[0] == 127
-                || (octets[0] == 169 && octets[1] == 254)
-                || (octets[0] == 172 && 16 ... 31 ~= octets[1])
-                || (octets[0] == 192 && octets[1] == 168)
-        }
-
-        guard host.contains(":"),
-              let firstHextetText = host.split(separator: ":", omittingEmptySubsequences: true).first,
-              let firstHextet = UInt16(firstHextetText, radix: 16)
-        else {
-            return false
-        }
-        return firstHextet & 0xffc0 == 0xfe80
-            || firstHextet & 0xfe00 == 0xfc00
+        LocalNetworkProbe.isLocalHost(hostWithoutPort(rawHost))
     }
 
     private static func hostWithoutPort(_ rawHost: String) -> String {

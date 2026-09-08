@@ -1,4 +1,5 @@
 import Foundation
+import Network
 
 public struct ConnectionProbeResult: Equatable, Sendable {
     public let baseURL: URL
@@ -132,24 +133,21 @@ public actor LocalNetworkProbe {
         if value == "localhost" || value == "::1" || value.hasSuffix(".local") {
             return true
         }
-        if value.hasPrefix("10.")
-            || value.hasPrefix("127.")
-            || value.hasPrefix("192.168.")
-            || value.hasPrefix("169.254.")
-        {
-            return true
+        if let address = IPv4Address(value) {
+            let octets = Array(address.rawValue)
+            return octets[0] == 10
+                || octets[0] == 127
+                || (octets[0] == 192 && octets[1] == 168)
+                || (octets[0] == 169 && octets[1] == 254)
+                || (octets[0] == 172 && (16...31).contains(octets[1]))
         }
-        let octets = value.split(separator: ".").compactMap { Int($0) }
-        if octets.count == 4, octets[0] == 172, (16...31).contains(octets[1]) {
-            return true
-        }
-        // IPv6 unique-local and link-local ranges.
-        return value.hasPrefix("fc")
-            || value.hasPrefix("fd")
-            || value.hasPrefix("fe8")
-            || value.hasPrefix("fe9")
-            || value.hasPrefix("fea")
-            || value.hasPrefix("feb")
+        let unscoped = value.components(separatedBy: "%")[0]
+        guard let address = IPv6Address(unscoped) else { return false }
+        let octets = Array(address.rawValue)
+        // IPv6 loopback, unique-local (fc00::/7), and link-local (fe80::/10).
+        return (octets.prefix(15).allSatisfy { $0 == 0 } && octets[15] == 1)
+            || octets[0] & 0xfe == 0xfc
+            || (octets[0] == 0xfe && octets[1] & 0xc0 == 0x80)
     }
 
     private static func hasPermissionDenialEvidence(_ error: NSError) -> Bool {
