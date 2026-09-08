@@ -527,12 +527,16 @@ const make = Effect.gen(function* PlaywrightPreviewHostMake() {
           Effect.timeoutOrElse({
             duration: timeout,
             orElse: () =>
-              new PreviewAutomationEngineError({
-                operation,
-                engine: tab.engine,
-                tabId: tab.tabId,
-                detail: `Evaluation did not finish in ${timeout} ms.`,
-              }),
+              closeTab(tab).pipe(
+                Effect.andThen(
+                  new PreviewAutomationEngineError({
+                    operation,
+                    engine: tab.engine,
+                    tabId: tab.tabId,
+                    detail: `Evaluation did not finish in ${timeout} ms. The tab was closed.`,
+                  }),
+                ),
+              ),
           }),
         );
       }

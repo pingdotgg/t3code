@@ -84,7 +84,7 @@ describe("PlaywrightPreviewHost", () => {
 
   // Runs against every engine found on this host. Passes without checking
   // anything when none is installed.
-  it.effect(
+  it.live(
     "drives a real headless page in each installed engine",
     () =>
       Effect.gen(function* () {
@@ -150,6 +150,20 @@ describe("PlaywrightPreviewHost", () => {
             .invoke<never>({ scope, operation: "recordingStart", input: {}, tabId })
             .pipe(Effect.flip);
           expect(recording._tag).toBe("PreviewAutomationEngineError");
+          const stuck = yield* host
+            .invoke<never>({
+              scope,
+              operation: "evaluate",
+              input: { expression: "new Promise(() => {})" },
+              tabId,
+              timeoutMs: 500,
+            })
+            .pipe(Effect.flip);
+          expect(stuck._tag).toBe("PreviewAutomationEngineError");
+          const gone = yield* host
+            .invoke<never>({ scope, operation: "status", input: {}, tabId })
+            .pipe(Effect.flip);
+          expect(gone._tag).toBe("PreviewAutomationEngineError");
         }
       }).pipe(Effect.provide(realHost)),
     { timeout: 120_000 },
