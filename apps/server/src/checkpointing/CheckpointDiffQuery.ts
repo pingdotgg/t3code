@@ -29,6 +29,7 @@ import {
   CheckpointWorkspacePathMissingError,
   type CheckpointServiceError,
 } from "./Errors.ts";
+import { checkpointStartRef } from "./Utils.ts";
 import * as CheckpointStore from "./CheckpointStore.ts";
 
 /** Service tag for checkpoint diff queries. */
@@ -155,24 +156,31 @@ export const make = Effect.gen(function* () {
         });
       }
 
-      const fromCheckpointRef =
-        input.fromTurnCount === 0
-          ? (() => {
-              // The root scope is shared by every run in this thread. Its
-              // runId tracks the latest owner, while ordinal zero stays the baseline.
-              const firstScope = projection.checkpointScopes.find(
-                (scope) => scope.kind === "root_run",
-              );
-              return firstScope === undefined
-                ? undefined
-                : checkpointRefForScopeOrdinal({
-                    scopeId: firstScope.id,
-                    ordinalWithinScope: 0,
-                  });
-            })()
-          : readyCheckpoints.find((checkpoint) => checkpoint.appRunOrdinal === input.fromTurnCount)
-              ?.ref;
-      if (fromCheckpointRef === undefined) {
+      const startRef = checkpointStartRef(toCheckpoint.ref);
+      // A captured turn-start snapshot is itself the correct single-turn
+      // baseline, including when the previous turn left no checkpoint.
+      const turnBaselineRef =
+        input.toTurnCount === input.fromTurnCount + 1 &&
+        (yield* checkpointStore.hasCheckpointRef({ cwd: toScope.cwd, checkpointRef: startRef }))
+          ? startRef
+          : input.fromTurnCount === 0
+            ? (() => {
+                // The root scope is shared by every run in this thread. Its
+                // runId tracks the latest owner, while ordinal zero stays the baseline.
+                const firstScope = projection.checkpointScopes.find(
+                  (scope) => scope.kind === "root_run",
+                );
+                return firstScope === undefined
+                  ? undefined
+                  : checkpointRefForScopeOrdinal({
+                      scopeId: firstScope.id,
+                      ordinalWithinScope: 0,
+                    });
+              })()
+            : readyCheckpoints.find(
+                (checkpoint) => checkpoint.appRunOrdinal === input.fromTurnCount,
+              )?.ref;
+      if (turnBaselineRef === undefined) {
         return yield* new CheckpointRefUnavailableError({
           operation,
           threadId: input.threadId,
@@ -180,11 +188,10 @@ export const make = Effect.gen(function* () {
           checkpoint: "from",
         });
       }
-
       const diff = yield* checkpointStore
         .diffCheckpoints({
           cwd: toScope.cwd,
-          fromCheckpointRef,
+          fromCheckpointRef: turnBaselineRef,
           toCheckpointRef: toCheckpoint.ref,
           fallbackFromToHead: false,
           ignoreWhitespace,

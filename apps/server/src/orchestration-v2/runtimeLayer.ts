@@ -255,6 +255,7 @@ const effectExecutorProvided = effectExecutorLayer.pipe(
   Layer.provide(
     Layer.mergeAll(
       runFinalizationServiceProvided,
+      checkpointCaptureServiceProvided,
       checkpointRollbackServiceProvided,
       providerSessionManagerProvided,
       providerTurnControlServiceProvided,
