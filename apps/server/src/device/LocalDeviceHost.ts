@@ -547,6 +547,3 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
   };
   return host;
 });
-
-/** Exposed for tests. */
-export const __testing = { AgentDeviceDaemonFile };

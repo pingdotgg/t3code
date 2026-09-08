@@ -12,7 +12,7 @@ For browser work, first call \`preview_status\`. If no automation-capable previe
 Do not switch to global browser skills, Chrome, Node REPL browser automation, standalone Playwright, or agent-browser merely because the preview is initially closed or a first call fails. Use an alternative browser system only when the T3 preview tools are absent, the user explicitly requests another browser, or \`preview_open\` returns an explicit unsupported/unavailable error. A failed T3 preview tool call should be inspected and retried with corrected arguments when the error is actionable.
 `;
 
-export const T3_CODE_DEVICE_TOOL_INSTRUCTIONS = `
+const T3_CODE_DEVICE_TOOL_INSTRUCTIONS = `
 
 ## T3 Code devices
 

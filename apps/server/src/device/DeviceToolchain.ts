@@ -23,10 +23,10 @@ import * as Semaphore from "effect/Semaphore";
 
 import * as ProcessRunner from "../processRunner.ts";
 
-export const DEVICE_HUB_PACKAGE = "expo-device-hub";
-export const DEVICE_HUB_VERSION = "0.9.0";
-export const AGENT_DEVICE_PACKAGE = "agent-device";
-export const AGENT_DEVICE_VERSION = "0.20.10";
+const DEVICE_HUB_PACKAGE = "expo-device-hub";
+const DEVICE_HUB_VERSION = "0.9.0";
+const AGENT_DEVICE_PACKAGE = "agent-device";
+const AGENT_DEVICE_VERSION = "0.20.10";
 
 const DEVICE_TOOLS_DIR = "device";
 const INSTALL_TIMEOUT = Duration.minutes(10);
@@ -87,7 +87,7 @@ const toolPaths = (path: Path.Path, baseDir: string, spec: ToolSpec): DeviceTool
   };
 };
 
-export const deviceToolchainPaths = (path: Path.Path, baseDir: string): DeviceToolchainPaths => ({
+const deviceToolchainPaths = (path: Path.Path, baseDir: string): DeviceToolchainPaths => ({
   hub: toolPaths(path, baseDir, HUB_SPEC),
   agentDevice: toolPaths(path, baseDir, AGENT_DEVICE_SPEC),
 });

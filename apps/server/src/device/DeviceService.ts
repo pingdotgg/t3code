@@ -122,7 +122,7 @@ interface ServiceState {
 const vendorPrefix = (platform: DevicePlatform) =>
   platform === "ios" ? "/vendor/serve-sim" : "/vendor/serve-emu";
 
-export const make = Effect.gen(function* () {
+const make = Effect.gen(function* () {
   const localHost = yield* LocalDeviceHost.make();
   const hosts: ReadonlyMap<DeviceHostId, DeviceHost> = new Map([[localHost.id, localHost]]);
   const httpClient = (yield* HttpClient.HttpClient).pipe(HttpClient.withScope);

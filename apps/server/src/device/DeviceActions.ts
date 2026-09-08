@@ -36,7 +36,7 @@ const encodePushPayload = Schema.encodeUnknownEffect(
   Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
 );
 
-export const IOS_ACTIONS: ReadonlySet<DeviceActionType> = new Set([
+const IOS_ACTIONS: ReadonlySet<DeviceActionType> = new Set([
   "setAppearance",
   "setTextSize",
   "setToggle",
@@ -51,7 +51,7 @@ export const IOS_ACTIONS: ReadonlySet<DeviceActionType> = new Set([
   "sendPush",
 ]);
 
-export const ANDROID_ACTIONS: ReadonlySet<DeviceActionType> = new Set([
+const ANDROID_ACTIONS: ReadonlySet<DeviceActionType> = new Set([
   "setAppearance",
   "setTextSize",
   "setToggle",
