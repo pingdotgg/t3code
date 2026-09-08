@@ -932,6 +932,9 @@ final class NativeMultiEnvironmentTests: XCTestCase {
         aggregateRefreshSleep: @escaping @Sendable (Duration) async throws -> Void = {
             try await Task.sleep(for: $0)
         },
+        aggregatePeerRefreshSleep: @escaping @Sendable (String, Duration) async throws -> Void = { _, interval in
+            try await Task.sleep(for: interval)
+        },
         aggregateEnvironmentLoader: @escaping @Sendable (EnvironmentRuntime) async throws -> [Environment] = {
             try await $0.environments()
         }
@@ -1038,6 +1041,7 @@ final class NativeMultiEnvironmentTests: XCTestCase {
                 aggregateIdleRefreshInterval: aggregateIdleRefreshInterval,
                 aggregateFailureRefreshInterval: aggregateFailureRefreshInterval,
                 aggregateRefreshSleep: aggregateRefreshSleep,
+                aggregatePeerRefreshSleep: aggregatePeerRefreshSleep,
                 aggregateEnvironmentLoader: aggregateEnvironmentLoader
             )
         )
@@ -1054,8 +1058,8 @@ struct NativePassiveThreadRefreshTests {
     func passiveThreadEventsArriveWithinFiveSecondsAndStayFastAfterChanges() async throws {
         let refreshSleep = ControllableAggregateRefreshSleep()
         let fixture = try await NativeMultiEnvironmentTests.makeFixture(
-            aggregateRefreshSleep: {
-                try await refreshSleep.sleep(for: $0)
+            aggregatePeerRefreshSleep: { _, interval in
+                try await refreshSleep.sleep(for: interval)
             }
         )
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
@@ -1096,8 +1100,8 @@ struct NativePassiveThreadRefreshTests {
     func passiveRefreshUsesTenSecondsWhenWorkIsUnchanged() async throws {
         let refreshSleep = ControllableAggregateRefreshSleep()
         let fixture = try await NativeMultiEnvironmentTests.makeFixture(
-            aggregateRefreshSleep: {
-                try await refreshSleep.sleep(for: $0)
+            aggregatePeerRefreshSleep: { _, interval in
+                try await refreshSleep.sleep(for: interval)
             }
         )
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
@@ -1111,52 +1115,161 @@ struct NativePassiveThreadRefreshTests {
         await fixture.client.disconnect()
     }
 
-    @Test("A failed passive environment backs off without slowing an active peer")
+    @Test("A failed passive environment backs off without slowing an active peer", .timeLimit(.minutes(1)))
     func failedPassiveEnvironmentBacksOffWithoutSlowingActivePeer() async throws {
-        let refreshSleep = ControllableAggregateRefreshSleep()
+        let healthyClock = ControllableAggregateRefreshSleep()
+        let failedClock = ControllableAggregateRefreshSleep()
         let fixture = try await NativeMultiEnvironmentTests.makeFixture(
             includeThirdEnvironment: true,
-            aggregateRefreshSleep: {
-                try await refreshSleep.sleep(for: $0)
+            aggregatePeerRefreshSleep: { id, interval in
+                try await (id == "two" ? healthyClock : failedClock).sleep(for: interval)
             }
         )
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
         _ = try await fixture.client.initialSnapshot()
-        await fixture.transport.setShell(
-            multiEnvironmentShell(
-                projectID: "project-two",
-                threadID: "thread-two",
-                title: "Remote work",
-                providerID: "claudeAgent",
-                modelID: "claude-opus-4-1",
-                backgroundLiveness: .working
-            ),
-            host: "two.example"
-        )
         await fixture.transport.setReachable(false, host: "three.example")
-
-        let firstCadence = await refreshSleep.waitUntilRequested(count: 1)
-        #expect(firstCadence == .seconds(5))
-        await refreshSleep.resume()
-        let secondCadence = await refreshSleep.waitUntilRequested(count: 2)
-        #expect(secondCadence == .seconds(5))
-        let initialFailedReadCount = await fixture.transport.shellReadCount(host: "three.example")
-        #expect(initialFailedReadCount == 2)
-
-        for requestCount in 2...4 {
-            await refreshSleep.resume()
-            let cadence = await refreshSleep.waitUntilRequested(count: requestCount + 1)
-            #expect(cadence == .seconds(5))
-            let failedReadCount = await fixture.transport.shellReadCount(host: "three.example")
-            #expect(failedReadCount == 2)
+        _ = await healthyClock.waitUntilRequested(count: 1)
+        _ = await failedClock.waitUntilRequested(count: 1)
+        await failedClock.resume()
+        let failureCadence = await failedClock.waitUntilRequested(count: 2)
+        #expect(failureCadence == .seconds(20))
+        for count in 2...4 {
+            await healthyClock.resume()
+            _ = await healthyClock.waitUntilRequested(count: count)
+            let failedReads = await fixture.transport.shellReadCount(host: "three.example")
+            #expect(failedReads == 2)
         }
-
-        await refreshSleep.resume()
-        _ = await refreshSleep.waitUntilRequested(count: 6)
-        let retriedReadCount = await fixture.transport.shellReadCount(host: "three.example")
-        #expect(retriedReadCount == 3)
+        await failedClock.resume()
+        _ = await failedClock.waitUntilRequested(count: 3)
+        let retriedReads = await fixture.transport.shellReadCount(host: "three.example")
+        #expect(retriedReads == 3)
         await fixture.client.disconnect()
     }
+
+    @Test("Healthy rows publish twice while a peer shell and optional catalogue remain held", .timeLimit(.minutes(1)))
+    func healthyRowsPublishTwiceWhilePeerAndCatalogueAreHeld() async throws {
+        let healthyClock = ControllableAggregateRefreshSleep()
+        let slowClock = ControllableAggregateRefreshSleep()
+        let connector = GatedPassiveCatalogueConnector()
+        let topologyGate = PassiveRequestGate()
+        let fixture = try await NativeMultiEnvironmentTests.makeFixture(
+            includeThirdEnvironment: true,
+            webSocketConnector: connector,
+            aggregatePeerRefreshSleep: { id, interval in
+                try await (id == "two" ? healthyClock : slowClock).sleep(for: interval)
+            },
+            aggregateEnvironmentLoader: { runtime in
+                await topologyGate.enter()
+                return try await runtime.environments()
+            }
+        )
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        let initial = try await fixture.client.initialSnapshot()
+        let healthy = try #require(initial.threads.first { $0.environmentID == "two" })
+        let heldShell = PassiveRequestGate()
+        await fixture.transport.holdNextShell(host: "three.example", gate: heldShell)
+        await connector.holdPassiveConnections()
+        await topologyGate.release()
+        await connector.gate.waitUntilEntered()
+        _ = await healthyClock.waitUntilRequested(count: 1)
+        _ = await slowClock.waitUntilRequested(count: 1)
+        await slowClock.resume()
+        await heldShell.waitUntilEntered()
+        for update in 1...2 {
+            let title = "Healthy update \(update)"
+            let probe = ThreadTitleEventProbe(events: fixture.client.events(), threadID: healthy.id, title: title)
+            probe.start()
+            await fixture.transport.setShell(multiEnvironmentShell(
+                projectID: "project-two", threadID: "thread-two", title: title,
+                snapshotSequence: update + 1
+            ), host: "two.example")
+            await healthyClock.resume()
+            await probe.waitUntilObserved()
+            #expect(probe.didObserveTitle())
+            _ = await healthyClock.waitUntilRequested(count: update + 1)
+            #expect(await heldShell.isHeld)
+            #expect(await connector.gate.isHeld)
+        }
+        await fixture.client.disconnect()
+        await heldShell.release()
+        await connector.release()
+    }
+    @Test("A cancelled refresh generation cannot overwrite a restarted peer", .timeLimit(.minutes(1)))
+    func cancelledGenerationCannotOverwriteRestartedPeer() async throws {
+        let clock = ControllableAggregateRefreshSleep()
+        let fixture = try await NativeMultiEnvironmentTests.makeFixture(
+            aggregatePeerRefreshSleep: { _, interval in try await clock.sleep(for: interval) }
+        )
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        _ = try await fixture.client.initialSnapshot()
+        _ = await clock.waitUntilRequested(count: 1)
+        let oldWorker = try #require(fixture.client.aggregateRefreshWorkers["two"]?.task)
+        let gate = PassiveRequestGate()
+        await fixture.transport.setShell(multiEnvironmentShell(
+            projectID: "project-two", threadID: "thread-two", title: "Stale generation",
+            snapshotSequence: 999
+        ), host: "two.example")
+        await fixture.transport.holdNextShell(host: "two.example", gate: gate)
+        await clock.resume()
+        await gate.waitUntilEntered()
+        await fixture.transport.setShell(multiEnvironmentShell(
+            projectID: "project-two", threadID: "thread-two", title: "Current generation",
+            snapshotSequence: 2
+        ), host: "two.example")
+        _ = try await fixture.client.initialSnapshot()
+        #expect(oldWorker.isCancelled)
+        await gate.release()
+        await oldWorker.value
+        // A stale 999 would survive this read of sequence 2 if it reached the cache.
+        let snapshot = try await fixture.client.backgroundSnapshot()
+        #expect(snapshot.threads.first { $0.environmentID == "two" }?.title == "Current generation")
+        await fixture.client.disconnect()
+    }
+
+    @Test("Removal cancels a held peer and its late response never returns a row", .timeLimit(.minutes(1)))
+    func removedPeerCannotPublishLateResponse() async throws {
+        let removedClock = ControllableAggregateRefreshSleep()
+        let healthyClock = ControllableAggregateRefreshSleep()
+        let fixture = try await NativeMultiEnvironmentTests.makeFixture(
+            includeThirdEnvironment: true,
+            aggregatePeerRefreshSleep: { id, interval in
+                try await (id == "two" ? removedClock : healthyClock).sleep(for: interval)
+            }
+        )
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        let initial = try await fixture.client.initialSnapshot()
+        let healthy = try #require(initial.threads.first { $0.environmentID == "three" })
+        let probe = ThreadTitleEventProbe(
+            events: fixture.client.events(), threadID: healthy.id, title: "Removal verified"
+        )
+        probe.start()
+        _ = await removedClock.waitUntilRequested(count: 1)
+        _ = await healthyClock.waitUntilRequested(count: 1)
+        let oldWorker = try #require(fixture.client.aggregateRefreshWorkers["two"]?.task)
+        let gate = PassiveRequestGate()
+        await fixture.transport.setShell(multiEnvironmentShell(
+            projectID: "project-two", threadID: "thread-two", title: "Ghost removed row",
+            snapshotSequence: 999
+        ), host: "two.example")
+        await fixture.transport.holdNextShell(host: "two.example", gate: gate)
+        await removedClock.resume()
+        await gate.waitUntilEntered()
+        try await fixture.client.removeEnvironment(id: "two")
+        #expect(oldWorker.isCancelled)
+        #expect(fixture.client.aggregateRefreshWorkers["two"] == nil)
+        await gate.release()
+        await oldWorker.value
+        await fixture.transport.setShell(multiEnvironmentShell(
+            projectID: "project-three", threadID: "thread-three", title: "Removal verified",
+            snapshotSequence: 2
+        ), host: "three.example")
+        await healthyClock.resume()
+        await probe.waitUntilObserved()
+        #expect(!probe.sawThreadTitle("Ghost removed row"))
+        #expect(!probe.lastEnvironmentIDs.contains("two"))
+        await fixture.client.disconnect()
+    }
+
 }
 
 private actor FailOnceAggregateEnvironmentLoader {
@@ -1341,6 +1454,8 @@ private final class ThreadTitleEventProbe {
     private let threadID: String
     private let title: String
     private var observed = false
+    private var observedTitles = Set<String>()
+    private(set) var lastEnvironmentIDs = Set<String>()
     private var observedWaiters: [CheckedContinuation<Void, Never>] = []
     private var task: Task<Void, Never>?
 
@@ -1356,8 +1471,11 @@ private final class ThreadTitleEventProbe {
             for await event in events {
                 switch event {
                 case let .thread(thread):
+                    observedTitles.insert(thread.title)
                     observed = thread.id == threadID && thread.title == title
                 case let .snapshot(snapshot):
+                    observedTitles.formUnion(snapshot.threads.map(\.title))
+                    lastEnvironmentIDs = Set(snapshot.environments.map(\.id))
                     observed = snapshot.threads.contains {
                         $0.id == self.threadID && $0.title == self.title
                     }
@@ -1372,6 +1490,8 @@ private final class ThreadTitleEventProbe {
             }
         }
     }
+
+    func sawThreadTitle(_ title: String) -> Bool { observedTitles.contains(title) }
 
     func didObserveTitle() -> Bool {
         observed
@@ -1446,6 +1566,7 @@ private actor MultiEnvironmentHTTPTransport: HTTPTransport {
     private var shellReadCounts: [String: Int] = [:]
     private var dispatched: [MultiEnvironmentDispatchRecord] = []
     private var hostsDroppingNextCreateReply = Set<String>()
+    private var nextShellGates: [String: PassiveRequestGate] = [:]
 
     init(shells: [String: OrchestrationShellSnapshot]) {
         self.shells = shells
@@ -1497,11 +1618,19 @@ private actor MultiEnvironmentHTTPTransport: HTTPTransport {
         hostsDroppingNextCreateReply.insert(host)
     }
 
-    func data(for request: URLRequest) throws -> (Data, HTTPURLResponse) {
+    func holdNextShell(host: String, gate: PassiveRequestGate) {
+        nextShellGates[host] = gate
+    }
+
+    func data(for request: URLRequest) async throws -> (Data, HTTPURLResponse) {
         let host = request.url?.host ?? ""
         let path = request.url?.path ?? ""
         if path == "/api/orchestration/shell" {
             shellReadCounts[host, default: 0] += 1
+            if let gate = nextShellGates.removeValue(forKey: host), let data = shellData[host] {
+                await gate.enter()
+                return (data, multiEnvironmentResponse(request))
+            }
         }
         guard reachableHosts.contains(host) else {
             throw URLError(.cannotConnectToHost)
@@ -1905,4 +2034,72 @@ private func multiEnvironmentResponse(_ request: URLRequest) -> HTTPURLResponse 
         httpVersion: "HTTP/1.1",
         headerFields: ["Content-Type": "application/json"]
     )!
+}
+
+/// Deliberately ignores cancellation to model a transport completing an old read.
+private actor PassiveRequestGate {
+    private var entered = false
+    private var released = false
+    private var entryWaiters: [CheckedContinuation<Void, Never>] = []
+    private var releaseWaiters: [CheckedContinuation<Void, Never>] = []
+    var isHeld: Bool { entered && !released }
+
+    func enter() async {
+        entered = true
+        entryWaiters.forEach { $0.resume() }
+        entryWaiters.removeAll()
+        guard !released else { return }
+        await withCheckedContinuation { releaseWaiters.append($0) }
+    }
+
+    func waitUntilEntered() async {
+        guard !entered else { return }
+        await withCheckedContinuation { entryWaiters.append($0) }
+    }
+
+    func release() {
+        released = true
+        releaseWaiters.forEach { $0.resume() }
+        releaseWaiters.removeAll()
+    }
+}
+
+private actor GatedPassiveCatalogueConnector: WebSocketConnecting {
+    private var shouldHold = false
+    let gate = PassiveRequestGate()
+
+    func holdPassiveConnections() { shouldHold = true }
+
+    func connect(to url: URL) async throws -> any WebSocketConnection {
+        if shouldHold && url.host == "two.example" {
+            return GatedPassiveCatalogueConnection(gate: gate)
+        }
+        throw URLError(.cannotConnectToHost)
+    }
+
+    func release() async { await gate.release() }
+}
+
+private actor GatedPassiveCatalogueConnection: WebSocketConnection {
+    let gate: PassiveRequestGate
+    private var receiver: CheckedContinuation<Data, Error>?
+    private var closed = false
+
+    init(gate: PassiveRequestGate) { self.gate = gate }
+
+    func send(_ data: Data) async throws {
+        let request = try JSONDecoder.t3.decode(JSONValue.self, from: data)
+        if request["tag"]?.stringValue != nil { await gate.enter() }
+    }
+
+    func receive() async throws -> Data {
+        if closed { throw CancellationError() }
+        return try await withCheckedThrowingContinuation { receiver = $0 }
+    }
+
+    func close() {
+        closed = true
+        receiver?.resume(throwing: CancellationError())
+        receiver = nil
+    }
 }
