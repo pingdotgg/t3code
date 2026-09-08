@@ -476,12 +476,14 @@ const readAndroid = Effect.fn("DeviceActions.readAndroid")(function* (run: Runne
       shell(["settings", "get", "system", "font_scale"]),
       shell(["settings", "get", "global", "animator_duration_scale"]),
       shell(["settings", "get", "global", "wifi_on"]),
-      shell(["dumpsys", "window", "windows"]),
+      // `dumpsys window windows` stopped printing the focus on API 36; the
+      // unfiltered dump still does.
+      shell(["dumpsys", "window"]),
     ],
     { concurrency: 5 },
   );
   const scale = fontScale && fontScale !== "null" ? Number(fontScale) : Number.NaN;
-  const focused = focus?.match(/mCurrentFocus=Window\{[^ ]+ u\d+ ([^/ ]+)\/([^ }]+)\}/);
+  const focused = focus?.match(/m(?:CurrentFocus|FocusedApp)=\w+\{[^ ]+ u\d+ ([^/ ]+)\//);
   const settings: DeviceSettings = {
     ...(night?.includes("yes")
       ? { appearance: "dark" }
