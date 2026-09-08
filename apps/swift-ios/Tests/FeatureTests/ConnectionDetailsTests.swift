@@ -1,8 +1,25 @@
+import Foundation
 import Testing
 @testable import T3Code
 
 @Suite("Connection details")
 struct ConnectionDetailsTests {
+    @Test(arguments: [
+        "part&second=value", "literal%26value", "part#second",
+        "literal%", "plus+equals=", "unicode-雪",
+    ])
+    func decodesFragmentTokensOnce(_ token: String) throws {
+        let link = try PairingURL.build(host: "https://studio.example", pairingCode: token)
+        let direct = try ConnectionDetailsParser.parse(link)
+        #expect(direct.endpoint == "https://studio.example")
+        #expect(direct.pairingCode == token)
+
+        var wrapper = URLComponents(string: "t3code://pair")!
+        wrapper.queryItems = [URLQueryItem(name: "pairingUrl", value: link)]
+        let wrapped = try ConnectionDetailsParser.parse(wrapper.url!.absoluteString)
+        #expect(wrapped.pairingCode == token)
+    }
+
     @Test
     func parsesRawPairingURL() throws {
         let details = try ConnectionDetailsParser.parse(

@@ -82,11 +82,11 @@ public enum PairingURL {
         try requireSupportedScheme(components.scheme)
 
         let query = components.queryItems ?? []
-        let fragment = queryItems(fromFragment: components.fragment)
-        let token = (fragment + query)
-            .first(where: { $0.name.caseInsensitiveCompare("token") == .orderedSame })?
-            .value?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let fragment = queryItems(fromFragment: components.percentEncodedFragment)
+        let token = [fragment, query].compactMap { items in
+            items.first(where: { $0.name.caseInsensitiveCompare("token") == .orderedSame })?
+                .value?.trimmingCharacters(in: .whitespacesAndNewlines)
+        }.first(where: { !$0.isEmpty }) ?? ""
         let label = query
             .first(where: { $0.name.caseInsensitiveCompare("label") == .orderedSame })?
             .value?
