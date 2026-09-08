@@ -403,6 +403,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["allow open drive preview tools sessions"],
   },
   {
+    id: "device-hosts",
+    title: "Device hosts",
+    to: "/settings/projects",
+    searchTerms: ["ssh remote simulator emulator ios android mac mini identity key connection"],
+  },
+  {
     id: "agent-device-access",
     title: "Agent device access",
     to: "/settings/integrations",

@@ -61,3 +61,26 @@ The device stream goes through the environment server, so it works over the
 local network, Tailscale, and T3 Connect. Live video needs a secure page
 (HTTPS or localhost); on a plain-HTTP remote origin iOS falls back to a slower
 still-image stream and Android cannot show video.
+
+## SSH device hosts
+
+In Settings → Projects → Project defaults, select one connected environment
+and add a host under **Device hosts**. Enter an SSH alias or `user@host`, with
+an optional identity file and port. These resolve on the environment server,
+so use the SSH configuration and keys available there. Password prompts are
+not supported.
+
+**Test connection** checks SSH, Node, npm, and platform tools without installing
+anything. The first device listing installs pinned device tools on the host.
+Node 22 or newer and npm must be available to non-interactive SSH commands.
+T3 checks common Homebrew and Android SDK locations; custom installations need
+the appropriate PATH and ANDROID_HOME on the host.
+
+The picker identifies devices by host when several hosts are configured.
+Connections recover after interruptions. Removing a host closes its device
+sessions and stops its T3 helpers when reachable; simulators keep running.
+
+T3 provides discovery, streaming, and control. Arrange app builds,
+installation, and connectivity to development servers such as Metro separately.
+A simulator on another machine cannot reach Metro through your environment's
+localhost without forwarding or another reachable address.

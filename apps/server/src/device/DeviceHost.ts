@@ -46,11 +46,12 @@ export interface DeviceHubEndpoint {
 export interface AgentDeviceEndpoint {
   readonly baseUrl: string;
   readonly token: string;
-  /** Absolute path of the agent-device entry script for the provider PATH shim. */
+  /** Host-local path of the agent-device entry script. The provider uses a separate local CLI install. */
   readonly entryPath: string;
 }
 
 export interface DeviceHostReady {
+  readonly nodePath: string;
   readonly hub: DeviceHubEndpoint;
   /**
    * Runs a host command (`xcrun`, `adb`, or a helper bundled with the hub)
