@@ -68,6 +68,44 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 const numberOr = (value: unknown, fallback: number) =>
   typeof value === "number" && Number.isFinite(value) ? value : fallback;
 
+const AX_ELEMENT_LIMIT = 500;
+
+/**
+ * serve-sim's helper returns the native nested tree; the root node is the
+ * application covering the whole screen. Flatten it the way serve-sim's own
+ * overlay does: skip nodes with the root's frame, cap the count.
+ */
+const flattenIosAxTree = (roots: ReadonlyArray<unknown>): ReadonlyArray<DeviceAxElement> => {
+  const first = roots[0];
+  const rootFrame = isRecord(first) && isRecord(first.frame) ? first.frame : null;
+  const screenWidth = Math.max(1, numberOr(rootFrame?.width, 1));
+  const screenHeight = Math.max(1, numberOr(rootFrame?.height, 1));
+  const elements: DeviceAxElement[] = [];
+  const visit = (node: unknown, path: string) => {
+    if (elements.length >= AX_ELEMENT_LIMIT || !isRecord(node) || !isRecord(node.frame)) return;
+    const frame = node.frame;
+    const width = numberOr(frame.width, 0);
+    const height = numberOr(frame.height, 0);
+    const coversScreen =
+      Math.abs(width - screenWidth) < 0.5 && Math.abs(height - screenHeight) < 0.5;
+    if (!coversScreen && width > 0 && height > 0) {
+      elements.push({
+        id: typeof node.AXUniqueId === "string" ? node.AXUniqueId : path,
+        label: typeof node.AXLabel === "string" ? node.AXLabel : "",
+        role: typeof node.type === "string" ? node.type : "",
+        x: numberOr(frame.x, 0) / screenWidth,
+        y: numberOr(frame.y, 0) / screenHeight,
+        width: width / screenWidth,
+        height: height / screenHeight,
+      });
+    }
+    const children = Array.isArray(node.children) ? node.children : [];
+    children.forEach((child, index) => visit(child, `${path}.${index}`));
+  };
+  roots.forEach((root, index) => visit(root, String(index)));
+  return elements;
+};
+
 export async function fetchDeviceAxTree(
   target: Target,
   signal?: AbortSignal,
@@ -78,29 +116,11 @@ export async function fetchDeviceAxTree(
       hubUrl(target, `/helper/${encodeURIComponent(target.deviceId)}/ax`),
       signal,
     );
-    if (!isRecord(payload) || !Array.isArray(payload.elements)) {
-      return { elements: [], errors: ["Unexpected accessibility payload."] };
+    if (!Array.isArray(payload)) {
+      const error = isRecord(payload) && typeof payload.error === "string" ? payload.error : null;
+      return { elements: [], errors: [error ?? "Unexpected accessibility payload."] };
     }
-    const screen = isRecord(payload.screen) ? payload.screen : {};
-    const screenWidth = Math.max(1, numberOr(screen.width, 1));
-    const screenHeight = Math.max(1, numberOr(screen.height, 1));
-    const elements = payload.elements.flatMap((raw): DeviceAxElement[] => {
-      if (!isRecord(raw) || !isRecord(raw.frame)) return [];
-      const frame = raw.frame;
-      return [
-        {
-          id: String(raw.id ?? raw.path ?? ""),
-          label: typeof raw.label === "string" ? raw.label : "",
-          role: typeof raw.role === "string" ? raw.role : "",
-          x: numberOr(frame.x, 0) / screenWidth,
-          y: numberOr(frame.y, 0) / screenHeight,
-          width: numberOr(frame.width, 0) / screenWidth,
-          height: numberOr(frame.height, 0) / screenHeight,
-        },
-      ];
-    });
-    const errors = Array.isArray(payload.errors) ? payload.errors.map(String) : [];
-    return { elements, errors };
+    return { elements: flattenIosAxTree(payload), errors: [] };
   }
   const payload = await fetchJson(
     target,
