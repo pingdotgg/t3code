@@ -1,4 +1,5 @@
 import { Button } from "../ui/button";
+import { Alert, AlertAction, AlertDescription } from "../ui/alert";
 import { SettingsPageContainer } from "./settingsLayout";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { useEnvironments } from "../../state/environments";
@@ -28,21 +29,23 @@ export function SettingsScopeNotice({
         ];
   return (
     <SettingsPageContainer>
-      <div className="space-y-4 rounded-xl border border-border/60 p-4 text-sm">
-        <p className="text-muted-foreground">{children}</p>
-        <div className="flex flex-wrap gap-2">
-          {choices.map((choice) => (
-            <Button
-              key={choice.label}
-              size="sm"
-              variant="outline"
-              onClick={() => selectScope(choice.search)}
-            >
-              {choice.label}
-            </Button>
-          ))}
-        </div>
-      </div>
+      <Alert role="status">
+        <AlertDescription>
+          <p>{children}</p>
+          <AlertAction className="flex-wrap gap-2">
+            {choices.map((choice) => (
+              <Button
+                key={choice.label}
+                size="sm"
+                variant="outline"
+                onClick={() => selectScope(choice.search)}
+              >
+                {choice.label}
+              </Button>
+            ))}
+          </AlertAction>
+        </AlertDescription>
+      </Alert>
     </SettingsPageContainer>
   );
 }
