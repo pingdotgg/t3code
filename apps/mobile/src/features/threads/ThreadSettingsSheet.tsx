@@ -408,8 +408,12 @@ function ThreadSettingsSessionProvider(
     () => new Set(),
   );
   const [pendingModel, setPendingModel] = useState<ModelOption | null>(null);
-  const availableRuntimeModes = runtimeModesForProvider(props.providerDriver);
-  const visibleRuntimeMode = visibleRuntimeModeForProvider(props.runtimeMode, props.providerDriver);
+  const displayedProviderDriver = pendingModel?.providerDriver ?? props.providerDriver;
+  const availableRuntimeModes = runtimeModesForProvider(displayedProviderDriver);
+  const visibleRuntimeMode = visibleRuntimeModeForProvider(
+    props.runtimeMode,
+    displayedProviderDriver,
+  );
 
   const isApplied = useCallback(
     (option: ModelOption) =>
