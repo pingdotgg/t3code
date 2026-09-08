@@ -4,11 +4,15 @@ import {
   TextGenerationProviderUnavailableError,
   type TextGenerationServiceError,
 } from "@t3tools/contracts";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 const isTextGenerationError = Schema.is(TextGenerationError);
 const isTextGenerationCliUnavailableError = Schema.is(TextGenerationCliUnavailableError);
 const isTextGenerationProviderUnavailableError = Schema.is(TextGenerationProviderUnavailableError);
+const decodeJsonThreadTitle = Schema.decodeOption(
+  Schema.fromJsonString(Schema.Struct({ title: Schema.String })),
+);
 
 /** Convert an Effect Schema to a flat JSON Schema object, inlining `$defs` when present. */
 export function toJsonSchemaObject(schema: Schema.Top): unknown {
@@ -51,7 +55,10 @@ export function sanitizePrTitle(raw: string): string {
 
 /** Normalise a raw thread title to a compact single-line sidebar-safe label. */
 export function sanitizeThreadTitle(raw: string): string {
-  const normalized = raw
+  // Unwrap before truncation can cut off the JSON envelope's closing brace.
+  const decoded = decodeJsonThreadTitle(raw);
+  const title = Option.isSome(decoded) ? decoded.value.title : raw;
+  const normalized = title
     .trim()
     .split(/\r?\n/g)[0]
     ?.trim()
