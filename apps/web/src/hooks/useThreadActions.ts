@@ -4,7 +4,11 @@ import {
   scopeThreadRef,
   scopedThreadKey,
 } from "@t3tools/client-runtime/environment";
-import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import {
+  isAtomCommandInterrupted,
+  settlePromise,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 import { canSnooze, threadWokeAt } from "@t3tools/client-runtime/state/thread-settled";
 import { EnvironmentId, type ScopedThreadRef, ThreadId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -596,12 +600,50 @@ export function useThreadActions() {
           ),
         );
       }
-      return unpinThreadMutation({
+      const thread = readThreadShell(target);
+      const orderKey = thread?.pinOrderKey ?? undefined;
+      const result = await unpinThreadMutation({
         environmentId: target.environmentId,
         input: { threadId: target.threadId },
       });
+      if (result._tag === "Success") {
+        let undoStarted = false;
+        // Reuses the app's Base UI toast action: https://base-ui.com/react/components/toast
+        const toastId = toastManager.add(
+          stackedThreadToast({
+            type: "success",
+            title: "Thread unpinned",
+            description: thread?.title,
+            timeout: 5_000,
+            actionProps: {
+              children: "Undo",
+              onClick: () => {
+                if (undoStarted) return;
+                undoStarted = true;
+                toastManager.close(toastId);
+                void pinThread(target, orderKey === undefined ? {} : { orderKey }).then(
+                  (undone) => {
+                    if (undone._tag === "Failure" && !isAtomCommandInterrupted(undone)) {
+                      const error = squashAtomCommandFailure(undone);
+                      toastManager.add(
+                        stackedThreadToast({
+                          type: "error",
+                          title: "Failed to undo unpin",
+                          description:
+                            error instanceof Error ? error.message : "An error occurred.",
+                        }),
+                      );
+                    }
+                  },
+                );
+              },
+            },
+          }),
+        );
+      }
+      return result;
     },
-    [unpinThreadMutation],
+    [pinThread, unpinThreadMutation],
   );
 
   const confirmAndUnpinThread = useCallback(
