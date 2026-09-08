@@ -21,6 +21,7 @@ import { getDriverOption } from "../settings/providerDriverMeta";
 import { RedactedSensitiveText } from "../settings/RedactedSensitiveText";
 import { Button } from "../ui/button";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   PaceIcon,
   ResetCreditDialog,
@@ -484,8 +485,15 @@ function PoolWindowCard({
 }) {
   // The soonest reset that hands anything back; an untouched account resets to no effect.
   const nextRefill = pool.resets.find((reset) => reset.restoresPercent > 0);
+  // One account: the share restored is the number above, so only the time is news.
+  const several = pool.members.length > 1;
+  const refillWhen = nextRefill
+    ? nextRefill.at <= now
+      ? "now"
+      : `in ${formatDuration(nextRefill.at - now)}`
+    : null;
   return (
-    <div className="grid items-center gap-x-6 gap-y-3 rounded-lg border border-border/60 p-4 md:grid-cols-[11rem_minmax(0,1fr)]">
+    <div className="grid items-center gap-x-6 gap-y-3 rounded-lg border border-border/60 p-4 md:grid-cols-[13rem_minmax(0,1fr)]">
       <div className="flex flex-col gap-1">
         <span className="text-sm font-medium text-foreground">{pool.label}</span>
         <span className="flex items-baseline gap-2">
@@ -493,12 +501,33 @@ function PoolWindowCard({
             {pool.remainingPercent}%
           </span>
           <span className="text-sm text-muted-foreground">left</span>
-          {pool.pace ? <PaceIcon pace={pool.pace} /> : null}
         </span>
-        {nextRefill ? (
-          <span className="text-xs text-muted-foreground tabular-nums">
-            <span className="font-medium text-foreground">↻ +{nextRefill.restoresPercent}%</span>{" "}
-            {nextRefill.at <= now ? "now" : `in ${formatDuration(nextRefill.at - now)}`}
+        {pool.pace || nextRefill ? (
+          <span className="flex items-center gap-x-1 text-xs whitespace-nowrap text-muted-foreground tabular-nums">
+            {pool.pace ? <PaceIcon pace={pool.pace} words /> : null}
+            {pool.pace && nextRefill ? <span aria-hidden>·</span> : null}
+            {nextRefill ? (
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <span
+                      tabIndex={0}
+                      className="cursor-default rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    />
+                  }
+                >
+                  <span className="font-medium text-foreground">
+                    ↻{several ? ` +${nextRefill.restoresPercent}%` : ""}
+                  </span>{" "}
+                  {refillWhen}
+                </TooltipTrigger>
+                <TooltipPopup side="top" className="max-w-72 text-xs">
+                  <AccountName account={nextRefill.member.account} className="font-medium" /> resets{" "}
+                  {refillWhen}
+                  {several ? `, restoring ${nextRefill.restoresPercent}% of the pool` : ""}
+                </TooltipPopup>
+              </Tooltip>
+            ) : null}
           </span>
         ) : null}
       </div>
