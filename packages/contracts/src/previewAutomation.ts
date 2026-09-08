@@ -118,6 +118,11 @@ export const PreviewAutomationOpenInput = Schema.Struct({
         !(input.tabId !== undefined && input.reuseExistingTab === false) ||
         "tabId cannot be combined with reuseExistingTab=false.",
     ),
+    Schema.makeFilter(
+      (input) =>
+        !(input.tabId !== undefined && input.engine !== undefined) ||
+        "engine cannot be combined with tabId.",
+    ),
   )
   .annotate({
     description:

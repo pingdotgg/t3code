@@ -30,10 +30,14 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Semaphore from "effect/Semaphore";
 import { chromium, firefox, webkit, type Browser, type Page } from "playwright-core";
 import playwrightPackage from "playwright-core/package.json" with { type: "json" };
 
+import type { McpInvocationScope } from "./McpInvocationContext.ts";
+
 export interface PlaywrightPreviewInvokeInput {
+  readonly scope: Pick<McpInvocationScope, "environmentId" | "providerSessionId">;
   readonly operation: PreviewAutomationOperation;
   readonly input: unknown;
   readonly tabId?: PreviewTabId;
@@ -102,7 +106,9 @@ export const resolveNavigationUrl = (
   if (input.url !== undefined) return normalizePreviewUrl(input.url);
   if (input.target?.kind === "url") return normalizePreviewUrl(input.target.url);
   if (input.target?.kind === "environment-port") {
-    return `${input.target.protocol ?? "http"}://localhost:${input.target.port}${input.target.path ?? ""}`;
+    const path = input.target.path ?? "";
+    const separator = path === "" || path.startsWith("/") ? "" : "/";
+    return `${input.target.protocol ?? "http"}://localhost:${input.target.port}${separator}${path}`;
   }
   throw new Error("Provide a url or a target.");
 };
@@ -173,6 +179,7 @@ const INTERACTIVE_ELEMENTS_SCRIPT = String.raw`(limit) => {
 
 interface EngineTab {
   readonly tabId: PreviewTabId;
+  readonly owner: string;
   readonly engine: PreviewBrowserEngine;
   readonly browser: Browser;
   readonly page: Page;
@@ -217,6 +224,7 @@ export const make = Effect.gen(function* PlaywrightPreviewHostMake() {
   const platform = yield* HostProcessPlatform;
   const env = yield* HostProcessEnvironment;
   const tabs = new Map<PreviewTabId, EngineTab>();
+  const openLock = yield* Semaphore.make(1);
   let tabSequence = 0;
 
   yield* Effect.addFinalizer(() =>
@@ -260,6 +268,7 @@ export const make = Effect.gen(function* PlaywrightPreviewHostMake() {
   yield* Effect.forkScoped(closeIdleTabs.pipe(Effect.delay(IDLE_CLOSE_MS), Effect.forever));
 
   const openTab = Effect.fn("PlaywrightPreviewHost.openTab")(function* (
+    owner: string,
     engine: PreviewBrowserEngine,
   ) {
     const path = yield* executablePath(engine);
@@ -277,8 +286,13 @@ export const make = Effect.gen(function* PlaywrightPreviewHostMake() {
           executablePath: path,
           headless: true,
         });
-        const page = await browser.newPage({ viewport: DEFAULT_VIEWPORT });
-        return { browser, page };
+        try {
+          const page = await browser.newPage({ viewport: DEFAULT_VIEWPORT });
+          return { browser, page };
+        } catch (cause) {
+          await browser.close().catch(() => undefined);
+          throw cause;
+        }
       },
       catch: (cause) =>
         new PreviewAutomationEngineError({
@@ -290,6 +304,7 @@ export const make = Effect.gen(function* PlaywrightPreviewHostMake() {
     });
     const tab: EngineTab = {
       tabId,
+      owner,
       engine,
       browser,
       page,
@@ -330,14 +345,17 @@ export const make = Effect.gen(function* PlaywrightPreviewHostMake() {
     return tab;
   });
 
-  const openOrReuseTab = (input: PreviewAutomationOpenInput) => {
-    const engine = input.engine ?? "blink";
-    const current =
-      input.reuseExistingTab === false
-        ? undefined
-        : Array.from(tabs.values()).find((tab) => tab.engine === engine);
-    return current === undefined ? openTab(engine) : Effect.succeed(current);
-  };
+  const openOrReuseTab = (owner: string, input: PreviewAutomationOpenInput) =>
+    openLock.withPermit(
+      Effect.suspend(() => {
+        const engine = input.engine ?? "blink";
+        const current =
+          input.reuseExistingTab === false
+            ? undefined
+            : Array.from(tabs.values()).find((tab) => tab.owner === owner && tab.engine === engine);
+        return current === undefined ? openTab(owner, engine) : Effect.succeed(current);
+      }),
+    );
 
   const run = <A>(
     tab: EngineTab,
@@ -505,7 +523,18 @@ export const make = Effect.gen(function* PlaywrightPreviewHostMake() {
             throw new Error(`Result exceeds ${MAX_EVALUATE_RESULT_CHARS} characters.`);
           }
           return value ?? null;
-        });
+        }).pipe(
+          Effect.timeoutOrElse({
+            duration: timeout,
+            orElse: () =>
+              new PreviewAutomationEngineError({
+                operation,
+                engine: tab.engine,
+                tabId: tab.tabId,
+                detail: `Evaluation did not finish in ${timeout} ms.`,
+              }),
+          }),
+        );
       }
       case "waitFor": {
         const input = rawInput as PreviewAutomationWaitForInput;
@@ -540,7 +569,9 @@ export const make = Effect.gen(function* PlaywrightPreviewHostMake() {
     input: PlaywrightPreviewInvokeInput,
   ): Effect.fn.Return<A, PreviewAutomationError> {
     const timeout = input.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-    const existing = input.tabId === undefined ? undefined : tabs.get(input.tabId);
+    const owner = `${input.scope.environmentId}\u0000${input.scope.providerSessionId}`;
+    const found = input.tabId === undefined ? undefined : tabs.get(input.tabId);
+    const existing = found?.owner === owner ? found : undefined;
     if (existing === undefined && input.tabId !== undefined) {
       return yield* new PreviewAutomationEngineError({
         operation: input.operation,
@@ -551,7 +582,7 @@ export const make = Effect.gen(function* PlaywrightPreviewHostMake() {
     const tab =
       existing ??
       (input.operation === "open"
-        ? yield* openOrReuseTab(input.input as PreviewAutomationOpenInput)
+        ? yield* openOrReuseTab(owner, input.input as PreviewAutomationOpenInput)
         : undefined);
     if (tab === undefined) {
       return yield* new PreviewAutomationEngineError({

@@ -90,7 +90,7 @@ const invoke = Effect.fn("PreviewToolkit.invoke")(function* <A>(
       : PlaywrightPreviewHost.isEngineTabId(tabId);
   if (isEngineTab) {
     const host = yield* PlaywrightPreviewHost.PlaywrightPreviewHost;
-    return yield* host.invoke<A>(request);
+    return yield* host.invoke<A>({ scope, ...request });
   }
   const broker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
   return yield* broker.invoke<A>({ scope, ...request });

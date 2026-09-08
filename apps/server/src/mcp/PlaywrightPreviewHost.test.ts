@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { PreviewTabId, type PreviewAutomationSnapshot } from "@t3tools/contracts";
+import { EnvironmentId, PreviewTabId, type PreviewAutomationSnapshot } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -13,9 +13,20 @@ const noBrowsers = PlaywrightPreviewHost.layer.pipe(
 
 const realHost = PlaywrightPreviewHost.layer.pipe(Layer.provide(NodeServices.layer));
 
+const scope = {
+  environmentId: EnvironmentId.make("environment-test"),
+  providerSessionId: "session-a",
+};
+const otherScope = { ...scope, providerSessionId: "session-b" };
+
 describe("resolveNavigationUrl", () => {
   it("normalizes urls and builds environment-port targets", () => {
     expect(PlaywrightPreviewHost.resolveNavigationUrl({ url: "t3.chat" })).toBe("https://t3.chat/");
+    expect(
+      PlaywrightPreviewHost.resolveNavigationUrl({
+        target: { kind: "environment-port", port: 5173, path: "settings" },
+      }),
+    ).toBe("http://localhost:5173/settings");
     expect(PlaywrightPreviewHost.resolveNavigationUrl({ url: "localhost:5173" })).toBe(
       "http://localhost:5173/",
     );
@@ -43,7 +54,7 @@ describe("PlaywrightPreviewHost", () => {
       const host = yield* PlaywrightPreviewHost.PlaywrightPreviewHost;
       expect(yield* host.installedEngines).toEqual([]);
       const error = yield* host
-        .invoke<never>({ operation: "open", input: { engine: "gecko" } })
+        .invoke<never>({ scope, operation: "open", input: { engine: "gecko" } })
         .pipe(Effect.flip);
       expect(error._tag).toBe("PreviewAutomationEngineUnavailableError");
       if (error._tag !== "PreviewAutomationEngineUnavailableError") return;
@@ -57,6 +68,7 @@ describe("PlaywrightPreviewHost", () => {
       const host = yield* PlaywrightPreviewHost.PlaywrightPreviewHost;
       const closed = yield* host
         .invoke<never>({
+          scope,
           operation: "snapshot",
           input: {},
           tabId: PreviewTabId.make("engine-webkit-9"),
@@ -64,7 +76,7 @@ describe("PlaywrightPreviewHost", () => {
         .pipe(Effect.flip);
       expect(closed._tag).toBe("PreviewAutomationEngineError");
       const untargeted = yield* host
-        .invoke<never>({ operation: "click", input: {} })
+        .invoke<never>({ scope, operation: "click", input: {} })
         .pipe(Effect.flip);
       expect(untargeted._tag).toBe("PreviewAutomationEngineError");
     }).pipe(Effect.provide(noBrowsers)),
@@ -81,38 +93,49 @@ describe("PlaywrightPreviewHost", () => {
           "document.body.innerHTML = \"<button id='go' onclick=\\\"document.title='Clicked'\\\">Go</button><input aria-label='Name'>\"";
         for (const engine of yield* host.installedEngines) {
           const opened = yield* host.invoke<{ tabId: string; engine: string }>({
+            scope,
             operation: "open",
             input: { engine },
           });
           expect(opened.engine).toBe(engine);
           const tabId = PreviewTabId.make(opened.tabId);
           const reused = yield* host.invoke<{ tabId: string }>({
+            scope,
             operation: "open",
             input: { engine },
           });
           expect(reused.tabId).toBe(opened.tabId);
+          const foreign = yield* host
+            .invoke<never>({ scope: otherScope, operation: "status", input: {}, tabId })
+            .pipe(Effect.flip);
+          expect(foreign._tag).toBe("PreviewAutomationEngineError");
           yield* host.invoke({
+            scope,
             operation: "evaluate",
             input: { expression: setHtml },
             tabId,
           });
           yield* host.invoke({
+            scope,
             operation: "click",
             input: { locator: "role=button[name='Go']" },
             tabId,
           });
           yield* host.invoke({
+            scope,
             operation: "type",
             input: { locator: "#go ~ input", text: "Ada" },
             tabId,
           });
           const value = yield* host.invoke({
+            scope,
             operation: "evaluate",
             input: { expression: "document.querySelector('input').value" },
             tabId,
           });
           expect(value).toBe("Ada");
           const snapshot = yield* host.invoke<PreviewAutomationSnapshot>({
+            scope,
             operation: "snapshot",
             input: {},
             tabId,
@@ -124,7 +147,7 @@ describe("PlaywrightPreviewHost", () => {
           ]);
           expect(snapshot.screenshot.data.length).toBeGreaterThan(0);
           const recording = yield* host
-            .invoke<never>({ operation: "recordingStart", input: {}, tabId })
+            .invoke<never>({ scope, operation: "recordingStart", input: {}, tabId })
             .pipe(Effect.flip);
           expect(recording._tag).toBe("PreviewAutomationEngineError");
         }
