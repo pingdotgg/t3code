@@ -22,6 +22,10 @@ OpenCode also stores persistent approval grants per directory. Automatic full-ac
 `once` so they cannot widen a supervised thread's permissions on a shared external server.
 See the [adapter](../../apps/server/src/provider/Layers/OpenCodeAdapter.ts).
 
+Harness sessions are routed through the configured local desk server. The
+[Harness driver](../../apps/server/src/provider/Drivers/HarnessDriver.ts) keeps each T3 thread's
+remote node identifier in its resume cursor and scopes in-memory session state by thread.
+
 Antigravity separates account profiles per instance while sharing installed executables across the
 environment. It forces file-based credential storage because the native macOS keychain entry would
 otherwise be shared across instances. The launch environment removes ambient Google credentials,

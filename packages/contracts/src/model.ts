@@ -148,6 +148,7 @@ const CLAUDE_DRIVER_KIND = ProviderDriverKind.make("claudeAgent");
 const CURSOR_DRIVER_KIND = ProviderDriverKind.make("cursor");
 const GROK_DRIVER_KIND = ProviderDriverKind.make("grok");
 const OPENCODE_DRIVER_KIND = ProviderDriverKind.make("opencode");
+const HARNESS_DRIVER_KIND = ProviderDriverKind.make("harness");
 
 export const DEFAULT_MODEL = "gpt-5.6-sol";
 
@@ -173,6 +174,7 @@ export const DEFAULT_MODEL_BY_PROVIDER: Partial<Record<ProviderDriverKind, strin
   [GROK_DRIVER_KIND]: "grok-build",
   [OPENCODE_DRIVER_KIND]: "openai/gpt-5",
   [ProviderDriverKind.make("antigravity")]: ANTIGRAVITY_DEFAULT_MODEL,
+  [HARNESS_DRIVER_KIND]: "z-ai/glm-5.3-flash",
 };
 
 /** Per-provider text generation model defaults. */
@@ -184,6 +186,7 @@ export const DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER: Partial<
   [CLAUDE_DRIVER_KIND]: "claude-haiku-4-5",
   [CURSOR_DRIVER_KIND]: "composer-2",
   [OPENCODE_DRIVER_KIND]: "openai/gpt-5",
+  [HARNESS_DRIVER_KIND]: "z-ai/glm-5.3-flash",
 };
 
 export const MODEL_SLUG_ALIASES_BY_PROVIDER: Partial<
@@ -210,6 +213,12 @@ export const MODEL_SLUG_ALIASES_BY_PROVIDER: Partial<
     "opus-4.5": "claude-opus-4-5",
   },
   [OPENCODE_DRIVER_KIND]: {},
+  [HARNESS_DRIVER_KIND]: {
+    glm: "z-ai/glm-5.3",
+    "glm-flash": "z-ai/glm-5.3-flash",
+    minimax: "minimax/minimax-m3",
+    kimi: "moonshotai/kimi-k3",
+  },
 };
 
 // ── Provider display names ────────────────────────────────────────────
@@ -221,4 +230,5 @@ export const PROVIDER_DISPLAY_NAMES: Partial<Record<ProviderDriverKind, string>>
   [CURSOR_DRIVER_KIND]: "Cursor",
   [GROK_DRIVER_KIND]: "Grok",
   [OPENCODE_DRIVER_KIND]: "OpenCode",
+  [HARNESS_DRIVER_KIND]: "Harness",
 };
