@@ -86,7 +86,6 @@ import {
   CheckIcon,
   ChevronDownIcon,
   ChevronRightIcon,
-  ChevronUpIcon,
   CircleAlertIcon,
   DownloadIcon,
   EyeIcon,
@@ -1125,18 +1124,17 @@ function TimelineHistoryControl(props: MessagesTimelineHistoryControls) {
   }
   return (
     <div className="messages-timeline-row-frame">
-      <div className="chat-content-lane flex flex-col items-center gap-1.5 py-2">
+      <div className="chat-content-lane flex flex-col gap-1.5 pb-2">
         {props.hasMoreHistory ? (
-          <Button
-            size="sm"
-            variant="outline"
+          <button
+            type="button"
             disabled={props.loading}
-            aria-label="Load earlier activity"
+            aria-label="Load earlier turns"
             onClick={props.onLoadEarlier}
+            className="w-full py-1.5 text-xs text-muted-foreground/60 hover:text-foreground disabled:cursor-default"
           >
-            <ChevronUpIcon />
-            {props.loading ? "Loading earlier activity…" : "Load earlier activity"}
-          </Button>
+            {props.loading ? "Loading earlier turns…" : "Load earlier turns"}
+          </button>
         ) : null}
         {props.error !== null ? (
           <p role="status" className="text-center text-muted-foreground text-xs">
