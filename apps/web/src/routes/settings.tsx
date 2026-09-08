@@ -98,8 +98,13 @@ function SettingsScopeBoundary({ pathname, children }: { pathname: string; child
     );
   }
   // Device-local pages ignore the scope entirely; the project page follows
-  // remembered members while a grouping change replaces its URL key.
-  if (DEVICE_ONLY_PATHS.has(pathname) || pathname === "/settings/projects") {
+  // remembered members while a grouping change replaces its URL key. Scheduled
+  // tasks keep their machine switcher available when the selected machine disconnects.
+  if (
+    DEVICE_ONLY_PATHS.has(pathname) ||
+    pathname === "/settings/projects" ||
+    pathname === "/settings/scheduled-tasks"
+  ) {
     return children;
   }
   if (scope.kind === "unavailable")
@@ -122,7 +127,8 @@ function SettingsContentLayout() {
   const groups = useSettingsProjectGroups();
   const { environments } = useEnvironments();
   const [restoreSignal, setRestoreSignal] = useState(0);
-  const showScope = !DEVICE_ONLY_PATHS.has(location.pathname);
+  const showScope =
+    !DEVICE_ONLY_PATHS.has(location.pathname) && location.pathname !== "/settings/scheduled-tasks";
   const navigateBackWithinApp = useCallback(() => {
     if (canGoBack) {
       window.history.back();
