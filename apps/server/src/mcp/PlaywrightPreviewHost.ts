@@ -219,7 +219,7 @@ const tabStatus = (tab: EngineTab): PreviewAutomationStatus => ({
   viewport: tab.page.viewportSize() ?? DEFAULT_VIEWPORT,
 });
 
-export const make = Effect.gen(function* PlaywrightPreviewHostMake() {
+const make = Effect.gen(function* PlaywrightPreviewHostMake() {
   const fileSystem = yield* FileSystem.FileSystem;
   const platform = yield* HostProcessPlatform;
   const env = yield* HostProcessEnvironment;
