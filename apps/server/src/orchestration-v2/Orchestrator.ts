@@ -27,6 +27,7 @@ import {
   ProviderInstanceId,
   type ProviderSessionId,
   RunId,
+  ThreadLinkedPullRequest,
   ThreadId,
 } from "@t3tools/contracts";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
@@ -39,6 +40,7 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
+import { ProjectionProjectRepository } from "../persistence/Services/ProjectionProjects.ts";
 import { CheckpointServiceV2 } from "./CheckpointService.ts";
 import { CommandPolicyV2 } from "./CommandPolicy.ts";
 import { CommandReceiptStoreV2 } from "./CommandReceiptStore.ts";
@@ -241,6 +243,8 @@ function isNativeMaintenanceCommand(message: {
   );
 }
 
+const threadPullRequestLinksEqual = Schema.toEquivalence(Schema.NullOr(ThreadLinkedPullRequest));
+
 function commandThreadId(command: OrchestrationV2Command): ThreadId {
   switch (command.type) {
     case "thread.create":
@@ -255,9 +259,11 @@ function commandThreadId(command: OrchestrationV2Command): ThreadId {
     case "thread.pin":
     case "thread.unpin":
     case "thread.pin.reorder":
+    case "thread.active.reorder":
     case "thread.visit":
     case "thread.mark-unread":
     case "thread.metadata.update":
+    case "thread.pull-request.sync":
     case "thread.title.regeneration.complete":
     case "thread.runtime-mode.set":
     case "thread.interaction-mode.set":
@@ -273,6 +279,7 @@ function commandThreadId(command: OrchestrationV2Command): ThreadId {
     case "queued-run.cancel":
     case "queued-run.edit":
     case "runtime-request.respond":
+    case "thread.user-input.dismiss":
     case "checkpoint.rollback":
     case "provider.switch":
       return command.threadId;
@@ -544,6 +551,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const eventSink = yield* EventSinkV2;
   const commandReceipts = yield* CommandReceiptStoreV2;
   const idAllocator = yield* IdAllocatorV2;
+  const projects = yield* ProjectionProjectRepository;
   const projectionStore = yield* ProjectionStoreV2;
   const providerAdapters = yield* ProviderAdapterRegistryV2;
   const continuationRequests = yield* ProviderContinuationRequests;
@@ -1450,8 +1458,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           | "thread.pin"
           | "thread.unpin"
           | "thread.pin.reorder"
+          | "thread.active.reorder"
           | "thread.mark-unread"
           | "thread.metadata.update"
+          | "thread.pull-request.sync"
           | "thread.title.regeneration.complete"
           | "thread.runtime-mode.set"
           | "thread.interaction-mode.set"
@@ -1511,7 +1521,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         command.type === "thread.unsnooze" ||
         command.type === "thread.pin" ||
         command.type === "thread.unpin" ||
-        command.type === "thread.pin.reorder") &&
+        command.type === "thread.pin.reorder" ||
+        command.type === "thread.active.reorder" ||
+        command.type === "thread.pull-request.sync") &&
       thread.archivedAt !== null
     ) {
       return yield* new OrchestratorDispatchError({
@@ -1531,17 +1543,86 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       });
     }
     if (
-      command.type === "thread.settle" &&
-      (projection.runs.some((run) =>
-        ["preparing", "queued", "starting", "running", "waiting"].includes(run.status),
-      ) ||
-        projection.runtimeRequests.some((request) => request.status === "pending"))
+      command.type === "thread.active.reorder" &&
+      (thread.pinnedAt != null || thread.settledOverride === "settled")
     ) {
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,
         commandType: command.type,
-        cause: `Thread ${command.threadId} has active or blocked work and cannot be settled.`,
+        cause: `Thread ${command.threadId} is not active and cannot be reordered.`,
       });
+    }
+    if (command.type === "thread.pull-request.sync") {
+      const project = yield* projects
+        .getById({ projectId: command.projectId })
+        .pipe(mapDispatchError(command));
+      const currentSequence = yield* eventSink.latestSequence({ threadId: command.threadId }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new OrchestratorProjectionError({
+              threadId: command.threadId,
+              cause,
+            }),
+        ),
+      );
+      if (
+        Option.isNone(project) ||
+        project.value.deletedAt !== null ||
+        project.value.workspaceRoot !== command.expected.workspaceRoot ||
+        currentSequence > command.snapshotSequence ||
+        thread.projectId !== command.projectId ||
+        thread.branch !== command.expected.branch ||
+        thread.worktreePath !== command.expected.worktreePath ||
+        !threadPullRequestLinksEqual(
+          thread.linkedPullRequest ?? null,
+          command.expected.linkedPullRequest,
+        ) ||
+        !threadPullRequestLinksEqual(
+          thread.branchPullRequest ?? null,
+          command.expected.branchPullRequest,
+        )
+      ) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Thread ${command.threadId} changed before pull request discovery.`,
+        });
+      }
+    }
+    if (command.type === "thread.settle") {
+      const activeRunExists = projection.runs.some((run) =>
+        ["preparing", "queued", "starting", "running", "waiting"].includes(run.status),
+      );
+      const pendingRequests = projection.runtimeRequests.filter(
+        (request) => request.status === "pending",
+      );
+      const blockingRequestExists = pendingRequests.some(
+        (request) => request.kind !== "user_input" || request.responseCapability.type !== "message",
+      );
+      if (activeRunExists || blockingRequestExists) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Thread ${command.threadId} has active or blocked work and cannot be settled.`,
+        });
+      }
+
+      // Message-capable async questions do not keep provider callbacks alive.
+      // Resolve them in the settle transaction so a settled thread never has
+      // an actionable question attached to it.
+      for (const request of pendingRequests) {
+        yield* dispatchRuntimeRequestRespond(
+          {
+            type: "runtime-request.respond",
+            commandId: command.commandId,
+            threadId: command.threadId,
+            requestId: request.id,
+            decision: "cancel",
+          },
+          events,
+          effects,
+        );
+      }
     }
 
     const providerSwitchPlan =
@@ -1627,6 +1708,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             unsettledAt: null,
             pinnedAt: null,
             pinOrderKey: null,
+            activeOrderKey: null,
             updatedAt: alreadySettled ? thread.updatedAt : now,
           };
         }
@@ -1707,6 +1789,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             updatedAt: keyUnchanged ? thread.updatedAt : now,
           };
         }
+        case "thread.active.reorder": {
+          return {
+            ...thread,
+            activeOrderKey: command.orderKey,
+            // Arranging the active list is not thread activity.
+            updatedAt: thread.updatedAt,
+          };
+        }
         case "thread.mark-unread":
           return { ...thread, lastVisitedAt: markUnreadVisitedAt };
         case "thread.metadata.update":
@@ -1726,6 +1816,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 ? { titleRegeneration: null }
                 : {}),
             updatedAt: now,
+          };
+        case "thread.pull-request.sync":
+          return {
+            ...thread,
+            branchPullRequest: command.branchPullRequest,
+            ...(command.linkedPullRequest === undefined
+              ? {}
+              : { linkedPullRequest: command.linkedPullRequest }),
+            updatedAt: thread.updatedAt,
           };
         case "thread.title.regeneration.complete":
           return thread.titleRegeneration?.requestId === command.requestId
@@ -1770,11 +1869,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           return "thread.unpinned" as const;
         case "thread.pin.reorder":
           return "thread.pin-reordered" as const;
+        case "thread.active.reorder":
+          return "thread.active-reordered" as const;
         case "thread.mark-unread":
           return "thread.marked-unread" as const;
         case "thread.metadata.update":
         case "thread.title.regeneration.complete":
           return "thread.metadata-updated" as const;
+        case "thread.pull-request.sync":
+          return "thread.pull-request-synced" as const;
         case "thread.runtime-mode.set":
           return "thread.runtime-mode-updated" as const;
         case "thread.interaction-mode.set":
@@ -4263,7 +4366,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const handoffFromModelSelections = Array.from(
         new Map(
           handoffSourceRuns.map((run) => [
-            `${run.modelSelection.instanceId} ${run.modelSelection.model}`,
+            `${run.modelSelection.instanceId}\0${run.modelSelection.model}`,
             run.modelSelection,
           ]),
         ).values(),
@@ -5297,6 +5400,47 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           },
         } satisfies PendingOrchestrationEffectV2,
       ]);
+    });
+
+  const dispatchThreadUserInputDismiss = (
+    command: Extract<OrchestrationV2Command, { readonly type: "thread.user-input.dismiss" }>,
+    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+    effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
+  ) =>
+    Effect.gen(function* () {
+      const projection = yield* projectionStore
+        .getThreadProjection(command.threadId)
+        .pipe(
+          Effect.mapError(() => new OrchestratorProjectionError({ threadId: command.threadId })),
+        );
+      const request = projection.runtimeRequests.find(
+        (candidate) => candidate.id === command.requestId,
+      );
+      if (request === undefined || request.status !== "pending") {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: "This question has already been answered.",
+        });
+      }
+      if (request.kind !== "user_input" || request.responseCapability.type !== "message") {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: "This question needs an answer. Answer it or stop the turn.",
+        });
+      }
+      yield* dispatchRuntimeRequestRespond(
+        {
+          type: "runtime-request.respond",
+          commandId: command.commandId,
+          threadId: command.threadId,
+          requestId: command.requestId,
+          decision: "cancel",
+        },
+        events,
+        effects,
+      );
     });
 
   const dispatchQueuedMessagePromoteToSteer = (
@@ -7044,8 +7188,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "thread.pin":
       case "thread.unpin":
       case "thread.pin.reorder":
+      case "thread.active.reorder":
       case "thread.mark-unread":
       case "thread.metadata.update":
+      case "thread.pull-request.sync":
       case "thread.title.regeneration.complete":
       case "thread.runtime-mode.set":
       case "thread.interaction-mode.set":
@@ -7070,6 +7216,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         break;
       case "runtime-request.respond":
         yield* dispatchRuntimeRequestRespond(command, events, effects);
+        break;
+      case "thread.user-input.dismiss":
+        yield* dispatchThreadUserInputDismiss(command, events, effects);
         break;
       case "run.interrupt":
         cancelUnsettledEffects = yield* dispatchRunInterrupt(command, events, effects);
@@ -7488,6 +7637,7 @@ export const layer: Layer.Layer<
   | ContextHandoffServiceV2
   | EventSinkV2
   | IdAllocatorV2
+  | ProjectionProjectRepository
   | ProviderAdapterRegistryV2
   | ProviderSessionManagerV2
   | ProviderSwitchServiceV2

@@ -16,6 +16,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -157,6 +158,156 @@ describe("CursorAdapterV2", () => {
       assert.isTrue(sentMessages[0]!.startsWith("/review this with $HOME and $missing\n\n"));
       assert.include(sentMessages[0]!, "Cursor");
       assert.include(sentMessages[0]!, "T3 Code");
+    }).pipe(Effect.scoped, Effect.provide(Layer.merge(NodeServices.layer, idAllocatorLayer))),
+  );
+
+  it.effect("fails standalone SDK transport diagnostics and sends compaction as /compress", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "cursor-v2-errors-" });
+      const sentMessages: Array<string> = [];
+      let sendCalls = 0;
+      const instanceId = ProviderInstanceId.make("cursor");
+      const threadId = ThreadId.make("cursor-transport-error-thread");
+      const modelSelection = { instanceId, model: "composer-2.5" };
+      const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: workspace,
+      });
+      const adapter = makeCursorAdapterV2({
+        instanceId,
+        settings: yield* decodeCursorSettings({}),
+        environment: { HOME: workspace },
+        fileSystem,
+        path,
+        idAllocator: yield* IdAllocatorV2,
+        serverConfig: yield* ServerConfig.pipe(
+          Effect.provide(serverConfigLayerTest(workspace, { prefix: "cursor-v2-error-config-" })),
+        ),
+        runner: {
+          assertComplete: Effect.void,
+          open: () =>
+            Effect.succeed({
+              agentId: "native-cursor-error",
+              listMessages: Effect.succeed([]),
+              close: Effect.void,
+              send: (input) =>
+                Effect.sync(() => {
+                  sendCalls += 1;
+                  sentMessages.push(
+                    typeof input.message === "string" ? input.message : input.message.text,
+                  );
+                  const runId = `native-cursor-run-${sendCalls}`;
+                  return {
+                    agentId: "native-cursor-error",
+                    runId,
+                    wait: Effect.succeed({
+                      id: runId,
+                      requestId: `native-request-${sendCalls}`,
+                      status: "finished" as const,
+                      model: { id: "composer-2.5" },
+                      durationMs: 1,
+                      ...(sendCalls === 1
+                        ? { result: "Error: RetriableError: WritableIterable is closed" }
+                        : {}),
+                    }),
+                    cancel: Effect.void,
+                  };
+                }),
+            }),
+        },
+      });
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("cursor-error-session"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const now = yield* DateTime.now;
+      const appThread = {
+        id: threadId,
+        projectId: ProjectId.make("cursor-error-project"),
+        createdBy: "user" as const,
+        creationSource: "web" as const,
+        title: "Cursor transport failure",
+        providerInstanceId: instanceId,
+        modelSelection,
+        runtimeMode: "full-access" as const,
+        interactionMode: "default" as const,
+        branch: null,
+        worktreePath: null,
+        activeProviderThreadId: providerThread.id,
+        lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+        forkedFrom: null,
+        createdAt: now,
+        updatedAt: now,
+        archivedAt: null,
+        settledOverride: null,
+        settledAt: null,
+        lastVisitedAt: null,
+        deletedAt: null,
+      };
+      yield* runtime.startTurn({
+        threadId,
+        providerThread,
+        modelSelection,
+        runtimePolicy,
+        runId: RunId.make("cursor-error-run"),
+        runOrdinal: 1,
+        providerTurnOrdinal: 1,
+        attemptId: RunAttemptId.make("cursor-error-attempt"),
+        rootNodeId: NodeId.make("cursor-error-root"),
+        appThread,
+        message: {
+          messageId: MessageId.make("cursor-error-message"),
+          createdBy: "user",
+          creationSource: "web",
+          text: "continue",
+          attachments: [],
+        },
+      });
+      const first = yield* runtime.events.pipe(
+        Stream.filter((event) => event.type === "turn.terminal"),
+        Stream.runHead,
+      );
+      assert.isTrue(Option.isSome(first));
+      if (Option.isSome(first)) {
+        assert.equal(first.value.status, "failed");
+        assert.equal(first.value.failure?.class, "transport_error");
+      }
+
+      assert.isDefined(runtime.compactThread);
+      yield* runtime.compactThread!({
+        threadId,
+        providerThread,
+        modelSelection,
+        runtimePolicy,
+        runId: RunId.make("cursor-compact-run"),
+        runOrdinal: 2,
+        providerTurnOrdinal: 2,
+        attemptId: RunAttemptId.make("cursor-compact-attempt"),
+        rootNodeId: NodeId.make("cursor-compact-root"),
+        appThread,
+        message: {
+          messageId: MessageId.make("cursor-compact-message"),
+          createdBy: "user",
+          creationSource: "web",
+          text: "ignored by compactThread",
+          attachments: [],
+        },
+      });
+      yield* runtime.events.pipe(
+        Stream.filter((event) => event.type === "turn.terminal"),
+        Stream.runHead,
+      );
+      assert.equal(sentMessages[1], "/compress");
     }).pipe(Effect.scoped, Effect.provide(Layer.merge(NodeServices.layer, idAllocatorLayer))),
   );
 

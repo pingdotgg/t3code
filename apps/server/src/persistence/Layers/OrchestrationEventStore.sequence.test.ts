@@ -213,7 +213,7 @@ it.effect("upgrades populated history to indexed high-water lookups without OR s
   Effect.gen(function* () {
     const store = yield* OrchestrationEventStore;
     const sql = yield* SqlClient.SqlClient;
-    yield* runMigrations({ toMigrationInclusive: 56 });
+    yield* runMigrations({ toMigrationInclusive: 58 });
     yield* sql`
       WITH RECURSIVE history(n) AS (
         SELECT 1 UNION ALL SELECT n + 1 FROM history WHERE n < 25000
@@ -228,7 +228,7 @@ it.effect("upgrades populated history to indexed high-water lookups without OR s
         CASE WHEN n % 3 = 0 THEN 1 ELSE 2 END
       FROM history
     `;
-    yield* runMigrations({ toMigrationInclusive: 57 });
+    yield* runMigrations({ toMigrationInclusive: 59 });
 
     const statements: Array<string> = [];
     const tracer = Tracer.make({

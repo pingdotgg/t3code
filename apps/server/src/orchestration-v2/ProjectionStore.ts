@@ -121,6 +121,7 @@ export type ProjectionSettlementCandidate = Pick<
   | "branch"
   | "worktreePath"
   | "linkedPullRequest"
+  | "branchPullRequest"
   | "createdAt"
   | "updatedAt"
   | "archivedAt"
@@ -413,7 +414,9 @@ export function applyToProjection(
     case "thread.pinned":
     case "thread.unpinned":
     case "thread.pin-reordered":
+    case "thread.active-reordered":
     case "thread.metadata-updated":
+    case "thread.pull-request-synced":
     case "thread.runtime-mode-updated":
     case "thread.interaction-mode-updated":
     case "thread.model-selection-updated":
@@ -1081,6 +1084,12 @@ export function threadShellFromProjection(
     ...(projection.thread.linkedPullRequest === undefined
       ? {}
       : { linkedPullRequest: projection.thread.linkedPullRequest }),
+    ...(projection.thread.branchPullRequest === undefined
+      ? {}
+      : { branchPullRequest: projection.thread.branchPullRequest }),
+    ...(projection.thread.activeOrderKey === undefined
+      ? {}
+      : { activeOrderKey: projection.thread.activeOrderKey }),
     lineage: projection.thread.lineage,
     forkedFrom: projection.thread.forkedFrom,
     activeProviderThreadId: projection.thread.activeProviderThreadId,
@@ -1296,6 +1305,12 @@ function shellFromState(input: {
     ...(input.state.thread.linkedPullRequest === undefined
       ? {}
       : { linkedPullRequest: input.state.thread.linkedPullRequest }),
+    ...(input.state.thread.branchPullRequest === undefined
+      ? {}
+      : { branchPullRequest: input.state.thread.branchPullRequest }),
+    ...(input.state.thread.activeOrderKey === undefined
+      ? {}
+      : { activeOrderKey: input.state.thread.activeOrderKey }),
     lineage: input.state.thread.lineage,
     forkedFrom: input.state.thread.forkedFrom,
     activeProviderThreadId: input.state.thread.activeProviderThreadId,
@@ -1360,9 +1375,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           case "thread.pinned":
           case "thread.unpinned":
           case "thread.pin-reordered":
+          case "thread.active-reordered":
           case "thread.visited":
           case "thread.marked-unread":
           case "thread.metadata-updated":
+          case "thread.pull-request-synced":
           case "thread.runtime-mode-updated":
           case "thread.interaction-mode-updated":
           case "thread.model-selection-updated":

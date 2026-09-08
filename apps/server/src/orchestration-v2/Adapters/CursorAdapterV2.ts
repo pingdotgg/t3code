@@ -42,6 +42,7 @@ import * as Stream from "effect/Stream";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import { CursorTransportFailure } from "../../provider/acp/CursorTransportFailure.ts";
 import { cursorSdkModelSelection } from "../../provider/cursorSdkModel.ts";
 import {
   discoverCursorSkills,
@@ -799,6 +800,7 @@ interface ActiveCursorTurn {
   readonly tools: Map<string, ActiveCursorToolCall>;
   readonly subagents: Map<string, ActiveCursorSubagent>;
   readonly assistant: ActiveCursorTextStream;
+  readonly assistantReply: CursorTransportFailure;
   readonly reasoning: ActiveCursorTextStream;
   interrupted: boolean;
   finalized: boolean;
@@ -1809,6 +1811,7 @@ export function makeCursorAdapterV2(
           }
           switch (update.type) {
             case "text-delta":
+              context.assistantReply.push(update.text);
               yield* completeReasoning(context);
               yield* appendTextSegment({
                 context,
@@ -2020,6 +2023,9 @@ export function makeCursorAdapterV2(
           turnInput: ProviderAdapterV2TurnInput,
         ) {
           const rawText = turnInput.message.text;
+          if (rawText.trim() === "/compress" && turnInput.message.attachments.length === 0) {
+            return "/compress";
+          }
           if (hasCursorSkillMention(rawText) && cursorSkillNames === undefined) {
             const skills = yield* discoverCursorSkills(
               turnInput.runtimePolicy.cwd ?? undefined,
@@ -2147,6 +2153,7 @@ export function makeCursorAdapterV2(
                 current: null,
                 nextSegment: 0,
               },
+              assistantReply: new CursorTransportFailure(),
               reasoning: {
                 current: null,
                 nextSegment: 0,
@@ -2187,6 +2194,7 @@ export function makeCursorAdapterV2(
                     result.result !== undefined &&
                     result.result.length > 0
                   ) {
+                    context.assistantReply.push(result.result);
                     yield* appendTextSegment({
                       context,
                       stream: context.assistant,
@@ -2195,15 +2203,21 @@ export function makeCursorAdapterV2(
                     });
                   }
                   if (context !== null) {
-                    const status = terminalStatus(context, result);
+                    const transportFailure = context.assistantReply.failure;
+                    const status =
+                      transportFailure === undefined ? terminalStatus(context, result) : "failed";
                     yield* finalizeTurn({
                       context,
                       status,
                       ...(status === "failed"
                         ? {
                             failure: makeProviderFailure({
-                              cause: (result as { readonly error?: unknown }).error,
-                              class: "provider_error",
+                              cause:
+                                transportFailure ?? (result as { readonly error?: unknown }).error,
+                              class:
+                                transportFailure === undefined
+                                  ? "provider_error"
+                                  : "transport_error",
                             }),
                           }
                         : {}),
@@ -2335,6 +2349,11 @@ export function makeCursorAdapterV2(
               ),
           ),
           startTurn,
+          compactThread: (turnInput) =>
+            startTurn({
+              ...turnInput,
+              message: { ...turnInput.message, text: "/compress" },
+            }),
           steerTurn: (turnInput) =>
             Effect.fail(
               new ProviderAdapterSteerRunUnsupportedError({
