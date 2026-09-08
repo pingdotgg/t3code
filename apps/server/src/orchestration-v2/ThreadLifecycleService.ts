@@ -13,7 +13,7 @@ import * as Schema from "effect/Schema";
 
 import * as ThreadManagement from "./ThreadManagementService.ts";
 
-export class ThreadLifecycleError extends Schema.TaggedErrorClass<ThreadLifecycleError>()(
+export class ThreadLifecycleError extends Schema.TaggedError<ThreadLifecycleError>()(
   "ThreadLifecycleError",
   {
     operation: Schema.Literals([

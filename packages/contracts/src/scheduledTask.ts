@@ -172,7 +172,7 @@ export const ScheduledTaskRunNowResult = Schema.Struct({
 });
 export type ScheduledTaskRunNowResult = typeof ScheduledTaskRunNowResult.Type;
 
-export class ScheduledTaskError extends Schema.TaggedErrorClass<ScheduledTaskError>()(
+export class ScheduledTaskError extends Schema.TaggedError<ScheduledTaskError>()(
   "ScheduledTaskError",
   {
     message: Schema.String,

@@ -10,7 +10,7 @@ import * as WorkspaceEntries from "../workspace/WorkspaceEntries.ts";
 import * as CheckpointCapture from "./CheckpointCaptureService.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 
-export class RunFinalizationError extends Schema.TaggedErrorClass<RunFinalizationError>()(
+export class RunFinalizationError extends Schema.TaggedError<RunFinalizationError>()(
   "RunFinalizationError",
   {
     threadId: ThreadId,
@@ -21,7 +21,7 @@ export class RunFinalizationError extends Schema.TaggedErrorClass<RunFinalizatio
   },
 ) {}
 
-export class RunFinalizationRefreshError extends Schema.TaggedErrorClass<RunFinalizationRefreshError>()(
+export class RunFinalizationRefreshError extends Schema.TaggedError<RunFinalizationRefreshError>()(
   "RunFinalizationRefreshError",
   { cwd: Schema.String, cause: Schema.Defect() },
 ) {}

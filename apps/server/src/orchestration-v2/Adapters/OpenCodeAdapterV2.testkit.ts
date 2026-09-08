@@ -44,7 +44,7 @@ const OpenCodeSdkReplayTranscript = Schema.Struct({
 export type OpenCodeSdkReplayTranscript = typeof OpenCodeSdkReplayTranscript.Type;
 const decodeOpenCodeSdkReplayTranscript = Schema.decodeUnknownEffect(OpenCodeSdkReplayTranscript);
 
-export class OpenCodeReplayTranscriptDecodeError extends Schema.TaggedErrorClass<OpenCodeReplayTranscriptDecodeError>()(
+export class OpenCodeReplayTranscriptDecodeError extends Schema.TaggedError<OpenCodeReplayTranscriptDecodeError>()(
   "OpenCodeReplayTranscriptDecodeError",
   {
     driver: Schema.optional(Schema.String),
@@ -58,7 +58,7 @@ export class OpenCodeReplayTranscriptDecodeError extends Schema.TaggedErrorClass
   }
 }
 
-export class OpenCodeReplayMismatchError extends Schema.TaggedErrorClass<OpenCodeReplayMismatchError>()(
+export class OpenCodeReplayMismatchError extends Schema.TaggedError<OpenCodeReplayMismatchError>()(
   "OpenCodeReplayMismatchError",
   {
     scenario: Schema.String,
@@ -72,7 +72,7 @@ export class OpenCodeReplayMismatchError extends Schema.TaggedErrorClass<OpenCod
   }
 }
 
-export class OpenCodeReplayIncompleteError extends Schema.TaggedErrorClass<OpenCodeReplayIncompleteError>()(
+export class OpenCodeReplayIncompleteError extends Schema.TaggedError<OpenCodeReplayIncompleteError>()(
   "OpenCodeReplayIncompleteError",
   {
     scenario: Schema.String,

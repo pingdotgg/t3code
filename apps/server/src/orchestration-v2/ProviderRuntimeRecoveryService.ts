@@ -18,7 +18,7 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import { restartContinuationRun } from "./RestartContinuation.ts";
 
-export class ProviderRuntimeRecoveryError extends Schema.TaggedErrorClass<ProviderRuntimeRecoveryError>()(
+export class ProviderRuntimeRecoveryError extends Schema.TaggedError<ProviderRuntimeRecoveryError>()(
   "ProviderRuntimeRecoveryError",
   {
     operation: Schema.Literals(["read-projections", "reconcile", "drain-outbox"]),
