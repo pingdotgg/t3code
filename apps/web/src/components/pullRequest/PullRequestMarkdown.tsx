@@ -39,7 +39,7 @@ export function PullRequestMarkdown({
     [repositoryUrl],
   );
   return (
-    <div className={cn("space-y-3", className)}>
+    <div className={cn("space-y-3", className)} data-image-gallery>
       {segments.map((segment) => {
         if (segment.kind === "markdown") {
           return (
