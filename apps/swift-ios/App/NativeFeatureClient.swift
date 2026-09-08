@@ -1872,6 +1872,9 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             activeThreadSequence = cached.sequence
             activeThreadPage = cached.page
             detail.page = cached.page
+            if latestDetails[route.uiID]?.page != detail.page {
+                publish(detail, threadID: route.uiID, renderCacheIsSource: true)
+            }
             markThreadCacheRecentlyUsed(route.uiID)
             startDetailStream(route, warmConnectionID: warmConnectionID)
             if let shell = shellsByEnvironmentID[environment.id] {
@@ -4861,6 +4864,9 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         } else if rawThread.latestTurn?.turnId == completed.turnId,
                   rawThread.latestTurn?.state == completed.state,
                   rawThread.latestTurn?.completedAt == completed.completedAt,
+                  rawThread.messages.contains(where: {
+                      $0.role == "assistant" && $0.turnId == completed.turnId && !$0.streaming
+                  }),
                   !rawThread.messages.contains(where: {
                       $0.role == "assistant" && $0.turnId == completed.turnId && $0.streaming
                   }) {
