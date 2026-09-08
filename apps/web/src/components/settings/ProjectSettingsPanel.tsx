@@ -869,23 +869,14 @@ function ProjectDetail({
         draftStore.clearProjectDraftThreadId(projectRef);
       }
 
-      if (isWholeGroup) {
-        if (hasOtherMembers) {
-          void navigate({
-            to: "/settings/projects",
-            search: { project: group.projectKey, machine: undefined },
-            replace: true,
-          });
-        } else {
-          void navigate({ to: "/", replace: true });
-        }
+      if (isWholeGroup && !hasOtherMembers) {
+        void navigate({ to: "/", replace: true });
       }
     },
     [
       deleteProject,
       group.displayName,
       group.memberProjects.length,
-      group.projectKey,
       hasOtherMembers,
       navigate,
       reportFailure,

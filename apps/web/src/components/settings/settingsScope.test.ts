@@ -171,6 +171,34 @@ describe("settings scope resolution", () => {
     });
   });
 
+  it("leaves a removed checkout unavailable while sibling checkouts remain", () => {
+    const search = {
+      project: "t3code",
+      machine: laptopId,
+      checkout: first.physicalProjectKey,
+    };
+    expect(resolveSettingsScope(search, groups, environments)).toMatchObject({
+      kind: "checkout",
+      members: [first],
+    });
+    expect(
+      resolveSettingsScope(search, [group("t3code", [second, third])], environments),
+    ).toMatchObject({ kind: "unavailable", members: [], environmentIds: [] });
+  });
+
+  it("does not select another environment after removing a project's last local checkout", () => {
+    const search = { project: "t3code", machine: laptopId };
+    expect(resolveSettingsScope(search, groups, environments)).toMatchObject({
+      kind: "project",
+      members: [first, second],
+    });
+    expect(resolveSettingsScope(search, [group("t3code", [third])], environments)).toMatchObject({
+      kind: "unavailable",
+      members: [],
+      environmentIds: [],
+    });
+  });
+
   it("rejects a cached checkout whose environment was removed", () => {
     expect(
       resolveSettingsScope(
