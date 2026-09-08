@@ -2,7 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/unstable/reactivity";
 import type { ComponentType } from "react";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { FlatList, ScrollView, Text as NativeText, useWindowDimensions, View } from "react-native";
+import { FlatList, ScrollView, Text as NativeText, View } from "react-native";
 
 import { AppText as Text } from "../../components/AppText";
 import { LoadingStrip } from "../../components/LoadingStrip";
@@ -50,6 +50,7 @@ const HighlightedSourceLine = memo(function HighlightedSourceLine(props: {
       style={{ minHeight: props.codeSurface.rowHeight }}
     >
       <NativeText
+        allowFontScaling={false}
         className="select-none pr-3 text-right text-foreground-tertiary"
         style={{
           width: props.codeSurface.gutterWidth,
@@ -61,6 +62,7 @@ const HighlightedSourceLine = memo(function HighlightedSourceLine(props: {
         {props.index + 1}
       </NativeText>
       <NativeText
+        allowFontScaling={false}
         selectable
         numberOfLines={props.wordBreak ? undefined : 1}
         className="flex-1 font-normal text-foreground"
@@ -152,10 +154,9 @@ function NativeSourceFileSurface(
   },
 ) {
   const { NativeView, onRefresh } = props;
-  const { codeSurface, codeWordBreak, nativeSourceStyle } = useAppearanceCodeSurface();
+  const { codeSurface, nativeSourceStyle } = useAppearanceCodeSurface();
   const { themeAppearance, themeId } = useAppearancePreferences();
   const appTheme = useUniwindTheme();
-  const { width: viewportWidth } = useWindowDimensions();
   const { rowsJson, status, targetIndex, tokens } = useSourceFileModel(props);
   const [isPullRefreshing, setIsPullRefreshing] = useState(false);
   const handlePullToRefresh = useCallback(async () => {
@@ -179,9 +180,7 @@ function NativeSourceFileSurface(
     [appTheme, themeAppearance, themeId],
   );
   const styleJson = useMemo(() => JSON.stringify(nativeSourceStyle), [nativeSourceStyle]);
-  const contentWidth = codeWordBreak
-    ? Math.max(240, viewportWidth - codeSurface.gutterWidth - 24)
-    : NATIVE_SOURCE_CONTENT_WIDTH;
+  const contentWidth = NATIVE_SOURCE_CONTENT_WIDTH;
 
   return (
     <View className="relative flex-1 bg-sheet">
@@ -215,15 +214,39 @@ function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
   const { codeSurface, codeWordBreak } = useAppearanceCodeSurface();
   const { lines, status, targetIndex, tokens } = useSourceFileModel(props);
   const listRef = useRef<FlatList<string>>(null);
+  const [isPullRefreshing, setIsPullRefreshing] = useState(false);
+
+  const handlePullToRefresh = useCallback(async () => {
+    if (!props.onRefresh) {
+      return;
+    }
+    setIsPullRefreshing(true);
+    try {
+      await props.onRefresh();
+    } finally {
+      setIsPullRefreshing(false);
+    }
+  }, [props.onRefresh]);
+  const scrollRetryCountRef = useRef(0);
+  const retryFrameRef = useRef<number | null>(null);
+  const targetIndexRef = useRef<number | null>(null);
+  targetIndexRef.current = targetIndex;
 
   useEffect(() => {
     if (targetIndex === null) {
       return;
     }
+    scrollRetryCountRef.current = 0;
     const frame = requestAnimationFrame(() => {
       listRef.current?.scrollToIndex({ index: targetIndex, animated: false, viewPosition: 0.3 });
     });
-    return () => cancelAnimationFrame(frame);
+    return () => {
+      cancelAnimationFrame(frame);
+      if (retryFrameRef.current !== null) {
+        cancelAnimationFrame(retryFrameRef.current);
+        retryFrameRef.current = null;
+      }
+    };
   }, [props.path, targetIndex]);
 
   const renderLine = useCallback(
@@ -240,6 +263,31 @@ function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
     [codeSurface, codeWordBreak, targetIndex, tokens],
   );
 
+  const handleScrollToIndexFailed = useCallback(
+    (info: { index: number; averageItemLength: number }) => {
+      listRef.current?.scrollToOffset({
+        offset: Math.max(0, info.averageItemLength * info.index),
+        animated: false,
+      });
+      if (retryFrameRef.current !== null || scrollRetryCountRef.current >= 3) {
+        return;
+      }
+      scrollRetryCountRef.current += 1;
+      retryFrameRef.current = requestAnimationFrame(() => {
+        retryFrameRef.current = null;
+        if (targetIndexRef.current === null || targetIndexRef.current !== info.index) {
+          return;
+        }
+        listRef.current?.scrollToIndex({
+          index: info.index,
+          animated: false,
+          viewPosition: 0.3,
+        });
+      });
+    },
+    [],
+  );
+
   const list = (
     <FlatList
       ref={listRef}
@@ -248,6 +296,7 @@ function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
       initialNumToRender={80}
       maxToRenderPerBatch={80}
       windowSize={12}
+      onScrollToIndexFailed={handleScrollToIndexFailed}
       {...(codeWordBreak
         ? {}
         : {
@@ -263,6 +312,12 @@ function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
         paddingTop: 8,
       }}
       renderItem={renderLine}
+      {...(props.onRefresh
+        ? {
+            refreshing: isPullRefreshing,
+            onRefresh: () => void handlePullToRefresh(),
+          }
+        : {})}
     />
   );
 
@@ -281,6 +336,10 @@ function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
 }
 
 export function SourceFileSurface(props: SourceFileSurfaceProps) {
+  const { codeWordBreak } = useAppearanceCodeSurface();
+  if (codeWordBreak) {
+    return <JavaScriptSourceFileSurface {...props} />;
+  }
   const NativeView = resolveNativeReviewDiffView();
   return NativeView ? (
     <NativeSourceFileSurface {...props} NativeView={NativeView} />
